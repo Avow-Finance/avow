@@ -1,6 +1,6 @@
 # Avow
 
-The commitment layer for autonomous trade.
+The commitment layer for autonomous commerce.
 
 Avow lets a verified business give its AI agents the authority to make commitments, and backs each commitment with money reserved for one named supplier. A supplier can then accept an agent it has never met, because it can check who is responsible for the agent, what the agent may commit to, and what money stands behind the commitment.
 
