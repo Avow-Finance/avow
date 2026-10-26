@@ -11,6 +11,7 @@ This is the public half of Avow: the TypeScript SDK, the MCP server and the veri
 ## Rules
 
 - Every change goes through a pull request with tests, and CI must pass.
+- Merge your own pull request once CI passes, except key-handling changes, which wait for Shaun to merge.
 - Testnet only. Nothing here moves real money.
 - Never commit keys, tokens or `.env` files.
 - Packages stay `"private": true` until their first release.
