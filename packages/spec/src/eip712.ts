@@ -125,10 +125,17 @@ export interface Approval {
   expiry: bigint
 }
 
-/** The supplier's acceptance of a funded reserve, signed by its signing key. */
+/**
+ * The supplier's acceptance of a funded reserve, signed by its signing key. It names the digest of
+ * Avow's approval that funded the reserve, which commits to every term the lock enforces, so the
+ * supplier is bound only by terms it signed. Any change to those terms gives another digest, and
+ * the lock refuses the acceptance.
+ */
 export interface Acceptance {
   commitmentId: Hex
   side: Side
+  /** `approvalDigest` of the approval the lock took, which the lock stores and emits as `approvalHash`. */
+  approvalHash: Hex
   termsHash: Hex
   /** Base units of the token. */
   amount: bigint
@@ -150,10 +157,16 @@ export interface ChargeReport {
   expiry: bigint
 }
 
-/** The supplier account's consent to give a reserve back, signed by its root key or an admin key. */
+/**
+ * The supplier account's consent to give a reserve back, signed by its root key or an admin key. It
+ * names the commitment's report count when the supplier signs, and the lock refuses it once
+ * another report has been filed.
+ */
 export interface ReleaseConsent {
   commitmentId: Hex
   side: Side
+  /** The lock's `reportCount` for the commitment, which counts every report ever filed. */
+  reportCount: number
   reason: ReleaseReason
   evidenceHash: Hex
   nonce: bigint
@@ -335,6 +348,7 @@ export const ACCEPTANCE_TYPES = {
   Acceptance: [
     { name: 'commitmentId', type: 'bytes32' },
     { name: 'side', type: 'uint8' },
+    { name: 'approvalHash', type: 'bytes32' },
     { name: 'termsHash', type: 'bytes32' },
     { name: 'amount', type: 'uint256' },
     { name: 'token', type: 'address' },
@@ -360,6 +374,7 @@ export const RELEASE_CONSENT_TYPES = {
   ReleaseConsent: [
     { name: 'commitmentId', type: 'bytes32' },
     { name: 'side', type: 'uint8' },
+    { name: 'reportCount', type: 'uint8' },
     { name: 'reason', type: 'uint8' },
     { name: 'evidenceHash', type: 'bytes32' },
     { name: 'nonce', type: 'uint256' },
@@ -505,6 +520,15 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
       })),
     },
   }
+}
+
+/**
+ * The digest of an approval as the lock computes it, under the lock's domain. The lock stores it at
+ * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
+ * computes it from the terms it agreed and checks it against the lock's before it signs.
+ */
+export function approvalDigest(a: Approval, d: AvowDomain): Hex {
+  return digestOf(approvalTypedData(a, d))
 }
 
 export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {

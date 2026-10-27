@@ -4,6 +4,7 @@ import {
   type Acceptance,
   type Approval,
   acceptanceTypedData,
+  approvalDigest,
   approvalTypedData,
   businessActionTypedData,
   type ChargeReport,
@@ -56,9 +57,11 @@ const approval: Approval = {
   expiry: 1_800_001_800n,
 }
 
+// The acceptance names the digest of the approval vector above.
 const acceptance: Acceptance = {
   commitmentId: id('vector commitment'),
   side: 'buyer',
+  approvalHash: approvalDigest(approval, DOMAIN),
   termsHash: id('vector terms'),
   amount: 500_000_000n,
   token: '0x20c0000000000000000000000000000000000001',
@@ -80,6 +83,7 @@ const report: ChargeReport = {
 const consent: ReleaseConsent = {
   commitmentId: id('vector commitment'),
   side: 'buyer',
+  reportCount: 1,
   reason: 'supplierFailed',
   evidenceHash: id('vector consent evidence'),
   nonce: 4n,
@@ -138,9 +142,9 @@ describe("the lock's signed messages", () => {
   it('hash to the digests the lock computes', () => {
     expect(digests).toEqual({
       Approval: '0x8c2d20a63420d1aafe8f5c7ae925ab730767f413ad665e34569c3f39e58f9597',
-      Acceptance: '0xb75643cda4c68adf403598d2f3bb4729aa4a0acaed7d9226376d21cf3bda9fcc',
+      Acceptance: '0x1f7987eab672e18486e733ff0b01047812ad5172e12b2ea71a1de3c66749e129',
       Report: '0xdc356ee8e260fd0652d6ce0ee76ad6f24093475bf865ec5fe1633110358aef5f',
-      ReleaseConsent: '0x64515772a12f085d62807f7904029b3496afcbfdb8e1ce432ff2e853a31140f7',
+      ReleaseConsent: '0xba75076057028d3d68ff18b534c362ea8e0869f8c92248c169ba7cd43a7e0653',
       Evidence: '0x0bf0efc44b0b6450dae37617d1575532ff731ba906d2667d4a941bd2d66c9fc6',
       'BusinessAction (contest)':
         '0x827daf481be7ef2b64d4661bbf842a24377d8b9218806cea423fb1757e70e9ef',

@@ -6,6 +6,7 @@ import {
   type Approval,
   type AvowTypedData,
   acceptanceTypedData,
+  approvalDigest,
   approvalTypedData,
   businessActionTypedData,
   type ChargeReport,
@@ -103,6 +104,7 @@ const approval: Approval = {
 const acceptance: Acceptance = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
+  approvalHash: approvalDigest(approval, DOMAIN),
   termsHash: hash,
   amount: terms.reserve,
   token: TOKEN.token,
@@ -124,6 +126,7 @@ const chargeReport: ChargeReport = {
 const consent: ReleaseConsent = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
+  reportCount: 0,
   reason: 'kept',
   evidenceHash: id('kept'),
   nonce: 14n,
@@ -297,6 +300,69 @@ describe('signed messages', () => {
     })
     expect(ok).toBe(true)
     expect(seen).toBe(digestOf(td))
+  })
+})
+
+describe("what the supplier's acceptance and consent bind", () => {
+  const [late, noShow] = approval.charges
+  if (!late || !noShow) throw new Error('the approval fixture has two charges')
+  // Every field of the approval, changed to another valid value.
+  const changes: Partial<Approval>[] = [
+    { commitmentId: id('commitment-2') },
+    { side: 'supplier' },
+    { token: '0x20c0000000000000000000000000000000000002' },
+    { amount: approval.amount + 1n },
+    { supplier: PAYEE },
+    { supplierSigner: PAYEE },
+    { payee: ARBITER },
+    { freeCancelBy: approval.freeCancelBy + 1n },
+    { acceptBy: approval.acceptBy + 1n },
+    { chargeDeadline: approval.chargeDeadline + 1n },
+    { releaseDate: approval.releaseDate + 1n },
+    { contestWindow: approval.contestWindow + 1n },
+    { charges: [{ ...late, most: late.most - 1n }, noShow] },
+    { charges: [late, { ...noShow, earliest: noShow.earliest + 1n }] },
+    { charges: [late] },
+    { day90SupplierShareBps: 5001 },
+    { arbiter: PAYEE },
+    { termsHash: id('other terms') },
+    { mandateHash: id('other mandate') },
+    { capPerCommitment: approval.capPerCommitment + 1n },
+    { capOpenReserves: approval.capOpenReserves + 1n },
+    { fundingKey: PAYEE },
+    { nonce: approval.nonce + 1n },
+    { expiry: approval.expiry + 1n },
+  ]
+
+  it('the approval digest changes with every term, the chain and the lock', () => {
+    const digest = approvalDigest(approval, DOMAIN)
+    expect(Object.keys(approval)).toHaveLength(22)
+    const seen = new Set([digest])
+    for (const change of changes) seen.add(approvalDigest({ ...approval, ...change }, DOMAIN))
+    seen.add(approvalDigest(approval, OTHER_DOMAIN))
+    seen.add(approvalDigest(approval, { chainId: CHAIN_ID + 1, verifyingContract: LOCK }))
+    expect(seen.size).toBe(changes.length + 3)
+  })
+
+  it('an acceptance signed for one approval fails for any other', async () => {
+    const signature = await sign(acceptanceTypedData(acceptance, DOMAIN))
+    for (const change of changes) {
+      const other = {
+        ...acceptance,
+        approvalHash: approvalDigest({ ...approval, ...change }, DOMAIN),
+      }
+      expect(await isSignedBy(acceptanceTypedData(other, DOMAIN), signature, admin.address)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('a consent signed for one report count fails for any other', async () => {
+    const signature = await sign(releaseConsentTypedData(consent, DOMAIN))
+    for (const reportCount of [1, 2, 255]) {
+      const later = releaseConsentTypedData({ ...consent, reportCount }, DOMAIN)
+      expect(await isSignedBy(later, signature, admin.address)).toBe(false)
+    }
   })
 })
 

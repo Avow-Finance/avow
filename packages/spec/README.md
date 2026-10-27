@@ -18,7 +18,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them |
 | Compute terms | The terms of a GPU reservation, their canonical JSON and the salted terms hash the lock stores |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
-| Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. Fixed digests in the tests match the lock's own, and the signatures the SDK makes for one whole commitment are pinned for the lock's tests to replay |
+| Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the lock enforces, and the consent names the commitment's report count, so a later report voids it. Fixed digests in the tests match the lock's own, and the signatures the SDK makes for one whole commitment are pinned for the lock's tests to replay |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
 | AP2 mapping | How a mandate maps onto an AP2 intent mandate |
