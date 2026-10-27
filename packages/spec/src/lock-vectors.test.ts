@@ -22,9 +22,9 @@ import {
 import { id, LOCK } from './test-helpers.js'
 
 /**
- * Fixed messages and the digests the lock contract computes for them. The lock's own tests check
- * the same messages against the same digests, so a change on either side that alters a signed
- * message fails that side's test.
+ * Fixed messages and the digests the lock contract computes for them. A change here that alters a
+ * signed message changes its digest and fails this test, and the lock contract has to change with
+ * it.
  */
 const DOMAIN = { chainId: 42431, verifyingContract: LOCK }
 const address = (n: number): Address => `0x${n.toString(16).padStart(40, '0')}`

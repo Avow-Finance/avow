@@ -110,7 +110,7 @@ export interface Approval {
   charges: readonly Charge[]
   /** The supplier's share of a confirmed charge still unruled at day 90, in basis points. */
   day90SupplierShareBps: number
-  /** The fallback arbiter named in the agreement, who can rule from day 30 to day 90. */
+  /** The fallback arbiter, who can rule from day 30 to day 90. Avow names it in the approval. */
   arbiter: Address
   termsHash: Hex
   mandateHash: Hex
@@ -130,7 +130,9 @@ export interface Approval {
  * Avow's approval that funded the reserve, which covers every term that approval sets for the
  * commitment, and the lock's own settings through the lock's address in its domain. Any change to
  * the approval gives another digest, and the lock refuses the acceptance. The supplier is bound by
- * everything the approval says, so it checks the approval against its own terms before it signs.
+ * everything the approval says, so it should check the approval against what it agreed before it
+ * signs. Nothing in this package makes that check yet, and `ComputeTerms` carries neither the
+ * day-90 share nor the arbiter.
  */
 export interface Acceptance {
   commitmentId: Hex
@@ -160,8 +162,8 @@ export interface ChargeReport {
 
 /**
  * The supplier account's consent to give a reserve back, signed by its root key or an admin key. It
- * names the commitment's report count when the supplier signs, and the lock refuses it once
- * another report has been filed.
+ * names a report count, and the lock takes it only while the commitment's count is that number, so
+ * a report filed after the supplier signed for the current count voids it.
  */
 export interface ReleaseConsent {
   commitmentId: Hex
@@ -526,8 +528,8 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
 /**
  * The digest of an approval as the lock computes it, under the lock's domain. The lock stores it at
  * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
- * given the approval computes it, checks that it matches the lock's, and checks the approval's
- * terms against its own before it signs an acceptance naming it.
+ * given the approval computes it and checks that it matches the lock's before it signs an
+ * acceptance naming it, and should check the approval's terms against what it agreed as well.
  */
 export function approvalDigest(a: Approval, d: AvowDomain): Hex {
   return digestOf(approvalTypedData(a, d))

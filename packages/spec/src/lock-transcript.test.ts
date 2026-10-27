@@ -41,12 +41,11 @@ import { id } from './test-helpers.js'
  * the reserve, signed message by message the way the SDK signs. Avow's approval key and the
  * supplier's signing key sign plain EIP-712 digests, and an account's root key or admin key signs
  * inside a keychain V2 envelope. The acceptance names the digest of the approval, and the consent
- * names the report count. Two more signed messages are ones the lock must refuse, an acceptance of
- * another approval and a consent signed before the second report. The lock
- * contract's tests send these exact signatures to a lock at the same address on the same chain,
- * and check that it takes every step and refuses those two. A change to how the SDK hashes, signs
- * or wraps a message fails this test, and a change to how the lock hashes or checks one fails the
- * lock's, so new pins here go to the lock's tests in the same change.
+ * names the report count. Two more are signatures a lock must refuse, an acceptance of another
+ * approval and a consent signed before the second report. A lock at the same address on the same
+ * chain takes the other ten and refuses those two, so the pins are the signatures it checks. A
+ * change to how the SDK hashes, signs or wraps a message fails this test, and the lock contract
+ * has to change with it.
  *
  * Each key comes from a public label at run time, as Foundry's `makeAddrAndKey` makes its keys,
  * so both sides sign with the same keys. They are test keys and hold nothing.
