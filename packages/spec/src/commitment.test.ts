@@ -10,7 +10,7 @@ import {
 } from './commitment.js'
 
 describe('commitment states', () => {
-  it("has the master spec's 11 states and 4 endings", () => {
+  it('has 11 states and 4 endings', () => {
     expect(COMMITMENT_STATES).toHaveLength(11)
     expect(ENDINGS).toEqual(['expired', 'released', 'charged', 'resolved'])
   })

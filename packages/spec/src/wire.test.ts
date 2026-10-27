@@ -27,6 +27,17 @@ import {
 } from './wire.js'
 
 const roundTrip = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
+/** What parsing returns for a value: the same, with every hex string in lower case. */
+const lowerHex = <T>(value: T): T =>
+  JSON.parse(
+    JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v)),
+    (_k, v) =>
+      typeof v === 'string' && /^0x[0-9a-fA-F]*$/.test(v)
+        ? v.toLowerCase()
+        : typeof v === 'string' && /^-?[0-9]+n$/.test(v)
+          ? BigInt(v.slice(0, -1))
+          : v,
+  )
 const agent = newKey()
 const terms = testnetDemoTerms(START)
 const SALT = `0x${'44'.repeat(32)}` as const
@@ -36,8 +47,8 @@ describe('records over JSON', () => {
     const mandate = demoMandate(newKey().address, agent.address)
     const request = demoRequest(agent.address)
     expect(parseComputeTerms(roundTrip(terms))).toEqual(terms)
-    expect(parseMandate(roundTrip(mandate))).toEqual(mandate)
-    expect(parseReserveRequest(roundTrip(request))).toEqual(request)
+    expect(parseMandate(roundTrip(mandate))).toEqual(lowerHex(mandate))
+    expect(parseReserveRequest(roundTrip(request))).toEqual(lowerHex(request))
   })
 
   it('refuses amounts that are negative, fractional, padded or not strings', () => {
@@ -104,7 +115,10 @@ describe('parseCommitment', () => {
   }
 
   it('round-trips a commitment', () => {
-    expect(parseCommitment(roundTrip(commitment))).toEqual({ ok: true, value: commitment })
+    expect(parseCommitment(roundTrip(commitment))).toEqual({
+      ok: true,
+      value: lowerHex(commitment),
+    })
   })
 
   it('refuses a schema version it can read nothing of', () => {
@@ -130,6 +144,7 @@ describe('parseSigned', () => {
     kybReference: 'mock-kyb-1',
     kybTestData: true,
     agentKey: agent.address,
+    agentKeyAuthorizedIn: id('key authorization tx'),
     mandateHash: id('mandate hash'),
     payee: PAYEE,
     acceptBy: terms.acceptBy,
@@ -154,7 +169,27 @@ describe('parseSigned', () => {
 
   it('parses an envelope and its message', () => {
     const result = parse(envelope)
-    expect(result.ok && result.value.message).toEqual(authorization)
+    expect(result.ok && result.value.message).toEqual(lowerHex(authorization))
+  })
+
+  it('reads hex in any letter case as the same value', () => {
+    const shouting = {
+      ...envelope,
+      message: {
+        ...envelope.message,
+        termsHash: envelope.message.termsHash.toUpperCase().replace('0X', '0x'),
+        payee: '0x000000000000000000000000000000000000BEEF',
+      },
+    }
+    const result = parse(shouting)
+    expect(result.ok && result.value.message.termsHash).toBe(authorization.termsHash)
+    expect(result.ok && result.value.message.payee).toBe(PAYEE)
+  })
+
+  it('accepts a mixed-case address whatever its checksum, so no check can throw on it', () => {
+    const badChecksum = '0x000000000000000000000000000000000000BeEf'
+    const result = parse({ ...envelope, message: { ...envelope.message, payee: badChecksum } })
+    expect(result.ok && result.value.message.payee).toBe(PAYEE)
   })
 
   it('refuses an unknown schema version before reading the message (acceptance test 5)', () => {

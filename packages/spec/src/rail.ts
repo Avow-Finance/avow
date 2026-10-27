@@ -2,8 +2,8 @@ import type { Address, Hex } from 'viem'
 import type { Currency, Side } from './types.js'
 
 /**
- * Everything that depends on the rail sits in this file. A second rail adds a variant here and an
- * adapter in avow-core, and the commitment, its terms and its states stay as they are.
+ * Everything that depends on the rail sits in this file. A second rail adds a variant here, and the
+ * commitment, its terms and its states stay as they are.
  */
 export type Rail = 'tempo'
 
@@ -34,7 +34,6 @@ export function toTokenUnits(micros: bigint, decimals: number): bigint {
 
 /**
  * One side's backing on Tempo. The lock stores these fields, and Avow's approval signs them.
- * This is the adapter page's `BackingRef`, which the open repo owns because suppliers check it.
  */
 export interface BackingRef {
   rail: Rail

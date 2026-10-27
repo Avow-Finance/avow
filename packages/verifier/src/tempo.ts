@@ -39,21 +39,23 @@ export async function readAgentKey(
     abi: Abis.accountKeychain,
     logs: receipt.logs.filter((l) => isAddressEqual(l.address, Addresses.accountKeychain)),
   })
-  const authorized = logs.some(
-    (l) =>
-      l.eventName === 'KeyAuthorized' &&
-      isAddressEqual(l.args.account, account) &&
-      isAddressEqual(l.args.publicKey, key),
+  // Tempo's witness event doesn't name the key, so the transaction must authorize exactly one key
+  // for this account, this one, with exactly one witness. Anything else can't be paired safely.
+  const authorizedKeys = logs.flatMap((l) =>
+    l.eventName === 'KeyAuthorized' && isAddressEqual(l.args.account, account)
+      ? [l.args.publicKey]
+      : [],
   )
   const witnesses = logs.flatMap((l) =>
     l.eventName === 'KeyAuthorizationWitness' && isAddressEqual(l.args.account, account)
       ? [l.args.witness]
       : [],
   )
+  const onlyThisKey =
+    authorizedKeys.length === 1 && isAddressEqual(authorizedKeys[0] ?? zeroAddress, key)
   return {
     active: !stored.isRevoked,
     expiry: stored.expiry >= NO_EXPIRY ? null : stored.expiry,
-    // One authorization per transaction carries one witness. Anything else is ambiguous.
-    witness: authorized && witnesses.length === 1 ? (witnesses[0] ?? null) : null,
+    witness: onlyThisKey && witnesses.length === 1 ? (witnesses[0] ?? null) : null,
   }
 }

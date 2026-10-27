@@ -8,6 +8,7 @@ import {
   PRODUCTION_PROFILE,
   type RailToken,
   type SupplierAuthorization,
+  signForAccount,
   supplierAuthorizationTypedData,
   TESTNET_DEMO_PROFILE,
   termsHash,
@@ -39,11 +40,14 @@ const TOKEN: RailToken = {
 const DOMAIN = { chainId: CHAIN_ID, verifyingContract: LOCK }
 const SALT = `0x${'55'.repeat(32)}` as const
 const COMMITMENT = id('commitment-1')
+const KEY_TX = id('the transaction that authorized the agent key')
 
 const avow = newKey()
 const buyer = newKey() // the business account's root key, the administrator's on testnet
 const agent = newKey()
 const terms = testnetDemoTerms(START)
+const TERMS_HASH = termsHash(terms, SALT)
+const agreed = { commitmentId: COMMITMENT, termsHash: TERMS_HASH, category: 'compute' }
 
 const mandate: Mandate = {
   mandateId: id('mandate-1'),
@@ -67,7 +71,7 @@ const mHash = mandateHash(mandate, DOMAIN)
 function authorization(change: Partial<SupplierAuthorization> = {}): SupplierAuthorization {
   return {
     commitmentId: COMMITMENT,
-    termsHash: termsHash(terms, SALT),
+    termsHash: TERMS_HASH,
     salt: SALT,
     amount: terms.reserve,
     token: TOKEN.token,
@@ -75,6 +79,7 @@ function authorization(change: Partial<SupplierAuthorization> = {}): SupplierAut
     kybReference: 'mock-kyb-1',
     kybTestData: true,
     agentKey: agent.address,
+    agentKeyAuthorizedIn: KEY_TX,
     mandateHash: mHash,
     payee: PAYEE,
     acceptBy: terms.acceptBy,
@@ -86,42 +91,37 @@ function authorization(change: Partial<SupplierAuthorization> = {}): SupplierAut
   }
 }
 
+const json = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
+
 async function signedAuthorization(
   message = authorization(),
   opts: { signer?: ReturnType<typeof newKey>; schemaVersion?: string; chainId?: number } = {},
-): Promise<unknown> {
+): Promise<Record<string, unknown> & { message: Record<string, unknown> }> {
   const signer = opts.signer ?? avow
   const signature = await signer.sign({
     hash: digestOf(supplierAuthorizationTypedData(message, DOMAIN)),
   })
-  return JSON.parse(
-    JSON.stringify(
-      toWire({
-        type: 'SupplierAuthorization',
-        schemaVersion: opts.schemaVersion ?? '1',
-        chainId: opts.chainId ?? CHAIN_ID,
-        lock: LOCK,
-        message,
-        signature,
-      }),
-    ),
-  )
+  return json({
+    type: 'SupplierAuthorization',
+    schemaVersion: opts.schemaVersion ?? '1',
+    chainId: opts.chainId ?? CHAIN_ID,
+    lock: LOCK,
+    message,
+    signature,
+  })
 }
 
-async function signedMandate(m: Mandate, signer = buyer): Promise<unknown> {
-  const signature = await signer.sign({ hash: digestOf(mandateTypedData(m, DOMAIN)) })
-  return JSON.parse(
-    JSON.stringify(
-      toWire({
-        type: 'Mandate',
-        schemaVersion: '1',
-        chainId: CHAIN_ID,
-        lock: LOCK,
-        message: m,
-        signature,
-      }),
-    ),
-  )
+/** The buyer's administrator signs as the business account, in Tempo's keychain envelope. */
+async function signedMandate(m: Mandate, key = buyer): Promise<unknown> {
+  const signature = await signForAccount(buyer.address, digestOf(mandateTypedData(m, DOMAIN)), key)
+  return json({
+    type: 'Mandate',
+    schemaVersion: '1',
+    chainId: CHAIN_ID,
+    lock: LOCK,
+    message: m,
+    signature,
+  })
 }
 
 function lockedBacking(change: Partial<LockedBacking> = {}): LockedBacking {
@@ -134,7 +134,7 @@ function lockedBacking(change: Partial<LockedBacking> = {}): LockedBacking {
     chargeDeadline: terms.chargeDeadline,
     contestWindow: terms.contestWindow,
     releaseDate: terms.releaseDate,
-    termsHash: termsHash(terms, SALT),
+    termsHash: TERMS_HASH,
     fundingKey: agent.address,
     ...change,
   }
@@ -143,6 +143,7 @@ function lockedBacking(change: Partial<LockedBacking> = {}): LockedBacking {
 const config: VerifierConfig = {
   chainId: CHAIN_ID,
   avowKeys: [avow.address],
+  businessId: 'biz_supplier',
   payee: PAYEE,
   acceptedTokens: [TOKEN],
   profile: TESTNET_DEMO_PROFILE,
@@ -156,17 +157,29 @@ beforeEach(() => {
   chain = new MemoryChain(CHAIN_ID)
   chain.setLock(LOCK, { fromFactory: true, account: buyer.address })
   chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking())
-  chain.setAgentKey(buyer.address, agent.address, { active: true, expiry: null, witness: mHash })
+  chain.setAgentKey(
+    buyer.address,
+    agent.address,
+    { active: true, expiry: null, witness: mHash },
+    KEY_TX,
+  )
   deps = { config, chain, replay: new MemoryReplayGuard() }
 })
 
 async function verify(
   auth?: unknown,
-  rest: { terms?: ComputeTerms; mandate?: unknown; now?: bigint; deps?: VerifierDeps } = {},
+  rest: {
+    terms?: ComputeTerms
+    agreed?: typeof agreed
+    mandate?: unknown
+    now?: bigint
+    deps?: VerifierDeps
+  } = {},
 ) {
   return verifySupplierAuthorization(
     {
       authorization: auth ?? (await signedAuthorization()),
+      agreed: rest.agreed ?? agreed,
       terms: rest.terms ?? terms,
       ...(rest.mandate === undefined ? {} : { mandate: rest.mandate }),
       now: rest.now ?? NOW,
@@ -177,7 +190,7 @@ async function verify(
 
 const refused = (reason: string) => ({ ok: false, reason })
 
-describe('a supplier verifies from the chain and the signatures alone (acceptance test 6)', () => {
+describe('a supplier verifies from the chain and the signatures alone', () => {
   it('accepts a reserve that matches the authorization and the terms', async () => {
     const result = await verify()
     expect(result.ok).toBe(true)
@@ -187,7 +200,7 @@ describe('a supplier verifies from the chain and the signatures alone (acceptanc
     expect(result.authorization.amount).toBe(500_000_000n)
   })
 
-  it('accepts the signed mandate too, when the supplier has it', async () => {
+  it('accepts the signed mandate too, signed in the keychain envelope', async () => {
     expect((await verify(undefined, { mandate: await signedMandate(mandate) })).ok).toBe(true)
   })
 
@@ -196,9 +209,11 @@ describe('a supplier verifies from the chain and the signatures alone (acceptanc
     expect(await verify()).toEqual(refused('chain.reserve_missing'))
   })
 
-  it('refuses a reserve that has already left the lock', async () => {
+  it('refuses a reserve that has left the lock or that a supplier already accepted', async () => {
     chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ state: 'released' }))
     expect(await verify()).toEqual(refused('chain.reserve_missing'))
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ state: 'accepted' }))
+    expect(await verify()).toEqual(refused('chain.reserve_accepted'))
   })
 
   it('refuses a reserve that differs from the authorization on-chain', async () => {
@@ -229,37 +244,83 @@ describe('a supplier verifies from the chain and the signatures alone (acceptanc
   it("refuses a lock that isn't from Avow's factory", async () => {
     chain.setLock(LOCK, { fromFactory: false, account: buyer.address })
     expect(await verify()).toEqual(refused('chain.lock_unknown'))
-    chain = new MemoryChain(CHAIN_ID)
-    expect(await verify(undefined, { deps: { ...deps, chain } })).toEqual(
+    const empty = new MemoryChain(CHAIN_ID)
+    expect(await verify(undefined, { deps: { ...deps, chain: empty } })).toEqual(
       refused('chain.lock_unknown'),
     )
   })
 
-  it("refuses when the agent's key is revoked or expired", async () => {
-    chain.setAgentKey(buyer.address, agent.address, { active: false, expiry: null, witness: mHash })
-    expect(await verify()).toEqual(refused('chain.agent_key_inactive'))
-    chain.setAgentKey(buyer.address, agent.address, { active: true, expiry: NOW, witness: mHash })
-    expect(await verify()).toEqual(refused('chain.agent_key_inactive'))
+  it("refuses an agent key that's missing, revoked, expired or ends before the release date", async () => {
+    const cases = [
+      { active: false, expiry: null },
+      { active: true, expiry: NOW },
+      { active: true, expiry: terms.releaseDate - 1n },
+    ]
+    for (const c of cases) {
+      chain.setAgentKey(buyer.address, agent.address, { ...c, witness: mHash }, KEY_TX)
+      expect(await verify(), JSON.stringify(toWire(c))).toEqual(refused('chain.agent_key_inactive'))
+    }
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: terms.releaseDate, witness: mHash },
+      KEY_TX,
+    )
+    expect((await verify()).ok).toBe(true)
   })
 
-  it("refuses when the agent key's on-chain mandate isn't the one Avow named", async () => {
-    chain.setAgentKey(buyer.address, agent.address, {
-      active: true,
-      expiry: null,
-      witness: id('another mandate'),
-    })
+  it("refuses when the agent key's mandate isn't the one Avow named, or the transaction is wrong", async () => {
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: id('another mandate') },
+      KEY_TX,
+    )
+    expect(await verify()).toEqual(refused('chain.mandate_mismatch'))
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: mHash },
+      id('some other transaction'),
+    )
     expect(await verify()).toEqual(refused('chain.mandate_mismatch'))
   })
 })
 
-describe('replays (acceptance test 4)', () => {
-  it('refuses the same authorization twice', async () => {
-    const auth = await signedAuthorization()
-    expect((await verify(auth)).ok).toBe(true)
-    expect(await verify(auth)).toEqual(refused('message.replayed'))
+describe('one commitment, one authorization', () => {
+  it("refuses an authorization for a commitment the supplier didn't agree to, even on equal terms", async () => {
+    const otherSalt = `0x${'77'.repeat(32)}` as const
+    const other = authorization({
+      commitmentId: id('commitment-2'),
+      salt: otherSalt,
+      termsHash: termsHash(terms, otherSalt),
+    })
+    chain.setBacking(
+      LOCK,
+      id('commitment-2'),
+      'buyer',
+      lockedBacking({ termsHash: other.termsHash }),
+    )
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', null)
+    expect(await verify(await signedAuthorization(other))).toEqual(
+      refused('authorization.commitment_mismatch'),
+    )
   })
 
-  it("doesn't use up a nonce on a refusal", async () => {
+  it('refuses a terms hash other than the one the supplier signed', async () => {
+    expect(await verify(undefined, { agreed: { ...agreed, termsHash: id('x') } })).toEqual(
+      refused('terms.hash_mismatch'),
+    )
+  })
+
+  it('passes a commitment once, however many authorizations Avow signs for it', async () => {
+    expect((await verify(await signedAuthorization())).ok).toBe(true)
+    expect(await verify(await signedAuthorization(authorization({ nonce: 2n })))).toEqual(
+      refused('message.replayed'),
+    )
+  })
+
+  it("doesn't use up a commitment on a refusal", async () => {
     const auth = await signedAuthorization()
     chain.setBacking(LOCK, COMMITMENT, 'buyer', null)
     expect(await verify(auth)).toEqual(refused('chain.reserve_missing'))
@@ -268,15 +329,56 @@ describe('replays (acceptance test 4)', () => {
   })
 })
 
-describe('schema versions (acceptance test 5)', () => {
+describe('the envelope, the signer and the validity window', () => {
   it("refuses an authorization from a schema version it can't read", async () => {
     expect(await verify(await signedAuthorization(undefined, { schemaVersion: '2' }))).toEqual(
       refused('message.schema_unknown'),
     )
   })
+
+  it("refuses an authorization signed by a key that isn't Avow's", async () => {
+    expect(await verify(await signedAuthorization(undefined, { signer: newKey() }))).toEqual(
+      refused('message.signer_unknown'),
+    )
+  })
+
+  it('refuses a signature that recovers no key', async () => {
+    const auth = await signedAuthorization()
+    expect(await verify({ ...auth, signature: `0x${'00'.repeat(65)}` })).toEqual(
+      refused('message.signature_invalid'),
+    )
+  })
+
+  it('refuses an expired authorization, one valid for too long, or one for another chain', async () => {
+    expect(await verify(undefined, { now: NOW + 300n })).toEqual(refused('message.expired'))
+    const month = await signedAuthorization(authorization({ expiry: NOW + 30n * 86_400n }))
+    expect(await verify(month)).toEqual(refused('message.validity_too_long'))
+    expect(await verify(await signedAuthorization(undefined, { chainId: 1 }))).toEqual(
+      refused('message.wrong_chain'),
+    )
+  })
+
+  it('reads hex in any letter case, so a relay that changes case changes nothing', async () => {
+    const auth = await signedAuthorization()
+    const upper = (h: unknown) => (h as string).toUpperCase().replace('0X', '0x')
+    const shouting = {
+      ...auth,
+      message: { ...auth.message, termsHash: upper(auth.message.termsHash) },
+    }
+    expect((await verify(shouting)).ok).toBe(true)
+  })
+
+  it('returns a reason, never an exception, for an address with a broken checksum', async () => {
+    const auth = await signedAuthorization()
+    const result = await verify({
+      ...auth,
+      message: { ...auth.message, payee: '0x000000000000000000000000000000000000BeEf' },
+    })
+    expect(result.ok).toBe(true)
+  })
 })
 
-describe('changes after signing (acceptance test 8)', () => {
+describe('changes after signing', () => {
   it("refuses terms that aren't the ones Avow signed", async () => {
     for (const change of [
       { noShow: terms.noShow + 1n, reserve: terms.reserve + 1n },
@@ -290,19 +392,22 @@ describe('changes after signing (acceptance test 8)', () => {
   })
 
   it('refuses an authorization changed after Avow signed it', async () => {
-    const auth = (await signedAuthorization()) as { message: Record<string, unknown> }
+    const auth = await signedAuthorization()
     for (const [field, value] of [
       ['amount', '1'],
       ['payee', '0x000000000000000000000000000000000000dead'],
       ['salt', `0x${'66'.repeat(32)}`],
       ['kybTestData', false],
+      ['agentKeyAuthorizedIn', id('another tx')],
       ['expiry', (NOW + 299n).toString()],
     ] as const) {
       const tampered = { ...auth, message: { ...auth.message, [field]: value } }
       expect(await verify(tampered), field).toEqual(refused('message.signer_unknown'))
     }
   })
+})
 
+describe("the buyer's mandate, when the supplier has it", () => {
   it("refuses a mandate that isn't the one the authorization names", async () => {
     const wider = { ...mandate, capPerCommitment: 2_000_000_000n }
     expect(await verify(undefined, { mandate: await signedMandate(wider) })).toEqual(
@@ -310,32 +415,58 @@ describe('changes after signing (acceptance test 8)', () => {
     )
   })
 
-  it("refuses a mandate the buyer's account didn't sign", async () => {
+  it("refuses a mandate the buyer's account didn't sign, or signed bare", async () => {
     expect(await verify(undefined, { mandate: await signedMandate(mandate, newKey()) })).toEqual(
       refused('mandate.signature_invalid'),
     )
-  })
-})
-
-describe('the envelope and the signer', () => {
-  it("refuses an authorization signed by a key that isn't Avow's", async () => {
-    expect(await verify(await signedAuthorization(undefined, { signer: newKey() }))).toEqual(
-      refused('message.signer_unknown'),
+    const bare = await buyer.sign({ hash: digestOf(mandateTypedData(mandate, DOMAIN)) })
+    const signed = json({
+      type: 'Mandate',
+      schemaVersion: '1',
+      chainId: CHAIN_ID,
+      lock: LOCK,
+      message: mandate,
+      signature: bare,
+    })
+    expect(await verify(undefined, { mandate: signed })).toEqual(
+      refused('mandate.signature_invalid'),
     )
   })
 
-  it('refuses a signature that recovers no key', async () => {
-    const auth = (await signedAuthorization()) as Record<string, unknown>
-    expect(await verify({ ...auth, signature: `0x${'00'.repeat(65)}` })).toEqual(
-      refused('message.signature_invalid'),
+  it("accepts an admin key's signature when the account lists the key", async () => {
+    const admin = newKey()
+    chain.addAdminKey(buyer.address, admin.address)
+    expect((await verify(undefined, { mandate: await signedMandate(mandate, admin) })).ok).toBe(
+      true,
     )
   })
 
-  it('refuses an expired authorization or one for another chain', async () => {
-    expect(await verify(undefined, { now: NOW + 300n })).toEqual(refused('message.expired'))
-    expect(await verify(await signedAuthorization(undefined, { chainId: 1 }))).toEqual(
-      refused('message.wrong_chain'),
-    )
+  it('refuses a mandate whose own limits rule out this reserve', async () => {
+    const cases: [Partial<Mandate>, string][] = [
+      [{ actions: ['cancel'] }, 'mandate.action_not_permitted'],
+      [{ capPerCommitment: 100_000_000n }, 'mandate.over_commitment_cap'],
+      [{ expiry: terms.releaseDate - 1n }, 'mandate.ends_before_window'],
+      [{ suppliers: ['biz_someone_else'] }, 'mandate.supplier_not_allowed'],
+      [{ categories: ['storage'] }, 'mandate.category_not_allowed'],
+      [
+        { paymentLimits: [{ token: TOKEN.token, amount: 100_000_000n, period: 0n }] },
+        'mandate.over_payment_limit',
+      ],
+    ]
+    for (const [change, reason] of cases) {
+      const narrow = { ...mandate, ...change }
+      const narrowHash = mandateHash(narrow, DOMAIN)
+      chain.setAgentKey(
+        buyer.address,
+        agent.address,
+        { active: true, expiry: null, witness: narrowHash },
+        KEY_TX,
+      )
+      const auth = await signedAuthorization(authorization({ mandateHash: narrowHash }))
+      expect(await verify(auth, { mandate: await signedMandate(narrow) }), reason).toEqual(
+        refused(reason),
+      )
+    }
   })
 })
 
@@ -355,14 +486,19 @@ describe("the supplier's own rules", () => {
     )
   })
 
-  it('refuses test KYB data outside testnet', async () => {
+  it('refuses test KYB data when the supplier turns it off', async () => {
     const deps2 = { ...deps, config: { ...config, acceptTestData: false } }
     expect(await verify(undefined, { deps: deps2 })).toEqual(refused('business.test_data'))
   })
 
   it("refuses the testnet's short contest window under the production profile", async () => {
-    const deps2 = { ...deps, config: { ...config, profile: PRODUCTION_PROFILE } }
-    expect(await verify(undefined, { deps: deps2 })).toEqual(refused('terms.contest_window_short'))
+    const deps2 = {
+      ...deps,
+      config: { ...config, profile: PRODUCTION_PROFILE, acceptTestData: false },
+    }
+    expect(await verify(undefined, { deps: deps2 })).toEqual(refused('business.test_data'))
+    const realKyb = await signedAuthorization(authorization({ kybTestData: false }))
+    expect(await verify(realKyb, { deps: deps2 })).toEqual(refused('terms.contest_window_short'))
   })
 
   it("refuses an authorization whose deadlines don't match the terms", async () => {
@@ -376,5 +512,21 @@ describe("the supplier's own rules", () => {
     const late = terms.acceptBy
     const auth = await signedAuthorization(authorization({ expiry: late + 300n }))
     expect(await verify(auth, { now: late })).toEqual(refused('authorization.accept_by_passed'))
+  })
+})
+
+describe('setup mistakes stop the check', () => {
+  it('throws when the chain reader is for another chain', async () => {
+    const elsewhere = { ...deps, chain: new MemoryChain(1) }
+    await expect(verify(undefined, { deps: elsewhere })).rejects.toThrow()
+  })
+
+  it('throws when test data or the demo profile would run outside a testnet', async () => {
+    const mainnet = new MemoryChain(4217)
+    await expect(
+      verify(undefined, {
+        deps: { ...deps, chain: mainnet, config: { ...config, chainId: 4217 } },
+      }),
+    ).rejects.toThrow()
   })
 })

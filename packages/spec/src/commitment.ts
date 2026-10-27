@@ -3,7 +3,7 @@ import type { BackingRef, RailState } from './rail.js'
 import type { ComputeTerms, Side } from './types.js'
 
 /**
- * The master spec's 11 commitment states. Draft, agreed, awaiting approval and expired live on
+ * The 11 commitment states. Draft, agreed, awaiting approval and expired live on
  * Avow's servers, and Tempo sees a commitment from the moment money is reserved. The last four
  * are endings.
  */
@@ -30,7 +30,7 @@ export function isEnding(state: CommitmentState): state is Ending {
 }
 
 /**
- * Every move the master spec's state diagram allows. A draft can move to itself on a
+ * Every move between states. A draft can move to itself on a
  * counter-offer, and an ending moves nowhere.
  */
 export const TRANSITIONS: { readonly [S in CommitmentState]: readonly CommitmentState[] } = {
@@ -96,7 +96,7 @@ export interface BackingRecord {
   status: RailState
 }
 
-/** Decision 14's evidence for a start. */
+/** The evidence that a job started: Avow's timestamp and the supplier's signed receipt. */
 export interface StartRecord {
   requestHash: Hex
   /** Avow's timestamp on the start request. */
@@ -105,7 +105,7 @@ export interface StartRecord {
   receipt: Hex | null
 }
 
-/** Decision 11's contest record. Every contest carries a reason code and a supporting statement. */
+/** A contest. Every contest carries a reason code and a supporting statement. */
 export interface ContestRecord {
   reasonCode: string
   statementHash: Hex

@@ -1,4 +1,4 @@
-import type { RailState, Side } from '@avow-finance/spec'
+import { keychainSignatureCheck, type RailState, type Side } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 
 /** What a lock stores for one side of a commitment. */
@@ -35,21 +35,34 @@ export interface AgentKeyInfo {
 
 /**
  * Everything the verifier reads from the chain. Nothing here comes from Avow, so a supplier's
- * check doesn't depend on Avow's database (acceptance test 6). The Tempo reader arrives with the
- * lock in step 2.5, and `MemoryChain` stands in for it in tests.
+ * check doesn't depend on Avow's database. The Tempo reader arrives with the lock contract, and
+ * `MemoryChain` stands in for it in tests.
  */
 export interface ChainReader {
   readonly chainId: number
   lock(lock: Address): Promise<LockInfo | null>
   backing(lock: Address, commitmentId: Hex, side: Side): Promise<LockedBacking | null>
-  agentKey(account: Address, key: Address): Promise<AgentKeyInfo | null>
+  /**
+   * A key on an account, with the mandate hash logged in the transaction that authorized it.
+   * Returns null when the account has no such key.
+   */
+  agentKey(account: Address, key: Address, authorizedIn: Hex): Promise<AgentKeyInfo | null>
+  /**
+   * Whether the account's root key or one of its admin keys signed the digest, in the keychain
+   * envelope Tempo requires. On Tempo this asks the chain's own signature verifier.
+   */
+  isAccountSignature(account: Address, digest: Hex, signature: Hex): Promise<boolean>
 }
 
 /** A chain reader held in memory, for tests and dry runs. */
 export class MemoryChain implements ChainReader {
   readonly #locks = new Map<string, LockInfo>()
   readonly #backings = new Map<string, LockedBacking>()
-  readonly #keys = new Map<string, AgentKeyInfo>()
+  readonly #keys = new Map<string, AgentKeyInfo & { authorizedIn: Hex | null }>()
+  readonly #admins = new Set<string>()
+  readonly #check = keychainSignatureCheck((account, key) =>
+    this.#admins.has(`${account.toLowerCase()}:${key.toLowerCase()}`),
+  )
 
   constructor(readonly chainId: number) {}
 
@@ -63,8 +76,16 @@ export class MemoryChain implements ChainReader {
     else this.#backings.delete(key)
   }
 
-  setAgentKey(account: Address, key: Address, info: AgentKeyInfo): void {
-    this.#keys.set(`${account.toLowerCase()}:${key.toLowerCase()}`, info)
+  /** Records a key. With `authorizedIn`, the witness reads back only for that transaction. */
+  setAgentKey(account: Address, key: Address, info: AgentKeyInfo, authorizedIn?: Hex): void {
+    this.#keys.set(`${account.toLowerCase()}:${key.toLowerCase()}`, {
+      ...info,
+      authorizedIn: authorizedIn ?? null,
+    })
+  }
+
+  addAdminKey(account: Address, key: Address): void {
+    this.#admins.add(`${account.toLowerCase()}:${key.toLowerCase()}`)
   }
 
   async lock(lock: Address): Promise<LockInfo | null> {
@@ -75,7 +96,15 @@ export class MemoryChain implements ChainReader {
     return this.#backings.get(`${lock.toLowerCase()}:${commitmentId.toLowerCase()}:${side}`) ?? null
   }
 
-  async agentKey(account: Address, key: Address): Promise<AgentKeyInfo | null> {
-    return this.#keys.get(`${account.toLowerCase()}:${key.toLowerCase()}`) ?? null
+  async agentKey(account: Address, key: Address, authorizedIn: Hex): Promise<AgentKeyInfo | null> {
+    const stored = this.#keys.get(`${account.toLowerCase()}:${key.toLowerCase()}`)
+    if (!stored) return null
+    const { authorizedIn: tx, ...info } = stored
+    const sameTx = tx === null || tx.toLowerCase() === authorizedIn.toLowerCase()
+    return sameTx ? info : { ...info, witness: null }
+  }
+
+  async isAccountSignature(account: Address, digest: Hex, signature: Hex): Promise<boolean> {
+    return this.#check({ signer: account, digest, signature })
   }
 }

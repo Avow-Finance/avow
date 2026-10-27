@@ -17,8 +17,8 @@ import type { SignatureCheck } from './eip712.js'
  * Tempo's keychain V2 envelope. When a business account's root key or one of its admin keys signs
  * for the account, Tempo's `verifyKeychainAdmin` accepts the signature only inside this envelope:
  * the byte `0x04`, the account's address, then the key's own signature over
- * `keccak256(0x04 || digest || account)`. A bare signature is refused (checks A3b and P3a in step
- * 1.35), and an envelope naming another account is refused for this one (P3b).
+ * `keccak256(0x04 || digest || account)`. Tempo refuses a bare signature, and it refuses an
+ * envelope that names another account.
  */
 
 /** The hash a root or admin key signs, which binds the signature to one account. */

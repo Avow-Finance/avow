@@ -6,6 +6,7 @@ import {
   type AvowTypedData,
   approvalTypedData,
   checkEnvelope,
+  commitmentKey,
   digestOf,
   domain,
   type HumanApproval,
@@ -13,7 +14,7 @@ import {
   isSignedBy,
   mandateHash,
   mandateTypedData,
-  replayKey,
+  messageKey,
   type StartReceipt,
   type SupplierAuthorization,
   startReceiptTypedData,
@@ -84,6 +85,7 @@ const authorization: SupplierAuthorization = {
   kybReference: 'mock-kyb-1',
   kybTestData: true,
   agentKey: agent.address,
+  agentKeyAuthorizedIn: id('key authorization tx'),
   mandateHash: mHash,
   payee: PAYEE,
   acceptBy: terms.acceptBy,
@@ -112,6 +114,8 @@ const receipt: StartReceipt = {
   nonce: 11n,
   expiry: START + 3600n,
 }
+
+const OTHER_DOMAIN = { chainId: CHAIN_ID, verifyingContract: OTHER_LOCK }
 
 const builders = {
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
@@ -170,6 +174,7 @@ describe('signed messages', () => {
       { kybReference: 'mock-kyb-2' },
       { kybTestData: false },
       { agentKey: admin.address },
+      { agentKeyAuthorizedIn: id('another tx') },
       { mandateHash: id('other mandate') },
       { payee: '0x000000000000000000000000000000000000dead' },
       { acceptBy: authorization.acceptBy + 1n },
@@ -248,13 +253,32 @@ describe('checkEnvelope', () => {
   })
 })
 
-describe('replayKey', () => {
-  it('is the same whatever the case of the signer', () => {
-    expect(replayKey('Approval', agent.address, 1n)).toBe(
-      replayKey('Approval', agent.address.toLowerCase() as Hex, 1n),
+describe('replay keys', () => {
+  it('give two messages two keys, whatever nonce their signers chose', () => {
+    const a = messageKey(supplierAuthorizationTypedData(authorization, DOMAIN))
+    const b = messageKey(
+      supplierAuthorizationTypedData(
+        { ...authorization, commitmentId: id('commitment-2') },
+        DOMAIN,
+      ),
     )
-    expect(replayKey('Approval', agent.address, 1n)).not.toBe(
-      replayKey('SupplierAuthorization', agent.address, 1n),
-    )
+    expect(a).not.toBe(b)
+    expect(a).toBe(messageKey(supplierAuthorizationTypedData(authorization, DOMAIN)))
+    expect(
+      messageKey(supplierAuthorizationTypedData(authorization, { ...DOMAIN, chainId: 1 })),
+    ).not.toBe(a)
+  })
+
+  it('give one commitment one key per message type, whatever the case of its hex', () => {
+    const k = commitmentKey('SupplierAuthorization', DOMAIN, id('commitment-1'))
+    expect(
+      commitmentKey(
+        'SupplierAuthorization',
+        { ...DOMAIN, verifyingContract: LOCK.toUpperCase().replace('0X', '0x') as Hex },
+        id('commitment-1').toUpperCase().replace('0X', '0x') as Hex,
+      ),
+    ).toBe(k)
+    expect(commitmentKey('StartReceipt', DOMAIN, id('commitment-1'))).not.toBe(k)
+    expect(commitmentKey('SupplierAuthorization', OTHER_DOMAIN, id('commitment-1'))).not.toBe(k)
   })
 })

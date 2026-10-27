@@ -1,7 +1,6 @@
 /**
  * Reason codes for every decision Avow makes and every refusal a verifier returns. Each code is
- * a stable string a machine can act on, with a sentence for a person. The settlement adapter in
- * avow-core adds its own `sponsor.*` and `rail.*` codes.
+ * a stable string a machine can act on, with a sentence for a person.
  */
 export const REASON_CODES = {
   approved: 'Every check passed',
@@ -34,7 +33,9 @@ export const REASON_CODES = {
   'terms.hash_mismatch': "The terms and salt don't produce the signed terms hash",
   'terms.currency_mismatch': "The terms' currency isn't the one the lock's token stands for",
   'message.schema_unknown': "The message's schema version or type isn't one this code reads",
-  'message.invalid': "The message doesn't parse as its schema version",
+  'message.invalid':
+    "The message doesn't parse as its schema version, or its fields don't fit together",
+  'message.validity_too_long': 'The message stays valid longer than this reader allows',
   'message.wrong_chain': 'The message was signed for another chain',
   'message.wrong_contract': 'The message was signed for another lock',
   'message.expired': 'The message has expired',
@@ -44,6 +45,8 @@ export const REASON_CODES = {
     "The signature doesn't come from one of Avow's published keys, so the message was changed or signed by someone else",
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",
   'authorization.terms_mismatch': "The authorization's amount or deadlines differ from the terms",
+  'authorization.commitment_mismatch':
+    'The authorization is for another commitment than the one the supplier agreed to',
   'authorization.mandate_mismatch':
     "The mandate given isn't the one the authorization names, or names another account or agent key",
   'authorization.accept_by_passed':
@@ -52,8 +55,10 @@ export const REASON_CODES = {
     "The reserve's token isn't one the supplier accepts for the terms' currency",
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',
   'chain.reserve_mismatch': 'The on-chain reserve differs from the authorization',
+  'chain.reserve_accepted': 'The reserve has already been accepted',
   'chain.lock_unknown': "The lock isn't running the code Avow's factory deploys",
-  'chain.agent_key_inactive': "The agent's key is revoked or expired on-chain",
+  'chain.agent_key_inactive':
+    "The agent's key isn't on the chain, is revoked, or expires before the commitment's release date",
   'chain.mandate_mismatch': "The agent key's authorization on-chain carries a different mandate",
 } as const
 
