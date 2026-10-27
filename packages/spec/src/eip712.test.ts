@@ -2,22 +2,34 @@ import { type Hex, hashTypedData } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { testnetDemoTerms } from './demo.js'
 import {
+  type Acceptance,
   type Approval,
   type AvowTypedData,
+  acceptanceTypedData,
   approvalTypedData,
+  businessActionTypedData,
+  type ChargeReport,
   checkEnvelope,
   commitmentKey,
+  contestAction,
   digestOf,
   domain,
+  evidenceTypedData,
   type HumanApproval,
   humanApprovalTypedData,
   isSignedBy,
   mandateHash,
   mandateTypedData,
   messageKey,
+  type ReleaseConsent,
+  releaseConsentTypedData,
+  reportTypedData,
   type StartReceipt,
+  type SupplierAction,
   type SupplierAuthorization,
+  type SupplierEvidence,
   startReceiptTypedData,
+  supplierActionTypedData,
   supplierAuthorizationTypedData,
   type TermsAgreement,
   termsAgreementTypedData,
@@ -56,16 +68,29 @@ const agreement: TermsAgreement = {
   expiry: NOW + 600n,
 }
 
+const supplierAccount = newKey()
+const supplierSigner = newKey()
+const ARBITER = '0x000000000000000000000000000000000000a4b1' as const
+
 const approval: Approval = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
   token: TOKEN.token,
   amount: terms.reserve,
+  supplier: supplierAccount.address,
+  supplierSigner: supplierSigner.address,
   payee: PAYEE,
+  freeCancelBy: terms.freeCancelBy,
   acceptBy: terms.acceptBy,
   chargeDeadline: terms.chargeDeadline,
-  contestWindow: terms.contestWindow,
   releaseDate: terms.releaseDate,
+  contestWindow: terms.contestWindow,
+  charges: [
+    { kind: 'lateCancellation', most: terms.lateCancellation, earliest: terms.freeCancelBy },
+    { kind: 'noShow', most: terms.noShow, earliest: terms.windowStart + terms.gracePeriod },
+  ],
+  day90SupplierShareBps: 5000,
+  arbiter: ARBITER,
   termsHash: hash,
   mandateHash: mHash,
   capPerCommitment: mandate.capPerCommitment,
@@ -73,6 +98,64 @@ const approval: Approval = {
   fundingKey: agent.address,
   nonce: 8n,
   expiry: NOW + 300n,
+}
+
+const acceptance: Acceptance = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  termsHash: hash,
+  amount: terms.reserve,
+  token: TOKEN.token,
+  acceptBy: terms.acceptBy,
+  nonce: 12n,
+  expiry: NOW + 600n,
+}
+
+const chargeReport: ChargeReport = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  kind: 'lateCancellation',
+  amount: terms.lateCancellation,
+  evidenceHash: id('late cancellation evidence'),
+  nonce: 13n,
+  expiry: NOW + 600n,
+}
+
+const consent: ReleaseConsent = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  reason: 'kept',
+  evidenceHash: id('kept'),
+  nonce: 14n,
+  expiry: NOW + 600n,
+}
+
+const supplierEvidence: SupplierEvidence = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  number: 2,
+  evidenceHash: id('supplier evidence'),
+  nonce: 15n,
+  expiry: NOW + 600n,
+}
+
+const contest = contestAction({
+  commitmentId: id('commitment-1'),
+  reportNumber: 1,
+  reasonCode: 3,
+  statementHash: id('contest statement'),
+  nonce: 16n,
+  expiry: NOW + 600n,
+})
+
+const withdrawal: SupplierAction = {
+  supplier: supplierAccount.address,
+  action: 'withdrawReport',
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  reportNumber: 1,
+  nonce: 17n,
+  expiry: NOW + 600n,
 }
 
 const authorization: SupplierAuthorization = {
@@ -124,6 +207,12 @@ const builders = {
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
   human: (d = DOMAIN) => humanApprovalTypedData(human, d),
   receipt: (d = DOMAIN) => startReceiptTypedData(receipt, d),
+  acceptance: (d = DOMAIN) => acceptanceTypedData(acceptance, d),
+  report: (d = DOMAIN) => reportTypedData(chargeReport, d),
+  consent: (d = DOMAIN) => releaseConsentTypedData(consent, d),
+  evidence: (d = DOMAIN) => evidenceTypedData(supplierEvidence, d),
+  contest: (d = DOMAIN) => businessActionTypedData(contest, d),
+  withdrawal: (d = DOMAIN) => supplierActionTypedData(withdrawal, d),
 }
 
 /** Signs the EIP-712 digest, which is what signTypedData signs. A test below checks they match. */
