@@ -23,5 +23,12 @@
     "type": "git",
     "url": "git+https://github.com/avow-finance/avow.git",
     "directory": "packages/sdk"
+  },
+  "dependencies": {
+    "@avow-finance/spec": "workspace:*",
+    "viem": "2.57.11"
+  },
+  "devDependencies": {
+    "ox": "0.14.57"
   }
 }
