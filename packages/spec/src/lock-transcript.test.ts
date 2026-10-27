@@ -44,8 +44,8 @@ import { id } from './test-helpers.js'
  * names the report count. Two more are signatures a lock must refuse, an acceptance of another
  * approval and a consent signed before the second report. A lock at the same address on the same
  * chain takes the other ten and refuses those two, so the pins are the signatures it checks. A
- * change to how the SDK hashes, signs or wraps a message fails this test, and the lock contract
- * has to change with it.
+ * change to how the SDK hashes, signs or wraps a message fails this test, and a lock would refuse
+ * the new signature.
  *
  * Each key comes from a public label at run time, as Foundry's `makeAddrAndKey` makes its keys,
  * so both sides sign with the same keys. They are test keys and hold nothing.
@@ -274,7 +274,7 @@ const pinned: Record<Step, Hex> = {
 }
 
 describe('a commitment signed with the SDK', () => {
-  it('gives the signatures the lock contract replays', async () => {
+  it('signs each message to its pinned signature', async () => {
     const signatures = Object.fromEntries(
       await Promise.all((Object.keys(digests) as Step[]).map(async (s) => [s, await sign(s)])),
     )

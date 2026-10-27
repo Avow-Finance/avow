@@ -528,8 +528,9 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
 /**
  * The digest of an approval as the lock computes it, under the lock's domain. The lock stores it at
  * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
- * given the approval computes it and checks that it matches the lock's before it signs an
- * acceptance naming it, and should check the approval's terms against what it agreed as well.
+ * given the approval should compute it, check that it matches the lock's once the reserve exists,
+ * and check the approval's terms against what it agreed. Nothing in this package makes either
+ * check yet.
  */
 export function approvalDigest(a: Approval, d: AvowDomain): Hex {
   return digestOf(approvalTypedData(a, d))
