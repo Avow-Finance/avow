@@ -15,7 +15,8 @@ pnpm check
 
 ## Making a change
 
-- Open a pull request against `main`. CI must pass, and a maintainer reviews every change before it merges.
+- Open a pull request against `main`. Every change needs passing CI and a review before it merges.
+- A change that touches settlement or dispute rules, signing, keys, mandates, authority checks, permissions, deployment, or what this repo publishes also needs a maintainer's approval.
 - Add or update tests with every change in behavior.
 - Keep each pull request to one change.
 - Never commit a key, token or `.env` file.
