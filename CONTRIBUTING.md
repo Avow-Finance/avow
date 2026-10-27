@@ -11,7 +11,7 @@ pnpm install
 pnpm check
 ```
 
-`pnpm check` runs lint, type checks and tests. `pnpm format` fixes formatting.
+`pnpm check` runs lint, the build, type checks and tests. `pnpm format` fixes formatting.
 
 ## Making a change
 

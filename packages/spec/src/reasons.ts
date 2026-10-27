@@ -40,9 +40,14 @@ export const REASON_CODES = {
   'message.expired': 'The message has expired',
   'message.replayed': 'The message has been used before',
   'message.signature_invalid': "The signature doesn't match the message",
-  'message.signer_unknown': "The signer isn't one of Avow's published keys",
+  'message.signer_unknown':
+    "The signature doesn't come from one of Avow's published keys, so the message was changed or signed by someone else",
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",
   'authorization.terms_mismatch': "The authorization's amount or deadlines differ from the terms",
+  'authorization.mandate_mismatch':
+    "The mandate given isn't the one the authorization names, or names another account or agent key",
+  'authorization.accept_by_passed':
+    'The acceptance deadline has passed, so the reserve can no longer be accepted',
   'authorization.token_not_accepted':
     "The reserve's token isn't one the supplier accepts for the terms' currency",
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',

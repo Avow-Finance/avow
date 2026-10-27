@@ -5,7 +5,7 @@ This is the public half of Avow: the TypeScript SDK, the MCP server and the veri
 ## Commands
 
 - `pnpm install` installs everything.
-- `pnpm check` runs lint, type checks and tests. Run it before every commit.
+- `pnpm check` runs lint, the build, type checks and tests. Packages import each other's built output, so the build runs first. Run it before every commit.
 - `pnpm format` fixes formatting.
 
 ## Rules
