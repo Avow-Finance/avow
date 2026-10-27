@@ -1,8 +1,9 @@
 name: Live Tempo checks
 
-# Asks Tempo's own signature verifier on Moderato whether the keychain envelope the SDK builds
-# still passes. It reads only, needs no secrets and moves nothing. It runs daily, so a Tempo
-# upgrade that changes the rule shows up before a business's signature fails.
+# Checks on Moderato that what the SDK builds still works on Tempo. The envelope check asks Tempo's
+# own signature verifier and only reads. The agent key check authorizes a key with keys made for
+# the run, paid for by the testnet faucet. Neither needs a secret or touches real money. It runs
+# daily, so a Tempo upgrade that changes a rule shows up before a business's signature fails.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
   keychain:
-    name: Keychain envelope against Moderato
+    name: Keychain envelope and agent keys against Moderato
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -34,7 +35,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: pnpm build
+
       - name: Check the envelope on Moderato
         run: pnpm --filter @avow-finance/spec exec vitest run src/keychain.live.test.ts
+        env:
+          AVOW_LIVE_TEMPO: "1"
+
+      - name: Authorize an agent key from a mandate on Moderato
+        run: pnpm --filter @avow-finance/sdk exec vitest run src/agent-key.live.test.ts
         env:
           AVOW_LIVE_TEMPO: "1"

@@ -5,4 +5,5 @@
  * Pre-release. Every interface may change before 1.0.
  */
 export * from './chain.js'
+export * from './tempo.js'
 export * from './verify.js'
