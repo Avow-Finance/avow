@@ -14,6 +14,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
 | AP2 mapping | How a mandate maps onto an AP2 intent mandate |
+| Keychain envelope | Tempo's keychain V2 envelope for signatures a business account's root or admin key makes, with an offline check and a check against Tempo's own verifier |
 | Wire forms | JSON schemas that parse amounts and times from decimal strings |
 
 ## Design rules
