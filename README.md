@@ -14,7 +14,7 @@ This repository holds the open parts of Avow that developers and suppliers run t
 | --- | --- | --- |
 | `@avow-finance/sdk` | TypeScript SDK for agents: show the business and its limits, check a booking against the mandate, request a reserve, list commitments | Planned |
 | `@avow-finance/mcp-server` | MCP server that gives an agent in Claude, Cursor or any other MCP client the same calls | Planned |
-| `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | Planned |
+| `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | In progress |
 | `@avow-finance/spec` | The commitment schema the others share: records, compute terms, signed messages, reason codes and the mandate check | In progress |
 
 Quickstarts will live in `examples/`.
@@ -43,7 +43,7 @@ pnpm install
 pnpm check
 ```
 
-`pnpm check` runs lint, type checks and tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes get in.
+`pnpm check` runs lint, the build, type checks and tests. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes get in.
 
 ## Security
 
