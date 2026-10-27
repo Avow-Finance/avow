@@ -90,7 +90,7 @@ describe('validateTerms', () => {
     expect(validateTerms(testnetDemoTerms(START), TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
-  it("refuses the testnet's 10-minute contest window under production (decision 3)", () => {
+  it("refuses the testnet's 10-minute contest window under production", () => {
     expect(validateTerms(testnetDemoTerms(START), PRODUCTION_PROFILE)).toBe(
       'terms.contest_window_short',
     )

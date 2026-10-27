@@ -91,6 +91,8 @@ export interface SupplierAuthorization {
   kybReference: string
   kybTestData: boolean
   agentKey: Address
+  /** The transaction that authorized the agent's key, where Tempo logged the mandate's hash. */
+  agentKeyAuthorizedIn: Hex
   mandateHash: Hex
   payee: Address
   acceptBy: bigint
@@ -196,6 +198,7 @@ export const SUPPLIER_AUTHORIZATION_TYPES = {
     { name: 'kybReference', type: 'string' },
     { name: 'kybTestData', type: 'bool' },
     { name: 'agentKey', type: 'address' },
+    { name: 'agentKeyAuthorizedIn', type: 'bytes32' },
     { name: 'mandateHash', type: 'bytes32' },
     { name: 'payee', type: 'address' },
     { name: 'acceptBy', type: 'uint64' },
@@ -399,7 +402,16 @@ export function checkEnvelope(
   return null
 }
 
-/** The key a replay guard records, one per signer, message type and nonce. */
-export function replayKey(type: MessageType, signer: Address, nonce: bigint): string {
-  return `${type}:${signer.toLowerCase()}:${nonce}`
+/**
+ * A replay guard's key for one exact message: its type and EIP-712 digest. The digest covers the
+ * chain, the lock, the commitment and every field, so two different messages never share a key,
+ * whatever nonces their signers chose.
+ */
+export function messageKey(td: AvowTypedData): string {
+  return `${td.primaryType}:${digestOf(td)}`
+}
+
+/** A replay guard's key for something a commitment may have only once, such as an authorization. */
+export function commitmentKey(type: MessageType, d: AvowDomain, commitmentId: Hex): string {
+  return `${type}:${d.chainId}:${d.verifyingContract.toLowerCase()}:${commitmentId.toLowerCase()}`
 }

@@ -10,7 +10,7 @@ const MINUTE = 60n
 const HOUR = 60n * MINUTE
 
 /**
- * The master spec's demo terms for 8 H100s: a $500 reserve, free cancellation until 24 hours
+ * Demo terms for 8 H100s: a $500 reserve, free cancellation until 24 hours
  * before the start, $250 for a late cancellation, $500 for a no-show, 30 minutes' grace and a
  * 72-hour contest window. Usage is $3 per GPU-hour, paid separately.
  */
@@ -36,7 +36,7 @@ export function demoTerms(windowStart: bigint): ComputeTerms {
 }
 
 /**
- * The same terms run in minutes, the master spec's testnet column: a 30-minute window, free
+ * The same terms run in minutes for testnet: a 30-minute window, free
  * cancellation until 10 minutes before, 2 minutes' grace and a 10-minute contest window, which
  * only the testnet demo profile accepts.
  */

@@ -6,7 +6,7 @@ import { Selectors } from 'viem/tempo'
 export interface AgentKeyScope {
   /** The buyer's lock. The key may call it, and approve the token to it, and nothing else. */
   lock: Address
-  /** The lock functions the agent's key calls, such as `reserve`. Step 2.2 fixes the list. */
+  /** The lock functions the agent's key calls, such as `reserve`. The lock's interface fixes the list. */
   lockSelectors: readonly Hex[]
 }
 
@@ -21,7 +21,7 @@ export interface AgentKeyTerms {
 }
 
 /**
- * Turns a mandate into the key authorization Tempo enforces (step 2.1). The key spends within the
+ * Turns a mandate into the key authorization Tempo enforces. The key spends within the
  * mandate's payment limits, expires with it, approves each token only to the lock, calls only the
  * lock's listed functions, and carries the mandate's hash. A mandate that doesn't permit reserves
  * gets no calls to the lock at all.

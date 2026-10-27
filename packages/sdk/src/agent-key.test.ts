@@ -6,7 +6,7 @@ import { agentKeyTerms } from './agent-key.js'
 const LOCK: Address = '0x00000000000000000000000000000000000010c4'
 const TOKEN: Address = '0x20c0000000000000000000000000000000000001'
 const DOMAIN: AvowDomain = { chainId: 42431, verifyingContract: LOCK }
-// A stand-in for the lock's reserve function, which step 2.2 defines.
+// A stand-in for the lock's reserve function, until the lock's interface is fixed.
 const RESERVE = toFunctionSelector('reserve(bytes)')
 
 const mandate: Mandate = {

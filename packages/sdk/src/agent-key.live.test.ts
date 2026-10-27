@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest'
 import { agentKeyTerms } from './agent-key.js'
 
 /**
- * Step 2.1 on Moderato. A business account authorizes an agent key from a mandate, and Tempo
+ * On Moderato, a business account authorizes an agent key from a mandate, and Tempo
  * stores the mandate's limit, expiry and hash with it. Every key is generated for the run, the
  * faucet pays for it, and nothing is saved. Runs when AVOW_LIVE_TEMPO=1.
  */

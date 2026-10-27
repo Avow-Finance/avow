@@ -15,7 +15,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 
 | Part | What it does |
 | --- | --- |
-| Records | Business, administrator, agent, mandate and commitment, with the master spec's 11 commitment states and the moves between them |
+| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them |
 | Compute terms | The terms of a GPU reservation, their canonical JSON and the salted terms hash the lock stores |
 | Signed messages | The mandate, the terms agreement, Avow's approval, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |

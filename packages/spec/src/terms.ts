@@ -56,7 +56,7 @@ export function validateTerms(terms: ComputeTerms, profile: TermsProfile): Reaso
   if (terms.reserve !== largestCharge || terms.reserve <= 0n) return 'terms.reserve_mismatch'
   const windowEnd = terms.windowStart + terms.windowDuration
   // Every charge needs a moment it can be reported in, so a no-show must be reportable after the
-  // grace period and before the charge deadline (decision 7).
+  // grace period and before the charge deadline.
   const inOrder =
     terms.windowDuration > 0n &&
     terms.gracePeriod >= 0n &&

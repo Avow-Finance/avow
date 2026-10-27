@@ -115,7 +115,7 @@ export interface Mandate {
 }
 
 /**
- * The terms of a GPU reservation, from the master spec's compute terms. Nothing here names a
+ * The terms of a GPU reservation. Nothing here names a
  * rail, so the same terms and terms hash work on any rail that backs them.
  */
 export interface ComputeTerms {

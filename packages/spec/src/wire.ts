@@ -22,18 +22,20 @@ const uint = (bits: number) =>
 const u64 = uint(64)
 /** Amounts and nonces. */
 const u256 = uint(256)
+// Hex parses to lower case, so a relay that changes letter case can't make two equal values
+// compare as different, and a mixed-case address with a bad checksum can't make a check throw.
 const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/)
-  .transform((s) => s as Address)
+  .transform((s) => s.toLowerCase() as Address)
 const bytes32 = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/)
-  .transform((s) => s as Hex)
+  .transform((s) => s.toLowerCase() as Hex)
 const hexBytes = z
   .string()
   .regex(/^0x([0-9a-fA-F]{2})*$/)
-  .transform((s) => s as Hex)
+  .transform((s) => s.toLowerCase() as Hex)
 const side = z.enum(['buyer', 'supplier'])
 
 export const computeTermsJson = z.strictObject({
@@ -132,6 +134,7 @@ export const supplierAuthorizationJson = z.strictObject({
   kybReference: z.string().min(1),
   kybTestData: z.boolean(),
   agentKey: address,
+  agentKeyAuthorizedIn: bytes32,
   mandateHash: bytes32,
   payee: address,
   acceptBy: u64,

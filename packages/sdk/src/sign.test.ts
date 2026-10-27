@@ -22,7 +22,7 @@ const DOMAIN: AvowDomain = { chainId: 42431, verifyingContract: LOCK }
 const keychain = keychainSignatureCheck(() => false)
 
 function passkeyBusiness() {
-  // A headless stand-in for a browser passkey, as in step 1.35. Step 3.16 runs a real one.
+  // A headless stand-in for a browser passkey. A real one gets its own run before release.
   const root = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), {
     rpId: 'avow.finance',
     origin: 'https://avow.finance',
