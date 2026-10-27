@@ -15,6 +15,7 @@ This repository holds the open parts of Avow that developers and suppliers run t
 | `@avow-finance/sdk` | TypeScript SDK for agents: show the business and its limits, check a booking against the mandate, request a reserve, list commitments | Planned |
 | `@avow-finance/mcp-server` | MCP server that gives an agent in Claude, Cursor or any other MCP client the same calls | Planned |
 | `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | Planned |
+| `@avow-finance/spec` | The commitment schema the others share: records, compute terms, signed messages, reason codes and the mandate check | In progress |
 
 Quickstarts will live in `examples/`.
 
@@ -31,7 +32,7 @@ Avow is built first on [Tempo](https://tempo.xyz) testnet, with other rails to f
 
 ## What opens next
 
-The terms format will be published as an open spec once a real counterparty has used it. The reserve contract will be published once it has been audited.
+`@avow-finance/spec` holds the working terms format, which the verifier needs to check a commitment, and it will change after supplier calls. Once a real counterparty has used it, the format will be published as a standalone open spec in the public domain. The reserve contract will be published once it has been audited.
 
 ## Develop
 
