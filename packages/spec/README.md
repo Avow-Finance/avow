@@ -4,6 +4,13 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 
 > **Status:** pre-release and testnet only. The compute terms here are the working format, and they will change after supplier calls.
 
+## What's public and what isn't
+
+- **Public now.** This schema, the compute terms format and the verifier, under the repo's Apache 2.0 license.
+- **Provisional.** The format is versioned, and a reader refuses a schema version it doesn't know. From the first testnet deployment, any change to a signed message, the terms or their canonical JSON gets a new schema version. Until 1.0 such a change can come in any release, and each release names it.
+- **Later.** The written specification will go into the public domain (CC0) once a real counterparty has used the format. This code isn't that specification, and it isn't CC0.
+- **Never here.** Customer terms, evidence, identity records and secrets stay out of this repo, its tests and its examples. Tests generate their own keys and use made-up businesses.
+
 ## What it holds
 
 | Part | What it does |

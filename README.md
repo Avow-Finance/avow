@@ -32,7 +32,7 @@ Avow is built first on [Tempo](https://tempo.xyz) testnet, with other rails to f
 
 ## What opens next
 
-`@avow-finance/spec` holds the working terms format, which the verifier needs to check a commitment, and it will change after supplier calls. Once a real counterparty has used it, the format will be published as a standalone open spec in the public domain. The reserve contract will be published once it has been audited.
+`@avow-finance/spec` holds the working schema and terms format under Apache 2.0, because the verifier needs them to check a commitment. The format is provisional and will change after supplier calls, under the rules in that package's README. Once a real counterparty has used it, the written specification will be published in the public domain (CC0). This code isn't that specification and isn't CC0. The reserve contract will be published once it has been audited.
 
 ## Develop
 
