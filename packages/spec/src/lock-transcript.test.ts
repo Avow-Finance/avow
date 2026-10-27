@@ -40,8 +40,9 @@ import { id } from './test-helpers.js'
  * the reserve, signed message by message the way the SDK signs. Avow's approval key and the
  * supplier's signing key sign plain EIP-712 digests, and an account's root key or admin key signs
  * inside a keychain V2 envelope. The lock contract's tests send these exact signatures to a lock
- * at the same address on the same chain, so a change on either side to how a message is hashed,
- * signed or wrapped fails both.
+ * at the same address on the same chain. A change to how the SDK hashes, signs or wraps a message
+ * fails this test, and a change to how the lock hashes or checks one fails the lock's, so new pins
+ * here go to the lock's tests in the same change.
  *
  * Each key comes from a public label at run time, as Foundry's `makeAddrAndKey` makes its keys,
  * so both sides sign with the same keys. They are test keys and hold nothing.
