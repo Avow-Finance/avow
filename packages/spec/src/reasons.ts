@@ -33,7 +33,7 @@ export const REASON_CODES = {
   'terms.hash_mismatch': "The terms and salt don't produce the signed terms hash",
   'terms.currency_mismatch': "The terms' currency isn't the one the lock's token stands for",
   'terms.incomplete':
-    "The supplier's terms don't carry every term Avow's approval sets, such as the day-90 share and the arbiter, so the approval can't be checked against them",
+    "The supplier's terms don't carry every term it would be bound by, such as the day-90 share and the arbiter, so Avow's approval can't be checked against them",
   'message.schema_unknown': "The message's schema version or type isn't one this code reads",
   'message.invalid':
     "The message doesn't parse as its schema version, or its fields don't fit together",

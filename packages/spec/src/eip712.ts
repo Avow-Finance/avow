@@ -531,12 +531,16 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
  * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
  * given the approval should compute it, check that it matches the lock's once the reserve exists,
  * and check the approval's terms against what it agreed. Nothing in this package makes either
- * check yet.
+ * check. The verifier's `prepareAcceptance` is to make both, and refuses until it can.
  */
 export function approvalDigest(a: Approval, d: AvowDomain): Hex {
   return digestOf(approvalTypedData(a, d))
 }
 
+/**
+ * The EIP-712 encoding of an acceptance, with no checks. A supplier gets an acceptance to sign from
+ * the verifier's `prepareAcceptance`.
+ */
 export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {
   return {
     domain: domain(d),

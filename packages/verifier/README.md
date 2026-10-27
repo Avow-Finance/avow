@@ -23,7 +23,7 @@ It throws, rather than refusing, when the setup is wrong, such as a chain reader
 
 ```ts
 import { MemoryReplayGuard, TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
-import { verifySupplierAuthorization } from '@avow-finance/verifier'
+import { prepareAcceptance, verifySupplierAuthorization } from '@avow-finance/verifier'
 
 const result = await verifySupplierAuthorization(
   {
@@ -49,14 +49,24 @@ const result = await verifySupplierAuthorization(
 )
 if (!result.ok) throw new Error(result.reason)
 // Keep this result. The verifier passes each commitment only once.
-// Get the acceptance from prepareAcceptance (below), send it to the lock, wait for the
+
+// The acceptance to sign. This refuses for now, as "Accepting" below explains.
+const prepared = prepareAcceptance({
+  approval,
+  terms,
+  domain: { chainId: 42431, verifyingContract: result.lock },
+})
+if (!prepared.ok) throw new Error(prepared.reason)
+// Sign prepared.acceptance with the supplier's signing key, send it to the lock, wait for the
 // transaction's receipt, then grant the capacity.
 ```
 
 Accept on the lock before granting anything. Until acceptance lands, the reserve can still go back to the buyer, for example when the buyer revokes the agent or the acceptance deadline passes.
 
+The verifier passes each commitment once, so a supplier keeps the first successful result, and keeps its replay guard in a database so a restart doesn't forget which commitments have passed.
+
 ## Accepting
 
-An acceptance binds the supplier to everything in Avow's approval, including the day-90 share and the arbiter, so a supplier gets one to sign only from `prepareAcceptance`. It is to check each term the approval sets against the supplier's own agreed terms, and the approval's digest against the one the lock stored, and to refuse when a term is missing or differs. The supplier's terms don't carry the day-90 share or the arbiter yet, so for now it refuses every request with `terms.incomplete`, and a supplier can't accept a reserve through the verifier.
+An acceptance binds the supplier to everything in Avow's approval, so a supplier gets one to sign only from `prepareAcceptance`. It is to check every term that binds the supplier against the supplier's own agreed values, then the approval's digest against the one the lock stored, and to refuse when any of them is missing or differs. Those terms are the amount, the token, the deadlines, the contest window, the charges, the day-90 share, the arbiter and the terms hash, with the supplier's own account, signing key and payout. The rest of the approval, such as the mandate hash, the caps, the funding key, the nonce and the expiry, belongs to the business and Avow, and the supplier needs it only to compute the digest.
 
-The verifier passes each commitment once, so a supplier keeps the first successful result, and keeps its replay guard in a database so a restart doesn't forget which commitments have passed.
+The supplier's terms don't carry the day-90 share or the arbiter yet, so for now `prepareAcceptance` refuses every request with `terms.incomplete`, and a supplier can't accept a reserve through the verifier.
