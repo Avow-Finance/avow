@@ -127,9 +127,10 @@ export interface Approval {
 
 /**
  * The supplier's acceptance of a funded reserve, signed by its signing key. It names the digest of
- * Avow's approval that funded the reserve, which commits to every term the lock enforces, so the
- * supplier is bound only by terms it signed. Any change to those terms gives another digest, and
- * the lock refuses the acceptance.
+ * Avow's approval that funded the reserve, which covers every term that approval sets for the
+ * commitment, and the lock's own settings through the lock's address in its domain. Any change to
+ * the approval gives another digest, and the lock refuses the acceptance. The supplier is bound by
+ * everything the approval says, so it checks the approval against its own terms before it signs.
  */
 export interface Acceptance {
   commitmentId: Hex
@@ -525,7 +526,8 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
 /**
  * The digest of an approval as the lock computes it, under the lock's domain. The lock stores it at
  * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
- * computes it from the terms it agreed and checks it against the lock's before it signs.
+ * given the approval computes it, checks that it matches the lock's, and checks the approval's
+ * terms against its own before it signs an acceptance naming it.
  */
 export function approvalDigest(a: Approval, d: AvowDomain): Hex {
   return digestOf(approvalTypedData(a, d))

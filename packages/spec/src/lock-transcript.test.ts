@@ -42,7 +42,7 @@ import { id } from './test-helpers.js'
  * supplier's signing key sign plain EIP-712 digests, and an account's root key or admin key signs
  * inside a keychain V2 envelope. The acceptance names the digest of the approval, and the consent
  * names the report count. Two more signed messages are ones the lock must refuse, an acceptance of
- * an approval with one term changed and a consent signed before the second report. The lock
+ * another approval and a consent signed before the second report. The lock
  * contract's tests send these exact signatures to a lock at the same address on the same chain,
  * and check that it takes every step and refuses those two. A change to how the SDK hashes, signs
  * or wraps a message fails this test, and a change to how the lock hashes or checks one fails the
@@ -117,11 +117,20 @@ const acceptance: Acceptance = {
   expiry: T + 3_000n,
 }
 
-/** An acceptance of an approval whose free cancellation ends an hour later, which the lock refuses. */
+/**
+ * An acceptance of another approval the lock would also take, with free cancellation and the
+ * late-cancellation charge an hour later, which the lock refuses since it took the first.
+ */
 const otherAcceptance: Acceptance = {
   ...acceptance,
   approvalHash: approvalDigest(
-    { ...approval, freeCancelBy: approval.freeCancelBy + 3_600n },
+    {
+      ...approval,
+      freeCancelBy: approval.freeCancelBy + 3_600n,
+      charges: approval.charges.map((c) =>
+        c.kind === 'lateCancellation' ? { ...c, earliest: c.earliest + 3_600n } : c,
+      ),
+    },
     DOMAIN,
   ),
 }
@@ -244,7 +253,7 @@ const pinned: Record<Step, Hex> = {
   approval:
     '0x2421059ab51bb25c715e1336cc4150ebcc8b847b2bc62a1d86f8dfeba11364815a8b971d5154f5c92efa44821bcd326472f0985949bce646df76a252e74f0ed01c',
   otherAcceptance:
-    '0xdc5708d34630367634faf18f66bc7e8f57185fadaa939e8d0da5ba452a631da95998c03c53e8e12d23b946de59da8828b884693953e7870989f604e915d359641c',
+    '0x45689895ae6b132a866473c951bbebf4e8afa7dfff23b63474e5184e56108f7a72f60851b09970ec185d5150dd7db0042338e89ceb5445a796fa1bb851efba6f1b',
   acceptance:
     '0x125ecc096d08f7d12d6d4a7864efab50d9da38ee63efd934cfb5a4af1fcd5d2b18788c42f14756ed73f060b9048efed49d28a5e6778e89b60196cc4e5c24235b1b',
   firstReport:
@@ -274,13 +283,13 @@ describe('a commitment signed with the SDK', () => {
   })
 
   it('accepts by the digest of the approval the lock stores', () => {
-    // The lock's tests check that the lock stores the first digest at the reserve.
+    // The digest Avow's approval key signed, which the lock stores at the reserve.
     expect(acceptance.approvalHash).toBe(digests.approval)
     expect(acceptance.approvalHash).toBe(
       '0xed141967591a406b84a7971887ad2de5be14ee9bfad217d402e6eb62d146c9f0',
     )
     expect(otherAcceptance.approvalHash).toBe(
-      '0xe0cdafd156b31a76bfd5a8b627ea0c2661783dc6944c4592de74b51d5aec0daa',
+      '0x035018b1266abfa8466f4789bee7d5e36e481bb607895c46584f11983513085f',
     )
   })
 
