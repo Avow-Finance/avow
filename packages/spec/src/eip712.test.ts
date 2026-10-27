@@ -2,22 +2,35 @@ import { type Hex, hashTypedData } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { testnetDemoTerms } from './demo.js'
 import {
+  type Acceptance,
   type Approval,
   type AvowTypedData,
+  acceptanceTypedData,
+  approvalDigest,
   approvalTypedData,
+  businessActionTypedData,
+  type ChargeReport,
   checkEnvelope,
   commitmentKey,
+  contestAction,
   digestOf,
   domain,
+  evidenceTypedData,
   type HumanApproval,
   humanApprovalTypedData,
   isSignedBy,
   mandateHash,
   mandateTypedData,
   messageKey,
+  type ReleaseConsent,
+  releaseConsentTypedData,
+  reportTypedData,
   type StartReceipt,
+  type SupplierAction,
   type SupplierAuthorization,
+  type SupplierEvidence,
   startReceiptTypedData,
+  supplierActionTypedData,
   supplierAuthorizationTypedData,
   type TermsAgreement,
   termsAgreementTypedData,
@@ -56,16 +69,29 @@ const agreement: TermsAgreement = {
   expiry: NOW + 600n,
 }
 
+const supplierAccount = newKey()
+const supplierSigner = newKey()
+const ARBITER = '0x000000000000000000000000000000000000a4b1' as const
+
 const approval: Approval = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
   token: TOKEN.token,
   amount: terms.reserve,
+  supplier: supplierAccount.address,
+  supplierSigner: supplierSigner.address,
   payee: PAYEE,
+  freeCancelBy: terms.freeCancelBy,
   acceptBy: terms.acceptBy,
   chargeDeadline: terms.chargeDeadline,
-  contestWindow: terms.contestWindow,
   releaseDate: terms.releaseDate,
+  contestWindow: terms.contestWindow,
+  charges: [
+    { kind: 'lateCancellation', most: terms.lateCancellation, earliest: terms.freeCancelBy },
+    { kind: 'noShow', most: terms.noShow, earliest: terms.windowStart + terms.gracePeriod },
+  ],
+  day90SupplierShareBps: 5000,
+  arbiter: ARBITER,
   termsHash: hash,
   mandateHash: mHash,
   capPerCommitment: mandate.capPerCommitment,
@@ -73,6 +99,66 @@ const approval: Approval = {
   fundingKey: agent.address,
   nonce: 8n,
   expiry: NOW + 300n,
+}
+
+const acceptance: Acceptance = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  approvalHash: approvalDigest(approval, DOMAIN),
+  termsHash: hash,
+  amount: terms.reserve,
+  token: TOKEN.token,
+  acceptBy: terms.acceptBy,
+  nonce: 12n,
+  expiry: NOW + 600n,
+}
+
+const chargeReport: ChargeReport = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  kind: 'lateCancellation',
+  amount: terms.lateCancellation,
+  evidenceHash: id('late cancellation evidence'),
+  nonce: 13n,
+  expiry: NOW + 600n,
+}
+
+const consent: ReleaseConsent = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  reportCount: 0,
+  reason: 'kept',
+  evidenceHash: id('kept'),
+  nonce: 14n,
+  expiry: NOW + 600n,
+}
+
+const supplierEvidence: SupplierEvidence = {
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  number: 2,
+  evidenceHash: id('supplier evidence'),
+  nonce: 15n,
+  expiry: NOW + 600n,
+}
+
+const contest = contestAction({
+  commitmentId: id('commitment-1'),
+  reportNumber: 1,
+  reasonCode: 3,
+  statementHash: id('contest statement'),
+  nonce: 16n,
+  expiry: NOW + 600n,
+})
+
+const withdrawal: SupplierAction = {
+  supplier: supplierAccount.address,
+  action: 'withdrawReport',
+  commitmentId: id('commitment-1'),
+  side: 'buyer',
+  reportNumber: 1,
+  nonce: 17n,
+  expiry: NOW + 600n,
 }
 
 const authorization: SupplierAuthorization = {
@@ -124,6 +210,12 @@ const builders = {
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
   human: (d = DOMAIN) => humanApprovalTypedData(human, d),
   receipt: (d = DOMAIN) => startReceiptTypedData(receipt, d),
+  acceptance: (d = DOMAIN) => acceptanceTypedData(acceptance, d),
+  report: (d = DOMAIN) => reportTypedData(chargeReport, d),
+  consent: (d = DOMAIN) => releaseConsentTypedData(consent, d),
+  evidence: (d = DOMAIN) => evidenceTypedData(supplierEvidence, d),
+  contest: (d = DOMAIN) => businessActionTypedData(contest, d),
+  withdrawal: (d = DOMAIN) => supplierActionTypedData(withdrawal, d),
 }
 
 /** Signs the EIP-712 digest, which is what signTypedData signs. A test below checks they match. */
@@ -208,6 +300,69 @@ describe('signed messages', () => {
     })
     expect(ok).toBe(true)
     expect(seen).toBe(digestOf(td))
+  })
+})
+
+describe("what the supplier's acceptance and consent bind", () => {
+  const [late, noShow] = approval.charges
+  if (!late || !noShow) throw new Error('the approval fixture has two charges')
+  // Every field of the approval, changed to another valid value.
+  const changes: Partial<Approval>[] = [
+    { commitmentId: id('commitment-2') },
+    { side: 'supplier' },
+    { token: '0x20c0000000000000000000000000000000000002' },
+    { amount: approval.amount + 1n },
+    { supplier: PAYEE },
+    { supplierSigner: PAYEE },
+    { payee: ARBITER },
+    { freeCancelBy: approval.freeCancelBy + 1n },
+    { acceptBy: approval.acceptBy + 1n },
+    { chargeDeadline: approval.chargeDeadline + 1n },
+    { releaseDate: approval.releaseDate + 1n },
+    { contestWindow: approval.contestWindow + 1n },
+    { charges: [{ ...late, most: late.most - 1n }, noShow] },
+    { charges: [late, { ...noShow, earliest: noShow.earliest + 1n }] },
+    { charges: [late] },
+    { day90SupplierShareBps: 5001 },
+    { arbiter: PAYEE },
+    { termsHash: id('other terms') },
+    { mandateHash: id('other mandate') },
+    { capPerCommitment: approval.capPerCommitment + 1n },
+    { capOpenReserves: approval.capOpenReserves + 1n },
+    { fundingKey: PAYEE },
+    { nonce: approval.nonce + 1n },
+    { expiry: approval.expiry + 1n },
+  ]
+
+  it('the approval digest changes with every term, the chain and the lock', () => {
+    const digest = approvalDigest(approval, DOMAIN)
+    expect(Object.keys(approval)).toHaveLength(22)
+    const seen = new Set([digest])
+    for (const change of changes) seen.add(approvalDigest({ ...approval, ...change }, DOMAIN))
+    seen.add(approvalDigest(approval, OTHER_DOMAIN))
+    seen.add(approvalDigest(approval, { chainId: CHAIN_ID + 1, verifyingContract: LOCK }))
+    expect(seen.size).toBe(changes.length + 3)
+  })
+
+  it('an acceptance signed for one approval fails for any other', async () => {
+    const signature = await sign(acceptanceTypedData(acceptance, DOMAIN))
+    for (const change of changes) {
+      const other = {
+        ...acceptance,
+        approvalHash: approvalDigest({ ...approval, ...change }, DOMAIN),
+      }
+      expect(await isSignedBy(acceptanceTypedData(other, DOMAIN), signature, admin.address)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('a consent signed for one report count fails for any other', async () => {
+    const signature = await sign(releaseConsentTypedData(consent, DOMAIN))
+    for (const reportCount of [1, 2, 255]) {
+      const later = releaseConsentTypedData({ ...consent, reportCount }, DOMAIN)
+      expect(await isSignedBy(later, signature, admin.address)).toBe(false)
+    }
   })
 })
 

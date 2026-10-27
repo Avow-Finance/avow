@@ -36,6 +36,11 @@ export interface Business {
 /** What a business needs before it can receive charges. */
 export interface SupplierProfile {
   businessId: string
+  /**
+   * The supplier's account on the rail. The business approves it on its lock, and the account's
+   * root key or an admin key consents to a release or withdraws a report.
+   */
+  account: Address
   /** Where charges go. A change takes effect only after a delay. */
   payee: Address
   /** The key that records acceptance, signs start receipts and reports outcomes. */
