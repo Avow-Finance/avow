@@ -14,4 +14,5 @@ export {
   signForAccount,
   wrapKeychainV2,
 } from '@avow-finance/spec'
+export * from './agent-key.js'
 export * from './sign.js'

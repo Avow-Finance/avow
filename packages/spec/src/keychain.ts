@@ -2,13 +2,14 @@ import { SignatureEnvelope } from 'ox/tempo'
 import {
   type Address,
   BaseError,
+  type Client,
   ContractFunctionRevertedError,
   concat,
   type Hex,
   isAddressEqual,
   keccak256,
-  type PublicClient,
 } from 'viem'
+import { readContract } from 'viem/actions'
 import { Abis, Addresses } from 'viem/tempo'
 import type { SignatureCheck } from './eip712.js'
 
@@ -94,10 +95,10 @@ export function keychainSignatureCheck(
  * Asks Tempo's signature verifier precompile, the same check the lock makes. A refusal returns
  * false, and a network failure throws, so an outage never reads as a forged signature.
  */
-export function tempoKeychainCheck(client: Pick<PublicClient, 'readContract'>): SignatureCheck {
+export function tempoKeychainCheck(client: Client): SignatureCheck {
   return async ({ signer, digest, signature }) => {
     try {
-      return await client.readContract({
+      return await readContract(client, {
         address: Addresses.signatureVerifier,
         abi: Abis.signatureVerifier,
         functionName: 'verifyKeychainAdmin',
