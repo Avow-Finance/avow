@@ -48,7 +48,10 @@ const result = await verifySupplierAuthorization(
   },
 )
 if (!result.ok) throw new Error(result.reason)
-// Grant the capacity for this commitment, then record acceptance on the lock.
+// Keep this result. The verifier passes each commitment only once.
+// Record acceptance on the lock, wait for the transaction's receipt, then grant the capacity.
 ```
 
-A production supplier keeps its replay guard in a database, so a restart doesn't forget which commitments have passed.
+Accept on the lock before granting anything. Until acceptance lands, the reserve can still go back to the buyer, for example when the buyer revokes the agent or the acceptance deadline passes.
+
+The verifier passes each commitment once, so a supplier keeps the first successful result, and keeps its replay guard in a database so a restart doesn't forget which commitments have passed.

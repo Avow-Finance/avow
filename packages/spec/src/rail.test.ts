@@ -75,5 +75,13 @@ describe('assertTestSettingsOnTestnet', () => {
         profile: PRODUCTION_PROFILE,
       }),
     ).not.toThrow()
+    // A short window can't pass by calling itself production.
+    expect(() =>
+      assertTestSettingsOnTestnet({
+        chainId: 7777,
+        testData: false,
+        profile: { name: 'production', minContestWindow: 600n },
+      }),
+    ).toThrow()
   })
 })
