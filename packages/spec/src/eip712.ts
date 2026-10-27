@@ -132,7 +132,8 @@ export interface Approval {
  * the approval gives another digest, and the lock refuses the acceptance. The supplier is bound by
  * everything the approval says, so it should check the approval against what it agreed before it
  * signs. Nothing in this package makes that check yet, and `ComputeTerms` carries neither the
- * day-90 share nor the arbiter.
+ * day-90 share nor the arbiter. A supplier gets an acceptance to sign from the verifier's
+ * `prepareAcceptance`, which refuses until it can make the check.
  */
 export interface Acceptance {
   commitmentId: Hex

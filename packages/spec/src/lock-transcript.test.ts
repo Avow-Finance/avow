@@ -45,7 +45,7 @@ import { id } from './test-helpers.js'
  * approval and a consent signed before the second report. A lock at the same address on the same
  * chain takes the other ten and refuses those two, so the pins are the signatures it checks. A
  * change to how the SDK hashes, signs or wraps a message fails this test, and a lock would refuse
- * the new signature.
+ * a signature over another hash or in another envelope.
  *
  * Each key comes from a public label at run time, as Foundry's `makeAddrAndKey` makes its keys,
  * so both sides sign with the same keys. They are test keys and hold nothing.

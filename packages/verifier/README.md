@@ -49,9 +49,14 @@ const result = await verifySupplierAuthorization(
 )
 if (!result.ok) throw new Error(result.reason)
 // Keep this result. The verifier passes each commitment only once.
-// Record acceptance on the lock, wait for the transaction's receipt, then grant the capacity.
+// Get the acceptance from prepareAcceptance (below), send it to the lock, wait for the
+// transaction's receipt, then grant the capacity.
 ```
 
 Accept on the lock before granting anything. Until acceptance lands, the reserve can still go back to the buyer, for example when the buyer revokes the agent or the acceptance deadline passes.
+
+## Accepting
+
+An acceptance binds the supplier to everything in Avow's approval, including the day-90 share and the arbiter, so a supplier gets one to sign only from `prepareAcceptance`. It is to check each term the approval sets against the supplier's own agreed terms, and the approval's digest against the one the lock stored, and to refuse when a term is missing or differs. The supplier's terms don't carry the day-90 share or the arbiter yet, so for now it refuses every request with `terms.incomplete`, and a supplier can't accept a reserve through the verifier.
 
 The verifier passes each commitment once, so a supplier keeps the first successful result, and keeps its replay guard in a database so a restart doesn't forget which commitments have passed.
