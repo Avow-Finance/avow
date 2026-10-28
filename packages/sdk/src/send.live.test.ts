@@ -3,7 +3,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { tempoModerato } from 'viem/chains'
 import { Abis, Account, Actions, Relay } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { sendSponsored } from './send.js'
+import { SendError, sendSponsored } from './send.js'
 
 /**
  * On Moderato, a key with no fee token sends a transaction through `sendSponsored`, and a relay
@@ -69,5 +69,39 @@ describe.skipIf(!live)('a sponsored transaction on Moderato', () => {
       args: [sender.address, relayKey.address],
     })
     expect(allowance).toBe(1n)
+  }, 180_000)
+
+  it('ends a transaction that never lands as failed once a finalized block passes its expiry', async () => {
+    const chain = tempoModerato.extend({ feeToken: ALPHA })
+    const transport = http('https://rpc.moderato.tempo.xyz', { retryCount: 6, retryDelay: 500 })
+    const client = createClient({ chain, transport }).extend(publicActions)
+    // A relay with no fee token co-signs a transaction no block will take.
+    const relay = Relay.create({
+      client,
+      plugins: [Relay.feePayer({ account: privateKeyToAccount(generatePrivateKey()) })],
+    })
+    const sender = Account.fromSecp256k1(generatePrivateKey())
+    const started = Date.now()
+    const error = await sendSponsored({
+      client,
+      account: sender,
+      calls: [
+        {
+          to: ALPHA,
+          data: encodeFunctionData({ abi: Abis.tip20, functionName: 'approve', args: [ALPHA, 1n] }),
+        },
+      ],
+      sponsor: (transaction) =>
+        relay.request(
+          { method: 'eth_signRawTransaction', params: [transaction] },
+          { chainId: chain.id },
+        ) as Promise<`0x${string}`>,
+      limits: { prepareTries: 4, sendTries: 2, signings: 1, wait: 1000, receiptTimeout: 120_000 },
+    }).catch((e: unknown) => e)
+    if (!(error instanceof SendError)) throw error
+    expect(error.outcome).toBe('failed')
+    expect(error.signings).toBe(1)
+    // It waited for the chain to pass the transaction's expiry, which viem sets 25 seconds out.
+    expect(Date.now() - started).toBeGreaterThan(20_000)
   }, 180_000)
 })

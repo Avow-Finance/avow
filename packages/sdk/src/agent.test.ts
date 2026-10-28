@@ -19,6 +19,7 @@ import {
   encodeFunctionResult,
   type Hex,
   recoverAddress,
+  toHex,
 } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { tempoModerato } from 'viem/chains'
@@ -41,35 +42,70 @@ import {
 } from './test/fixture.js'
 
 const LANDED_IN = 7n
+const quick = { prepareTries: 1, sendTries: 1, signings: 1, wait: 1, receiptTimeout: 50 }
 
 /**
- * A chain that answers only reads of the lock, with what it holds once the agent's reserve
- * landed. It records the block every read named.
+ * A chain that answers reads of the lock with what it holds once the agent's reserve landed, the
+ * finalized block at the time a test sets, and receipts for the hashes a test says landed. It
+ * records the block every read of the lock named.
  */
 function lockChain() {
-  const state = { holds: null as Approval | null, readAt: [] as unknown[] }
+  const state = {
+    holds: null as Approval | null,
+    readAt: [] as unknown[],
+    /** The finalized block's time, past every approval's expiry unless a test moves it. */
+    finalTime: START + 86_400n,
+    landed: new Set<string>(),
+  }
   const client = createClient({
     chain: tempoModerato,
-    transport: custom({
-      async request({ method, params }) {
-        if (method !== 'eth_call') throw new Error(`the test reached the chain with ${method}`)
-        const [call, block] = params as [{ to: Address; data: Hex }, unknown]
-        state.readAt.push(block)
-        if (call.to.toLowerCase() !== LOCK) throw new Error(`a read of ${call.to}`)
-        const { functionName } = decodeFunctionData({ abi: LOCK_ABI, data: call.data })
-        if (functionName === 'token') {
-          return encodeFunctionResult({ abi: LOCK_ABI, functionName: 'token', result: TOKEN.token })
-        }
-        if (functionName === 'commitment') {
-          return encodeFunctionResult({
-            abi: LOCK_ABI,
-            functionName: 'commitment',
-            result: lockRecord(state.holds) as never,
-          })
-        }
-        throw new Error(`a read of ${functionName}`)
+    transport: custom(
+      {
+        async request({ method, params }) {
+          if (method === 'eth_getBlockByNumber') {
+            return {
+              number: toHex(LANDED_IN + 10n),
+              timestamp: toHex(state.finalTime),
+              hash: id('a block'),
+              parentHash: id('its parent'),
+              transactions: [],
+            }
+          }
+          if (method === 'eth_getTransactionReceipt') {
+            const [hash] = params as [Hex]
+            if (!state.landed.has(hash)) return null
+            return {
+              status: '0x1',
+              transactionHash: hash,
+              blockNumber: toHex(LANDED_IN),
+              blockHash: id('a block'),
+              logs: [],
+            }
+          }
+          if (method !== 'eth_call') throw new Error(`the test reached the chain with ${method}`)
+          const [call, block] = params as [{ to: Address; data: Hex }, unknown]
+          state.readAt.push(block)
+          if (call.to.toLowerCase() !== LOCK) throw new Error(`a read of ${call.to}`)
+          const { functionName } = decodeFunctionData({ abi: LOCK_ABI, data: call.data })
+          if (functionName === 'token') {
+            return encodeFunctionResult({
+              abi: LOCK_ABI,
+              functionName: 'token',
+              result: TOKEN.token,
+            })
+          }
+          if (functionName === 'commitment') {
+            return encodeFunctionResult({
+              abi: LOCK_ABI,
+              functionName: 'commitment',
+              result: lockRecord(state.holds) as never,
+            })
+          }
+          throw new Error(`a read of ${functionName}`)
+        },
       },
-    }),
+      { retryCount: 0 },
+    ),
   })
   return { state, client }
 }
@@ -83,12 +119,17 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
     /** What the lock holds after the transaction lands, the approval it carried by default. */
     holds: (approval: Approval): Approval | null => approval,
     fail: null as Error | null,
+    /** Whether the lock holds the approval when the send fails anyway. */
+    landsAnyway: false,
   }
   const send: NonNullable<AgentConfig['send']> = async (c) => {
     f.calls.push('send')
     sent.push(c)
-    if (sending.fail) throw sending.fail
     const last = f.approvals.at(-1)
+    if (sending.fail) {
+      if (sending.landsAnyway && last) chain.state.holds = last.message
+      throw sending.fail
+    }
     chain.state.holds = last ? sending.holds(last.message) : null
     return { transactionHash: id('the reserve transaction'), blockNumber: LANDED_IN }
   }
@@ -101,6 +142,7 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
     avow: f.avow,
     now: () => clock.now,
     send,
+    limits: quick,
   }
   return { ...f, chain, sent, clock, sending, config, agent: createAgent(config) }
 }
@@ -109,6 +151,14 @@ const book = (
   s: Awaited<ReturnType<typeof setup>>,
   change: Parameters<typeof gpuBooking>[0] = {},
 ) => s.agent.book({ supplier: s.connection, booking: gpuBooking(change), category: 'compute' })
+
+/** Books, and returns the commitment's id, with the lock holding its reserve. */
+async function booked(s: Awaited<ReturnType<typeof setup>>): Promise<Hex> {
+  const result = await book(s)
+  if (!result.ok) throw new Error(result.reason)
+  s.calls.length = 0
+  return result.commitment.commitmentId
+}
 
 describe('booking with a supplier', () => {
   it('agrees the terms, has Avow approve, checks the approval and funds the reserve', async () => {
@@ -290,42 +340,88 @@ describe('booking with a supplier', () => {
 })
 
 describe('when funding the reserve goes wrong', () => {
-  it('throws with the commitment and the hashes sent, and says no reserve was funded', async () => {
-    const s = await setup()
-    s.sending.fail = new SendError('The transaction reverted', 'failed', [id('a hash')])
-    const error = await book(s).catch((e: unknown) => e)
-    if (!(error instanceof BookingError)) throw new Error('expected a BookingError')
-    expect(error.outcome).toBe('failed')
-    expect(error.hashes).toEqual([id('a hash')])
-    const [request] = s.requests
-    expect(error.commitment.commitmentId).toBe(request?.request.commitmentId)
-    expect(error.commitment.salt).toBe(request?.salt)
-    expect(error.commitment.approval.message.commitmentId).toBe(request?.request.commitmentId)
-  })
+  const sendError = (outcome: 'failed' | 'unknown', signings = 1) =>
+    new SendError(`the send ended ${outcome}`, outcome, { hashes: [id('a hash')], signings })
 
-  it("says the outcome is unknown when the send can't tell, or fails some other way", async () => {
-    for (const fail of [
-      new SendError('No receipt after waiting', 'unknown', [id('a hash')]),
-      new Error('socket hang up'),
-    ]) {
+  it('reads the lock once the approval stops working, and says no reserve was funded', async () => {
+    for (const fail of [sendError('failed'), sendError('unknown'), new Error('socket hang up')]) {
       const s = await setup()
       s.sending.fail = fail
       const error = await book(s).catch((e: unknown) => e)
-      expect(error).toBeInstanceOf(BookingError)
-      expect((error as BookingError).outcome).toBe('unknown')
+      if (!(error instanceof BookingError)) throw new Error('expected a BookingError')
+      expect(error.outcome).toBe('failed')
+      // It read the lock as of the finalized block, past the approval's expiry.
+      expect(s.chain.state.readAt).toContain(toHex(LANDED_IN + 10n))
+      const [request] = s.requests
+      expect(error.commitment.commitmentId).toBe(request?.request.commitmentId)
+      expect(error.commitment.salt).toBe(request?.salt)
+      expect(error.commitment.approval.message.commitmentId).toBe(request?.request.commitmentId)
     }
   })
 
-  it("throws when the transaction landed but the lock doesn't hold the reserve under the approval", async () => {
+  it('carries every hash sent, and settles a send that failed before signing without reading', async () => {
     const s = await setup()
-    s.sending.holds = () => null
-    await expect(book(s)).rejects.toThrow("the lock doesn't show the reserve")
+    s.sending.fail = sendError('failed', 0)
+    const error = await book(s).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(BookingError)
+    expect((error as BookingError).outcome).toBe('failed')
+    expect((error as BookingError).hashes).toEqual([id('a hash')])
+    expect(s.chain.state.readAt).toEqual([])
+  })
+
+  it('returns the commitment when the reserve landed anyway, with the hash that funded it', async () => {
+    const s = await setup()
+    s.sending.fail = sendError('unknown')
+    s.sending.landsAnyway = true
+    s.chain.state.landed.add(id('a hash'))
+    const result = await book(s)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.commitment.reservedIn).toBe(id('a hash'))
+
+    // Landed in a transaction the agent never sent, such as the relay sending what it co-signed.
     const t = await setup()
-    t.sending.holds = (a) => ({ ...a, nonce: a.nonce + 1n })
-    const error = await book(t).catch((e: unknown) => e)
+    t.sending.fail = sendError('failed')
+    t.sending.landsAnyway = true
+    const other = await book(t)
+    if (!other.ok) throw new Error(other.reason)
+    expect(other.commitment.reservedIn).toBeNull()
+  })
+
+  it("says the outcome is unknown when the chain doesn't pass the approval's expiry in time", async () => {
+    const s = await setup()
+    s.sending.fail = sendError('unknown')
+    s.chain.state.finalTime = NOW
+    const error = await book(s).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(BookingError)
     expect((error as BookingError).outcome).toBe('unknown')
+
+    // Later the agent reconciles the same booking from the error, without booking again.
+    const e = error as BookingError
+    s.chain.state.finalTime = START
+    expect(await s.agent.reconcile(e.commitment, e.hashes)).toEqual({ outcome: 'failed' })
+    s.chain.state.holds = e.commitment.approval.message
+    s.chain.state.landed.add(id('a hash'))
+    expect(await s.agent.reconcile(e.commitment, e.hashes)).toEqual({
+      outcome: 'funded',
+      reservedIn: id('a hash'),
+    })
+    expect(s.calls.filter((c) => c === 'approveReserve')).toHaveLength(1)
+  })
+
+  it("settles a transaction that landed when the lock doesn't show the reserve under the approval", async () => {
+    const s = await setup()
+    s.sending.holds = () => null
+    const error = await book(s).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(BookingError)
+    expect((error as BookingError).outcome).toBe('failed')
     expect((error as BookingError).hashes).toEqual([id('the reserve transaction')])
+
+    // A lock holding the commitment under another approval isn't this booking funded.
+    const t = await setup()
+    t.sending.holds = (a) => ({ ...a, nonce: a.nonce + 1n })
+    const other = await book(t).catch((e: unknown) => e)
+    expect(other).toBeInstanceOf(BookingError)
+    expect((other as BookingError).outcome).toBe('unknown')
   })
 })
 
@@ -343,10 +439,27 @@ describe('cancelling and starting', () => {
 
   it('has Avow timestamp the request, the supplier sign its receipt and Avow record it, in order', async () => {
     const s = await setup()
-    const started = await s.agent.start(id('commitment'), s.connection)
+    const id_ = await booked(s)
+    const started = await s.agent.start(id_, s.connection)
     if (!started.ok) throw new Error(started.reason)
     expect(s.calls).toEqual(['requestStart', 'startJob', 'recordStart'])
-    expect(started.receipt.message.startRequestHash).toBe(id(`start ${id('commitment')}`))
+    expect(started.receipt.message.startRequestHash).toBe(id(`start ${id_}`))
+  })
+
+  it("starts only a commitment the lock holds, with the connection's supplier", async () => {
+    const s = await setup()
+    expect(await s.agent.start(id('commitment'), s.connection)).toEqual({
+      ok: false,
+      reason: 'chain.reserve_missing',
+    })
+    const id_ = await booked(s)
+    const stranger = privateKeyToAccount(generatePrivateKey())
+    const elsewhere = { ...s.connection, profile: { ...s.supplier, signingKey: stranger.address } }
+    expect(await s.agent.start(id_, elsewhere)).toEqual({
+      ok: false,
+      reason: 'chain.supplier_mismatch',
+    })
+    expect(s.calls).not.toContain('requestStart')
   })
 
   it("records no receipt that doesn't answer the request or isn't the supplier's", async () => {
@@ -367,8 +480,10 @@ describe('cancelling and starting', () => {
     ]
     for (const [receipt, reason] of cases) {
       const s = await setup()
+      const id_ = await booked(s)
+      s.calls.length = 0
       s.hooks.receipt = (r) => receipt(r, s.supplierKey) as never
-      expect(await s.agent.start(id('commitment'), s.connection)).toEqual({ ok: false, reason })
+      expect(await s.agent.start(id_, s.connection)).toEqual({ ok: false, reason })
       expect(s.calls).toEqual(['requestStart', 'startJob'])
     }
   })
@@ -376,7 +491,7 @@ describe('cancelling and starting', () => {
   it("passes on Avow's refusal of the receipt", async () => {
     const s = await setup()
     s.hooks.startRefusal = 'message.replayed'
-    expect(await s.agent.start(id('commitment'), s.connection)).toEqual({
+    expect(await s.agent.start(await booked(s), s.connection)).toEqual({
       ok: false,
       reason: 'message.replayed',
     })

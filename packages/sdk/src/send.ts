@@ -1,3 +1,4 @@
+import { TxEnvelopeTempo } from 'ox/tempo'
 import {
   type Account,
   type Chain,
@@ -15,7 +16,6 @@ import {
   prepareTransactionRequest,
   signTransaction,
 } from 'viem/actions'
-import { Transaction } from 'viem/tempo'
 import type { Call } from './lock.js'
 
 /** How hard the sender tries before it gives up. */
@@ -41,25 +41,35 @@ export const SEND_LIMITS: SendLimits = {
 }
 
 /**
- * Why a send failed, with the hash of every transaction it sent. Its outcome is `failed` when
- * nothing it sent took effect or still can, and `unknown` when a transaction may have landed, so
- * the caller has to read the chain before acting again.
+ * Why a send failed, with the hash of every transaction it sent and how many the key signed. Its
+ * outcome is `failed` when nothing it sent took effect or still can, and `unknown` when a
+ * transaction may have landed, so the caller has to read the chain before acting again. A `failed`
+ * after signing assumes nobody sent the signed transaction but the sender, which the relay's
+ * contract promises.
  */
 export class SendError extends Error {
   readonly outcome: 'failed' | 'unknown'
   readonly hashes: readonly Hex[]
+  readonly signings: number
 
   constructor(
     message: string,
     outcome: 'failed' | 'unknown',
-    hashes: readonly Hex[],
+    sent: { hashes: readonly Hex[]; signings: number },
     options?: { cause?: unknown },
   ) {
     super(message, options)
     this.name = 'SendError'
     this.outcome = outcome
-    this.hashes = [...hashes]
+    this.hashes = [...sent.hashes]
+    this.signings = sent.signings
   }
+}
+
+/** What a send has done so far, which every error it throws carries. */
+interface Sent {
+  hashes: Hex[]
+  signings: number
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -79,7 +89,7 @@ async function prepare(
   account: Account,
   calls: readonly Call[],
   limits: SendLimits,
-  hashes: readonly Hex[],
+  sent: Sent,
 ) {
   for (let i = 1; ; i++) {
     try {
@@ -95,7 +105,7 @@ async function prepare(
         throw new SendError(
           `The node refused to prepare the transaction: ${reason(error)}`,
           'failed',
-          hashes,
+          sent,
           { cause: error },
         )
       }
@@ -104,7 +114,7 @@ async function prepare(
   }
 }
 
-/** Tempo's transaction fields the relay has to leave as the key signed them. */
+/** The fields a sender signs, named when the relay's bytes change one. */
 const SIGNED_FIELDS = [
   'chainId',
   'calls',
@@ -116,8 +126,8 @@ const SIGNED_FIELDS = [
   'maxFeePerGas',
   'maxPriorityFeePerGas',
   'accessList',
+  'authorizationList',
   'keyAuthorization',
-  'signature',
 ] as const
 
 const same = (a: unknown, b: unknown) =>
@@ -125,22 +135,28 @@ const same = (a: unknown, b: unknown) =>
   JSON.stringify(b, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
 
 /**
- * Why the relay's bytes aren't the transaction the key signed with the relay's fee payer
- * signature added, or null when they are. The relay may set the fee token, which the sender
- * doesn't sign, and nothing else.
+ * Why the relay's bytes aren't the transaction the key signed with a fee payer's signature added,
+ * or null when they are. The payload the key signed has to be the same in both, which covers every
+ * call with its destination, data and value, the nonce, the validity window, the gas and fees, and
+ * any key authorization, and the key's signature has to be the same too. Only the fee token, which
+ * a sender doesn't sign, and the fee payer's signature may differ.
  */
 export function cosignProblem(signed: Hex, cosigned: Hex): string | null {
-  let before: Record<string, unknown>
-  let after: Record<string, unknown>
+  let before: TxEnvelopeTempo.TxEnvelopeTempo
+  let after: TxEnvelopeTempo.TxEnvelopeTempo
   try {
-    before = Transaction.deserialize(signed as `0x76${string}`) as Record<string, unknown>
-    after = Transaction.deserialize(cosigned as `0x76${string}`) as Record<string, unknown>
+    before = TxEnvelopeTempo.deserialize(signed as TxEnvelopeTempo.Serialized)
+    after = TxEnvelopeTempo.deserialize(cosigned as TxEnvelopeTempo.Serialized)
   } catch {
     return "the bytes aren't a Tempo transaction"
   }
   if (!after.feePayerSignature) return 'they carry no fee payer signature'
-  for (const field of SIGNED_FIELDS) {
-    if (!same(before[field], after[field])) return `they change the transaction's ${field}`
+  if (!before.signature || !same(before.signature, after.signature)) {
+    return "they change the key's signature"
+  }
+  if (TxEnvelopeTempo.getSignPayload(before) !== TxEnvelopeTempo.getSignPayload(after)) {
+    const changed = SIGNED_FIELDS.find((field) => !same(before[field], after[field]))
+    return `they change what the key signed${changed ? `, its ${changed} among it` : ''}`
   }
   return null
 }
@@ -156,17 +172,17 @@ async function submit(
   bytes: Hex,
   hash: Hex,
   limits: SendLimits,
-  hashes: readonly Hex[],
+  sent: Sent,
 ): Promise<unknown> {
   let last: unknown = null
   for (let i = 0; i < limits.sendTries; i++) {
     try {
       const answer = await client.request({ method: 'eth_sendRawTransaction', params: [bytes] })
       if (typeof answer === 'string' && answer.toLowerCase() !== hash.toLowerCase()) {
-        throw new SendError(`The node answered with the hash ${answer}, not ${hash}`, 'unknown', [
-          ...hashes,
-          answer as Hex,
-        ])
+        throw new SendError(`The node answered with the hash ${answer}, not ${hash}`, 'unknown', {
+          hashes: [...sent.hashes, answer as Hex],
+          signings: sent.signings,
+        })
       }
       return null
     } catch (error) {
@@ -183,7 +199,7 @@ async function submit(
 async function latestBlock(
   client: Client<Transport, Chain>,
   limits: SendLimits,
-  hashes: readonly Hex[],
+  sent: Sent,
 ): Promise<bigint> {
   for (let i = 1; ; i++) {
     try {
@@ -193,8 +209,10 @@ async function latestBlock(
         throw new SendError(
           `The node didn't give its latest block: ${reason(error)}`,
           'failed',
-          hashes,
-          { cause: error },
+          sent,
+          {
+            cause: error,
+          },
         )
       }
       await sleep(limits.wait)
@@ -203,12 +221,14 @@ async function latestBlock(
 }
 
 /**
- * Waits for a transaction's outcome. It looks for the receipt, and reads each new block by number
- * for the transaction's hash, from the block the node was at before the transaction went out. A
- * block read by number comes whole from a node that has it, so a node a block behind can't hide a
- * transaction that landed. Once it reads a block later than the transaction's expiry, and no block
- * before held the hash, the transaction never landed and no later block can include it. An error
- * from the node is read again, never taken as an answer.
+ * Waits for a transaction's outcome. It looks for the receipt, and reads each block by number for
+ * the transaction's hash, from the block the node was at before the key signed. It reads only
+ * blocks at or below the chain's finalized block, which no later answer can change, and a block
+ * read by number comes whole or not at all, so a node that's behind can't hide a block. A failed or
+ * missing read stops the scan at that block until a later read gets it. Once the scan reads a block
+ * later than the transaction's expiry, and no block before it held the hash, the transaction never
+ * landed and no later block can include it. Tempo only includes a transaction in a block before its
+ * `validBefore`, and a block later than it counts here, one second more cautious than that rule.
  */
 async function outcomeOf(
   client: Client<Transport, Chain>,
@@ -216,29 +236,33 @@ async function outcomeOf(
   from: bigint,
   validBefore: number | undefined,
   limits: SendLimits,
-  hashes: readonly Hex[],
+  sent: Sent,
 ): Promise<TransactionReceipt | 'expired'> {
   const deadline = Date.now() + limits.receiptTimeout
+  const late = () => Date.now() > deadline
   const wanted = hash.toLowerCase()
   let next = from
   let includedIn: bigint | null = null
   for (;;) {
     const receipt = await getTransactionReceipt(client, { hash }).catch(() => null)
     if (receipt) return receipt
-    while (validBefore !== undefined && includedIn === null) {
-      const block = await getBlock(client, { blockNumber: next }).catch(() => null)
-      if (!block) break
-      if (block.transactions.some((t) => String(t).toLowerCase() === wanted)) includedIn = next
-      else if (block.timestamp > BigInt(validBefore)) return 'expired'
-      else next++
+    if (validBefore !== undefined && includedIn === null) {
+      const final = await getBlock(client, { blockTag: 'finalized' }).catch(() => null)
+      while (final && next <= final.number && includedIn === null && !late()) {
+        const block = await getBlock(client, { blockNumber: next }).catch(() => null)
+        if (!block) break
+        if (block.transactions.some((t) => String(t).toLowerCase() === wanted)) includedIn = next
+        else if (block.timestamp > BigInt(validBefore)) return 'expired'
+        else next++
+      }
     }
-    if (Date.now() > deadline) {
+    if (late()) {
       throw new SendError(
         includedIn === null
           ? `No receipt for ${hash} after waiting, so whether it landed is unknown`
           : `${hash} landed in block ${includedIn}, but its receipt never came, so its outcome is unknown`,
         'unknown',
-        hashes,
+        sent,
       )
     }
     await sleep(limits.wait)
@@ -250,34 +274,41 @@ async function outcomeOf(
  * the relay co-signs it, and the sender checks the relay's bytes are the transaction the key
  * signed before sending them and tracking their hash from the start, since the public RPC can
  * answer with an error after a transaction has landed. viem makes a sponsored transaction valid
- * for under half a minute, and the sender signs again only once it has read every block up to one
- * later than that and found the transaction in none, up to the limit's number of signings. The
- * relay only co-signs and never sends, so a refusal from it sends nothing. It throws a `SendError`
- * when the transaction can't be prepared, lands reverted, never lands, or has an outcome the chain
- * didn't show in time.
+ * for under half a minute. The sender signs again only once it has read every finalized block,
+ * from before the key signed up to one later than that expiry, and found the transaction in none,
+ * up to the limit's number of signings. It throws a `SendError` when the transaction can't be
+ * prepared, lands reverted, never lands, or has an outcome the chain didn't show in time.
  */
 export async function sendSponsored(args: {
   client: Client<Transport, Chain>
   account: Account
   calls: readonly Call[]
+  /**
+   * Has the relay co-sign the signed transaction and returns the co-signed bytes. It must never
+   * send the transaction itself or pass it on, since anyone holding it could land it until it
+   * expires, and the sender's outcomes assume only the sender sends it.
+   */
   sponsor: (transaction: Hex) => Promise<Hex>
   /** Called with each hash before its bytes go to the node. */
   onSent?: (hash: Hex) => void
   limits?: SendLimits
 }): Promise<TransactionReceipt> {
   const limits = checked(args.limits ?? SEND_LIMITS)
-  const hashes: Hex[] = []
-  for (let signing = 1; ; signing++) {
-    const request = await prepare(args.client, args.account, args.calls, limits, hashes)
+  const sent: Sent = { hashes: [], signings: 0 }
+  for (;;) {
+    const request = await prepare(args.client, args.account, args.calls, limits, sent)
+    // Read before the key signs, so no block that could hold the transaction comes before it.
+    const from = await latestBlock(args.client, limits, sent)
     const signed = await signTransaction(args.client, {
       ...request,
       account: args.account,
     } as never)
+    sent.signings++
     let bytes: Hex
     try {
       bytes = await args.sponsor(signed)
     } catch (error) {
-      throw new SendError(`The relay didn't co-sign: ${reason(error)}`, 'failed', hashes, {
+      throw new SendError(`The relay didn't co-sign: ${reason(error)}`, 'failed', sent, {
         cause: error,
       })
     }
@@ -286,18 +317,17 @@ export async function sendSponsored(args: {
       throw new SendError(
         `The relay's bytes aren't the transaction the key signed: ${problem}`,
         'failed',
-        hashes,
+        sent,
       )
     }
     const hash = keccak256(bytes)
-    const from = await latestBlock(args.client, limits, hashes)
-    hashes.push(hash)
+    sent.hashes.push(hash)
     args.onSent?.(hash)
-    const refused = await submit(args.client, bytes, hash, limits, hashes)
-    const outcome = await outcomeOf(args.client, hash, from, request.validBefore, limits, hashes)
+    const refused = await submit(args.client, bytes, hash, limits, sent)
+    const outcome = await outcomeOf(args.client, hash, from, request.validBefore, limits, sent)
     if (outcome !== 'expired') {
       if (outcome.status !== 'success') {
-        throw new SendError(`The transaction ${hash} reverted`, 'failed', hashes)
+        throw new SendError(`The transaction ${hash} reverted`, 'failed', sent)
       }
       return outcome
     }
@@ -305,14 +335,18 @@ export async function sendSponsored(args: {
       throw new SendError(
         `The node never took the transaction: ${reason(refused)}`,
         'failed',
-        hashes,
+        sent,
         {
           cause: refused,
         },
       )
     }
-    if (signing >= limits.signings) {
-      throw new SendError(`The transaction expired in no block, ${signing} times`, 'failed', hashes)
+    if (sent.signings >= limits.signings) {
+      throw new SendError(
+        `The transaction expired in no block, ${sent.signings} times`,
+        'failed',
+        sent,
+      )
     }
   }
 }

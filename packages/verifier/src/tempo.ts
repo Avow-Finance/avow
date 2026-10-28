@@ -143,8 +143,8 @@ const KIND_NAMES = new Map<number, ChargeKind>(
 /**
  * Reads what a lock holds for one side of a commitment, or null when it holds nothing. It reads
  * only the lock, so it needs no factory, and the caller decides whether the lock is Avow's. Given
- * a block number it reads the lock as of that block, which a node without the block refuses
- * rather than answering from an older one.
+ * a block number it reads the lock as of that block, and a node that doesn't have the block yet
+ * refuses the read.
  */
 export async function readBacking(
   client: Client,

@@ -30,6 +30,7 @@ import {
 } from '@avow-finance/spec'
 import { type LockedBacking, readBacking } from '@avow-finance/verifier'
 import {
+  type Address,
   type Chain,
   type Client,
   type Hex,
@@ -38,10 +39,11 @@ import {
   type Transport,
   toHex,
 } from 'viem'
+import { getBlock, getTransactionReceipt } from 'viem/actions'
 import type { Account as TempoAccount } from 'viem/tempo'
 import type { AvowApi } from './avow-api.js'
 import { type Call, reserveCalls } from './lock.js'
-import { SendError, type SendLimits, sendSponsored } from './send.js'
+import { SEND_LIMITS, SendError, type SendLimits, sendSponsored } from './send.js'
 import type { SupplierConnection } from './supplier.js'
 
 /** An agent's access key on its business account, as Tempo signs with it. */
@@ -107,9 +109,21 @@ export interface ApprovedCommitment {
 
 /** A commitment the agent made and funded. */
 export interface Commitment extends ApprovedCommitment {
-  /** The transaction that funded the reserve. */
-  reservedIn: Hex
+  /**
+   * The transaction that funded the reserve, or null when the reserve landed in a transaction the
+   * agent didn't send itself.
+   */
+  reservedIn: Hex | null
 }
+
+/**
+ * What the lock says about an approved commitment once Avow's approval can no longer land:
+ * `funded` when it holds the reserve under the approval, `failed` when it doesn't, and `unknown`
+ * when the chain didn't show it in time.
+ */
+export type Reconciled =
+  | { outcome: 'funded'; reservedIn: Hex | null }
+  | { outcome: 'failed' | 'unknown' }
 
 /** A booking's outcome. A refusal carries the reason code, and Avow's decision id once it decided. */
 export type BookResult =
@@ -117,10 +131,11 @@ export type BookResult =
   | { ok: false; reason: ReasonCode; decisionId?: string }
 
 /**
- * A booking that failed after Avow approved it, while the agent funded the reserve. It carries
- * the commitment and every transaction hash sent, so the agent can read what the lock holds with
- * `commitment` before it books again. Its outcome is `failed` when no reserve was funded and none
- * can be, and `unknown` when one may have been.
+ * A booking whose funding failed after Avow approved it. The agent has already read the lock
+ * after the approval stopped working, so `failed` means no reserve was funded and none can be.
+ * `unknown` means the chain didn't show the outcome in time. It carries the commitment and every
+ * transaction hash sent, so the agent can `reconcile` this booking later instead of making
+ * another one.
  */
 export class BookingError extends Error {
   readonly outcome: 'failed' | 'unknown'
@@ -249,10 +264,59 @@ export function createAgent(config: AgentConfig) {
     }
   }
 
+  const limits = config.limits ?? SEND_LIMITS
+
+  /** The first of the hashes whose transaction landed successfully, or null when none did. */
+  async function landedOf(hashes: readonly Hex[]): Promise<Hex | null> {
+    for (const hash of hashes) {
+      const receipt = await getTransactionReceipt(client, { hash }).catch(() => null)
+      if (receipt?.status === 'success') return hash
+    }
+    return null
+  }
+
+  /**
+   * Reads the lock for an approved commitment once no transaction carrying Avow's approval can
+   * still land. The lock takes the approval only in a block before its expiry and before the
+   * acceptance deadline, so it reads the lock as of a finalized block at or past the earlier of
+   * the two, which no later block can change. It waits for that block up to the limit's receipt
+   * timeout.
+   */
+  async function reconcile(
+    approved: ApprovedCommitment,
+    hashes: readonly Hex[] = [],
+  ): Promise<Reconciled> {
+    const a = approved.approval.message
+    const closes = a.expiry < a.acceptBy ? a.expiry : a.acceptBy
+    const digest = approvalDigest(a, d).toLowerCase()
+    const deadline = Date.now() + limits.receiptTimeout
+    for (;;) {
+      const final = await getBlock(client, { blockTag: 'finalized' }).catch(() => null)
+      if (final && final.timestamp >= closes) {
+        const held = await readBacking(
+          client,
+          d.verifyingContract,
+          approved.commitmentId,
+          'buyer',
+          {
+            blockNumber: final.number,
+          },
+        ).catch(() => undefined)
+        if (held === null) return { outcome: 'failed' }
+        if (held) {
+          if (held.approvalHash.toLowerCase() !== digest) return { outcome: 'unknown' }
+          return { outcome: 'funded', reservedIn: await landedOf(hashes) }
+        }
+      }
+      if (Date.now() > deadline) return { outcome: 'unknown' }
+      await sleep(limits.wait)
+    }
+  }
+
   /** Why a supplier's start receipt doesn't answer the start request, or null when it does. */
   function receiptProblem(
     receipt: Signed<StartReceipt>,
-    expected: { commitmentId: Hex; startRequestHash: Hex; requestedAt: bigint; signer: Hex },
+    expected: { commitmentId: Hex; startRequestHash: Hex; requestedAt: bigint; signer: Address },
   ): ReasonCode | null {
     const envelopeProblem = checkEnvelope(receipt, {
       type: 'StartReceipt',
@@ -290,8 +354,9 @@ export function createAgent(config: AgentConfig) {
      * reason code, terms or a booking the mandate doesn't allow, a reserve the mandate sends to
      * the administrator, a supplier signature from another key, Avow's refusal, and an approval
      * that differs from the terms or the mandate or that the lock would refuse as late. Once the
-     * reserve is funded it checks the lock holds it under Avow's approval. It throws a
-     * `BookingError` when funding fails or its outcome is unknown.
+     * reserve is funded it checks the lock holds it under Avow's approval. When funding fails it
+     * reads the lock after the approval stops working, and returns the commitment if the reserve
+     * landed anyway. Otherwise it throws a `BookingError`.
      */
     async book(b: Booking): Promise<BookResult> {
       const terms = gpuReservationTerms(b.booking)
@@ -375,32 +440,62 @@ export function createAgent(config: AgentConfig) {
         agreement: signed,
         approval: answer.approval,
       }
-      let landed: Landed
+      let landed: Landed | null = null
+      let failure: unknown = null
       try {
         landed = await send(reserveCalls(answer.approval, d))
       } catch (error) {
-        const failed = error instanceof SendError && error.outcome === 'failed'
+        failure = error
+      }
+      if (landed) {
+        // The lock has to hold this commitment under exactly the approval the agent checked.
+        const held = await backingAt(commitmentId, landed.blockNumber).catch(() => null)
+        const expected = approvalDigest(answer.approval.message, d).toLowerCase()
+        if (held && held.approvalHash.toLowerCase() === expected) {
+          return { ok: true, commitment: { ...approved, reservedIn: landed.transactionHash } }
+        }
+      }
+      const hashes =
+        failure instanceof SendError ? failure.hashes : landed ? [landed.transactionHash] : []
+      const what = failure
+        ? failure instanceof Error
+          ? failure.message
+          : String(failure)
+        : `${landed?.transactionHash} landed, but the lock didn't show the reserve under Avow's approval`
+      // A transaction the key never signed can't land, so a send that failed before signing
+      // settles the booking.
+      if (failure instanceof SendError && failure.signings === 0) {
         throw new BookingError(
-          `Funding the reserve for ${commitmentId} ${failed ? 'failed' : 'may have landed'}: ${error instanceof Error ? error.message : String(error)}`,
-          failed ? 'failed' : 'unknown',
+          `Funding ${commitmentId} failed: ${what}`,
+          'failed',
           approved,
-          error instanceof SendError ? error.hashes : [],
-          { cause: error },
+          hashes,
+          {
+            cause: failure,
+          },
         )
       }
-      // The lock has to hold this commitment under exactly the approval the agent checked.
-      const held = await backingAt(commitmentId, landed.blockNumber).catch(() => null)
-      const expected = approvalDigest(answer.approval.message, d)
-      if (!held || held.approvalHash.toLowerCase() !== expected.toLowerCase()) {
-        throw new BookingError(
-          `${landed.transactionHash} landed, but the lock doesn't show the reserve for ${commitmentId} under Avow's approval`,
-          'unknown',
-          approved,
-          [landed.transactionHash],
-        )
+      const settled = await reconcile(approved, hashes)
+      if (settled.outcome === 'funded') {
+        return { ok: true, commitment: { ...approved, reservedIn: settled.reservedIn } }
       }
-      return { ok: true, commitment: { ...approved, reservedIn: landed.transactionHash } }
+      throw new BookingError(
+        settled.outcome === 'failed'
+          ? `Funding ${commitmentId} failed, and the lock holds no reserve for it: ${what}`
+          : `Whether ${commitmentId} was funded is unknown: ${what}`,
+        settled.outcome,
+        approved,
+        hashes,
+        { cause: failure ?? undefined },
+      )
     },
+
+    /**
+     * Reads the lock for a commitment `book` approved but couldn't settle, once Avow's approval can
+     * no longer land, so the agent learns whether that booking was funded instead of making
+     * another. It takes what a `BookingError` carries.
+     */
+    reconcile,
 
     /**
      * Tells Avow the business cancels a commitment, which Avow timestamps. Before free
@@ -416,21 +511,28 @@ export function createAgent(config: AgentConfig) {
     },
 
     /**
-     * Starts the job with the supplier. Avow timestamps the request, the supplier returns its
-     * signed start receipt, which the agent checks answers the request and comes from the
-     * supplier's signing key, and Avow records the start the kept booking rests on.
+     * Starts the job with the supplier. The lock has to hold the commitment with this supplier's
+     * signing key. Avow timestamps the request, the supplier returns its signed start receipt,
+     * which the agent checks answers the request and comes from that key, and Avow records the
+     * start the kept booking rests on.
      */
     async start(
       commitmentId: Hex,
       supplier: SupplierConnection,
     ): Promise<{ ok: true; receipt: Signed<StartReceipt> } | { ok: false; reason: ReasonCode }> {
       if (!permits('start')) return { ok: false, reason: 'mandate.action_not_permitted' }
+      // The receipt has to come from the signing key the lock holds for the commitment.
+      const held = await readBacking(client, d.verifyingContract, commitmentId, 'buyer')
+      if (!held) return { ok: false, reason: 'chain.reserve_missing' }
+      if (!isAddressEqual(held.supplierSigner, supplier.profile.signingKey)) {
+        return { ok: false, reason: 'chain.supplier_mismatch' }
+      }
       const request = await avow.requestStart({ commitmentId })
       const receipt = await supplier.startJob({ commitmentId, ...request })
       const problem = receiptProblem(receipt, {
         commitmentId,
         ...request,
-        signer: supplier.profile.signingKey,
+        signer: held.supplierSigner,
       })
       if (problem) return { ok: false, reason: problem }
       const recorded = await avow.recordStart({ commitmentId, receipt })
