@@ -1,3 +1,4 @@
+import type { Address } from 'viem'
 import type { ComputeTerms } from './types.js'
 
 /** Whole dollars in micros. */
@@ -12,9 +13,10 @@ const HOUR = 60n * MINUTE
 /**
  * Demo terms for 8 H100s: a $500 reserve, free cancellation until 24 hours
  * before the start, $250 for a late cancellation, $500 for a no-show, 30 minutes' grace and a
- * 72-hour contest window. Usage is $3 per GPU-hour, paid separately.
+ * 72-hour contest window. Usage is $3 per GPU-hour, paid separately. A dispute nobody rules on
+ * by day 90 splits a confirmed charge evenly, and the caller names the arbiter.
  */
-export function demoTerms(windowStart: bigint): ComputeTerms {
+export function demoTerms(windowStart: bigint, arbiter: Address): ComputeTerms {
   const windowEnd = windowStart + 24n * HOUR
   return {
     kind: 'compute',
@@ -32,6 +34,7 @@ export function demoTerms(windowStart: bigint): ComputeTerms {
     chargeDeadline: windowEnd,
     contestWindow: 72n * HOUR,
     releaseDate: windowEnd,
+    dispute: { arbiter, day90SupplierShareBps: 5000 },
   }
 }
 
@@ -40,10 +43,10 @@ export function demoTerms(windowStart: bigint): ComputeTerms {
  * cancellation until 10 minutes before, 2 minutes' grace and a 10-minute contest window, which
  * only the testnet demo profile accepts.
  */
-export function testnetDemoTerms(windowStart: bigint): ComputeTerms {
+export function testnetDemoTerms(windowStart: bigint, arbiter: Address): ComputeTerms {
   const windowEnd = windowStart + 30n * MINUTE
   return {
-    ...demoTerms(windowStart),
+    ...demoTerms(windowStart, arbiter),
     windowDuration: 30n * MINUTE,
     freeCancelBy: windowStart - 10n * MINUTE,
     gracePeriod: 2n * MINUTE,

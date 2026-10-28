@@ -6,163 +6,45 @@ import {
   mandateHash,
   mandateTypedData,
   PRODUCTION_PROFILE,
-  type RailToken,
-  type SupplierAuthorization,
-  signForAccount,
-  supplierAuthorizationTypedData,
-  TESTNET_DEMO_PROFILE,
   termsHash,
-  testnetDemoTerms,
   toWire,
 } from '@avow-finance/spec'
-import { type Address, type Hex, keccak256, stringToHex, zeroAddress } from 'viem'
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
+import { zeroAddress } from 'viem'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { type LockedBacking, MemoryChain } from './chain.js'
-import { type VerifierConfig, type VerifierDeps, verifySupplierAuthorization } from './verify.js'
-
-// Keys are generated for each run and never leave memory.
-const newKey = () => privateKeyToAccount(generatePrivateKey())
-const id = (label: string): Hex => keccak256(stringToHex(label))
-
-const CHAIN_ID = 42431
-const START = 1_800_000_000n
-const NOW = START - 3600n
-const LOCK: Address = '0x00000000000000000000000000000000000010c4'
-const PAYEE: Address = '0x000000000000000000000000000000000000beef'
-const TOKEN: RailToken = {
-  rail: 'tempo',
-  chainId: CHAIN_ID,
-  token: '0x20c0000000000000000000000000000000000001',
-  currency: 'USD',
-  decimals: 6,
-}
-const DOMAIN = { chainId: CHAIN_ID, verifyingContract: LOCK }
-const SALT = `0x${'55'.repeat(32)}` as const
-const COMMITMENT = id('commitment-1')
-const KEY_TX = id('the transaction that authorized the agent key')
-
-const avow = newKey()
-const buyer = newKey() // the business account's root key, the administrator's on testnet
-const agent = newKey()
-const terms = testnetDemoTerms(START)
-const TERMS_HASH = termsHash(terms, SALT)
-const agreed = { commitmentId: COMMITMENT, termsHash: TERMS_HASH, category: 'compute' }
-
-const mandate: Mandate = {
-  mandateId: id('mandate-1'),
-  businessId: 'biz_buyer',
-  agentId: 'agt_1',
-  account: buyer.address,
-  agentKey: agent.address,
-  actions: ['reserve'],
-  currency: 'USD',
-  capPerCommitment: 1_000_000_000n,
-  capOpenReserves: 2_000_000_000n,
-  suppliers: ['biz_supplier'],
-  categories: [],
-  paymentLimits: [{ token: TOKEN.token, amount: 5_000_000_000n, period: 86_400n }],
-  approvalRule: { kind: 'never' },
-  expiry: START + 30n * 86_400n,
-  nonce: 1n,
-}
-const mHash = mandateHash(mandate, DOMAIN)
-
-function authorization(change: Partial<SupplierAuthorization> = {}): SupplierAuthorization {
-  return {
-    commitmentId: COMMITMENT,
-    termsHash: TERMS_HASH,
-    salt: SALT,
-    amount: terms.reserve,
-    token: TOKEN.token,
-    buyerBusinessId: 'biz_buyer',
-    kybReference: 'mock-kyb-1',
-    kybTestData: true,
-    agentKey: agent.address,
-    agentKeyAuthorizedIn: KEY_TX,
-    mandateHash: mHash,
-    payee: PAYEE,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
-    nonce: 1n,
-    expiry: NOW + 300n,
-    ...change,
-  }
-}
-
-const json = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
-
-async function signedAuthorization(
-  message = authorization(),
-  opts: { signer?: ReturnType<typeof newKey>; schemaVersion?: string; chainId?: number } = {},
-): Promise<Record<string, unknown> & { message: Record<string, unknown> }> {
-  const signer = opts.signer ?? avow
-  const signature = await signer.sign({
-    hash: digestOf(supplierAuthorizationTypedData(message, DOMAIN)),
-  })
-  return json({
-    type: 'SupplierAuthorization',
-    schemaVersion: opts.schemaVersion ?? '1',
-    chainId: opts.chainId ?? CHAIN_ID,
-    lock: LOCK,
-    message,
-    signature,
-  })
-}
-
-/** The buyer's administrator signs as the business account, in Tempo's keychain envelope. */
-async function signedMandate(m: Mandate, key = buyer): Promise<unknown> {
-  const signature = await signForAccount(buyer.address, digestOf(mandateTypedData(m, DOMAIN)), key)
-  return json({
-    type: 'Mandate',
-    schemaVersion: '1',
-    chainId: CHAIN_ID,
-    lock: LOCK,
-    message: m,
-    signature,
-  })
-}
-
-function lockedBacking(change: Partial<LockedBacking> = {}): LockedBacking {
-  return {
-    state: 'reserved',
-    token: TOKEN.token,
-    amount: terms.reserve,
-    payee: PAYEE,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    contestWindow: terms.contestWindow,
-    releaseDate: terms.releaseDate,
-    termsHash: TERMS_HASH,
-    fundingKey: agent.address,
-    ...change,
-  }
-}
-
-const config: VerifierConfig = {
-  chainId: CHAIN_ID,
-  avowKeys: [avow.address],
-  businessId: 'biz_supplier',
-  payee: PAYEE,
-  acceptedTokens: [TOKEN],
-  profile: TESTNET_DEMO_PROFILE,
-  acceptTestData: true,
-}
+import {
+  agent,
+  agreed,
+  authorization,
+  avow,
+  buyer,
+  CHAIN_ID,
+  COMMITMENT,
+  config,
+  DOMAIN,
+  id,
+  json,
+  KEY_TX,
+  LOCK,
+  lockedBacking,
+  lockInfo,
+  mandate,
+  mHash,
+  NOW,
+  newKey,
+  reservedChain,
+  signedAuthorization,
+  signedMandate,
+  TOKEN,
+  terms,
+} from './test-helpers.js'
+import { type Agreed, type VerifierDeps, verifySupplierAuthorization } from './verify.js'
 
 let chain: MemoryChain
 let deps: VerifierDeps
 
 beforeEach(() => {
-  chain = new MemoryChain(CHAIN_ID)
-  chain.setLock(LOCK, { fromFactory: true, account: buyer.address })
-  chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking())
-  chain.setAgentKey(
-    buyer.address,
-    agent.address,
-    { active: true, expiry: null, witness: mHash },
-    KEY_TX,
-  )
+  chain = reservedChain()
   deps = { config, chain, replay: new MemoryReplayGuard() }
 })
 
@@ -170,7 +52,7 @@ async function verify(
   auth?: unknown,
   rest: {
     terms?: ComputeTerms
-    agreed?: typeof agreed
+    agreed?: Agreed
     mandate?: unknown
     now?: bigint
     deps?: VerifierDeps
@@ -242,7 +124,7 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
   })
 
   it("refuses a lock that isn't from Avow's factory", async () => {
-    chain.setLock(LOCK, { fromFactory: false, account: buyer.address })
+    chain.setLock(LOCK, lockInfo({ fromFactory: false }))
     expect(await verify()).toEqual(refused('chain.lock_unknown'))
     const empty = new MemoryChain(CHAIN_ID)
     expect(await verify(undefined, { deps: { ...deps, chain: empty } })).toEqual(
@@ -407,6 +289,40 @@ describe('changes after signing', () => {
   })
 })
 
+describe('the buyer the supplier agreed with', () => {
+  it("refuses an authorization for another buyer, or another mandate, than the agreement's", async () => {
+    expect(
+      await verify(undefined, { agreed: { ...agreed, buyerBusinessId: 'biz_other' } }),
+    ).toEqual(refused('authorization.buyer_mismatch'))
+    expect(await verify(undefined, { agreed: { ...agreed, mandateHash: id('other') } })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
+  })
+
+  it('checks neither when the supplier leaves them out', async () => {
+    const { buyerBusinessId: _b, mandateHash: _m, ...older } = agreed
+    expect((await verify(undefined, { agreed: older })).ok).toBe(true)
+  })
+
+  it("refuses a mandate signed for another business than the authorization's buyer", async () => {
+    const other = { ...mandate, businessId: 'biz_someone_else' }
+    const otherHash = mandateHash(other, DOMAIN)
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: otherHash },
+      KEY_TX,
+    )
+    const auth = await signedAuthorization(authorization({ mandateHash: otherHash }))
+    expect(
+      await verify(auth, {
+        mandate: await signedMandate(other),
+        agreed: { ...agreed, mandateHash: otherHash },
+      }),
+    ).toEqual(refused('authorization.mandate_mismatch'))
+  })
+})
+
 describe("the buyer's mandate, when the supplier has it", () => {
   it("refuses a mandate that isn't the one the authorization names", async () => {
     const wider = { ...mandate, capPerCommitment: 2_000_000_000n }
@@ -463,9 +379,11 @@ describe("the buyer's mandate, when the supplier has it", () => {
         KEY_TX,
       )
       const auth = await signedAuthorization(authorization({ mandateHash: narrowHash }))
-      expect(await verify(auth, { mandate: await signedMandate(narrow) }), reason).toEqual(
-        refused(reason),
-      )
+      const narrowAgreed = { ...agreed, mandateHash: narrowHash }
+      expect(
+        await verify(auth, { mandate: await signedMandate(narrow), agreed: narrowAgreed }),
+        reason,
+      ).toEqual(refused(reason))
     }
   })
 })

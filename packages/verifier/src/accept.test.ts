@@ -1,58 +1,524 @@
-import { type Approval, termsHash, testnetDemoTerms } from '@avow-finance/spec'
-import { type Address, type Hex, keccak256, stringToHex, zeroAddress } from 'viem'
-import { describe, expect, it } from 'vitest'
-import { prepareAcceptance } from './accept.js'
+import {
+  type Approval,
+  acceptanceTypedData,
+  type ComputeTerms,
+  digestOf,
+  isKeySignature,
+  type Mandate,
+  mandateHash,
+  PRODUCTION_PROFILE,
+  toWire,
+} from '@avow-finance/spec'
+import { type Address, zeroAddress } from 'viem'
+import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  ACCEPTANCE_VALIDITY,
+  type AcceptanceDeps,
+  prepareAcceptance,
+  signAcceptance,
+} from './accept.js'
+import type { LockedBacking, MemoryChain } from './chain.js'
+import { disclosureId, formatDuration, formatTime } from './disclosure.js'
+import {
+  ARBITER,
+  acceptanceConfig,
+  agent,
+  agreed,
+  approval,
+  authorization,
+  buyer,
+  COMMITMENT,
+  DOMAIN,
+  id,
+  KEY_TX,
+  LOCK,
+  lockedBacking,
+  lockInfo,
+  mandate,
+  mHash,
+  NOW,
+  newKey,
+  PAYEE,
+  reservedChain,
+  signedApproval,
+  signedAuthorization,
+  signedMandate,
+  supplierKey,
+  terms,
+} from './test-helpers.js'
 
-const id = (label: string): Hex => keccak256(stringToHex(label))
-const address = (label: string): Address => `0x${id(label).slice(-40)}`
+let chain: MemoryChain
+let deps: AcceptanceDeps
 
-const START = 1_800_000_000n
-const terms = testnetDemoTerms(START)
-const domain = { chainId: 42431, verifyingContract: address('lock') }
+beforeEach(() => {
+  chain = reservedChain()
+  deps = { config: acceptanceConfig, chain }
+})
 
-// Avow's approval for the demo terms, matching them in every field the terms carry. The day-90
-// share and the arbiter are Avow's, since the terms have no field for either.
-const approval: Approval = {
-  commitmentId: id('commitment'),
-  side: 'buyer',
-  token: '0x20c0000000000000000000000000000000000001',
-  amount: terms.reserve,
-  supplier: address('supplier account'),
-  supplierSigner: address('supplier signing key'),
-  payee: address('supplier payout'),
-  freeCancelBy: terms.freeCancelBy,
-  acceptBy: terms.acceptBy,
-  chargeDeadline: terms.chargeDeadline,
-  releaseDate: terms.releaseDate,
-  contestWindow: terms.contestWindow,
-  charges: [
-    { kind: 'lateCancellation', most: terms.lateCancellation, earliest: terms.freeCancelBy },
-    { kind: 'noShow', most: terms.noShow, earliest: terms.windowStart + terms.gracePeriod },
-  ],
-  day90SupplierShareBps: 5000,
-  arbiter: address('arbiter'),
-  termsHash: termsHash(terms, `0x${'55'.repeat(32)}`),
-  mandateHash: id('mandate'),
-  capPerCommitment: terms.reserve,
-  capOpenReserves: 2n * terms.reserve,
-  fundingKey: zeroAddress,
-  nonce: 1n,
-  expiry: START,
+const refused = (reason: string) => ({ ok: false, reason })
+
+async function prepare(
+  change: {
+    authorization?: unknown
+    approval?: unknown
+    mandate?: unknown
+    terms?: ComputeTerms
+    agreed?: typeof agreed
+    now?: bigint
+    deps?: AcceptanceDeps
+  } = {},
+) {
+  return prepareAcceptance(
+    {
+      authorization: change.authorization ?? (await signedAuthorization()),
+      approval: change.approval ?? (await signedApproval()),
+      mandate: 'mandate' in change ? change.mandate : await signedMandate(mandate),
+      agreed: change.agreed ?? agreed,
+      terms: change.terms ?? terms,
+      now: change.now ?? NOW,
+      nonce: 7n,
+    },
+    change.deps ?? deps,
+  )
 }
 
-describe('prepareAcceptance', () => {
-  it('builds no acceptance while the terms lack the day-90 share and the arbiter', () => {
-    expect(prepareAcceptance({ approval, terms, domain })).toEqual({
-      ok: false,
-      reason: 'terms.incomplete',
+async function ready() {
+  const prepared = await prepare()
+  if (!prepared.ok) throw new Error(prepared.reason)
+  return prepared
+}
+
+describe('the supported acceptance path', () => {
+  it('builds the acceptance the lock checks, naming the digest the lock stored', async () => {
+    const prepared = await ready()
+    const stored = lockedBacking().approvalHash
+    expect(prepared.approvalDigest).toBe(stored)
+    expect(prepared.acceptance).toEqual({
+      commitmentId: COMMITMENT,
+      side: 'buyer',
+      approvalHash: stored,
+      termsHash: agreed.termsHash,
+      amount: 500_000_000n,
+      token: approval().token,
+      acceptBy: terms.acceptBy,
+      nonce: 7n,
+      expiry: NOW + ACCEPTANCE_VALIDITY,
     })
+    expect(prepared.digest).toBe(digestOf(acceptanceTypedData(prepared.acceptance, DOMAIN)))
+    expect(prepared.signingKey).toBe(supplierKey.address)
   })
 
-  it('builds none for an approval that differs from the terms either', () => {
-    const later = { ...approval, freeCancelBy: approval.freeCancelBy + 600n }
-    expect(prepareAcceptance({ approval: later, terms, domain })).toEqual({
-      ok: false,
-      reason: 'terms.incomplete',
+  it('never lets the acceptance outlive the acceptance deadline', async () => {
+    const late = terms.acceptBy - 60n
+    const auth = await signedAuthorization(authorization({ expiry: late + 300n }))
+    const prepared = await prepare({ authorization: auth, now: late })
+    expect(prepared.ok && prepared.acceptance.expiry).toBe(terms.acceptBy)
+  })
+
+  it('accepts a reserve the business funded with its root key', async () => {
+    const a = approval({ fundingKey: zeroAddress })
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, a))
+    expect((await prepare({ approval: await signedApproval(a) })).ok).toBe(true)
+  })
+
+  it('records nothing, so the same reserve can be prepared again', async () => {
+    expect((await prepare()).ok).toBe(true)
+    expect((await prepare()).ok).toBe(true)
+  })
+})
+
+describe('signing the acceptance', () => {
+  it('signs with the supplier signing key once the disclosure is confirmed', async () => {
+    const prepared = await ready()
+    const signed = await signAcceptance(prepared, supplierKey, {
+      disclosureId: prepared.disclosure.id,
     })
+    expect(signed).toMatchObject({ type: 'Acceptance', chainId: 42431, lock: LOCK })
+    expect(signed.message).toEqual(prepared.acceptance)
+    expect(isKeySignature(prepared.digest, signed.signature, supplierKey.address)).toBe(true)
+  })
+
+  it('refuses without the confirmation, or with another disclosure id', async () => {
+    const prepared = await ready()
+    await expect(
+      signAcceptance(prepared, supplierKey, { disclosureId: undefined as never }),
+    ).rejects.toThrow(/disclosure/)
+    await expect(
+      signAcceptance(prepared, supplierKey, { disclosureId: id('another disclosure') }),
+    ).rejects.toThrow(/disclosure/)
+  })
+
+  it("refuses a key that isn't the signing key the approval names", async () => {
+    const prepared = await ready()
+    await expect(
+      signAcceptance(prepared, newKey(), { disclosureId: prepared.disclosure.id }),
+    ).rejects.toThrow(/signing key/)
+  })
+
+  it('refuses a copy or an edit of what prepareAcceptance returned', async () => {
+    const prepared = await ready()
+    const confirm = { disclosureId: prepared.disclosure.id }
+    const notBuilt = /as it returned it/
+    // A copy with another amount.
+    const changedAcceptance = {
+      ...prepared,
+      acceptance: { ...prepared.acceptance, amount: prepared.acceptance.amount - 1n },
+    }
+    await expect(signAcceptance(changedAcceptance, supplierKey, confirm)).rejects.toThrow(notBuilt)
+    // A copy with its digest and disclosure rebuilt to match, so it agrees with itself.
+    const later = { ...prepared.acceptance, expiry: prepared.acceptance.expiry + 3600n }
+    const digest = digestOf(acceptanceTypedData(later, prepared.domain))
+    const sections = [{ heading: 'Nothing to see', lines: ['Sign here'] }]
+    const rebuilt = {
+      ...prepared,
+      acceptance: later,
+      digest,
+      disclosure: {
+        ...prepared.disclosure,
+        digest,
+        sections,
+        id: disclosureId({ ...prepared.disclosure, digest, sections }),
+      },
+    }
+    await expect(
+      signAcceptance(rebuilt, supplierKey, { disclosureId: rebuilt.disclosure.id }),
+    ).rejects.toThrow(notBuilt)
+    // The object itself can't be changed in place.
+    expect(() => {
+      ;(prepared.acceptance as { amount: bigint }).amount = 1n
+    }).toThrow(TypeError)
+    const lines = (prepared.disclosure.sections[0]?.lines ?? []) as string[]
+    expect(lines.length).toBeGreaterThan(0)
+    expect(() => lines.push('More')).toThrow(TypeError)
+    expect((await signAcceptance(prepared, supplierKey, confirm)).message.amount).toBe(500_000_000n)
+  })
+})
+
+describe('every term of the approval that binds the supplier', () => {
+  const other: Address = '0x000000000000000000000000000000000000dead'
+  const charges = approval().charges
+  const [late, noShow] = charges as [(typeof charges)[0], (typeof charges)[0]]
+  const cases: [string, Partial<Approval>, string][] = [
+    ['commitment', { commitmentId: id('commitment-2') }, 'approval.commitment_mismatch'],
+    ['supplier account', { supplier: newKey().address }, 'approval.parties_mismatch'],
+    ['signing key', { supplierSigner: newKey().address }, 'approval.parties_mismatch'],
+    ['payout', { payee: other }, 'approval.parties_mismatch'],
+    ['side', { side: 'supplier' }, 'approval.terms_mismatch'],
+    ['token', { token: '0x20c0000000000000000000000000000000000002' }, 'approval.terms_mismatch'],
+    ['amount', { amount: 500_000_001n }, 'approval.terms_mismatch'],
+    ['free cancellation', { freeCancelBy: terms.freeCancelBy + 1n }, 'approval.terms_mismatch'],
+    ['acceptance deadline', { acceptBy: terms.acceptBy + 1n }, 'approval.terms_mismatch'],
+    ['charge deadline', { chargeDeadline: terms.chargeDeadline + 1n }, 'approval.terms_mismatch'],
+    ['release date', { releaseDate: terms.releaseDate + 1n }, 'approval.terms_mismatch'],
+    ['contest window', { contestWindow: terms.contestWindow - 1n }, 'approval.terms_mismatch'],
+    ['terms hash', { termsHash: id('other terms') }, 'approval.terms_mismatch'],
+    ['first kind', { charges: [{ ...late, kind: 'noShow' }, noShow] }, 'approval.charges_mismatch'],
+    [
+      'first most',
+      { charges: [{ ...late, most: late.most - 1n }, noShow] },
+      'approval.charges_mismatch',
+    ],
+    [
+      'first earliest',
+      { charges: [{ ...late, earliest: late.earliest + 1n }, noShow] },
+      'approval.charges_mismatch',
+    ],
+    [
+      'second most',
+      { charges: [late, { ...noShow, most: noShow.most + 1n }] },
+      'approval.charges_mismatch',
+    ],
+    [
+      'second earliest',
+      { charges: [late, { ...noShow, earliest: noShow.earliest - 1n }] },
+      'approval.charges_mismatch',
+    ],
+    ['a charge dropped', { charges: [noShow] }, 'approval.charges_mismatch'],
+    ['charges reordered', { charges: [noShow, late] }, 'approval.charges_mismatch'],
+    ['day-90 share', { day90SupplierShareBps: 4999 }, 'approval.dispute_mismatch'],
+    ['arbiter', { arbiter: other }, 'approval.dispute_mismatch'],
+    ['mandate hash', { mandateHash: id('another mandate') }, 'approval.mandate_mismatch'],
+    ['cap per commitment', { capPerCommitment: 1_000_000_001n }, 'approval.mandate_mismatch'],
+    ['cap on open reserves', { capOpenReserves: 2_000_000_001n }, 'approval.mandate_mismatch'],
+    ['funding key', { fundingKey: newKey().address }, 'approval.mandate_mismatch'],
+    ['root key in place of the agent', { fundingKey: zeroAddress }, 'approval.mandate_mismatch'],
+    ['nonce', { nonce: 2n }, 'chain.approval_mismatch'],
+    ['expiry', { expiry: NOW + 121n }, 'chain.approval_mismatch'],
+  ]
+
+  it('covers every field of the approval', () => {
+    const changed = new Set(cases.flatMap(([, change]) => Object.keys(change)))
+    expect([...changed].sort()).toEqual(Object.keys(approval()).sort())
+  })
+
+  for (const [name, change, reason] of cases) {
+    it(`refuses an approval with another ${name}, while the lock holds the original`, async () => {
+      const tampered = await signedApproval(approval(change))
+      expect(await prepare({ approval: tampered })).toEqual(refused(reason))
+    })
+  }
+
+  it('refuses an approval for another lock', async () => {
+    const tampered = {
+      ...(await signedApproval()),
+      lock: '0x00000000000000000000000000000000000010c5',
+    }
+    expect(await prepare({ approval: tampered })).toEqual(refused('message.wrong_contract'))
+  })
+
+  it('refuses an approval that is missing a term', async () => {
+    const signed = await signedApproval()
+    const { arbiter: _, ...message } = signed.message as Record<string, unknown>
+    expect(await prepare({ approval: { ...signed, message } })).toEqual(refused('message.invalid'))
+  })
+})
+
+describe("the supplier's own terms", () => {
+  it('refuses terms without the dispute block', async () => {
+    const { dispute: _, ...older } = terms
+    expect(await prepare({ terms: older as ComputeTerms })).toEqual(refused('terms.incomplete'))
+  })
+
+  it('refuses terms other than the ones the supplier agreed to and Avow signed', async () => {
+    const changes: Partial<ComputeTerms>[] = [
+      { dispute: { ...terms.dispute, arbiter: newKey().address } },
+      { dispute: { ...terms.dispute, day90SupplierShareBps: 10_000 } },
+      { noShow: terms.noShow - 1n },
+      { gracePeriod: terms.gracePeriod + 1n },
+    ]
+    for (const change of changes) {
+      expect(
+        await prepare({ terms: { ...terms, ...change } }),
+        JSON.stringify(toWire(change)),
+      ).toEqual(refused('terms.hash_mismatch'))
+    }
+  })
+
+  it("refuses a buyer or a mandate other than the ones the supplier's agreement names", async () => {
+    expect(await prepare({ agreed: { ...agreed, buyerBusinessId: 'biz_other' } })).toEqual(
+      refused('authorization.buyer_mismatch'),
+    )
+    expect(await prepare({ agreed: { ...agreed, mandateHash: id('other mandate') } })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
+  })
+
+  it('needs the buyer and the mandate from the agreement', async () => {
+    const { buyerBusinessId: _b, ...noBuyer } = agreed
+    expect(await prepare({ agreed: noBuyer as typeof agreed })).toEqual(refused('message.invalid'))
+    const { mandateHash: _m, ...noMandate } = agreed
+    expect(await prepare({ agreed: noMandate as typeof agreed })).toEqual(
+      refused('message.invalid'),
+    )
+  })
+
+  it('refuses a commitment the supplier did not agree to', async () => {
+    expect(await prepare({ agreed: { ...agreed, commitmentId: id('commitment-2') } })).toEqual(
+      refused('authorization.commitment_mismatch'),
+    )
+  })
+})
+
+describe("the buyer's mandate and the agent's authority", () => {
+  /** Rewires the chain, the authorization and the approval for another mandate. */
+  async function under(m: Mandate) {
+    const h = mandateHash(m, DOMAIN)
+    const a = approval({
+      mandateHash: h,
+      capPerCommitment: m.capPerCommitment,
+      capOpenReserves: m.capOpenReserves,
+    })
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: h },
+      KEY_TX,
+    )
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, a))
+    return prepare({
+      authorization: await signedAuthorization(authorization({ mandateHash: h })),
+      approval: await signedApproval(a),
+      mandate: await signedMandate(m),
+      agreed: { ...agreed, mandateHash: h },
+    })
+  }
+
+  it('passes the same reserve under a mandate that allows it', async () => {
+    expect((await under({ ...mandate, nonce: 2n })).ok).toBe(true)
+  })
+
+  it('refuses without the mandate', async () => {
+    expect(await prepare({ mandate: undefined })).toEqual(refused('mandate.missing'))
+    expect(await prepare({ mandate: null })).toEqual(refused('mandate.missing'))
+  })
+
+  it("refuses a mandate the buyer's account didn't sign", async () => {
+    expect(await prepare({ mandate: await signedMandate(mandate, newKey()) })).toEqual(
+      refused('mandate.signature_invalid'),
+    )
+  })
+
+  it("refuses a mandate other than the one Avow's authorization names", async () => {
+    const other = await signedMandate({ ...mandate, capPerCommitment: 900_000_000n })
+    expect(await prepare({ mandate: other })).toEqual(refused('authorization.mandate_mismatch'))
+  })
+
+  it("refuses a mandate signed for another business than the agreement's buyer", async () => {
+    expect(await under({ ...mandate, businessId: 'biz_someone_else' })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
+  })
+
+  it('refuses a mandate that has expired or ends before the release date', async () => {
+    expect(await under({ ...mandate, expiry: NOW })).toEqual(refused('mandate.expired'))
+    expect(await under({ ...mandate, expiry: terms.releaseDate - 1n })).toEqual(
+      refused('mandate.ends_before_window'),
+    )
+  })
+
+  it('refuses an agent key that is revoked, expires too soon or carries another mandate', async () => {
+    const set = (info: { active: boolean; expiry: bigint | null; witness: `0x${string}` }) =>
+      chain.setAgentKey(buyer.address, agent.address, info, KEY_TX)
+    set({ active: false, expiry: null, witness: mHash })
+    expect(await prepare()).toEqual(refused('chain.agent_key_inactive'))
+    set({ active: true, expiry: terms.releaseDate - 1n, witness: mHash })
+    expect(await prepare()).toEqual(refused('chain.agent_key_inactive'))
+    set({ active: true, expiry: null, witness: id('another mandate') })
+    expect(await prepare()).toEqual(refused('chain.mandate_mismatch'))
+  })
+
+  it("refuses a reserve outside the mandate's scope", async () => {
+    const cases: [Partial<Mandate>, string][] = [
+      [{ actions: ['cancel'] }, 'mandate.action_not_permitted'],
+      [{ suppliers: ['biz_someone_else'] }, 'mandate.supplier_not_allowed'],
+      [{ categories: ['storage'] }, 'mandate.category_not_allowed'],
+      [{ capPerCommitment: 100_000_000n }, 'mandate.over_commitment_cap'],
+      [
+        {
+          paymentLimits: [
+            { token: '0x20c0000000000000000000000000000000000002', amount: 1n, period: 0n },
+          ],
+        },
+        'mandate.token_not_allowed',
+      ],
+      [
+        { paymentLimits: [{ token: approval().token, amount: 100_000_000n, period: 0n }] },
+        'mandate.over_payment_limit',
+      ],
+    ]
+    for (const [change, reason] of cases) {
+      expect(await under({ ...mandate, ...change }), reason).toEqual(refused(reason))
+    }
+  })
+})
+
+describe('the lock', () => {
+  it('refuses when the lock holds the reserve under another approval', async () => {
+    chain.setBacking(
+      LOCK,
+      COMMITMENT,
+      'buyer',
+      lockedBacking({ approvalHash: id('another approval') }),
+    )
+    expect(await prepare()).toEqual(refused('chain.approval_mismatch'))
+  })
+
+  it("refuses when the lock's record differs from the approval it names", async () => {
+    const changes: Partial<LockedBacking>[] = [
+      { supplier: newKey().address },
+      { supplierSigner: newKey().address },
+      { freeCancelBy: terms.freeCancelBy + 1n },
+      { charges: approval().charges.slice(1) },
+      { day90SupplierShareBps: 0 },
+      { arbiter: newKey().address },
+      { mandateHash: id('another mandate') },
+    ]
+    for (const change of changes) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking(change))
+      expect(await prepare(), Object.keys(change).join()).toEqual(
+        refused('chain.approval_mismatch'),
+      )
+    }
+  })
+
+  it('refuses a reserve that is missing, already accepted, or funded by another key', async () => {
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', null)
+    expect(await prepare()).toEqual(refused('chain.reserve_missing'))
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ state: 'accepted' }))
+    expect(await prepare()).toEqual(refused('chain.reserve_accepted'))
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ fundingKey: newKey().address }))
+    expect(await prepare()).toEqual(refused('chain.reserve_mismatch'))
+  })
+
+  it("refuses a lock that isn't from Avow's factory", async () => {
+    chain.setLock(LOCK, lockInfo({ fromFactory: false }))
+    expect(await prepare()).toEqual(refused('chain.lock_unknown'))
+  })
+
+  it("refuses a lock whose dispute timing or token isn't the profile's", async () => {
+    const timing = lockInfo().timing
+    for (const change of [
+      { timing: { ...timing, confirmWindow: timing.confirmWindow + 1n } },
+      { timing: { ...timing, rulingKeyEnd: timing.rulingKeyEnd - 1n } },
+      { timing: { ...timing, day90: timing.day90 * 2n } },
+      { timing: { ...timing, rulingDelay: 0n } },
+      { timing: { ...timing, minContestWindow: 60n } },
+      { timing: PRODUCTION_PROFILE.lockTiming },
+      { token: '0x20c0000000000000000000000000000000000002' as Address },
+    ]) {
+      chain.setLock(LOCK, lockInfo(change))
+      expect(await prepare(), JSON.stringify(toWire(change))).toEqual(
+        refused('chain.lock_timing_unexpected'),
+      )
+    }
+  })
+})
+
+describe('the disclosure', () => {
+  it('shows the exposure, the deadlines and the dispute terms before anything is signed', async () => {
+    const { disclosure } = await ready()
+    const text = disclosure.sections.map((s) => `${s.heading}\n${s.lines.join('\n')}`).join('\n')
+    expect(disclosure.sections.map((s) => s.heading)).toEqual([
+      "What you're accepting",
+      'Your exposure',
+      'Deadlines',
+      'Disputes',
+    ])
+    for (const expected of [
+      COMMITMENT,
+      lockedBacking().approvalHash,
+      'The business reserved USD 500 (500000000 base units',
+      'A late cancellation can charge up to USD 250 (250000000 base units',
+      `reported from ${formatTime(terms.freeCancelBy)}`,
+      'A no-show can charge up to USD 500 (500000000 base units',
+      `reported from ${formatTime(terms.windowStart + terms.gracePeriod)}`,
+      `Free cancellation ends at ${formatTime(terms.freeCancelBy)}`,
+      `This acceptance stops working at ${formatTime(NOW + ACCEPTANCE_VALIDITY)}`,
+      `the lock takes no acceptance from ${formatTime(terms.acceptBy)}`,
+      `Report any charge before ${formatTime(terms.chargeDeadline)}`,
+      `goes back to the business at ${formatTime(terms.releaseDate)}`,
+      'within 5 minutes',
+      "contest a confirmed charge for 10 minutes, and a report Avow hasn't confirmed at any time",
+      'Avow can also pause a confirmed charge before its contest window closes',
+      'The commitment takes at most two reports, one at a time.',
+      'rule for 30 minutes after the pause',
+      `the arbiter ${'0x000000000000000000000000000000000000A4b1'}`,
+      'until 90 minutes after it',
+      'takes effect 5 minutes after',
+      'pays you 50% of it',
+    ]) {
+      expect(text).toContain(expected)
+    }
+    expect(text.toLowerCase()).toContain(PAYEE.toLowerCase())
+    expect(text.toLowerCase()).toContain(ARBITER.toLowerCase())
+    expect(disclosure.preauthorization).toBeNull()
+    expect(disclosure.digest).toBe((await ready()).digest)
+  })
+
+  it('writes durations in the largest whole unit', () => {
+    expect(formatDuration(259_200n)).toBe('3 days')
+    expect(formatDuration(86_400n)).toBe('1 day')
+    expect(formatDuration(5400n)).toBe('90 minutes')
+    expect(formatDuration(90n)).toBe('90 seconds')
   })
 })

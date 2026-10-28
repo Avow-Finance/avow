@@ -5,9 +5,11 @@ import {
   newSalt,
   PRODUCTION_PROFILE,
   TESTNET_DEMO_PROFILE,
+  termsCharges,
   termsHash,
   validateTerms,
 } from './terms.js'
+import { ARBITER } from './test-helpers.js'
 import type { ComputeTerms } from './types.js'
 
 const START = 1_800_000_000n
@@ -21,7 +23,7 @@ describe('canonicalJson', () => {
   })
 
   it('gives the same bytes whatever order the keys were written in', () => {
-    const terms = testnetDemoTerms(START)
+    const terms = testnetDemoTerms(START, ARBITER)
     const reversed = Object.fromEntries(Object.entries(terms).reverse())
     expect(canonicalJson(reversed)).toBe(canonicalJson(terms))
   })
@@ -40,17 +42,19 @@ describe('canonicalJson', () => {
 
 describe('termsHash', () => {
   it('is the same for the same terms and salt', () => {
-    expect(termsHash(testnetDemoTerms(START), SALT)).toBe(termsHash(testnetDemoTerms(START), SALT))
+    expect(termsHash(testnetDemoTerms(START, ARBITER), SALT)).toBe(
+      termsHash(testnetDemoTerms(START, ARBITER), SALT),
+    )
   })
 
   it('changes with the salt', () => {
-    expect(termsHash(testnetDemoTerms(START), SALT)).not.toBe(
-      termsHash(testnetDemoTerms(START), newSalt()),
+    expect(termsHash(testnetDemoTerms(START, ARBITER), SALT)).not.toBe(
+      termsHash(testnetDemoTerms(START, ARBITER), newSalt()),
     )
   })
 
   it('changes when any field changes', () => {
-    const base = testnetDemoTerms(START)
+    const base = testnetDemoTerms(START, ARBITER)
     const hash = termsHash(base, SALT)
     const changes: Partial<ComputeTerms>[] = [
       { resource: { ...base.resource, count: 7 } },
@@ -67,14 +71,25 @@ describe('termsHash', () => {
       { chargeDeadline: base.chargeDeadline + 1n },
       { contestWindow: base.contestWindow + 1n },
       { releaseDate: base.releaseDate + 1n },
+      { dispute: { ...base.dispute, arbiter: '0x000000000000000000000000000000000000a4b2' } },
+      { dispute: { ...base.dispute, day90SupplierShareBps: 4999 } },
     ]
     for (const change of changes) {
       expect(termsHash({ ...base, ...change }, SALT)).not.toBe(hash)
     }
   })
 
+  it("reads the arbiter's address in any letter case as the same terms", () => {
+    const base = testnetDemoTerms(START, '0x00000000000000000000000000000000000ABCDE')
+    const lower = {
+      ...base,
+      dispute: { ...base.dispute, arbiter: base.dispute.arbiter.toLowerCase() as typeof ARBITER },
+    }
+    expect(termsHash(base, SALT)).toBe(termsHash(lower, SALT))
+  })
+
   it('needs a 32-byte salt', () => {
-    expect(() => termsHash(testnetDemoTerms(START), '0x1234')).toThrow()
+    expect(() => termsHash(testnetDemoTerms(START, ARBITER), '0x1234')).toThrow()
   })
 
   it('makes a fresh 32-byte salt each time', () => {
@@ -86,18 +101,18 @@ describe('termsHash', () => {
 
 describe('validateTerms', () => {
   it('accepts the demo terms under production and the testnet terms under the demo profile', () => {
-    expect(validateTerms(demoTerms(START), PRODUCTION_PROFILE)).toBeNull()
-    expect(validateTerms(testnetDemoTerms(START), TESTNET_DEMO_PROFILE)).toBeNull()
+    expect(validateTerms(demoTerms(START, ARBITER), PRODUCTION_PROFILE)).toBeNull()
+    expect(validateTerms(testnetDemoTerms(START, ARBITER), TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
   it("refuses the testnet's 10-minute contest window under production", () => {
-    expect(validateTerms(testnetDemoTerms(START), PRODUCTION_PROFILE)).toBe(
+    expect(validateTerms(testnetDemoTerms(START, ARBITER), PRODUCTION_PROFILE)).toBe(
       'terms.contest_window_short',
     )
   })
 
   it('needs the reserve to equal the largest charge', () => {
-    const t = testnetDemoTerms(START)
+    const t = testnetDemoTerms(START, ARBITER)
     expect(validateTerms({ ...t, reserve: dollars(499) }, TESTNET_DEMO_PROFILE)).toBe(
       'terms.reserve_mismatch',
     )
@@ -110,13 +125,38 @@ describe('validateTerms', () => {
   })
 
   it('takes the late-cancellation charge when it is the larger one', () => {
-    const t = testnetDemoTerms(START)
+    const t = testnetDemoTerms(START, ARBITER)
     const terms = { ...t, lateCancellation: dollars(700), reserve: dollars(700) }
     expect(validateTerms(terms, TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
+  it('needs the dispute terms, with a real arbiter and a share from 0 to 10,000', () => {
+    const t = testnetDemoTerms(START, ARBITER)
+    const { dispute: _, ...withoutDispute } = t
+    expect(validateTerms(withoutDispute as ComputeTerms, TESTNET_DEMO_PROFILE)).toBe(
+      'terms.incomplete',
+    )
+    const bad = [
+      { arbiter: '0x0000000000000000000000000000000000000000', day90SupplierShareBps: 5000 },
+      { arbiter: '0x1234', day90SupplierShareBps: 5000 },
+      { arbiter: ARBITER, day90SupplierShareBps: -1 },
+      { arbiter: ARBITER, day90SupplierShareBps: 10_001 },
+      { arbiter: ARBITER, day90SupplierShareBps: 50.5 },
+    ]
+    for (const dispute of bad) {
+      const terms = { ...t, dispute } as ComputeTerms
+      expect(validateTerms(terms, TESTNET_DEMO_PROFILE), JSON.stringify(dispute)).toBe(
+        'terms.dispute_invalid',
+      )
+    }
+    for (const share of [0, 10_000]) {
+      const terms = { ...t, dispute: { arbiter: ARBITER, day90SupplierShareBps: share } }
+      expect(validateTerms(terms, TESTNET_DEMO_PROFILE)).toBeNull()
+    }
+  })
+
   it('needs the deadlines in order', () => {
-    const t = testnetDemoTerms(START)
+    const t = testnetDemoTerms(START, ARBITER)
     const end = t.windowStart + t.windowDuration
     const bad: Partial<ComputeTerms>[] = [
       { windowDuration: 0n },
@@ -132,5 +172,21 @@ describe('validateTerms', () => {
         'terms.deadlines_out_of_order',
       )
     }
+  })
+})
+
+describe('termsCharges', () => {
+  it("gives the lock's charges for the terms, in the token's base units", () => {
+    const t = testnetDemoTerms(START, ARBITER)
+    expect(termsCharges(t, 6)).toEqual([
+      { kind: 'lateCancellation', most: 250_000_000n, earliest: t.freeCancelBy },
+      { kind: 'noShow', most: 500_000_000n, earliest: t.windowStart + t.gracePeriod },
+    ])
+    expect(termsCharges(t, 18)[1]?.most).toBe(500n * 10n ** 18n)
+  })
+
+  it('leaves out a kind the terms set to zero', () => {
+    const t = { ...testnetDemoTerms(START, ARBITER), lateCancellation: 0n }
+    expect(termsCharges(t, 6).map((c) => c.kind)).toEqual(['noShow'])
   })
 })

@@ -14,6 +14,8 @@ export const NOW = START - 3600n
 export const LOCK: Address = '0x00000000000000000000000000000000000010c4'
 export const OTHER_LOCK: Address = '0x00000000000000000000000000000000000010c5'
 export const PAYEE: Address = '0x000000000000000000000000000000000000beef'
+/** The fallback arbiter the test terms name. */
+export const ARBITER: Address = '0x000000000000000000000000000000000000a4b1'
 export const TOKEN: RailToken = {
   rail: 'tempo',
   chainId: CHAIN_ID,
@@ -58,6 +60,6 @@ export function demoRequest(agentKey: Address): ReserveRequest {
     supplier: 'biz_supplier',
     payee: PAYEE,
     category: 'compute',
-    terms: testnetDemoTerms(START),
+    terms: testnetDemoTerms(START, ARBITER),
   }
 }

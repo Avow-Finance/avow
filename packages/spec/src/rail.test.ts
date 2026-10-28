@@ -80,7 +80,7 @@ describe('assertTestSettingsOnTestnet', () => {
       assertTestSettingsOnTestnet({
         chainId: 7777,
         testData: false,
-        profile: { name: 'production', minContestWindow: 600n },
+        profile: { ...PRODUCTION_PROFILE, minContestWindow: 600n },
       }),
     ).toThrow()
   })

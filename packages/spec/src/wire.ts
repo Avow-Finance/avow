@@ -1,7 +1,13 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import { COMMITMENT_STATES, type Commitment, OUTCOME_ENDINGS } from './commitment.js'
-import { checkEnvelope, type MessageType, type Signed } from './eip712.js'
+import {
+  CHARGE_KINDS,
+  type ChargeKind,
+  checkEnvelope,
+  type MessageType,
+  type Signed,
+} from './eip712.js'
 import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
 import type { ComputeTerms, Mandate, ReserveRequest } from './types.js'
@@ -59,6 +65,10 @@ export const computeTermsJson = z.strictObject({
   chargeDeadline: u64,
   contestWindow: u64,
   releaseDate: u64,
+  dispute: z.strictObject({
+    arbiter: address,
+    day90SupplierShareBps: z.number().int().min(0).max(10_000),
+  }),
 })
 
 const approvalRuleJson = z.discriminatedUnion('kind', [
@@ -105,16 +115,30 @@ export const termsAgreementJson = z.strictObject({
   expiry: u64,
 })
 
+const chargeJson = z.strictObject({
+  kind: z.enum(Object.keys(CHARGE_KINDS) as [ChargeKind, ...ChargeKind[]]),
+  most: u256,
+  earliest: u64,
+})
+
+/** Avow's approval, field for field as the lock checks it. */
 export const approvalJson = z.strictObject({
   commitmentId: bytes32,
   side,
   token: address,
   amount: u256,
+  supplier: address,
+  supplierSigner: address,
   payee: address,
+  freeCancelBy: u64,
   acceptBy: u64,
   chargeDeadline: u64,
-  contestWindow: u64,
   releaseDate: u64,
+  contestWindow: u64,
+  // The lock holds up to four kinds of charge, and this schema names two.
+  charges: z.array(chargeJson).min(1).max(4),
+  day90SupplierShareBps: z.number().int().min(0).max(10_000),
+  arbiter: address,
   termsHash: bytes32,
   mandateHash: bytes32,
   capPerCommitment: u256,

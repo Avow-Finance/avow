@@ -120,8 +120,20 @@ export interface Mandate {
 }
 
 /**
- * The terms of a GPU reservation. Nothing here names a
- * rail, so the same terms and terms hash work on any rail that backs them.
+ * How a disputed charge ends when Avow doesn't rule. Avow's ruling key can rule until day 30 after
+ * the charge is paused, the arbiter from day 30 until day 90, and a confirmed charge still unruled
+ * at day 90 pays the supplier its share and the rest goes back to the business.
+ */
+export interface DisputeTerms {
+  /** The fallback arbiter's key, which the lock names for the commitment. */
+  arbiter: Address
+  /** The supplier's share of a confirmed charge still unruled at day 90, from 0 to 10,000. */
+  day90SupplierShareBps: number
+}
+
+/**
+ * The terms of a GPU reservation. Nothing here names a rail, and the arbiter is an EVM address,
+ * so the same terms and terms hash work on any EVM rail that backs them.
  */
 export interface ComputeTerms {
   kind: 'compute'
@@ -142,6 +154,7 @@ export interface ComputeTerms {
   chargeDeadline: bigint
   contestWindow: bigint
   releaseDate: bigint
+  dispute: DisputeTerms
 }
 
 /** An agent's request to reserve money for a supplier under terms. */

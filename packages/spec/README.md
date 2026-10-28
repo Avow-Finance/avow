@@ -16,7 +16,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Part | What it does |
 | --- | --- |
 | Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them |
-| Compute terms | The terms of a GPU reservation, their canonical JSON and the salted terms hash the lock stores |
+| Compute terms | The terms of a GPU reservation with their dispute terms, the arbiter and the day-90 share, their canonical JSON, the salted terms hash the lock stores and the charges a commitment under them carries |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
@@ -28,9 +28,9 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 ## Design rules
 
 - Money in terms and mandates is in micros, millionths of the currency unit, so $500 is `500_000_000n`. A USD token on Tempo has 6 decimals, so its base units equal micros.
-- Terms name a currency and never a token, so the same terms and terms hash work on any rail. The token belongs to the backing, in `BackingRef`.
+- Terms name a currency and never a token, so the same terms and terms hash work on any EVM rail. The token belongs to the backing, in `BackingRef`. The arbiter is an EVM address, hashed in lower case.
 - Every signed message names its schema version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A reader refuses a version it doesn't know.
-- The reserve equals the largest charge in the terms. A contest window under 72 hours passes only the testnet demo profile.
+- The reserve equals the largest charge in the terms. A contest window under 72 hours passes only the testnet demo profile. Each profile also fixes the timing of the locks its factory creates, and a supplier's verifier accepts no other. The production profile holds the intended production timing, which is unaudited and which no deployed factory uses yet. The testnet demo factory doesn't enforce every production limit.
 
 ## Develop
 

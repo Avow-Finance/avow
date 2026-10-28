@@ -110,7 +110,7 @@ export interface Approval {
   charges: readonly Charge[]
   /** The supplier's share of a confirmed charge still unruled at day 90, in basis points. */
   day90SupplierShareBps: number
-  /** The fallback arbiter, who can rule from day 30 to day 90. Avow names it in the approval. */
+  /** The fallback arbiter from the agreed terms, who can rule from day 30 to day 90. */
   arbiter: Address
   termsHash: Hex
   mandateHash: Hex
@@ -130,10 +130,10 @@ export interface Approval {
  * Avow's approval that funded the reserve, which covers every term that approval sets for the
  * commitment, and the lock's own settings through the lock's address in its domain. Any change to
  * the approval gives another digest, and the lock refuses the acceptance. The supplier is bound by
- * everything the approval says, so it should check the approval against what it agreed before it
- * signs. Nothing in this package makes that check yet, and `ComputeTerms` carries neither the
- * day-90 share nor the arbiter. A supplier gets an acceptance to sign from the verifier's
- * `prepareAcceptance`, which refuses until it can make the check.
+ * everything the approval says, so it gets an acceptance to sign from the verifier's
+ * `prepareAcceptance`, which checks the approval against the supplier's own terms and the lock
+ * first. The lock checks only the signature and the digest, so it takes a correctly signed
+ * acceptance however it was built.
  */
 export interface Acceptance {
   commitmentId: Hex
@@ -164,7 +164,9 @@ export interface ChargeReport {
 /**
  * The supplier account's consent to give a reserve back, signed by its root key or an admin key. It
  * names a report count, and the lock takes it only while the commitment's count is that number, so
- * a report filed after the supplier signed for the current count voids it.
+ * a report filed after the supplier signed for the current count voids it. A consent that names a
+ * later count than the commitment has becomes valid once reports reach that count, which is
+ * preauthorization, so the verifier's `prepareReleaseConsent` makes the signer confirm it.
  */
 export interface ReleaseConsent {
   commitmentId: Hex
@@ -528,10 +530,9 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
 
 /**
  * The digest of an approval as the lock computes it, under the lock's domain. The lock stores it at
- * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. A supplier
- * given the approval should compute it, check that it matches the lock's once the reserve exists,
- * and check the approval's terms against what it agreed. Nothing in this package makes either
- * check. The verifier's `prepareAcceptance` is to make both, and refuses until it can.
+ * the reserve and emits it as `approvalHash`, and the supplier's acceptance names it. The
+ * verifier's `prepareAcceptance` computes it, checks it against the lock's, and checks the
+ * approval's terms against the supplier's own before it builds an acceptance.
  */
 export function approvalDigest(a: Approval, d: AvowDomain): Hex {
   return digestOf(approvalTypedData(a, d))
@@ -539,7 +540,7 @@ export function approvalDigest(a: Approval, d: AvowDomain): Hex {
 
 /**
  * The EIP-712 encoding of an acceptance, with no checks. A supplier gets an acceptance to sign from
- * the verifier's `prepareAcceptance`.
+ * the verifier's `prepareAcceptance`, and signs it with `signAcceptance`.
  */
 export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {
   return {

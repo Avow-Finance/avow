@@ -1,27 +1,56 @@
-import { keychainSignatureCheck, type RailState, type Side } from '@avow-finance/spec'
+import {
+  type Charge,
+  keychainSignatureCheck,
+  type LockTiming,
+  type RailState,
+  type Side,
+} from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 
 /** What a lock stores for one side of a commitment. */
 export interface LockedBacking {
   state: RailState
+  /** The lock's one token. */
   token: Address
-  /** Base units of the token. */
+  /** Base units of the token, as funded. */
   amount: bigint
+  /** What the lock still holds for the commitment, less any part already returned or paid. */
+  held: bigint
+  /** The supplier's payout address, copied from the approval. */
   payee: Address
+  /** The supplier's account, which consents to releases. */
+  supplier: Address
+  /** The supplier's signing key, which accepts the reserve and reports charges. */
+  supplierSigner: Address
+  freeCancelBy: bigint
   acceptBy: bigint
   chargeDeadline: bigint
   contestWindow: bigint
   releaseDate: bigint
+  charges: readonly Charge[]
+  day90SupplierShareBps: number
+  arbiter: Address
   termsHash: Hex
+  mandateHash: Hex
+  /** The digest of Avow's approval the lock took, which the supplier's acceptance names. */
+  approvalHash: Hex
   /** The key that funded the reserve, or the zero address when the account's root key did. */
   fundingKey: Address
+  /** Every report ever filed on the commitment, which a release consent names. */
+  reportCount: number
+  /** Whether a ruling has been posted on the commitment. */
+  hasRuling: boolean
 }
 
 export interface LockInfo {
-  /** True when the lock runs the code Avow's factory deploys. */
+  /** True when Avow's factory, as the reader was set up with it, created the lock. */
   fromFactory: boolean
   /** The business account that owns the lock. */
   account: Address
+  /** The token the lock holds reserves in. */
+  token: Address
+  /** The timing the factory fixed in the lock. */
+  timing: LockTiming
 }
 
 export interface AgentKeyInfo {
@@ -35,8 +64,8 @@ export interface AgentKeyInfo {
 
 /**
  * Everything the verifier reads from the chain. Nothing here comes from Avow, so a supplier's
- * check doesn't depend on Avow's database. The Tempo reader arrives with the lock contract, and
- * `MemoryChain` stands in for it in tests.
+ * check doesn't depend on Avow's database. `tempoChainReader` reads Tempo, and `MemoryChain` stands
+ * in for it in tests. A supplier trusts whichever node it reads through, so it picks that node.
  */
 export interface ChainReader {
   readonly chainId: number
