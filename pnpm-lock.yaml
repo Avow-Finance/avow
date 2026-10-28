@@ -31,16 +31,15 @@ importers:
       '@avow-finance/spec':
         specifier: workspace:*
         version: link:../spec
-      viem:
-        specifier: 2.57.11
-        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
-    devDependencies:
       '@avow-finance/verifier':
         specifier: workspace:*
         version: link:../verifier
       ox:
         specifier: 0.14.57
         version: 0.14.57(typescript@7.0.2)(zod@4.6.7)
+      viem:
+        specifier: 2.57.11
+        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
 
   packages/spec:
     dependencies:
