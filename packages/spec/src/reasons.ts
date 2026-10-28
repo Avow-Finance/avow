@@ -35,7 +35,7 @@ export const REASON_CODES = {
   'terms.hash_mismatch': "The terms and salt don't produce the signed terms hash",
   'terms.currency_mismatch': "The terms' currency isn't the one the lock's token stands for",
   'terms.incomplete':
-    "The terms leave out a field or section every reader needs, such as the arbiter and the day-90 share, so they can't be hashed or checked against Avow's approval",
+    'The terms leave out a field or section this check needs, such as the arbiter and the day-90 share',
   'terms.dispute_invalid':
     "The terms' arbiter is missing or zero, or the day-90 share is outside 0 to 10,000 basis points",
   'terms.version_unknown': "The terms' version isn't one this code reads",
@@ -100,7 +100,7 @@ export const REASON_CODES = {
   'chain.supplier_mismatch':
     "The commitment on the lock names another supplier account than this supplier's",
   'reference.commitment_mismatch':
-    'The lock holds no commitment for this reference, or holds it under another terms hash',
+    "The lock holds no commitment for this reference, holds it under another terms hash, or the reference names a side the terms' backing doesn't secure",
   'payment.not_found': 'No transfer is at that chain, transaction and log index',
   'payment.failed': 'The transaction that holds the payment failed',
   'payment.not_final': "The payment's block isn't finalized yet",

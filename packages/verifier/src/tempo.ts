@@ -8,6 +8,7 @@ import {
 } from '@avow-finance/spec'
 import {
   type Address,
+  BlockNotFoundError,
   type Client,
   type Hex,
   isAddressEqual,
@@ -16,7 +17,7 @@ import {
   zeroAddress,
 } from 'viem'
 import { getBlock, getTransactionReceipt, readContract } from 'viem/actions'
-import { Abis, Addresses, TokenId } from 'viem/tempo'
+import { Abis, Addresses } from 'viem/tempo'
 import type { AgentKeyInfo, ChainReader, LockedBacking, LockInfo } from './chain.js'
 import { FACTORY_ABI, LOCK_ABI } from './lock-abi.js'
 
@@ -70,14 +71,12 @@ export async function readAgentKey(
   }
 }
 
-/** Whether an address is a TIP-20 token's, which Tempo gives a fixed prefix and a token id. */
+/** Tempo puts every TIP-20 token at these 12 bytes, `0x20c0` and ten zero bytes, then its 8-byte id. */
+const TIP20_PREFIX = '0x20c000000000000000000000'
+
+/** Whether an address is a TIP-20 token's, by the whole 12-byte prefix. */
 function isTip20(address: Address): boolean {
-  try {
-    TokenId.fromAddress(address)
-    return true
-  } catch {
-    return false
-  }
+  return address.toLowerCase().startsWith(TIP20_PREFIX)
 }
 
 /**
@@ -106,9 +105,15 @@ export async function readTransfer(
   if (!log) return null
   let finalized = false
   if (final.number !== null && receipt.blockNumber <= final.number) {
-    const atHeight = await getBlock(client, { blockNumber: receipt.blockNumber })
+    // A node a block behind may not have the block yet, and then the receipt reads as not final.
+    const atHeight = await getBlock(client, { blockNumber: receipt.blockNumber }).catch(
+      (error: unknown) => {
+        if (error instanceof BlockNotFoundError) return null
+        throw error
+      },
+    )
     finalized =
-      atHeight.hash !== null && atHeight.hash.toLowerCase() === receipt.blockHash.toLowerCase()
+      atHeight?.hash != null && atHeight.hash.toLowerCase() === receipt.blockHash.toLowerCase()
   }
   const [decoded] = isTip20(log.address)
     ? parseEventLogs({ abi: Abis.tip20, eventName: 'TransferWithMemo', logs: [log], strict: true })

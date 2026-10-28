@@ -94,7 +94,14 @@ export async function verifyCommitmentTerms(
   if (shape) return refuse(shape)
   // Version 1 terms written before the dispute block existed can't be checked against a lock.
   if (isTermsV1(t) && !(t as { dispute?: unknown }).dispute) return refuse('terms.incomplete')
-  if (!same(termsHash(t, input.salt), ref.termsHash)) return refuse('terms.hash_mismatch')
+  let hash: Hex
+  try {
+    hash = termsHash(t, input.salt)
+  } catch {
+    // A salt the hash refuses, such as a short one or all zeros, can't give the hash the lock holds.
+    return refuse('terms.hash_mismatch')
+  }
+  if (!same(hash, ref.termsHash)) return refuse('terms.hash_mismatch')
   const enforced = enforceableTerms(t)
   if (ref.side !== enforced.side) return refuse('reference.commitment_mismatch')
   const token = input.acceptedTokens.find(

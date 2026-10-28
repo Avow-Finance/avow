@@ -70,6 +70,15 @@ describe('version 1 vectors, pinned from the published build', () => {
     })
     expect(enforceableTerms(t).reserve).toBe(t.reserve)
   })
+
+  it('gives the charges as before for terms without the dispute block or a reserve the token can hold', () => {
+    const t = testnetDemoTerms(START, ARBITER)
+    const { dispute: _, ...noDispute } = t
+    expect(termsCharges(noDispute as typeof t, 6)).toEqual(termsChargesV1(t, 6))
+    // A reserve two decimals can't hold, where the charges still can.
+    const odd = { ...t, reserve: t.reserve + 1n }
+    expect(termsCharges(odd, 2)).toEqual(termsChargesV1(odd, 2))
+  })
 })
 
 describe('termsHash for version 1', () => {

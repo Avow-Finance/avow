@@ -46,6 +46,8 @@ import {
 
 const PAYER: Address = '0x00000000000000000000000000000000000000a1'
 const OTHER: Address = '0x00000000000000000000000000000000000000a2'
+/** Starts like a TIP-20 token's address, but a token's next ten bytes are zero. */
+const LOOKALIKE: Address = '0x20c03012000000000000000000000000000d7d75'
 const TX = id('payment transaction')
 const MEMO = id('the commitment this pays toward')
 
@@ -241,6 +243,14 @@ describe('verifyCommitmentReference and verifyCommitmentTerms', () => {
     })
   })
 
+  it('refuse a salt the hash refuses, as terms that give another hash, without throwing', async () => {
+    for (const salt of [`0x${'00'.repeat(32)}`, '0x1234'] as const) {
+      expect(
+        await verifyCommitmentTerms({ reference, terms, salt, acceptedTokens: [TOKEN] }, chain),
+      ).toEqual({ ok: false, reason: 'terms.hash_mismatch' })
+    }
+  })
+
   it('refuse terms that hash to something else, or a lock enforcing other values', async () => {
     expect(
       await verifyCommitmentTerms(
@@ -270,7 +280,7 @@ describe('verifyCommitmentReference and verifyCommitmentTerms', () => {
  * each height. Every method it's asked for is recorded in `calls`.
  */
 function node(
-  opts: { status?: '0x0' | '0x1'; finalized?: bigint; canonical?: Hex } = {},
+  opts: { status?: '0x0' | '0x1'; finalized?: bigint; canonical?: Hex; behind?: boolean } = {},
   calls: string[] = [],
 ) {
   const block = 100n
@@ -305,6 +315,8 @@ function node(
     log(7, withMemo, amount),
     // The same event from a contract that isn't a TIP-20 token.
     log(8, withMemo, amount, OTHER),
+    // And from an address with a TIP-20 token's first two bytes, ground out to look like one.
+    log(10, withMemo, amount, LOOKALIKE),
   ]
   const blockAt = (n: bigint, hash: Hex) => ({
     number: `0x${n.toString(16)}`,
@@ -341,7 +353,8 @@ function node(
           return blockAt(n, id(`block ${n}`))
         }
         if (method === 'eth_getBlockByNumber' && params[0] === `0x${block.toString(16)}`) {
-          return blockAt(block, opts.canonical ?? receiptBlock)
+          // A node a block behind hasn't seen the block yet.
+          return opts.behind ? null : blockAt(block, opts.canonical ?? receiptBlock)
         }
         throw new Error(`unexpected ${method}`)
       },
@@ -365,9 +378,14 @@ describe('readTransfer', () => {
 
   it('reads a plain Transfer with no memo, or the event from a contract that is no TIP-20 token, as no payment', async () => {
     expect((await readTransfer(node(), CHAIN_ID, TX, 6))?.event).toBeNull()
-    const lookalike = await readTransfer(node(), CHAIN_ID, TX, 8)
-    expect(lookalike?.emitter).toBe(OTHER)
-    expect(lookalike?.event).toBeNull()
+    for (const [index, emitter] of [
+      [8, OTHER],
+      [10, LOOKALIKE],
+    ] as const) {
+      const lookalike = await readTransfer(node(), CHAIN_ID, TX, index)
+      expect(lookalike?.emitter).toBe(emitter)
+      expect(lookalike?.event).toBeNull()
+    }
   })
 
   it('reports a failed transaction and a block past the finalized one', async () => {
@@ -378,6 +396,11 @@ describe('readTransfer', () => {
   it('reads a receipt from a block the chain no longer holds at that height as not final', async () => {
     const orphaned = node({ finalized: 105n, canonical: id('the block that won at 100') })
     expect((await readTransfer(orphaned, CHAIN_ID, TX, 7))?.finalized).toBe(false)
+  })
+
+  it('reads a receipt as not final, without throwing, when the node has no block at its height', async () => {
+    const behind = node({ finalized: 101n, behind: true })
+    expect((await readTransfer(behind, CHAIN_ID, TX, 7))?.finalized).toBe(false)
   })
 
   it('reads the finalized block before the receipt, then the block at the receipt height', async () => {

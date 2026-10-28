@@ -82,7 +82,7 @@ async function prepare(
       approval: change.approval ?? (await signedApproval()),
       mandate: 'mandate' in change ? change.mandate : await signedMandate(mandate),
       agreed: change.agreed ?? agreed,
-      terms: change.terms ?? terms,
+      terms: 'terms' in change ? (change.terms as AnyTerms) : terms,
       now: change.now ?? NOW,
       nonce: 7n,
     },
@@ -329,6 +329,12 @@ describe('a commitment made under version 1 terms', () => {
 })
 
 describe("the supplier's own terms", () => {
+  it('refuses terms that are no object or carry a field the hash leaves out, without throwing', async () => {
+    expect(await prepare({ terms: null as unknown as AnyTerms })).toEqual(refused('terms.invalid'))
+    const extra = { ...terms, gracePeriod: 60n } as AnyTerms
+    expect(await prepare({ terms: extra })).toEqual(refused('terms.invalid'))
+  })
+
   it('refuses version 1 terms without the dispute block', async () => {
     const { dispute: _, ...older } = testnetDemoTermsV1(START, ARBITER)
     expect(await prepare({ terms: older as AnyTerms })).toEqual(refused('terms.incomplete'))

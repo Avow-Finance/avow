@@ -110,8 +110,9 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * and every value has to be one canonical JSON can write. The terms hash covers only the header
  * and the sections, so a field beside them is refused rather than left out of the hash. A field
  * or section left out is `terms.incomplete`, another version is `terms.version_unknown` and
- * anything else is `terms.invalid`. A field set to undefined counts as left out, as JSON leaves it
- * out. Version 1 terms hash every field they hold, so `validateTerms` checks them on its own.
+ * anything else is `terms.invalid`. Terms with no `version` key are version 1, and any other field
+ * set to undefined counts as left out, as JSON leaves it out. Version 1 terms hash every field they
+ * hold, so `validateTerms` checks them on its own.
  */
 export function termsShapeProblem(terms: unknown): ReasonCode | null {
   if (!isPlainObject(terms)) return 'terms.invalid'
@@ -447,8 +448,13 @@ export function lockTerms(terms: AnyTerms, decimals: number): LockTerms {
   }
 }
 
-/** The charges a commitment under these terms carries, as Avow's approval names them. */
+/**
+ * The charges a commitment under these terms carries, as Avow's approval names them. Version 1
+ * terms keep the function they were read with, which needs neither the dispute block nor a reserve
+ * the token can hold.
+ */
 export function termsCharges(terms: AnyTerms, decimals: number): Charge[] {
+  if (isTermsV1(terms)) return termsChargesV1(terms, decimals)
   return lockTerms(terms, decimals).charges
 }
 

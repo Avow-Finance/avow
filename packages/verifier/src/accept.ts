@@ -20,6 +20,7 @@ import {
   parseSigned,
   type ReasonCode,
   type Signed,
+  termsShapeProblem,
   toTokenUnits,
 } from '@avow-finance/spec'
 import {
@@ -138,6 +139,8 @@ export async function prepareAcceptance(
   const { config, chain } = deps
   const refuse = (reason: ReasonCode): PreparedAcceptance => ({ ok: false, reason })
   const t = request.terms
+  const shape = termsShapeProblem(t)
+  if (shape) return refuse(shape)
   // Version 1 terms written before the dispute block existed can't be checked against the approval.
   if (isTermsV1(t) && !(t as { dispute?: unknown }).dispute) return refuse('terms.incomplete')
   if (request.mandate === undefined || request.mandate === null) return refuse('mandate.missing')

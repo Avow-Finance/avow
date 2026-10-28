@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { canonicalJson, newSalt } from './canonical.js'
 import { testnetDemoTerms } from './demo.js'
@@ -74,6 +75,11 @@ describe('canonicalJson', () => {
       expect(() => canonicalJson({ a: value }), value.constructor.name).toThrow('plain objects')
     }
     expect(canonicalJson({ a: Object.assign(Object.create(null), { b: 1 }) })).toBe('{"a":{"b":1}}')
+  })
+
+  it("reads a plain object from another realm, and still refuses that realm's Date", () => {
+    expect(canonicalJson({ a: runInNewContext('({ b: 1 })') })).toBe('{"a":{"b":1}}')
+    expect(() => canonicalJson({ a: runInNewContext('new Date(0)') })).toThrow('plain objects')
   })
 })
 

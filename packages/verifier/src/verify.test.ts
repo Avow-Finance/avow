@@ -64,7 +64,7 @@ async function verify(
     {
       authorization: auth ?? (await signedAuthorization()),
       agreed: rest.agreed ?? agreed,
-      terms: rest.terms ?? terms,
+      terms: 'terms' in rest ? (rest.terms as AnyTerms) : terms,
       ...(rest.mandate === undefined ? {} : { mandate: rest.mandate }),
       now: rest.now ?? NOW,
     },
@@ -287,6 +287,19 @@ describe('changes after signing', () => {
     ]
     for (const change of changes) {
       expect(await verify(undefined, { terms: change })).toEqual(refused('terms.hash_mismatch'))
+    }
+  })
+
+  it('refuses terms the hash would not cover in full, before hashing them', async () => {
+    const { resolution: _, ...noResolution } = terms
+    const cases: [unknown, string][] = [
+      [noResolution, 'terms.incomplete'],
+      [{ ...terms, gracePeriod: 60n }, 'terms.invalid'],
+      [{ ...terms, version: 3 }, 'terms.version_unknown'],
+      [null, 'terms.invalid'],
+    ]
+    for (const [t, reason] of cases) {
+      expect(await verify(undefined, { terms: t as AnyTerms }), reason).toEqual(refused(reason))
     }
   })
 

@@ -28,8 +28,9 @@ export function canonicalJson(value: unknown): string {
       return JSON.stringify(value)
     case 'object': {
       if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+      // A plain object's prototype is null or some realm's Object.prototype, whose own is null.
       const prototype = Object.getPrototypeOf(value)
-      if (prototype !== Object.prototype && prototype !== null) {
+      if (prototype !== null && Object.getPrototypeOf(prototype) !== null) {
         throw new TypeError('Canonical JSON holds plain objects and arrays only')
       }
       const entries = Object.entries(value as Record<string, unknown>)

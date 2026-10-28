@@ -14,6 +14,7 @@ import { canonicalJson } from './canonical.js'
 import { demoTerms, dollars, testnetDemoTerms } from './demo.js'
 import type { Approval } from './eip712.js'
 import {
+  GPU_HOUR,
   type GPU_RESERVATION,
   type GpuReservationTerms,
   gpuGracePeriod,
@@ -457,6 +458,13 @@ describe('validateTerms', () => {
     if (!late) throw new Error('a late cancellation charge')
     const bad: [GpuReservationTerms, string][] = [
       [{ ...base, consideration: { kind: 'fixed', amount: dollars(3) } }, 'terms.template_invalid'],
+      [
+        {
+          ...base,
+          consideration: { kind: 'fixed', amount: dollars(3), unit: GPU_HOUR } as never,
+        },
+        'terms.template_invalid',
+      ],
       [
         { ...base, consideration: { kind: 'rate', amount: dollars(3), unit: 'hour' } },
         'terms.template_invalid',
