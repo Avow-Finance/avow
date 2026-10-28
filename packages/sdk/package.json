@@ -26,10 +26,10 @@
   },
   "dependencies": {
     "@avow-finance/spec": "workspace:*",
+    "@avow-finance/verifier": "workspace:*",
     "viem": "2.57.11"
   },
   "devDependencies": {
-    "@avow-finance/verifier": "workspace:*",
     "ox": "0.14.57"
   }
 }

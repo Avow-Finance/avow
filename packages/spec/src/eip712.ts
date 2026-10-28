@@ -804,6 +804,17 @@ export interface Signed<T> {
 }
 
 /**
+ * A terms agreement both sides signed. The buyer's agent key and the supplier's signing key each
+ * sign the same EIP-712 message, so it travels with two signatures in place of one.
+ */
+export type SignedAgreement = Omit<Signed<TermsAgreement>, 'signature'> & {
+  /** The buyer's agent key, signing under its mandate. */
+  buyerSignature: Hex
+  /** The supplier's signing key. */
+  supplierSignature: Hex
+}
+
+/**
  * Checks a signed message's envelope before its signature. The lock is checked when the reader
  * already knows it, and a supplier who learns the lock from the message checks it on-chain.
  */

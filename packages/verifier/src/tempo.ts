@@ -140,6 +140,60 @@ const KIND_NAMES = new Map<number, ChargeKind>(
   (Object.entries(CHARGE_KINDS) as [ChargeKind, number][]).map(([name, code]) => [code, name]),
 )
 
+/**
+ * Reads what a lock holds for one side of a commitment, or null when it holds nothing. It reads
+ * only the lock, so it needs no factory, and the caller decides whether the lock is Avow's.
+ */
+export async function readBacking(
+  client: Client,
+  lock: Address,
+  commitmentId: Hex,
+  side: 'buyer' | 'supplier',
+): Promise<LockedBacking | null> {
+  const [c, token] = await Promise.all([
+    readContract(client, {
+      address: lock,
+      abi: LOCK_ABI,
+      functionName: 'commitment',
+      args: [commitmentId, side === 'buyer' ? 0 : 1],
+    }),
+    readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' }),
+  ])
+  if (c.state === 0) return null
+  const state = RAIL_STATES[c.state]
+  if (!state) throw new Error(`The lock reports state ${c.state}, which this verifier doesn't read`)
+  const charges: Charge[] = []
+  for (let k = 0; k < c.most.length; k++) {
+    if ((c.kinds & (1 << k)) === 0) continue
+    const kind = KIND_NAMES.get(k)
+    if (!kind) throw new Error(`The lock holds charge kind ${k}, which this verifier doesn't read`)
+    charges.push({ kind, most: c.most[k] ?? 0n, earliest: c.earliest[k] ?? 0n })
+  }
+  return {
+    state,
+    token,
+    amount: c.amount,
+    held: c.held,
+    payee: c.payout,
+    supplier: c.supplier,
+    supplierSigner: c.supplierSigner,
+    freeCancelBy: c.freeCancelBy,
+    acceptBy: c.acceptBy,
+    chargeDeadline: c.chargeDeadline,
+    contestWindow: c.contestWindow,
+    releaseDate: c.releaseDate,
+    charges,
+    day90SupplierShareBps: c.day90ShareBps,
+    arbiter: c.arbiter,
+    termsHash: c.termsHash,
+    mandateHash: c.mandateHash,
+    approvalHash: c.approvalHash,
+    fundingKey: c.fundedBy,
+    reportCount: c.reportCount,
+    hasRuling: c.hasRuling,
+  }
+}
+
 export interface TempoReaderOptions {
   /** The factory the supplier trusts. Only a lock it created counts as Avow's. */
   factory: Address
@@ -196,61 +250,10 @@ export function tempoChainReader(client: Client, options: TempoReaderOptions): C
     }
   }
 
-  async function backing(
-    lock: Address,
-    commitmentId: Hex,
-    side: 'buyer' | 'supplier',
-  ): Promise<LockedBacking | null> {
-    const [c, token] = await Promise.all([
-      readContract(client, {
-        address: lock,
-        abi: LOCK_ABI,
-        functionName: 'commitment',
-        args: [commitmentId, side === 'buyer' ? 0 : 1],
-      }),
-      tokenOf(lock),
-    ])
-    if (c.state === 0) return null
-    const state = RAIL_STATES[c.state]
-    if (!state)
-      throw new Error(`The lock reports state ${c.state}, which this verifier doesn't read`)
-    const charges: Charge[] = []
-    for (let k = 0; k < c.most.length; k++) {
-      if ((c.kinds & (1 << k)) === 0) continue
-      const kind = KIND_NAMES.get(k)
-      if (!kind)
-        throw new Error(`The lock holds charge kind ${k}, which this verifier doesn't read`)
-      charges.push({ kind, most: c.most[k] ?? 0n, earliest: c.earliest[k] ?? 0n })
-    }
-    return {
-      state,
-      token,
-      amount: c.amount,
-      held: c.held,
-      payee: c.payout,
-      supplier: c.supplier,
-      supplierSigner: c.supplierSigner,
-      freeCancelBy: c.freeCancelBy,
-      acceptBy: c.acceptBy,
-      chargeDeadline: c.chargeDeadline,
-      contestWindow: c.contestWindow,
-      releaseDate: c.releaseDate,
-      charges,
-      day90SupplierShareBps: c.day90ShareBps,
-      arbiter: c.arbiter,
-      termsHash: c.termsHash,
-      mandateHash: c.mandateHash,
-      approvalHash: c.approvalHash,
-      fundingKey: c.fundedBy,
-      reportCount: c.reportCount,
-      hasRuling: c.hasRuling,
-    }
-  }
-
   return {
     chainId,
     lock,
-    backing,
+    backing: (lock, commitmentId, side) => readBacking(client, lock, commitmentId, side),
     agentKey: (account, key, authorizedIn) => readAgentKey(client, account, key, authorizedIn),
     isAccountSignature: (account, digest, signature) =>
       check({ signer: account, digest, signature }),
