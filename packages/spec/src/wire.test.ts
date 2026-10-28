@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Commitment } from './commitment.js'
 import { testnetDemoTerms } from './demo.js'
-import type { SupplierAuthorization } from './eip712.js'
-import { termsHash } from './terms.js'
+import type { Approval, SupplierAuthorization } from './eip712.js'
+import { termsCharges, termsHash } from './terms.js'
 import {
+  ARBITER,
   CHAIN_ID,
   demoMandate,
   demoRequest,
@@ -17,6 +18,7 @@ import {
   TOKEN,
 } from './test-helpers.js'
 import {
+  approvalJson,
   parseCommitment,
   parseComputeTerms,
   parseMandate,
@@ -39,14 +41,14 @@ const lowerHex = <T>(value: T): T =>
           : v,
   )
 const agent = newKey()
-const terms = testnetDemoTerms(START)
+const terms = testnetDemoTerms(START, ARBITER)
 const SALT = `0x${'44'.repeat(32)}` as const
 
 describe('records over JSON', () => {
   it('round-trips terms, mandates and reserve requests', () => {
     const mandate = demoMandate(newKey().address, agent.address)
     const request = demoRequest(agent.address)
-    expect(parseComputeTerms(roundTrip(terms))).toEqual(terms)
+    expect(parseComputeTerms(roundTrip(terms))).toEqual(lowerHex(terms))
     expect(parseMandate(roundTrip(mandate))).toEqual(lowerHex(mandate))
     expect(parseReserveRequest(roundTrip(request))).toEqual(lowerHex(request))
   })
@@ -72,6 +74,76 @@ describe('records over JSON', () => {
 
   it('refuses a currency v1 has no rail for', () => {
     expect(() => parseComputeTerms({ ...roundTrip(terms), currency: 'EUR' })).toThrow()
+  })
+
+  it('needs the dispute terms, with a share from 0 to 10,000', () => {
+    const { dispute: _, ...withoutDispute } = roundTrip(terms)
+    expect(() => parseComputeTerms(withoutDispute)).toThrow()
+    for (const day90SupplierShareBps of [-1, 10_001, 50.5, '5000']) {
+      expect(() =>
+        parseComputeTerms({
+          ...roundTrip(terms),
+          dispute: { arbiter: ARBITER, day90SupplierShareBps },
+        }),
+      ).toThrow()
+    }
+  })
+})
+
+describe("Avow's approval over JSON", () => {
+  const approval: Approval = {
+    commitmentId: id('commitment-1'),
+    side: 'buyer',
+    token: TOKEN.token,
+    amount: terms.reserve,
+    supplier: newKey().address,
+    supplierSigner: newKey().address,
+    payee: PAYEE,
+    freeCancelBy: terms.freeCancelBy,
+    acceptBy: terms.acceptBy,
+    chargeDeadline: terms.chargeDeadline,
+    releaseDate: terms.releaseDate,
+    contestWindow: terms.contestWindow,
+    charges: termsCharges(terms, TOKEN.decimals),
+    day90SupplierShareBps: 5000,
+    arbiter: ARBITER,
+    termsHash: termsHash(terms, SALT),
+    mandateHash: id('mandate hash'),
+    capPerCommitment: 1_000_000_000n,
+    capOpenReserves: 2_000_000_000n,
+    fundingKey: agent.address,
+    nonce: 7n,
+    expiry: NOW + 120n,
+  }
+  const envelope = roundTrip({
+    type: 'Approval',
+    schemaVersion: '1',
+    chainId: CHAIN_ID,
+    lock: LOCK,
+    message: approval,
+    signature: `0x${'ab'.repeat(65)}`,
+  })
+  const parse = (json: unknown) =>
+    parseSigned(json, 'Approval', approvalJson, { chainId: CHAIN_ID, lock: LOCK })
+
+  it('round-trips every field the lock stores', () => {
+    const result = parse(envelope)
+    expect(result.ok && result.value.message).toEqual(lowerHex(approval))
+  })
+
+  it('refuses an approval missing a field, with an unknown charge or too many charges', () => {
+    const { arbiter: _, ...withoutArbiter } = envelope.message
+    const charge = envelope.message.charges[0]
+    const changes = [
+      withoutArbiter,
+      { ...envelope.message, charges: [] },
+      { ...envelope.message, charges: [{ ...charge, kind: 'minimumUse' }] },
+      { ...envelope.message, charges: [charge, charge, charge, charge, charge] },
+      { ...envelope.message, day90SupplierShareBps: 10_001 },
+    ]
+    for (const message of changes) {
+      expect(parse({ ...envelope, message })).toEqual({ ok: false, reason: 'message.invalid' })
+    }
   })
 })
 

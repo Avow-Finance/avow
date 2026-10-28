@@ -37,6 +37,7 @@ import {
 } from './eip712.js'
 import { termsHash } from './terms.js'
 import {
+  ARBITER,
   CHAIN_ID,
   DOMAIN,
   demoMandate,
@@ -54,7 +55,7 @@ const SALT = `0x${'22'.repeat(32)}` as const
 const admin = newKey()
 const agent = newKey()
 const mandate = demoMandate(admin.address, agent.address)
-const terms = testnetDemoTerms(START)
+const terms = testnetDemoTerms(START, ARBITER)
 const hash = termsHash(terms, SALT)
 const mHash = mandateHash(mandate, DOMAIN)
 
@@ -71,7 +72,6 @@ const agreement: TermsAgreement = {
 
 const supplierAccount = newKey()
 const supplierSigner = newKey()
-const ARBITER = '0x000000000000000000000000000000000000a4b1' as const
 
 const approval: Approval = {
   commitmentId: id('commitment-1'),

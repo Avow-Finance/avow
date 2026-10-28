@@ -92,6 +92,25 @@ export function keychainSignatureCheck(
 }
 
 /**
+ * Whether a key's own signature, outside any keychain envelope, signed the digest. It reads the
+ * kinds of signature Tempo's verifier reads for a single key, secp256k1, P-256 and WebAuthn, so it
+ * answers as the lock's check of a supplier's signing key does.
+ */
+export function isKeySignature(digest: Hex, signature: Hex, key: Address): boolean {
+  try {
+    const envelope = SignatureEnvelope.deserialize(signature)
+    if (envelope.type === 'keychain') return false
+    const signer = SignatureEnvelope.extractAddress({ payload: digest, signature: envelope })
+    return (
+      isAddressEqual(signer, key) &&
+      SignatureEnvelope.verify(envelope, { payload: digest, address: key })
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
  * Asks Tempo's signature verifier precompile, the same check the lock makes. A refusal returns
  * false, and a network failure throws, so an outage never reads as a forged signature.
  */

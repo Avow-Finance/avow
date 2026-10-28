@@ -25,7 +25,7 @@ Quickstarts will live in `examples/`.
 2. The administrator signs a mandate that sets what one agent may commit to, and the agent gets a scoped key on Tempo.
 3. The agent asks a supplier to reserve capacity, such as GPU time with a $500 cancellation charge.
 4. Avow checks the mandate, and $500 of the business's own money is reserved for that supplier.
-5. The supplier verifies the reserve on-chain, accepts it on the lock, and only then grants the capacity. Accepting waits until the verifier can check every term that binds the supplier.
+5. The supplier's verifier checks the reserve on-chain and every term that binds the supplier against the supplier's own. The supplier accepts on the lock, and only then grants the capacity.
 6. When the job completes, the money goes back to the business. A late cancellation pays the agreed charge after a contest window, and never more than the reserve.
 
 Avow is built first on [Tempo](https://tempo.xyz) testnet, with other rails to follow.

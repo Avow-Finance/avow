@@ -6,5 +6,8 @@
  */
 export * from './accept.js'
 export * from './chain.js'
+export * from './consent.js'
+export * from './disclosure.js'
+export * from './lock-abi.js'
 export * from './tempo.js'
 export * from './verify.js'
