@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { Commitment } from './commitment.js'
 import { testnetDemoTerms } from './demo.js'
 import type { Approval, SupplierAuthorization } from './eip712.js'
-import { termsCharges, termsHash } from './terms.js'
+import type { PaymentReference } from './references.js'
+import { discloseSection, lockTerms, termsHash } from './terms.js'
+import { testnetDemoTermsV1 } from './terms-v1.js'
 import {
   ARBITER,
   CHAIN_ID,
@@ -17,13 +19,18 @@ import {
   START,
   TOKEN,
 } from './test-helpers.js'
+import { COMMITMENT_RECORD_VERSION } from './version.js'
 import {
   approvalJson,
+  parseAnyTerms,
+  parseAttributions,
   parseCommitment,
-  parseComputeTerms,
   parseMandate,
+  parseReference,
   parseReserveRequest,
+  parseSectionDisclosure,
   parseSigned,
+  parseTerms,
   supplierAuthorizationJson,
   toWire,
 } from './wire.js'
@@ -42,51 +49,191 @@ const lowerHex = <T>(value: T): T =>
   )
 const agent = newKey()
 const terms = testnetDemoTerms(START, ARBITER)
+const lock = lockTerms(terms, TOKEN.decimals)
 const SALT = `0x${'44'.repeat(32)}` as const
 
 describe('records over JSON', () => {
   it('round-trips terms, mandates and reserve requests', () => {
     const mandate = demoMandate(newKey().address, agent.address)
     const request = demoRequest(agent.address)
-    expect(parseComputeTerms(roundTrip(terms))).toEqual(lowerHex(terms))
+    expect(parseTerms(roundTrip(terms))).toEqual({ ok: true, value: lowerHex(terms) })
     expect(parseMandate(roundTrip(mandate))).toEqual(lowerHex(mandate))
     expect(parseReserveRequest(roundTrip(request))).toEqual(lowerHex(request))
   })
 
+  const withBacking = (backing: unknown) => ({ ...roundTrip(terms), backing })
+  const withRemedies = (change: object) => ({
+    ...roundTrip(terms),
+    remedies: { ...roundTrip(terms).remedies, ...change },
+  })
+
   it('refuses amounts that are negative, fractional, padded or not strings', () => {
-    for (const reserve of ['-1', '1.5', '01', 500, '1e9', '']) {
-      expect(() => parseComputeTerms({ ...roundTrip(terms), reserve })).toThrow()
+    for (const amount of ['-1', '1.5', '01', 500, '1e9', '']) {
+      expect(parseTerms(withBacking({ ...roundTrip(terms).backing, amount }))).toEqual({
+        ok: false,
+        reason: 'terms.invalid',
+      })
     }
   })
 
   it('refuses a time too large for the uint64 that signed messages carry it in', () => {
     const tooLate = (2n ** 64n).toString()
-    expect(() => parseComputeTerms({ ...roundTrip(terms), releaseDate: tooLate })).toThrow()
-    expect(
-      parseComputeTerms({ ...roundTrip(terms), releaseDate: (2n ** 64n - 1n).toString() })
-        .releaseDate,
-    ).toBe(2n ** 64n - 1n)
+    expect(parseTerms(withRemedies({ chargeDeadline: tooLate })).ok).toBe(false)
+    const latest = parseTerms(withRemedies({ chargeDeadline: (2n ** 64n - 1n).toString() }))
+    expect(latest.ok && latest.value.remedies.chargeDeadline).toBe(2n ** 64n - 1n)
   })
 
-  it('refuses fields the schema version has no place for', () => {
-    expect(() => parseComputeTerms({ ...roundTrip(terms), token: TOKEN.token })).toThrow()
-  })
-
-  it('refuses a currency v1 has no rail for', () => {
-    expect(() => parseComputeTerms({ ...roundTrip(terms), currency: 'EUR' })).toThrow()
-  })
-
-  it('needs the dispute terms, with a share from 0 to 10,000', () => {
-    const { dispute: _, ...withoutDispute } = roundTrip(terms)
-    expect(() => parseComputeTerms(withoutDispute)).toThrow()
-    for (const day90SupplierShareBps of [-1, 10_001, 50.5, '5000']) {
-      expect(() =>
-        parseComputeTerms({
-          ...roundTrip(terms),
-          dispute: { arbiter: ARBITER, day90SupplierShareBps },
-        }),
-      ).toThrow()
+  it('refuses fields the version has no place for, at the top and in each section', () => {
+    expect(parseTerms({ ...roundTrip(terms), token: TOKEN.token }).ok).toBe(false)
+    for (const section of ['subject', 'consideration', 'remedies', 'resolution', 'backing']) {
+      const json = roundTrip(terms)
+      expect(parseTerms({ ...json, [section]: { ...json[section], extra: 1 } })).toEqual({
+        ok: false,
+        reason: 'terms.invalid',
+      })
     }
+  })
+
+  it('refuses a currency v1 has no rail for, and amounts in anything but micros', () => {
+    expect(parseTerms({ ...roundTrip(terms), currency: 'EUR' }).ok).toBe(false)
+    expect(parseTerms({ ...roundTrip(terms), amountDecimals: 2 }).ok).toBe(false)
+  })
+
+  it('refuses a terms version it does not read, before reading the rest', () => {
+    for (const version of [1, 3, '2', undefined]) {
+      expect(parseTerms({ ...roundTrip(terms), version, subject: 'anything' })).toEqual({
+        ok: false,
+        reason: 'terms.version_unknown',
+      })
+    }
+  })
+
+  it('refuses a template it does not know', () => {
+    expect(parseTerms({ ...roundTrip(terms), template: 'freight-booking/1' })).toEqual({
+      ok: false,
+      reason: 'terms.template_unknown',
+    })
+    expect(parseTerms({ ...roundTrip(terms), template: 'gpu-reservation/2' })).toEqual({
+      ok: false,
+      reason: 'terms.template_unknown',
+    })
+  })
+
+  it('refuses a backing a lock cannot enforce', () => {
+    const reserve = roundTrip(terms).backing
+    for (const backing of [
+      { ...reserve, kind: 'partner' },
+      { ...reserve, kind: 'agreement' },
+      { ...reserve, kind: 'payment' },
+      { ...reserve, side: 'supplier' },
+    ]) {
+      expect(parseTerms(withBacking(backing))).toEqual({
+        ok: false,
+        reason: 'terms.backing_unsupported',
+      })
+    }
+  })
+
+  it('needs the resolution, with a share from 0 to 10,000', () => {
+    const { resolution: _, ...withoutResolution } = roundTrip(terms)
+    expect(parseTerms(withoutResolution).ok).toBe(false)
+    for (const day90SupplierShareBps of [-1, 10_001, 50.5, '5000']) {
+      const json = roundTrip(terms)
+      expect(
+        parseTerms({ ...json, resolution: { ...json.resolution, day90SupplierShareBps } }).ok,
+      ).toBe(false)
+    }
+  })
+
+  it('reads version 1 terms only where a commitment made under them is checked', () => {
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    expect(parseAnyTerms(roundTrip(v1))).toEqual({ ok: true, value: lowerHex(v1) })
+    expect(parseAnyTerms(roundTrip(terms))).toEqual({ ok: true, value: lowerHex(terms) })
+    expect(parseTerms(roundTrip(v1))).toEqual({ ok: false, reason: 'terms.version_unknown' })
+    expect(parseAnyTerms({ ...roundTrip(v1), reserve: '-1' })).toEqual({
+      ok: false,
+      reason: 'terms.invalid',
+    })
+  })
+})
+
+describe('a section shown on its own over JSON', () => {
+  it('round-trips each section, checking its shape for the template', () => {
+    for (const section of [
+      'subject',
+      'consideration',
+      'remedies',
+      'resolution',
+      'backing',
+    ] as const) {
+      const shown = discloseSection(terms, SALT, section)
+      expect(parseSectionDisclosure(roundTrip(shown))).toEqual({ ok: true, value: lowerHex(shown) })
+    }
+  })
+
+  it("refuses a section whose shape doesn't fit, an unknown template or another version", () => {
+    const shown = roundTrip(discloseSection(terms, SALT, 'subject'))
+    expect(parseSectionDisclosure({ ...shown, content: { anything: 1 } })).toEqual({
+      ok: false,
+      reason: 'terms.invalid',
+    })
+    expect(
+      parseSectionDisclosure({ ...shown, header: { ...shown.header, template: 'freight/1' } }),
+    ).toEqual({ ok: false, reason: 'terms.template_unknown' })
+    expect(parseSectionDisclosure({ ...shown, header: { ...shown.header, version: 3 } })).toEqual({
+      ok: false,
+      reason: 'terms.version_unknown',
+    })
+  })
+})
+
+describe('references and attributions over JSON', () => {
+  const payment: PaymentReference = {
+    kind: 'payment',
+    chainId: CHAIN_ID,
+    transactionHash: id('payment tx'),
+    logIndex: 3,
+    token: TOKEN.token,
+    from: agent.address,
+    to: PAYEE,
+    amount: 24_000_000n,
+    memo: id('memo'),
+  }
+  const commitment = {
+    kind: 'commitment' as const,
+    chainId: CHAIN_ID,
+    lock: LOCK,
+    commitmentId: id('commitment-1'),
+    side: 'buyer' as const,
+    termsHash: termsHash(terms, SALT),
+  }
+
+  it('round-trips both kinds of reference', () => {
+    expect(parseReference(roundTrip(payment))).toEqual({ ok: true, value: lowerHex(payment) })
+    expect(parseReference(roundTrip(commitment))).toEqual({ ok: true, value: lowerHex(commitment) })
+  })
+
+  it('refuses a payment with no memo, an unknown kind or a negative log index', () => {
+    const { memo: _, ...noMemo } = roundTrip(payment)
+    for (const json of [
+      noMemo,
+      { ...roundTrip(payment), kind: 'calldata' },
+      { ...roundTrip(payment), logIndex: -1 },
+    ]) {
+      expect(parseReference(json)).toEqual({ ok: false, reason: 'message.invalid' })
+    }
+  })
+
+  it('round-trips attributions as evidence or value', () => {
+    const attributions = [
+      { payment, obligation: commitment, use: 'evidence' as const },
+      { payment, obligation: commitment, use: 'value' as const },
+    ]
+    expect(parseAttributions(roundTrip(attributions))).toEqual({
+      ok: true,
+      value: lowerHex(attributions),
+    })
+    expect(parseAttributions(roundTrip([{ ...attributions[0], use: 'backing' }])).ok).toBe(false)
   })
 })
 
@@ -95,16 +242,16 @@ describe("Avow's approval over JSON", () => {
     commitmentId: id('commitment-1'),
     side: 'buyer',
     token: TOKEN.token,
-    amount: terms.reserve,
+    amount: lock.amount,
     supplier: newKey().address,
     supplierSigner: newKey().address,
     payee: PAYEE,
-    freeCancelBy: terms.freeCancelBy,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
-    contestWindow: terms.contestWindow,
-    charges: termsCharges(terms, TOKEN.decimals),
+    freeCancelBy: lock.freeCancelBy,
+    acceptBy: lock.acceptBy,
+    chargeDeadline: lock.chargeDeadline,
+    releaseDate: lock.releaseDate,
+    contestWindow: lock.contestWindow,
+    charges: lock.charges,
     day90SupplierShareBps: 5000,
     arbiter: ARBITER,
     termsHash: termsHash(terms, SALT),
@@ -149,7 +296,7 @@ describe("Avow's approval over JSON", () => {
 
 describe('parseCommitment', () => {
   const commitment: Commitment = {
-    schemaVersion: '1',
+    schemaVersion: COMMITMENT_RECORD_VERSION,
     commitmentId: id('commitment-1'),
     category: 'compute',
     buyer: { businessId: 'biz_buyer', agentId: 'agt_1', mandateId: id('mandate-1') },
@@ -170,12 +317,12 @@ describe('parseCommitment', () => {
           commitmentId: id('commitment-1'),
           side: 'buyer',
           token: TOKEN.token,
-          amount: terms.reserve,
+          amount: lock.amount,
           payee: PAYEE,
-          acceptBy: terms.acceptBy,
-          chargeDeadline: terms.chargeDeadline,
-          contestWindow: terms.contestWindow,
-          releaseDate: terms.releaseDate,
+          acceptBy: lock.acceptBy,
+          chargeDeadline: lock.chargeDeadline,
+          contestWindow: lock.contestWindow,
+          releaseDate: lock.releaseDate,
           termsHash: termsHash(terms, SALT),
         },
         status: 'reserved',
@@ -184,21 +331,48 @@ describe('parseCommitment', () => {
     start: null,
     contest: null,
     outcome: null,
+    references: [],
   }
 
+  const v1 = testnetDemoTermsV1(START, ARBITER)
+  const underV1 = { ...commitment, terms: v1, termsHash: termsHash(v1, SALT) }
+
   it('round-trips a commitment', () => {
+    expect(COMMITMENT_RECORD_VERSION).toBe('2')
     expect(parseCommitment(roundTrip(commitment))).toEqual({
       ok: true,
       value: lowerHex(commitment),
     })
   })
 
+  it('reads a version 2 record made under version 1 terms', () => {
+    expect(parseCommitment(roundTrip(underV1))).toEqual({ ok: true, value: lowerHex(underV1) })
+  })
+
+  it('reads a version 1 record as version 2, citing nothing, so it is written back as version 2', () => {
+    // A record as version 1 wrote it, with version 1 terms and no references.
+    const { references: _, ...older } = { ...underV1, schemaVersion: '1' }
+    expect(parseCommitment(roundTrip(older))).toEqual({ ok: true, value: lowerHex(underV1) })
+  })
+
+  it('refuses a version 1 record with version 2 terms or references, and a version 2 record without references', () => {
+    const { references: _, ...unreferenced } = commitment
+    const bad = [
+      { ...commitment, schemaVersion: '1' },
+      { ...underV1, schemaVersion: '1' },
+      unreferenced,
+    ]
+    for (const record of bad) {
+      expect(parseCommitment(roundTrip(record))).toEqual({ ok: false, reason: 'message.invalid' })
+    }
+  })
+
   it('refuses a schema version it can read nothing of', () => {
-    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '2' })).toEqual({
+    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '3' })).toEqual({
       ok: false,
       reason: 'message.schema_unknown',
     })
-    expect(parseCommitment({ schemaVersion: '1' })).toEqual({
+    expect(parseCommitment({ schemaVersion: '2' })).toEqual({
       ok: false,
       reason: 'message.invalid',
     })
@@ -210,7 +384,7 @@ describe('parseSigned', () => {
     commitmentId: id('commitment-1'),
     termsHash: termsHash(terms, SALT),
     salt: SALT,
-    amount: terms.reserve,
+    amount: lock.amount,
     token: TOKEN.token,
     buyerBusinessId: 'biz_buyer',
     kybReference: 'mock-kyb-1',
@@ -219,9 +393,9 @@ describe('parseSigned', () => {
     agentKeyAuthorizedIn: id('key authorization tx'),
     mandateHash: id('mandate hash'),
     payee: PAYEE,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
+    acceptBy: lock.acceptBy,
+    chargeDeadline: lock.chargeDeadline,
+    releaseDate: lock.releaseDate,
     nonce: 1n,
     expiry: NOW + 300n,
   }
@@ -269,6 +443,15 @@ describe('parseSigned', () => {
       ok: false,
       reason: 'message.schema_unknown',
     })
+  })
+
+  it('refuses a type named after something every object inherits, without throwing', () => {
+    for (const type of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(parse({ ...envelope, type }), type).toEqual({
+        ok: false,
+        reason: 'message.schema_unknown',
+      })
+    }
   })
 
   it('refuses another type, chain or lock', () => {

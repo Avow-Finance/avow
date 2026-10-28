@@ -11,7 +11,7 @@ import {
   TESTNET_DEMO_PROFILE,
   termsCharges,
   termsHash,
-  testnetDemoTerms,
+  testnetDemoTermsV1,
   toWire,
 } from '@avow-finance/spec'
 import {
@@ -67,7 +67,9 @@ const approvalKey = key('approval key')
 const avowKey = key('avow authorization key')
 
 // The release date comes after the charge deadline, so a reader that swapped the two would show it.
-const terms = { ...testnetDemoTerms(START, arbiter.address), releaseDate: START + 2400n }
+// These are version 1 terms, and the pins below are the ones version 1 shipped with, so a
+// commitment made under version 1 stays verifiable by this verifier.
+const terms = { ...testnetDemoTermsV1(START, arbiter.address), releaseDate: START + 2400n }
 const SALT = id('vector terms salt')
 const COMMITMENT = id('vector commitment')
 const TERMS_HASH = termsHash(terms, SALT)
@@ -285,6 +287,7 @@ function chainOver(commitment: Hex): ChainReader {
     backing: reader.backing,
     agentKey: (...args) => memory.agentKey(...args),
     isAccountSignature: (...args) => memory.isAccountSignature(...args),
+    transfer: (...args) => memory.transfer(...args),
   }
 }
 

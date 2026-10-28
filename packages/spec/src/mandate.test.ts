@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import { checkMandate, type MandateCheckInput, validateMandate } from './mandate.js'
-import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './terms.js'
+import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
 import { demoMandate, demoRequest, NOW, newKey, START, TOKEN } from './test-helpers.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
@@ -123,9 +123,11 @@ describe('checkMandate', () => {
 
   it('denies terms that fail on their own, before any limit', () => {
     const terms = demoRequest(agent.address).terms
-    expect(checkMandate(input({}, { terms: { ...terms, reserve: dollars(250) } }))).toEqual(
-      denied('terms.reserve_mismatch'),
-    )
+    expect(
+      checkMandate(
+        input({}, { terms: { ...terms, backing: { ...terms.backing, amount: dollars(250) } } }),
+      ),
+    ).toEqual(denied('terms.reserve_mismatch'))
     expect(checkMandate(input({}, {}, { profile: PRODUCTION_PROFILE }))).toEqual(
       denied('terms.contest_window_short'),
     )

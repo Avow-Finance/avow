@@ -8,10 +8,10 @@ Lets a supplier check an Avow commitment before it grants capacity, and accept i
 
 `verifySupplierAuthorization` refuses with the first reason code that applies, in this order.
 
-1. The envelope names a schema version, message type and chain this code reads. The authorization hasn't expired, stays valid for no more than five minutes, and one of Avow's published keys signed it.
+1. The envelope names a message type, that type's version and a chain this code reads. The authorization hasn't expired, stays valid for no more than five minutes, and one of Avow's published keys signed it.
 2. It's for the commitment the supplier agreed to, with the terms hash the supplier signed. KYB marked as test data passes only where the supplier allows it, and only on a testnet.
-3. The supplier's terms and the salt produce that terms hash, the reserve equals the largest charge, the contest window meets the supplier's profile, and the terms name an arbiter and a day-90 share from 0 to 10,000.
-4. The token is one the supplier accepts for the terms' currency, the amount and deadlines match the terms, the payee is the supplier's own payout address, and the acceptance deadline hasn't passed.
+3. The supplier's terms hold nothing the terms hash leaves out, and they and the salt produce that terms hash. The terms are version 2 under a template this code knows, or version 1 for a commitment made under it. The reserve equals the largest charge, the contest window meets the supplier's profile, and the terms name an arbiter and a day-90 share from 0 to 10,000.
+4. The token is one the supplier accepts for the terms' currency, the amount and deadlines match what the terms map to, the payee is the supplier's own payout address, and the acceptance deadline hasn't passed.
 5. On the chain, the lock comes from Avow's factory and holds a reserve for this commitment that nobody has accepted yet and that matches the authorization. The agent's key or the account's root key funded it.
 6. The agent's key is active, lasts until the release date, and carries the mandate hash Avow named, in the transaction the authorization points to.
 7. When the supplier passes the buyer's signed mandate, the mandate hashes to that value, the buyer's account signed it in Tempo's keychain envelope, and its own limits allow this reserve.
@@ -24,7 +24,7 @@ It throws, rather than refusing, when the setup is wrong, such as a chain reader
 An acceptance binds the supplier to everything in Avow's approval, so a supplier gets one to sign only from `prepareAcceptance`, and signs it only with `signAcceptance`. `prepareAcceptance` refuses with the first reason that applies.
 
 1. Avow's authorization passes every check above, with the buyer's signed mandate required. It names the buyer and the mandate the supplier's own terms agreement names, and the mandate is that buyer's. A mandate that's forged, expired, revoked with its agent key, or that doesn't allow this supplier, category, currency, token or amount refuses.
-2. Avow's approval names the commitment the supplier agreed to, the supplier's own account, signing key and payout, and the token, amount, deadlines, contest window, terms hash, charges, day-90 share and arbiter of the supplier's own terms.
+2. Avow's approval names the commitment the supplier agreed to, the supplier's own account, signing key and payout, and the token. Every field the lock enforces is what `lockTerms` maps the supplier's own terms to, the mapping Avow's API signs with, under the terms hash the supplier agreed to.
 3. It names the mandate the authorization names, that mandate's two caps, and a funding key that's the mandate's agent key or the account's root key and that funded the reserve.
 4. The lock stores the digest of exactly this approval and the same terms, and its token and dispute timing are the ones the supplier's profile accepts.
 
@@ -33,6 +33,12 @@ Then it builds the acceptance, which names the lock's digest of the approval and
 ## Release consents
 
 A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. It gives up the supplier's charge, a reported or confirmed one included. Nothing caps how long a consent lasts, so its disclosure states the exact expiry and how long that is from when it was prepared. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. Like `signAcceptance`, it signs only the frozen object its prepare call returned. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
+
+## References and payments
+
+`verifyCommitmentReference` checks that a commitment reference names a lock Avow's factory created and that the lock holds that commitment under the reference's terms hash. `verifyCommitmentTerms` goes further for anyone holding the terms and salt. The terms have to give that hash, the reference has to name the side the terms' backing secures, and the lock's token has to be one the caller accepts for the terms' currency. The lock then has to enforce exactly what the terms map to, in that token's units. It reads version 1 and version 2 terms, so a commitment made under version 1 stays checkable without Avow.
+
+`verifyPaymentReference` checks a settled payment against the chain. A reference names its own token and any contract can emit an event shaped like a token's, so the caller passes the tokens it accepts, and a reference to any other token is refused before the chain is read. The Tempo reader reads the finalized block, then the receipt and the log at the reference's index. It counts the transaction as final only when its block is at or below the finalized one and is the chain's block at that height, so a receipt from a block that lost a reorg never counts. The check passes only when the transaction succeeded and is final and the log is the TIP-20 `TransferWithMemo` event that token emitted, with exactly the reference's sender, recipient, amount and memo. A plain transfer without a memo, the same event from a contract that isn't a TIP-20 token, and anything read from calldata don't count. A payment is evidence that money moved, and nothing here treats it as backing. A live test sends a payment with a memo on Moderato and checks it end to end.
 
 ## What this doesn't protect
 

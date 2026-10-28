@@ -1,4 +1,4 @@
-import { PRODUCTION_PROFILE, type TermsProfile } from './terms.js'
+import { PRODUCTION_PROFILE, type TermsProfile } from './profiles.js'
 
 /** Tempo's Moderato testnet. */
 export const TEMPO_MODERATO = 42431

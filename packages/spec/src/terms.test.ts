@@ -1,192 +1,584 @@
-import { describe, expect, it } from 'vitest'
-import { demoTerms, dollars, testnetDemoTerms } from './demo.js'
+import { hkdfSync } from 'node:crypto'
 import {
-  canonicalJson,
-  newSalt,
-  PRODUCTION_PROFILE,
-  TESTNET_DEMO_PROFILE,
+  type Address,
+  concat,
+  encodeAbiParameters,
+  type Hex,
+  hexToBytes,
+  keccak256,
+  stringToHex,
+  toHex,
+} from 'viem'
+import { describe, expect, it } from 'vitest'
+import { canonicalJson } from './canonical.js'
+import { demoTerms, dollars, testnetDemoTerms } from './demo.js'
+import type { Approval } from './eip712.js'
+import {
+  GPU_HOUR,
+  type GPU_RESERVATION,
+  type GpuReservationTerms,
+  gpuGracePeriod,
+} from './gpu-reservation.js'
+import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
+import {
+  approvalTermsProblem,
+  checkSectionDisclosure,
+  discloseSection,
+  enforceableTerms,
+  lockTerms,
+  sectionHash,
+  sectionHashes,
+  sectionSalt,
+  TERMS_SECTIONS,
+  type TermsSection,
   termsCharges,
   termsHash,
+  termsHashFromSections,
+  termsHeader,
+  termsShapeProblem,
   validateTerms,
 } from './terms.js'
+import { termsHashV1, testnetDemoTermsV1 } from './terms-v1.js'
 import { ARBITER } from './test-helpers.js'
-import type { ComputeTerms } from './types.js'
 
 const START = 1_800_000_000n
 const SALT = `0x${'11'.repeat(32)}` as const
+const OTHER: Address = '0x000000000000000000000000000000000000a4b2'
+const base = testnetDemoTerms(START, ARBITER)
 
-describe('canonicalJson', () => {
-  it('sorts keys at every depth and writes bigints as strings', () => {
-    expect(canonicalJson({ b: 1n, a: { d: [2n, 'x'], c: true } })).toBe(
-      '{"a":{"c":true,"d":["2","x"]},"b":"1"}',
-    )
-  })
-
-  it('gives the same bytes whatever order the keys were written in', () => {
-    const terms = testnetDemoTerms(START, ARBITER)
-    const reversed = Object.fromEntries(Object.entries(terms).reverse())
-    expect(canonicalJson(reversed)).toBe(canonicalJson(terms))
-  })
-
-  it('leaves out undefined fields', () => {
-    expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}')
-  })
-
-  it('refuses values JSON would change or drop', () => {
-    expect(() => canonicalJson({ a: Number.NaN })).toThrow()
-    expect(() => canonicalJson({ a: Number.POSITIVE_INFINITY })).toThrow()
-    expect(() => canonicalJson({ a: () => 1 })).toThrow()
-    expect(() => canonicalJson({ a: Symbol('s') })).toThrow()
-  })
-})
+/** Terms with one section changed. */
+function change<S extends TermsSection>(
+  t: GpuReservationTerms,
+  section: S,
+  patch: Partial<GpuReservationTerms[S]>,
+): GpuReservationTerms {
+  return { ...t, [section]: { ...t[section], ...patch } }
+}
 
 describe('termsHash', () => {
-  it('is the same for the same terms and salt', () => {
-    expect(termsHash(testnetDemoTerms(START, ARBITER), SALT)).toBe(
-      termsHash(testnetDemoTerms(START, ARBITER), SALT),
-    )
+  it('is the same for the same terms and salt, and changes with the salt', () => {
+    expect(termsHash(base, SALT)).toBe(termsHash(testnetDemoTerms(START, ARBITER), SALT))
+    expect(termsHash(base, SALT)).not.toBe(termsHash(base, `0x${'12'.repeat(32)}`))
   })
 
-  it('changes with the salt', () => {
-    expect(termsHash(testnetDemoTerms(START, ARBITER), SALT)).not.toBe(
-      termsHash(testnetDemoTerms(START, ARBITER), newSalt()),
-    )
-  })
-
-  it('changes when any field changes', () => {
-    const base = testnetDemoTerms(START, ARBITER)
+  it('changes when any field of the header or any section changes', () => {
     const hash = termsHash(base, SALT)
-    const changes: Partial<ComputeTerms>[] = [
-      { resource: { ...base.resource, count: 7 } },
-      { resource: { ...base.resource, region: 'elsewhere' } },
-      { windowStart: base.windowStart + 1n },
-      { windowDuration: base.windowDuration + 1n },
-      { acceptBy: base.acceptBy - 1n },
-      { price: { perGpuHour: base.price.perGpuHour + 1n } },
-      { reserve: base.reserve - 1n },
-      { freeCancelBy: base.freeCancelBy - 1n },
-      { lateCancellation: base.lateCancellation + 1n },
-      { noShow: base.noShow - 1n },
-      { gracePeriod: base.gracePeriod + 1n },
-      { chargeDeadline: base.chargeDeadline + 1n },
-      { contestWindow: base.contestWindow + 1n },
-      { releaseDate: base.releaseDate + 1n },
-      { dispute: { ...base.dispute, arbiter: '0x000000000000000000000000000000000000a4b2' } },
-      { dispute: { ...base.dispute, day90SupplierShareBps: 4999 } },
+    const [late, noShow] = base.remedies.charges
+    if (!late || !noShow) throw new Error('the demo terms have two charges')
+    const changed: GpuReservationTerms[] = [
+      change(base, 'subject', { resource: { ...base.subject.resource, count: 7 } }),
+      change(base, 'subject', { resource: { ...base.subject.resource, region: 'elsewhere' } }),
+      change(base, 'subject', { resource: { ...base.subject.resource, sku: 'other' } }),
+      change(base, 'subject', { windowStart: START + 1n }),
+      change(base, 'subject', { windowDuration: base.subject.windowDuration + 1n }),
+      { ...base, consideration: { kind: 'rate', amount: dollars(4), unit: 'gpu-hour' } },
+      { ...base, consideration: { kind: 'rate', amount: dollars(3), unit: 'gpu-minute' } },
+      { ...base, consideration: { kind: 'fixed', amount: dollars(3) } },
+      change(base, 'remedies', { acceptBy: base.remedies.acceptBy - 1n }),
+      change(base, 'remedies', { freeCancelBy: base.remedies.freeCancelBy - 1n }),
+      change(base, 'remedies', { chargeDeadline: base.remedies.chargeDeadline + 1n }),
+      change(base, 'remedies', { charges: [{ ...late, amount: late.amount + 1n }, noShow] }),
+      change(base, 'remedies', { charges: [late, { ...noShow, earliest: noShow.earliest + 1n }] }),
+      change(base, 'remedies', { charges: [noShow] }),
+      change(base, 'resolution', { contestWindow: base.resolution.contestWindow + 1n }),
+      change(base, 'resolution', { arbiter: OTHER }),
+      change(base, 'resolution', { day90SupplierShareBps: 4999 }),
+      change(base, 'backing', { amount: base.backing.amount - 1n }),
+      change(base, 'backing', { releaseDate: base.backing.releaseDate + 1n }),
     ]
-    for (const change of changes) {
-      expect(termsHash({ ...base, ...change }, SALT)).not.toBe(hash)
-    }
+    const seen = new Set([hash])
+    for (const t of changed) seen.add(termsHash(t, SALT))
+    expect(seen.size).toBe(changed.length + 1)
   })
 
   it("reads the arbiter's address in any letter case as the same terms", () => {
-    const base = testnetDemoTerms(START, '0x00000000000000000000000000000000000ABCDE')
-    const lower = {
-      ...base,
-      dispute: { ...base.dispute, arbiter: base.dispute.arbiter.toLowerCase() as typeof ARBITER },
+    const upper = testnetDemoTerms(START, '0x00000000000000000000000000000000000ABCDE')
+    const lower = change(upper, 'resolution', {
+      arbiter: '0x00000000000000000000000000000000000abcde',
+    })
+    expect(termsHash(upper, SALT)).toBe(termsHash(lower, SALT))
+  })
+
+  it('needs a random 32-byte salt', () => {
+    expect(() => termsHash(base, '0x1234')).toThrow()
+    expect(() => termsHash(base, `0x${'00'.repeat(32)}`)).toThrow()
+  })
+
+  it('refuses a version it does not read', () => {
+    expect(() =>
+      termsHash({ ...base, version: 3 } as unknown as GpuReservationTerms, SALT),
+    ).toThrow('terms.version_unknown')
+  })
+})
+
+describe('how the hash is built, spelled out for other implementations', () => {
+  it('derives each section salt with HKDF-SHA256, no HKDF salt and the section label as info', () => {
+    for (const s of TERMS_SECTIONS) {
+      const expected = toHex(
+        new Uint8Array(
+          hkdfSync(
+            'sha256',
+            Buffer.from(SALT.slice(2), 'hex'),
+            Buffer.alloc(0),
+            `avow:terms:v2:salt:${s}`,
+            32,
+          ),
+        ),
+      )
+      expect(sectionSalt(SALT, s)).toBe(expected)
     }
-    expect(termsHash(base, SALT)).toBe(termsHash(lower, SALT))
+    const salts = new Set(TERMS_SECTIONS.map((s) => sectionSalt(SALT, s)))
+    expect(salts.size).toBe(5)
+    expect(salts.has(SALT)).toBe(false)
   })
 
-  it('needs a 32-byte salt', () => {
-    expect(() => termsHash(testnetDemoTerms(START, ARBITER), '0x1234')).toThrow()
+  it('hashes each section under its own label, salt and canonical JSON, and the header in the clear', () => {
+    const salts = Object.fromEntries(TERMS_SECTIONS.map((s) => [s, sectionSalt(SALT, s)]))
+    const contents: Record<TermsSection, unknown> = {
+      subject: base.subject,
+      consideration: base.consideration,
+      remedies: base.remedies,
+      resolution: { ...base.resolution, arbiter: base.resolution.arbiter.toLowerCase() },
+      backing: base.backing,
+    }
+    const hashes = Object.fromEntries(
+      TERMS_SECTIONS.map((s) => [
+        s,
+        keccak256(
+          encodeAbiParameters(
+            [{ type: 'string' }, { type: 'bytes32' }, { type: 'string' }],
+            [`avow:terms:v2:${s}`, salts[s] as Hex, canonicalJson(contents[s])],
+          ),
+        ),
+      ]),
+    ) as Record<TermsSection, Hex>
+    expect(sectionHashes(base, SALT)).toEqual(hashes)
+    const header =
+      '{"amountDecimals":6,"currency":"USD","template":"gpu-reservation/1","version":2}'
+    expect(canonicalJson(termsHeader(base))).toBe(header)
+    const expected = keccak256(
+      encodeAbiParameters(
+        [
+          { type: 'string' },
+          { type: 'string' },
+          { type: 'bytes32' },
+          { type: 'bytes32' },
+          { type: 'bytes32' },
+          { type: 'bytes32' },
+          { type: 'bytes32' },
+        ],
+        [
+          'avow:terms:v2',
+          header,
+          hashes.subject,
+          hashes.consideration,
+          hashes.remedies,
+          hashes.resolution,
+          hashes.backing,
+        ],
+      ),
+    )
+    expect(termsHash(base, SALT)).toBe(expected)
+    expect(termsHashFromSections(termsHeader(base), hashes)).toBe(expected)
   })
 
-  it('makes a fresh 32-byte salt each time', () => {
-    const a = newSalt()
-    expect(a).toMatch(/^0x[0-9a-f]{64}$/)
-    expect(newSalt()).not.toBe(a)
+  it('hashes nothing a version 1 hash could have hashed, since the two differ at byte 32', () => {
+    // A version 1 hash covers the salt and then the terms' JSON object, so its byte 32 is `{`.
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    const v1Json = canonicalJson({
+      ...v1,
+      dispute: { ...v1.dispute, arbiter: v1.dispute.arbiter.toLowerCase() },
+    })
+    const v1Preimage = concat([SALT, stringToHex(v1Json)])
+    expect(keccak256(v1Preimage)).toBe(termsHashV1(v1, SALT))
+    expect(hexToBytes(v1Preimage)[32]).toBe('{'.charCodeAt(0))
+    // A version 2 hash covers an ABI encoding whose second word is the header's offset, a small
+    // number, so its byte 32 is zero whatever the terms say.
+    const hashes = sectionHashes(base, SALT)
+    const v2Preimage = encodeAbiParameters(
+      [
+        { type: 'string' },
+        { type: 'string' },
+        ...TERMS_SECTIONS.map(() => ({ type: 'bytes32' }) as const),
+      ],
+      [
+        'avow:terms:v2',
+        canonicalJson(termsHeader(base)),
+        ...TERMS_SECTIONS.map((section) => hashes[section]),
+      ],
+    )
+    expect(keccak256(v2Preimage)).toBe(termsHash(base, SALT))
+    expect(hexToBytes(v2Preimage)[32]).toBe(0)
+  })
+
+  it('keeps sections apart, so the same content hashed as another section never matches', () => {
+    const salt = sectionSalt(SALT, 'remedies')
+    const asRemedies = sectionHash('remedies', base.remedies, salt)
+    for (const s of TERMS_SECTIONS.filter((x) => x !== 'remedies')) {
+      expect(sectionHash(s, base.remedies, salt)).not.toBe(asRemedies)
+    }
+  })
+})
+
+describe('the shape terms need before they are hashed', () => {
+  it('passes version 2 terms with exactly the header and five sections, and version 1 terms', () => {
+    expect(termsShapeProblem(base)).toBeNull()
+    expect(termsShapeProblem(testnetDemoTermsV1(START, ARBITER))).toBeNull()
+  })
+
+  it('refuses terms missing a header field or a section as incomplete, before hashing them', () => {
+    for (const field of ['template', 'currency', 'amountDecimals', ...TERMS_SECTIONS]) {
+      const { [field as keyof typeof base]: _, ...missing } = base
+      for (const t of [missing, { ...base, [field]: undefined }]) {
+        expect(termsShapeProblem(t), field).toBe('terms.incomplete')
+        expect(() => termsHash(t as GpuReservationTerms, SALT), field).toThrow('terms.incomplete')
+        expect(validateTerms(t as GpuReservationTerms, TESTNET_DEMO_PROFILE), field).toBe(
+          'terms.incomplete',
+        )
+      }
+    }
+  })
+
+  it('reads terms with no version as version 1, whose checks refuse version 2 sections', () => {
+    const { version: _, ...unversioned } = base
+    expect(termsShapeProblem(unversioned)).toBeNull()
+    expect(validateTerms(unversioned as never, TESTNET_DEMO_PROFILE)).not.toBeNull()
+  })
+
+  it('refuses a field beside the header and sections, which the hash would leave out', () => {
+    const extra = { ...base, gracePeriod: 60n }
+    expect(termsShapeProblem(extra)).toBe('terms.invalid')
+    expect(() => termsHash(extra, SALT)).toThrow('terms.invalid')
+    expect(validateTerms(extra, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
+    expect(() => discloseSection(extra, SALT, 'subject')).toThrow('terms.invalid')
+  })
+
+  it('refuses another version, a section that is no object or a value canonical JSON cannot write', () => {
+    expect(termsShapeProblem({ ...base, version: 3 })).toBe('terms.version_unknown')
+    const resource = base.subject.resource
+    const bad: unknown[] = [
+      { ...base, remedies: null },
+      { ...base, subject: [] },
+      { ...base, backing: 'reserve' },
+      change(base, 'subject', { resource: { ...resource, count: 1.5 } }),
+      change(base, 'subject', { resource: { ...resource, region: '\ud800' } }),
+      change(base, 'subject', { windowStart: new Date(0) as unknown as bigint }),
+      null,
+      [],
+      'terms',
+    ]
+    bad.forEach((t, i) => {
+      expect(termsShapeProblem(t), `case ${i}`).toBe('terms.invalid')
+      expect(() => termsHash(t as GpuReservationTerms, SALT), `case ${i}`).toThrow('terms.invalid')
+    })
+  })
+})
+
+describe('showing one section', () => {
+  const hash = termsHash(base, SALT)
+
+  it('checks any one section against the terms hash, with only its own salt', () => {
+    for (const s of TERMS_SECTIONS) {
+      const shown = discloseSection(base, SALT, s)
+      expect(Object.keys(shown.others).sort()).toEqual(TERMS_SECTIONS.filter((x) => x !== s).sort())
+      expect(JSON.stringify(shown, (_k, v) => (typeof v === 'bigint' ? `${v}` : v))).not.toContain(
+        SALT.slice(2),
+      )
+      expect(checkSectionDisclosure(shown, hash)).toBeNull()
+    }
+  })
+
+  it('shows the service and window without any price or charge', () => {
+    const shown = discloseSection(base, SALT, 'subject')
+    const text = JSON.stringify(shown, (_k, v) => (typeof v === 'bigint' ? `${v}` : v))
+    for (const secret of ['3000000', '250000000', '500000000']) expect(text).not.toContain(secret)
+    expect(checkSectionDisclosure(shown, hash)).toBeNull()
+  })
+
+  it('refuses a changed section, another salt, another header, or missing or extra hashes', () => {
+    const shown = discloseSection(base, SALT, 'remedies')
+    const remedies = base.remedies
+    const { backing: _, ...withoutBacking } = shown.others
+    const bad = [
+      { ...shown, content: { ...remedies, chargeDeadline: remedies.chargeDeadline + 1n } },
+      { ...shown, salt: sectionSalt(SALT, 'backing') },
+      { ...shown, salt: SALT },
+      { ...shown, header: { ...shown.header, currency: 'EUR' as 'USD' } },
+      { ...shown, others: { ...shown.others, subject: shown.others.backing as Hex } },
+    ]
+    for (const d of bad) expect(checkSectionDisclosure(d, hash)).toBe('terms.hash_mismatch')
+    expect(checkSectionDisclosure({ ...shown, others: withoutBacking }, hash)).toBe('terms.invalid')
+    expect(
+      checkSectionDisclosure({ ...shown, others: { ...shown.others, remedies: hash } }, hash),
+    ).toBe('terms.invalid')
+    expect(
+      checkSectionDisclosure(
+        { ...shown, header: { ...shown.header, template: 'freight/1' as typeof GPU_RESERVATION } },
+        hash,
+      ),
+    ).toBe('terms.template_unknown')
+    expect(checkSectionDisclosure(shown, termsHash(base, `0x${'12'.repeat(32)}`))).toBe(
+      'terms.hash_mismatch',
+    )
+  })
+
+  it('binds the backing, so a changed backing changes the terms hash', () => {
+    const otherBacking = change(base, 'backing', { amount: base.backing.amount + 1n })
+    expect(termsHash(otherBacking, SALT)).not.toBe(hash)
+    const shown = discloseSection(otherBacking, SALT, 'backing')
+    expect(checkSectionDisclosure(shown, hash)).toBe('terms.hash_mismatch')
   })
 })
 
 describe('validateTerms', () => {
   it('accepts the demo terms under production and the testnet terms under the demo profile', () => {
     expect(validateTerms(demoTerms(START, ARBITER), PRODUCTION_PROFILE)).toBeNull()
-    expect(validateTerms(testnetDemoTerms(START, ARBITER), TESTNET_DEMO_PROFILE)).toBeNull()
+    expect(validateTerms(base, TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
   it("refuses the testnet's 10-minute contest window under production", () => {
-    expect(validateTerms(testnetDemoTerms(START, ARBITER), PRODUCTION_PROFILE)).toBe(
-      'terms.contest_window_short',
-    )
+    expect(validateTerms(base, PRODUCTION_PROFILE)).toBe('terms.contest_window_short')
+  })
+
+  it('refuses a version or template it does not know', () => {
+    const v3 = { ...base, version: 3 } as unknown as GpuReservationTerms
+    expect(validateTerms(v3, TESTNET_DEMO_PROFILE)).toBe('terms.version_unknown')
+    const freight = { ...base, template: 'freight/1' } as unknown as GpuReservationTerms
+    expect(validateTerms(freight, TESTNET_DEMO_PROFILE)).toBe('terms.template_unknown')
+  })
+
+  it('knows only its own templates and charge kinds, never a name every object inherits', () => {
+    const [late, noShow] = base.remedies.charges
+    if (!late || !noShow) throw new Error('two charges')
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      const template = { ...base, template: name } as unknown as GpuReservationTerms
+      expect(validateTerms(template, TESTNET_DEMO_PROFILE), name).toBe('terms.template_unknown')
+      const charges = [{ ...late, kind: name }, noShow] as typeof base.remedies.charges
+      const kind = change(base, 'remedies', { charges })
+      expect(validateTerms(kind, TESTNET_DEMO_PROFILE), name).toBe('terms.charges_invalid')
+    }
+  })
+
+  it('needs amounts written in millionths of the currency', () => {
+    const t = { ...base, amountDecimals: 18 } as unknown as GpuReservationTerms
+    expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
+  })
+
+  it('refuses a backing or side a lock cannot enforce', () => {
+    for (const backing of [
+      { ...base.backing, kind: 'partner' },
+      { ...base.backing, kind: 'payment' },
+      { ...base.backing, side: 'supplier' },
+    ]) {
+      const t = { ...base, backing } as unknown as GpuReservationTerms
+      expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe('terms.backing_unsupported')
+    }
   })
 
   it('needs the reserve to equal the largest charge', () => {
-    const t = testnetDemoTerms(START, ARBITER)
-    expect(validateTerms({ ...t, reserve: dollars(499) }, TESTNET_DEMO_PROFILE)).toBe(
-      'terms.reserve_mismatch',
+    for (const amount of [dollars(499), dollars(600)]) {
+      expect(validateTerms(change(base, 'backing', { amount }), TESTNET_DEMO_PROFILE)).toBe(
+        'terms.reserve_mismatch',
+      )
+    }
+    const [late, noShow] = base.remedies.charges
+    if (!late || !noShow) throw new Error('two charges')
+    const lateLarger = change(
+      change(base, 'remedies', { charges: [{ ...late, amount: dollars(700) }, noShow] }),
+      'backing',
+      { amount: dollars(700) },
     )
-    expect(validateTerms({ ...t, reserve: dollars(600) }, TESTNET_DEMO_PROFILE)).toBe(
-      'terms.reserve_mismatch',
-    )
-    expect(
-      validateTerms({ ...t, lateCancellation: 0n, noShow: 0n, reserve: 0n }, TESTNET_DEMO_PROFILE),
-    ).toBe('terms.reserve_mismatch')
+    expect(validateTerms(lateLarger, TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
-  it('takes the late-cancellation charge when it is the larger one', () => {
-    const t = testnetDemoTerms(START, ARBITER)
-    const terms = { ...t, lateCancellation: dollars(700), reserve: dollars(700) }
-    expect(validateTerms(terms, TESTNET_DEMO_PROFILE)).toBeNull()
+  it('needs one of each charge kind at most, in the lock order, each with an amount', () => {
+    const [late, noShow] = base.remedies.charges
+    if (!late || !noShow) throw new Error('two charges')
+    for (const charges of [
+      [],
+      [noShow, late],
+      [noShow, noShow],
+      [{ ...late, amount: 0n }, noShow],
+      [{ ...late, kind: 'minimumUse' }, noShow],
+      [late, noShow, late, noShow, late],
+    ]) {
+      const t = change(base, 'remedies', { charges: charges as typeof base.remedies.charges })
+      expect(validateTerms(t, TESTNET_DEMO_PROFILE), JSON.stringify(charges.length)).toBe(
+        'terms.charges_invalid',
+      )
+    }
   })
 
-  it('needs the dispute terms, with a real arbiter and a share from 0 to 10,000', () => {
-    const t = testnetDemoTerms(START, ARBITER)
-    const { dispute: _, ...withoutDispute } = t
-    expect(validateTerms(withoutDispute as ComputeTerms, TESTNET_DEMO_PROFILE)).toBe(
-      'terms.incomplete',
-    )
+  it('needs every deadline in order', () => {
+    const r = base.remedies
+    const end = START + base.subject.windowDuration
     const bad = [
-      { arbiter: '0x0000000000000000000000000000000000000000', day90SupplierShareBps: 5000 },
-      { arbiter: '0x1234', day90SupplierShareBps: 5000 },
-      { arbiter: ARBITER, day90SupplierShareBps: -1 },
-      { arbiter: ARBITER, day90SupplierShareBps: 10_001 },
-      { arbiter: ARBITER, day90SupplierShareBps: 50.5 },
+      change(base, 'remedies', { chargeDeadline: end - 1n }),
+      change(base, 'remedies', { acceptBy: START + 1n }),
+      change(base, 'remedies', { freeCancelBy: START + 1n }),
+      change(base, 'backing', { releaseDate: r.chargeDeadline - 1n }),
+      change(base, 'subject', { windowDuration: 0n }),
+      change(base, 'remedies', {
+        charges: r.charges.map((c) =>
+          c.kind === 'noShow' ? { ...c, earliest: r.chargeDeadline } : c,
+        ),
+      }),
+      change(base, 'remedies', {
+        charges: r.charges.map((c) => (c.kind === 'noShow' ? { ...c, earliest: START - 1n } : c)),
+      }),
     ]
-    for (const dispute of bad) {
-      const terms = { ...t, dispute } as ComputeTerms
-      expect(validateTerms(terms, TESTNET_DEMO_PROFILE), JSON.stringify(dispute)).toBe(
+    for (const t of bad) {
+      expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe('terms.deadlines_out_of_order')
+    }
+  })
+
+  it('needs a real arbiter and a share from 0 to 10,000', () => {
+    const bad = [
+      { arbiter: '0x0000000000000000000000000000000000000000' as Address },
+      { arbiter: '0x1234' as Address },
+      { day90SupplierShareBps: -1 },
+      { day90SupplierShareBps: 10_001 },
+    ]
+    for (const patch of bad) {
+      expect(validateTerms(change(base, 'resolution', patch), TESTNET_DEMO_PROFILE)).toBe(
         'terms.dispute_invalid',
       )
     }
-    for (const share of [0, 10_000]) {
-      const terms = { ...t, dispute: { arbiter: ARBITER, day90SupplierShareBps: share } }
-      expect(validateTerms(terms, TESTNET_DEMO_PROFILE)).toBeNull()
+    // A share that isn't a whole number can't be hashed, so it never reaches the dispute check.
+    const fractional = change(base, 'resolution', { day90SupplierShareBps: 50.5 })
+    expect(validateTerms(fractional, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
+    for (const day90SupplierShareBps of [0, 10_000]) {
+      const t = change(base, 'resolution', { day90SupplierShareBps })
+      expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBeNull()
     }
   })
 
-  it('needs the deadlines in order', () => {
-    const t = testnetDemoTerms(START, ARBITER)
-    const end = t.windowStart + t.windowDuration
-    const bad: Partial<ComputeTerms>[] = [
-      { windowDuration: 0n },
-      { freeCancelBy: t.windowStart + 1n },
-      { acceptBy: t.windowStart + 1n },
-      { chargeDeadline: end - 1n },
-      { releaseDate: t.chargeDeadline - 1n },
-      { gracePeriod: t.chargeDeadline - t.windowStart },
-      { gracePeriod: -1n },
+  it("applies the GPU reservation template's own rules", () => {
+    const late = base.remedies.charges[0]
+    if (!late) throw new Error('a late cancellation charge')
+    const bad: [GpuReservationTerms, string][] = [
+      [{ ...base, consideration: { kind: 'fixed', amount: dollars(3) } }, 'terms.template_invalid'],
+      [
+        {
+          ...base,
+          consideration: { kind: 'fixed', amount: dollars(3), unit: GPU_HOUR } as never,
+        },
+        'terms.template_invalid',
+      ],
+      [
+        { ...base, consideration: { kind: 'rate', amount: dollars(3), unit: 'hour' } },
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, count: 0 } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, gpu: '' } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, region: '' } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, sku: '' } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'remedies', {
+          charges: [{ ...late, earliest: late.earliest - 1n }, ...base.remedies.charges.slice(1)],
+        }),
+        'terms.template_invalid',
+      ],
     ]
-    for (const change of bad) {
-      expect(validateTerms({ ...t, ...change }, TESTNET_DEMO_PROFILE)).toBe(
-        'terms.deadlines_out_of_order',
-      )
-    }
+    for (const [t, reason] of bad) expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe(reason)
+  })
+
+  it('accepts each GPU reservation deadline at its limit', () => {
+    const r = base.remedies
+    const [late, noShow] = r.charges
+    if (!late || !noShow) throw new Error('two charges')
+    const end = START + base.subject.windowDuration
+    const atLimits = [
+      // Free cancellation up to the window's start, with the late cancellation chargeable from it.
+      change(base, 'remedies', {
+        freeCancelBy: START,
+        charges: [{ ...late, earliest: START }, noShow],
+      }),
+      // A no-show chargeable from the window's start, with no grace period.
+      change(base, 'remedies', { charges: [late, { ...noShow, earliest: START }] }),
+      // The window ending at the charge deadline.
+      change(base, 'remedies', { chargeDeadline: end }),
+    ]
+    for (const t of atLimits) expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBeNull()
+    expect(r.acceptBy).toBe(START)
   })
 })
 
-describe('termsCharges', () => {
-  it("gives the lock's charges for the terms, in the token's base units", () => {
-    const t = testnetDemoTerms(START, ARBITER)
-    expect(termsCharges(t, 6)).toEqual([
-      { kind: 'lateCancellation', most: 250_000_000n, earliest: t.freeCancelBy },
-      { kind: 'noShow', most: 500_000_000n, earliest: t.windowStart + t.gracePeriod },
-    ])
-    expect(termsCharges(t, 18)[1]?.most).toBe(500n * 10n ** 18n)
+describe('what the lock enforces', () => {
+  it('maps version 2 demo terms to exactly the values version 1 mapped the same booking to', () => {
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    expect(lockTerms(base, 6)).toEqual(lockTerms(v1, 6))
+    expect(lockTerms(base, 18)).toEqual(lockTerms(v1, 18))
+    expect(enforceableTerms(base)).toEqual(enforceableTerms(v1))
   })
 
-  it('leaves out a kind the terms set to zero', () => {
-    const t = { ...testnetDemoTerms(START, ARBITER), lateCancellation: 0n }
-    expect(termsCharges(t, 6).map((c) => c.kind)).toEqual(['noShow'])
+  it("gives the lock's charges in the token's base units, and the grace period from the no-show", () => {
+    expect(termsCharges(base, 6)).toEqual([
+      { kind: 'lateCancellation', most: 250_000_000n, earliest: base.remedies.freeCancelBy },
+      { kind: 'noShow', most: 500_000_000n, earliest: START + 120n },
+    ])
+    expect(termsCharges(base, 18)[1]?.most).toBe(500n * 10n ** 18n)
+    expect(gpuGracePeriod(base)).toBe(120n)
+  })
+
+  it("names the side the backing secures, and version 1 terms back the buyer's side", () => {
+    expect(lockTerms(base, 6).side).toBe('buyer')
+    expect(enforceableTerms(testnetDemoTermsV1(START, ARBITER)).side).toBe('buyer')
+  })
+
+  it('leaves out a charge the booking sets to zero', () => {
+    const t = testnetDemoTerms(START, ARBITER)
+    const onlyNoShow = change(t, 'remedies', { charges: t.remedies.charges.slice(1) })
+    expect(termsCharges(onlyNoShow, 6).map((c) => c.kind)).toEqual(['noShow'])
+  })
+})
+
+describe('approvalTermsProblem', () => {
+  const lock = lockTerms(base, 6)
+  const hash = termsHash(base, SALT)
+  const approval = { ...lock, termsHash: hash } satisfies Partial<Approval>
+
+  it('passes an approval built from the terms', () => {
+    expect(approvalTermsProblem(approval, { lock, termsHash: hash })).toBeNull()
+  })
+
+  it('refuses an approval that differs from the terms in any enforced field', () => {
+    const [late, noShow] = lock.charges
+    if (!late || !noShow) throw new Error('two charges')
+    const cases: [Partial<typeof approval>, string][] = [
+      [{ side: 'supplier' }, 'approval.terms_mismatch'],
+      [{ amount: lock.amount - 1n }, 'approval.terms_mismatch'],
+      [{ freeCancelBy: lock.freeCancelBy + 1n }, 'approval.terms_mismatch'],
+      [{ acceptBy: lock.acceptBy + 1n }, 'approval.terms_mismatch'],
+      [{ chargeDeadline: lock.chargeDeadline + 1n }, 'approval.terms_mismatch'],
+      [{ releaseDate: lock.releaseDate + 1n }, 'approval.terms_mismatch'],
+      [{ contestWindow: lock.contestWindow + 1n }, 'approval.terms_mismatch'],
+      [{ termsHash: termsHash(base, `0x${'12'.repeat(32)}`) }, 'approval.terms_mismatch'],
+      [{ charges: [late] }, 'approval.charges_mismatch'],
+      [{ charges: [{ ...late, most: late.most + 1n }, noShow] }, 'approval.charges_mismatch'],
+      [
+        { charges: [late, { ...noShow, earliest: noShow.earliest - 1n }] },
+        'approval.charges_mismatch',
+      ],
+      [{ day90SupplierShareBps: 4000 }, 'approval.dispute_mismatch'],
+      [{ arbiter: OTHER }, 'approval.dispute_mismatch'],
+    ]
+    for (const [patch, reason] of cases) {
+      expect(approvalTermsProblem({ ...approval, ...patch }, { lock, termsHash: hash })).toBe(
+        reason,
+      )
+    }
   })
 })

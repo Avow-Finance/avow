@@ -4,8 +4,8 @@ import {
   type HumanApproval,
   humanApprovalTypedData,
   type Mandate,
+  MESSAGE_VERSIONS,
   mandateTypedData,
-  SCHEMA_VERSION,
   type Signed,
   signForAccount,
 } from '@avow-finance/spec'
@@ -49,7 +49,7 @@ function envelope<T>(
 ): Signed<T> {
   return {
     type,
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: MESSAGE_VERSIONS[type],
     chainId: d.chainId,
     lock: d.verifyingContract,
     message,

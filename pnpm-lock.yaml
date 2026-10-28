@@ -44,6 +44,9 @@ importers:
 
   packages/spec:
     dependencies:
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       ox:
         specifier: 0.14.57
         version: 0.14.57(typescript@7.0.2)(zod@4.6.7)

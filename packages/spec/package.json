@@ -2,7 +2,7 @@
   "name": "@avow-finance/spec",
   "version": "0.0.0",
   "private": true,
-  "description": "Avow's commitment schema: mandates, compute terms, signed messages, reason codes and the mandate check",
+  "description": "Avow's commitment schema: mandates, terms and their templates, signed messages, reason codes and the mandate check",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -12,7 +12,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "vectors"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -25,6 +26,7 @@
     "directory": "packages/spec"
   },
   "dependencies": {
+    "@noble/hashes": "1.8.0",
     "ox": "0.14.57",
     "viem": "2.57.11",
     "zod": "4.6.7"

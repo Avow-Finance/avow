@@ -2,18 +2,21 @@ import {
   CHARGE_KINDS,
   type Charge,
   type ChargeKind,
+  type ObservedTransfer,
   RAIL_STATES,
   tempoKeychainCheck,
 } from '@avow-finance/spec'
 import {
   type Address,
+  BlockNotFoundError,
   type Client,
   type Hex,
   isAddressEqual,
   parseEventLogs,
+  TransactionReceiptNotFoundError,
   zeroAddress,
 } from 'viem'
-import { getTransactionReceipt, readContract } from 'viem/actions'
+import { getBlock, getTransactionReceipt, readContract } from 'viem/actions'
 import { Abis, Addresses } from 'viem/tempo'
 import type { AgentKeyInfo, ChainReader, LockedBacking, LockInfo } from './chain.js'
 import { FACTORY_ABI, LOCK_ABI } from './lock-abi.js'
@@ -65,6 +68,71 @@ export async function readAgentKey(
     active: !stored.isRevoked,
     expiry: stored.expiry >= NO_EXPIRY ? null : stored.expiry,
     witness: onlyThisKey && witnesses.length === 1 ? (witnesses[0] ?? null) : null,
+  }
+}
+
+/** Tempo puts every TIP-20 token at these 12 bytes, `0x20c0` and ten zero bytes, then its 8-byte id. */
+const TIP20_PREFIX = '0x20c000000000000000000000'
+
+/** Whether an address is a TIP-20 token's, by the whole 12-byte prefix. */
+function isTip20(address: Address): boolean {
+  return address.toLowerCase().startsWith(TIP20_PREFIX)
+}
+
+/**
+ * Reads the log at one index of one transaction. The log counts as a payment only when a TIP-20
+ * token emitted it and it decodes as that token's `TransferWithMemo` event, and the caller checks
+ * that the token is the one the reference names and one it accepts. The receipt is final only
+ * when its block is at or below the chain's finalized block and is the chain's block at that
+ * height, so a receipt from a block that lost a reorg never reads as final.
+ */
+export async function readTransfer(
+  client: Client,
+  chainId: number,
+  transactionHash: Hex,
+  logIndex: number,
+): Promise<ObservedTransfer | null> {
+  // The finalized block is read first, so every block at or below it stays the chain's block.
+  const final = await getBlock(client, { blockTag: 'finalized' })
+  let receipt: Awaited<ReturnType<typeof getTransactionReceipt>>
+  try {
+    receipt = await getTransactionReceipt(client, { hash: transactionHash })
+  } catch (error) {
+    if (error instanceof TransactionReceiptNotFoundError) return null
+    throw error
+  }
+  const log = receipt.logs.find((l) => l.logIndex === logIndex)
+  if (!log) return null
+  let finalized = false
+  if (final.number !== null && receipt.blockNumber <= final.number) {
+    // A node a block behind may not have the block yet, and then the receipt reads as not final.
+    const atHeight = await getBlock(client, { blockNumber: receipt.blockNumber }).catch(
+      (error: unknown) => {
+        if (error instanceof BlockNotFoundError) return null
+        throw error
+      },
+    )
+    finalized =
+      atHeight?.hash != null && atHeight.hash.toLowerCase() === receipt.blockHash.toLowerCase()
+  }
+  const [decoded] = isTip20(log.address)
+    ? parseEventLogs({ abi: Abis.tip20, eventName: 'TransferWithMemo', logs: [log], strict: true })
+    : []
+  return {
+    chainId,
+    transactionHash: receipt.transactionHash,
+    logIndex,
+    succeeded: receipt.status === 'success',
+    finalized,
+    emitter: log.address,
+    event: decoded
+      ? {
+          from: decoded.args.from,
+          to: decoded.args.to,
+          amount: decoded.args.amount,
+          memo: decoded.args.memo,
+        }
+      : null,
   }
 }
 
@@ -186,5 +254,7 @@ export function tempoChainReader(client: Client, options: TempoReaderOptions): C
     agentKey: (account, key, authorizedIn) => readAgentKey(client, account, key, authorizedIn),
     isAccountSignature: (account, digest, signature) =>
       check({ signer: account, digest, signature }),
+    transfer: (transactionHash, logIndex) =>
+      readTransfer(client, chainId, transactionHash, logIndex),
   }
 }

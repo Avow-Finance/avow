@@ -2,6 +2,7 @@ import {
   type Charge,
   keychainSignatureCheck,
   type LockTiming,
+  type ObservedTransfer,
   type RailState,
   type Side,
 } from '@avow-finance/spec'
@@ -81,6 +82,12 @@ export interface ChainReader {
    * envelope Tempo requires. On Tempo this asks the chain's own signature verifier.
    */
   isAccountSignature(account: Address, digest: Hex, signature: Hex): Promise<boolean>
+  /**
+   * The log at one index of one transaction, decoded as a TIP-20 `TransferWithMemo` event when it
+   * is one, with whether the transaction succeeded and whether its block is finalized. Returns
+   * null when the chain has no such transaction or log. Nothing is read from calldata.
+   */
+  transfer(transactionHash: Hex, logIndex: number): Promise<ObservedTransfer | null>
 }
 
 /** A chain reader held in memory, for tests and dry runs. */
@@ -89,6 +96,7 @@ export class MemoryChain implements ChainReader {
   readonly #backings = new Map<string, LockedBacking>()
   readonly #keys = new Map<string, AgentKeyInfo & { authorizedIn: Hex | null }>()
   readonly #admins = new Set<string>()
+  readonly #transfers = new Map<string, ObservedTransfer>()
   readonly #check = keychainSignatureCheck((account, key) =>
     this.#admins.has(`${account.toLowerCase()}:${key.toLowerCase()}`),
   )
@@ -113,6 +121,11 @@ export class MemoryChain implements ChainReader {
     })
   }
 
+  /** Records what the chain holds at one log index of one transaction. */
+  setTransfer(seen: ObservedTransfer): void {
+    this.#transfers.set(`${seen.transactionHash.toLowerCase()}:${seen.logIndex}`, seen)
+  }
+
   addAdminKey(account: Address, key: Address): void {
     this.#admins.add(`${account.toLowerCase()}:${key.toLowerCase()}`)
   }
@@ -135,5 +148,9 @@ export class MemoryChain implements ChainReader {
 
   async isAccountSignature(account: Address, digest: Hex, signature: Hex): Promise<boolean> {
     return this.#check({ signer: account, digest, signature })
+  }
+
+  async transfer(transactionHash: Hex, logIndex: number): Promise<ObservedTransfer | null> {
+    return this.#transfers.get(`${transactionHash.toLowerCase()}:${logIndex}`) ?? null
   }
 }

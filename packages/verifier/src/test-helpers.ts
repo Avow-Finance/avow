@@ -3,6 +3,7 @@ import {
   approvalDigest,
   approvalTypedData,
   digestOf,
+  type LockTerms,
   type Mandate,
   mandateHash,
   mandateTypedData,
@@ -11,7 +12,6 @@ import {
   signForAccount,
   supplierAuthorizationTypedData,
   TESTNET_DEMO_PROFILE,
-  termsCharges,
   termsHash,
   testnetDemoTerms,
   toWire,
@@ -56,6 +56,27 @@ export const supplierAccount = newKey()
 export const supplierKey = newKey()
 export const terms = testnetDemoTerms(START, ARBITER)
 export const TERMS_HASH = termsHash(terms, SALT)
+/**
+ * What the terms make the lock enforce, written out field by field from the sections rather than
+ * through `lockTerms`, so the tests check the mapping against an account of it kept apart from the
+ * code. The token has 6 decimals, so its base units equal micros.
+ */
+export const LOCK_TERMS: LockTerms = {
+  side: terms.backing.side,
+  amount: terms.backing.amount,
+  freeCancelBy: terms.remedies.freeCancelBy,
+  acceptBy: terms.remedies.acceptBy,
+  chargeDeadline: terms.remedies.chargeDeadline,
+  releaseDate: terms.backing.releaseDate,
+  contestWindow: terms.resolution.contestWindow,
+  charges: terms.remedies.charges.map((c) => ({
+    kind: c.kind,
+    most: c.amount,
+    earliest: c.earliest,
+  })),
+  day90SupplierShareBps: terms.resolution.day90SupplierShareBps,
+  arbiter: terms.resolution.arbiter,
+}
 
 export const mandate: Mandate = {
   mandateId: id('mandate-1'),
@@ -89,7 +110,7 @@ export function authorization(change: Partial<SupplierAuthorization> = {}): Supp
     commitmentId: COMMITMENT,
     termsHash: TERMS_HASH,
     salt: SALT,
-    amount: terms.reserve,
+    amount: LOCK_TERMS.amount,
     token: TOKEN.token,
     buyerBusinessId: 'biz_buyer',
     kybReference: 'mock-kyb-1',
@@ -98,9 +119,9 @@ export function authorization(change: Partial<SupplierAuthorization> = {}): Supp
     agentKeyAuthorizedIn: KEY_TX,
     mandateHash: mHash,
     payee: PAYEE,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
+    acceptBy: LOCK_TERMS.acceptBy,
+    chargeDeadline: LOCK_TERMS.chargeDeadline,
+    releaseDate: LOCK_TERMS.releaseDate,
     nonce: 1n,
     expiry: NOW + 300n,
     ...change,
@@ -144,20 +165,11 @@ export async function signedMandate(m: Mandate, key = buyer): Promise<unknown> {
 export function approval(change: Partial<Approval> = {}): Approval {
   return {
     commitmentId: COMMITMENT,
-    side: 'buyer',
     token: TOKEN.token,
-    amount: terms.reserve,
+    ...LOCK_TERMS,
     supplier: supplierAccount.address,
     supplierSigner: supplierKey.address,
     payee: PAYEE,
-    freeCancelBy: terms.freeCancelBy,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
-    contestWindow: terms.contestWindow,
-    charges: termsCharges(terms, TOKEN.decimals),
-    day90SupplierShareBps: terms.dispute.day90SupplierShareBps,
-    arbiter: terms.dispute.arbiter,
     termsHash: TERMS_HASH,
     mandateHash: mHash,
     capPerCommitment: mandate.capPerCommitment,
