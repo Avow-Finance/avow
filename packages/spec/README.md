@@ -18,7 +18,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them, and the references a record cites |
 | Terms | Version 2 terms: a header and five sections, each hashed apart, with templates for what each kind of commitment promises. GPU reservation is the first template |
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
-| References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event, and the rule that a payment's value counts once |
+| References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
@@ -50,18 +50,19 @@ A template's meaning never changes. A change in how a template reads its terms i
 
 ### What the lock enforces
 
-`lockTerms` maps terms to the fields of Avow's approval, which the lock stores and enforces. The amount and release date come from the backing, the deadlines and charges from the remedies, and the contest window, arbiter and day-90 share from the resolution. Avow's API builds its approval with this mapping, and `approvalTermsProblem` refuses an approval that differs from it in any field or names another terms hash. The verifier runs the same check against the supplier's own terms before it builds an acceptance, so an approval can't make a lock enforce anything the terms don't say.
+`lockTerms` maps terms to the fields of Avow's approval, which the lock stores and enforces. The side, amount and release date come from the backing, the deadlines and charges from the remedies, and the contest window, arbiter and day-90 share from the resolution. Avow's API builds its approval with this mapping, and `approvalTermsProblem` refuses an approval that differs from it in any field or names another terms hash. The verifier runs the same check against the supplier's own terms before it builds an acceptance, so an approval can't make a lock enforce anything the terms don't say. The terms name a currency and never a token, so the approval's token sits outside the mapping, and the API and the verifier each check that it's a token accepted for that currency.
 
 ### Hashing
 
-Every hash here is reproducible from these rules, and `vectors/terms-v2.json` holds worked examples that `scripts/write-terms-vectors.mjs` writes and the tests check.
+Every hash here is reproducible from these rules, and `vectors/terms-v2.json` holds worked examples that `scripts/write-terms-vectors.mjs` writes and the tests check. One of them has a checksummed arbiter and a region with non-ASCII letters and quotes, where an implementation that skips a rule would hash differently.
 
-- **Canonical JSON** is RFC 8785. Amounts, times and durations are integers written as decimal strings. Amounts are millionths of the currency, times are UTC Unix seconds and durations are seconds. Every other number is a safe integer, such as a count or a share in basis points. Strings have to be well-formed Unicode.
+- **The terms' shape** is exactly the header's four fields and the five sections. The hash covers nothing else, so `termsShapeProblem` refuses a field beside them, a section that isn't an object and a value canonical JSON can't write, and `termsHash` throws on terms it refuses.
+- **Canonical JSON** is RFC 8785. Amounts, times and durations are integers written as decimal strings. Amounts are millionths of the currency, times are UTC Unix seconds and durations are seconds. Every other number is a safe integer, such as a count or a share in basis points. Strings have to be well-formed Unicode, and non-ASCII characters are written as UTF-8 without escapes. Only plain objects and arrays are written, so a Date or a Map throws.
 - **Section salts** come from HKDF-SHA256 (RFC 5869). The input keying material is the commitment's 32-byte salt, there's no HKDF salt, the info is the UTF-8 label `avow:terms:v2:salt:<section>`, and the output is 32 bytes. The commitment's salt comes from a cryptographic random source, one per commitment, and an all-zero salt is refused.
 - **A section's hash** is `keccak256(abi.encode(string label, bytes32 sectionSalt, string canonicalJson))`, with the label `avow:terms:v2:<section>`. The arbiter's address is hashed in lower case.
 - **The terms hash** is `keccak256(abi.encode(string "avow:terms:v2", string headerJson, bytes32 subject, bytes32 consideration, bytes32 remedies, bytes32 resolution, bytes32 backing))`.
 
-Every label is distinct, so a section can't be read as another section and a version 2 hash can't match a version 1 hash. A change of backing changes the terms hash, so it makes a new commitment and no signature carries over to it.
+Each section has its own label, so a section can't be read as another section. A version 1 hash covers the salt followed by the terms' JSON, whose first character is `{`, and a version 2 hash covers an ABI encoding whose 33rd byte is always zero, so a hash of one version can never match the other's. A change of backing changes the terms hash, so it makes a new commitment and no signature carries over to it.
 
 ### Showing one section
 
@@ -73,7 +74,7 @@ Version 1 terms are flat and carry no version field. Commitments made under them
 
 ## References and payments
 
-A reference has a kind. A commitment reference is chain, lock, commitment id, side and terms hash, checked against the lock. A payment reference names a settled transfer by chain, transaction hash and log index, its canonical id, and states the token, sender, recipient, amount and memo. `checkPaymentReference` passes only when the transaction succeeded and is finalized and the log at that index is the token's own TIP-20 `TransferWithMemo` event with exactly those values. A plain transfer without a memo, or anything read from calldata, doesn't count.
+A reference has a kind. A commitment reference is chain, lock, commitment id, side and terms hash, checked against the lock. A payment reference names a settled transfer by chain, transaction hash and log index, its canonical id, and states the token, sender, recipient, amount and memo. The reference names its own token and any contract can emit an event shaped like a token's, so `checkPaymentReference` takes the tokens the reader accepts and refuses any other. It passes only when the transaction succeeded and is finalized and the log at that index is that token's own TIP-20 `TransferWithMemo` event with exactly those values. A plain transfer without a memo, or anything read from calldata, doesn't count.
 
 Any number of records can cite one payment as evidence, but its value counts at most once. `checkAttributions` refuses a second attribution of the same payment's value, whichever obligation it names. It proves uniqueness only within the set it's given, and it can't see an attribution another service or a later request makes. Before any version lets a payment's value be allocated, a persistent registry has to record each attribution atomically.
 
@@ -85,7 +86,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1 | That message changes |
 | Terms | `version` inside the terms hash, 2 | The header, a section's schema, canonical JSON or the hashing changes |
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
-| Commitment record | `COMMITMENT_RECORD_VERSION`, 1 | The record's own fields change |
+| Commitment record | `COMMITMENT_RECORD_VERSION`, 2 | The record's own fields change. Version 2 added the references a record cites, and a version 1 record reads as version 2 with none |
 
 Every signed message names its version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A reader refuses a version it doesn't know for that message type.
 

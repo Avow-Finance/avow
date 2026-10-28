@@ -1,5 +1,14 @@
 import { hkdfSync } from 'node:crypto'
-import { type Address, encodeAbiParameters, type Hex, keccak256, toHex } from 'viem'
+import {
+  type Address,
+  concat,
+  encodeAbiParameters,
+  type Hex,
+  hexToBytes,
+  keccak256,
+  stringToHex,
+  toHex,
+} from 'viem'
 import { describe, expect, it } from 'vitest'
 import { canonicalJson } from './canonical.js'
 import { demoTerms, dollars, testnetDemoTerms } from './demo.js'
@@ -25,6 +34,7 @@ import {
   termsHash,
   termsHashFromSections,
   termsHeader,
+  termsShapeProblem,
   validateTerms,
 } from './terms.js'
 import { termsHashV1, testnetDemoTermsV1 } from './terms-v1.js'
@@ -93,15 +103,10 @@ describe('termsHash', () => {
     expect(() => termsHash(base, `0x${'00'.repeat(32)}`)).toThrow()
   })
 
-  it('never equals the version 1 hash of the same booking', () => {
-    const v1 = testnetDemoTermsV1(START, ARBITER)
-    expect(termsHash(base, SALT)).not.toBe(termsHashV1(v1, SALT))
-  })
-
   it('refuses a version it does not read', () => {
     expect(() =>
       termsHash({ ...base, version: 3 } as unknown as GpuReservationTerms, SALT),
-    ).toThrow()
+    ).toThrow('terms.version_unknown')
   })
 })
 
@@ -176,12 +181,95 @@ describe('how the hash is built, spelled out for other implementations', () => {
     expect(termsHashFromSections(termsHeader(base), hashes)).toBe(expected)
   })
 
+  it('hashes nothing a version 1 hash could have hashed, since the two differ at byte 32', () => {
+    // A version 1 hash covers the salt and then the terms' JSON object, so its byte 32 is `{`.
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    const v1Json = canonicalJson({
+      ...v1,
+      dispute: { ...v1.dispute, arbiter: v1.dispute.arbiter.toLowerCase() },
+    })
+    const v1Preimage = concat([SALT, stringToHex(v1Json)])
+    expect(keccak256(v1Preimage)).toBe(termsHashV1(v1, SALT))
+    expect(hexToBytes(v1Preimage)[32]).toBe('{'.charCodeAt(0))
+    // A version 2 hash covers an ABI encoding whose second word is the header's offset, a small
+    // number, so its byte 32 is zero whatever the terms say.
+    const hashes = sectionHashes(base, SALT)
+    const v2Preimage = encodeAbiParameters(
+      [
+        { type: 'string' },
+        { type: 'string' },
+        ...TERMS_SECTIONS.map(() => ({ type: 'bytes32' }) as const),
+      ],
+      [
+        'avow:terms:v2',
+        canonicalJson(termsHeader(base)),
+        ...TERMS_SECTIONS.map((section) => hashes[section]),
+      ],
+    )
+    expect(keccak256(v2Preimage)).toBe(termsHash(base, SALT))
+    expect(hexToBytes(v2Preimage)[32]).toBe(0)
+  })
+
   it('keeps sections apart, so the same content hashed as another section never matches', () => {
     const salt = sectionSalt(SALT, 'remedies')
     const asRemedies = sectionHash('remedies', base.remedies, salt)
     for (const s of TERMS_SECTIONS.filter((x) => x !== 'remedies')) {
       expect(sectionHash(s, base.remedies, salt)).not.toBe(asRemedies)
     }
+  })
+})
+
+describe('the shape terms need before they are hashed', () => {
+  it('passes version 2 terms with exactly the header and five sections, and version 1 terms', () => {
+    expect(termsShapeProblem(base)).toBeNull()
+    expect(termsShapeProblem(testnetDemoTermsV1(START, ARBITER))).toBeNull()
+  })
+
+  it('refuses terms missing a header field or a section as incomplete, before hashing them', () => {
+    for (const field of ['template', 'currency', 'amountDecimals', ...TERMS_SECTIONS]) {
+      const { [field as keyof typeof base]: _, ...missing } = base
+      for (const t of [missing, { ...base, [field]: undefined }]) {
+        expect(termsShapeProblem(t), field).toBe('terms.incomplete')
+        expect(() => termsHash(t as GpuReservationTerms, SALT), field).toThrow('terms.incomplete')
+        expect(validateTerms(t as GpuReservationTerms, TESTNET_DEMO_PROFILE), field).toBe(
+          'terms.incomplete',
+        )
+      }
+    }
+  })
+
+  it('reads terms with no version as version 1, whose checks refuse version 2 sections', () => {
+    const { version: _, ...unversioned } = base
+    expect(termsShapeProblem(unversioned)).toBeNull()
+    expect(validateTerms(unversioned as never, TESTNET_DEMO_PROFILE)).not.toBeNull()
+  })
+
+  it('refuses a field beside the header and sections, which the hash would leave out', () => {
+    const extra = { ...base, gracePeriod: 60n }
+    expect(termsShapeProblem(extra)).toBe('terms.invalid')
+    expect(() => termsHash(extra, SALT)).toThrow('terms.invalid')
+    expect(validateTerms(extra, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
+    expect(() => discloseSection(extra, SALT, 'subject')).toThrow('terms.invalid')
+  })
+
+  it('refuses another version, a section that is no object or a value canonical JSON cannot write', () => {
+    expect(termsShapeProblem({ ...base, version: 3 })).toBe('terms.version_unknown')
+    const resource = base.subject.resource
+    const bad: unknown[] = [
+      { ...base, remedies: null },
+      { ...base, subject: [] },
+      { ...base, backing: 'reserve' },
+      change(base, 'subject', { resource: { ...resource, count: 1.5 } }),
+      change(base, 'subject', { resource: { ...resource, region: '\ud800' } }),
+      change(base, 'subject', { windowStart: new Date(0) as unknown as bigint }),
+      null,
+      [],
+      'terms',
+    ]
+    bad.forEach((t, i) => {
+      expect(termsShapeProblem(t), `case ${i}`).toBe('terms.invalid')
+      expect(() => termsHash(t as GpuReservationTerms, SALT), `case ${i}`).toThrow('terms.invalid')
+    })
   })
 })
 
@@ -258,6 +346,23 @@ describe('validateTerms', () => {
     expect(validateTerms(freight, TESTNET_DEMO_PROFILE)).toBe('terms.template_unknown')
   })
 
+  it('knows only its own templates and charge kinds, never a name every object inherits', () => {
+    const [late, noShow] = base.remedies.charges
+    if (!late || !noShow) throw new Error('two charges')
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      const template = { ...base, template: name } as unknown as GpuReservationTerms
+      expect(validateTerms(template, TESTNET_DEMO_PROFILE), name).toBe('terms.template_unknown')
+      const charges = [{ ...late, kind: name }, noShow] as typeof base.remedies.charges
+      const kind = change(base, 'remedies', { charges })
+      expect(validateTerms(kind, TESTNET_DEMO_PROFILE), name).toBe('terms.charges_invalid')
+    }
+  })
+
+  it('needs amounts written in millionths of the currency', () => {
+    const t = { ...base, amountDecimals: 18 } as unknown as GpuReservationTerms
+    expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
+  })
+
   it('refuses a backing or side a lock cannot enforce', () => {
     for (const backing of [
       { ...base.backing, kind: 'partner' },
@@ -332,13 +437,15 @@ describe('validateTerms', () => {
       { arbiter: '0x1234' as Address },
       { day90SupplierShareBps: -1 },
       { day90SupplierShareBps: 10_001 },
-      { day90SupplierShareBps: 50.5 },
     ]
     for (const patch of bad) {
       expect(validateTerms(change(base, 'resolution', patch), TESTNET_DEMO_PROFILE)).toBe(
         'terms.dispute_invalid',
       )
     }
+    // A share that isn't a whole number can't be hashed, so it never reaches the dispute check.
+    const fractional = change(base, 'resolution', { day90SupplierShareBps: 50.5 })
+    expect(validateTerms(fractional, TESTNET_DEMO_PROFILE)).toBe('terms.invalid')
     for (const day90SupplierShareBps of [0, 10_000]) {
       const t = change(base, 'resolution', { day90SupplierShareBps })
       expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBeNull()
@@ -359,6 +466,18 @@ describe('validateTerms', () => {
         'terms.template_invalid',
       ],
       [
+        change(base, 'subject', { resource: { ...base.subject.resource, gpu: '' } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, region: '' } }),
+        'terms.template_invalid',
+      ],
+      [
+        change(base, 'subject', { resource: { ...base.subject.resource, sku: '' } }),
+        'terms.template_invalid',
+      ],
+      [
         change(base, 'remedies', {
           charges: [{ ...late, earliest: late.earliest - 1n }, ...base.remedies.charges.slice(1)],
         }),
@@ -366,6 +485,26 @@ describe('validateTerms', () => {
       ],
     ]
     for (const [t, reason] of bad) expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe(reason)
+  })
+
+  it('accepts each GPU reservation deadline at its limit', () => {
+    const r = base.remedies
+    const [late, noShow] = r.charges
+    if (!late || !noShow) throw new Error('two charges')
+    const end = START + base.subject.windowDuration
+    const atLimits = [
+      // Free cancellation up to the window's start, with the late cancellation chargeable from it.
+      change(base, 'remedies', {
+        freeCancelBy: START,
+        charges: [{ ...late, earliest: START }, noShow],
+      }),
+      // A no-show chargeable from the window's start, with no grace period.
+      change(base, 'remedies', { charges: [late, { ...noShow, earliest: START }] }),
+      // The window ending at the charge deadline.
+      change(base, 'remedies', { chargeDeadline: end }),
+    ]
+    for (const t of atLimits) expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBeNull()
+    expect(r.acceptBy).toBe(START)
   })
 })
 
@@ -384,6 +523,11 @@ describe('what the lock enforces', () => {
     ])
     expect(termsCharges(base, 18)[1]?.most).toBe(500n * 10n ** 18n)
     expect(gpuGracePeriod(base)).toBe(120n)
+  })
+
+  it("names the side the backing secures, and version 1 terms back the buyer's side", () => {
+    expect(lockTerms(base, 6).side).toBe('buyer')
+    expect(enforceableTerms(testnetDemoTermsV1(START, ARBITER)).side).toBe('buyer')
   })
 
   it('leaves out a charge the booking sets to zero', () => {
@@ -406,6 +550,7 @@ describe('approvalTermsProblem', () => {
     const [late, noShow] = lock.charges
     if (!late || !noShow) throw new Error('two charges')
     const cases: [Partial<typeof approval>, string][] = [
+      [{ side: 'supplier' }, 'approval.terms_mismatch'],
       [{ amount: lock.amount - 1n }, 'approval.terms_mismatch'],
       [{ freeCancelBy: lock.freeCancelBy + 1n }, 'approval.terms_mismatch'],
       [{ acceptBy: lock.acceptBy + 1n }, 'approval.terms_mismatch'],

@@ -9,7 +9,8 @@ import { type Hex, toHex } from 'viem'
  * its decimal digits, so amounts, times and durations are integers that never pass through a
  * float. Any other number has to be a safe integer, such as a count or a share in basis points.
  * Every string and key has to be well-formed Unicode. Undefined fields are left out, as JSON
- * would leave them.
+ * would leave them. Only plain objects and arrays are written, so a Date, Map or class instance
+ * throws rather than turning into `{}`.
  */
 export function canonicalJson(value: unknown): string {
   if (value === null) return 'null'
@@ -27,6 +28,10 @@ export function canonicalJson(value: unknown): string {
       return JSON.stringify(value)
     case 'object': {
       if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+      const prototype = Object.getPrototypeOf(value)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new TypeError('Canonical JSON holds plain objects and arrays only')
+      }
       const entries = Object.entries(value as Record<string, unknown>)
         .filter(([, v]) => v !== undefined)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

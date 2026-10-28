@@ -31,6 +31,7 @@ import {
   AMOUNT_DECIMALS,
   type Currency,
   type RemedyCharge,
+  type Side,
   TEMPLATE_IDS,
   TERMS_VERSION,
   type TemplateId,
@@ -89,6 +90,48 @@ export function termsSections(t: Terms): Record<TermsSection, unknown> {
     resolution: t.resolution,
     backing: t.backing,
   }
+}
+
+/** The fields version 2 terms hold at the top level, the header's four and the five sections. */
+const TERMS_FIELDS: readonly string[] = [
+  'version',
+  'template',
+  'currency',
+  'amountDecimals',
+  ...TERMS_SECTIONS,
+]
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * What keeps terms from being hashed, or null when nothing does. Version 2 terms hold exactly
+ * their version, the header's other three fields and the five sections, each section an object,
+ * and every value has to be one canonical JSON can write. The terms hash covers only the header
+ * and the sections, so a field beside them is refused rather than left out of the hash. A field
+ * or section left out is `terms.incomplete`, another version is `terms.version_unknown` and
+ * anything else is `terms.invalid`. A field set to undefined counts as left out, as JSON leaves it
+ * out. Version 1 terms hash every field they hold, so `validateTerms` checks them on its own.
+ */
+export function termsShapeProblem(terms: unknown): ReasonCode | null {
+  if (!isPlainObject(terms)) return 'terms.invalid'
+  if (isTermsV1(terms)) return null
+  if (terms.version !== TERMS_VERSION) return 'terms.version_unknown'
+  const fields = Object.keys(terms).filter((k) => terms[k] !== undefined)
+  if (TERMS_FIELDS.some((f) => !fields.includes(f))) return 'terms.incomplete'
+  if (fields.length !== TERMS_FIELDS.length) return 'terms.invalid'
+  if (!TERMS_SECTIONS.every((section) => isPlainObject(terms[section]))) return 'terms.invalid'
+  try {
+    canonicalJson(terms)
+  } catch {
+    return 'terms.invalid'
+  }
+  return null
+}
+
+function assertShape(terms: unknown): void {
+  const problem = termsShapeProblem(terms)
+  if (problem) throw new TypeError(`These terms can't be hashed (${problem})`)
 }
 
 function checkSalt(salt: Hex): void {
@@ -176,12 +219,11 @@ export function sectionHashes(t: Terms, salt: Hex): Record<TermsSection, Hex> {
 /**
  * The salted terms hash the lock stores and every signed message names. Version 2 terms hash
  * their header and sections as above. Version 1 terms keep the hash they were signed under.
+ * Throws on terms `termsShapeProblem` refuses, so no field ever sits outside the hash.
  */
 export function termsHash(terms: AnyTerms, salt: Hex): Hex {
+  assertShape(terms)
   if (isTermsV1(terms)) return termsHashV1(terms, salt)
-  if (terms.version !== TERMS_VERSION) {
-    throw new TypeError(`Terms version ${String(terms.version)} isn't one this code reads`)
-  }
   return termsHashFromSections(termsHeader(terms), sectionHashes(terms, salt))
 }
 
@@ -199,6 +241,8 @@ export interface SectionDisclosure {
 
 /** Shows one section of the terms, with its own salt and the other four sections' hashes. */
 export function discloseSection(terms: Terms, salt: Hex, section: TermsSection): SectionDisclosure {
+  assertShape(terms)
+  if (isTermsV1(terms)) throw new TypeError('Version 1 terms have no sections to show')
   const hashes = sectionHashes(terms, salt)
   const others: Partial<Record<TermsSection, Hex>> = {}
   for (const s of TERMS_SECTIONS) if (s !== section) others[s] = hashes[s]
@@ -244,8 +288,10 @@ function checkCharges(charges: readonly RemedyCharge[]): ReasonCode | null {
   if (charges.length === 0 || charges.length > 4) return 'terms.charges_invalid'
   let last = -1
   for (const c of charges) {
-    const code = (CHARGE_KINDS as Record<string, number | undefined>)[c.kind]
-    if (code === undefined || code <= last || c.amount <= 0n) return 'terms.charges_invalid'
+    // Only the table's own kinds count, never a name every object inherits such as `constructor`.
+    if (!Object.hasOwn(CHARGE_KINDS, c.kind)) return 'terms.charges_invalid'
+    const code = CHARGE_KINDS[c.kind]
+    if (code <= last || c.amount <= 0n) return 'terms.charges_invalid'
     last = code
   }
   return null
@@ -258,12 +304,11 @@ function checkCharges(charges: readonly RemedyCharge[]): ReasonCode | null {
  * can't enforce, and a template it doesn't know.
  */
 export function validateTerms(terms: AnyTerms, profile: TermsProfile): ReasonCode | null {
+  const shape = termsShapeProblem(terms)
+  if (shape) return shape
   if (isTermsV1(terms)) return validateTermsV1(terms, profile)
-  if (terms.version !== TERMS_VERSION) return 'terms.version_unknown'
-  const rules = (TEMPLATE_RULES as Record<string, ((t: Terms) => ReasonCode | null) | undefined>)[
-    terms.template
-  ]
-  if (!rules) return 'terms.template_unknown'
+  if (!Object.hasOwn(TEMPLATE_RULES, terms.template)) return 'terms.template_unknown'
+  const rules = TEMPLATE_RULES[terms.template]
   if (terms.amountDecimals !== AMOUNT_DECIMALS) return 'terms.invalid'
   const { remedies: r, resolution: res, backing: b } = terms
   if ((b.kind as string) !== 'reserve' || (b.side as string) !== 'buyer') {
@@ -306,6 +351,8 @@ export function validateTerms(terms: AnyTerms, profile: TermsProfile): ReasonCod
  */
 export interface EnforceableTerms {
   currency: Currency
+  /** The side the reserve backs. Version 1 terms back the buyer. */
+  side: Side
   reserve: bigint
   acceptBy: bigint
   freeCancelBy: bigint
@@ -336,6 +383,7 @@ export function enforceableTerms(terms: AnyTerms): EnforceableTerms {
     }
     return {
       currency: terms.currency,
+      side: 'buyer',
       reserve: terms.reserve,
       acceptBy: terms.acceptBy,
       freeCancelBy: terms.freeCancelBy,
@@ -349,6 +397,7 @@ export function enforceableTerms(terms: AnyTerms): EnforceableTerms {
   }
   return {
     currency: terms.currency,
+    side: terms.backing.side,
     reserve: terms.backing.amount,
     acceptBy: terms.remedies.acceptBy,
     freeCancelBy: terms.remedies.freeCancelBy,
@@ -363,6 +412,7 @@ export function enforceableTerms(terms: AnyTerms): EnforceableTerms {
 
 /** The fields of Avow's approval that come from the terms, with amounts in the token's base units. */
 export interface LockTerms {
+  side: Side
   amount: bigint
   freeCancelBy: bigint
   acceptBy: bigint
@@ -382,6 +432,7 @@ export function lockTerms(terms: AnyTerms, decimals: number): LockTerms {
   const e = enforceableTerms(terms)
   const units = (micros: bigint) => toTokenUnits(micros, decimals)
   return {
+    side: e.side,
     amount: units(e.reserve),
     freeCancelBy: e.freeCancelBy,
     acceptBy: e.acceptBy,
@@ -414,6 +465,7 @@ function sameCharges(a: readonly Charge[], b: readonly Charge[]): boolean {
 /** The fields of Avow's approval that have to match the terms. */
 export type ApprovalTermsFields = Pick<
   Approval,
+  | 'side'
   | 'amount'
   | 'freeCancelBy'
   | 'acceptBy'
@@ -438,6 +490,7 @@ export function approvalTermsProblem(
 ): ReasonCode | null {
   const l = expected.lock
   if (
+    approval.side !== l.side ||
     approval.amount !== l.amount ||
     approval.freeCancelBy !== l.freeCancelBy ||
     approval.acceptBy !== l.acceptBy ||

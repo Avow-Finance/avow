@@ -16,7 +16,7 @@ import {
   zeroAddress,
 } from 'viem'
 import { getBlock, getTransactionReceipt, readContract } from 'viem/actions'
-import { Abis, Addresses } from 'viem/tempo'
+import { Abis, Addresses, TokenId } from 'viem/tempo'
 import type { AgentKeyInfo, ChainReader, LockedBacking, LockInfo } from './chain.js'
 import { FACTORY_ABI, LOCK_ABI } from './lock-abi.js'
 
@@ -70,11 +70,22 @@ export async function readAgentKey(
   }
 }
 
+/** Whether an address is a TIP-20 token's, which Tempo gives a fixed prefix and a token id. */
+function isTip20(address: Address): boolean {
+  try {
+    TokenId.fromAddress(address)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
- * Reads the log at one index of one transaction. The log counts as a payment only when it decodes
- * as the TIP-20 `TransferWithMemo` event, and the caller checks that its emitter is the token the
- * reference names. Finality comes from the chain's finalized block, so a receipt in a later block
- * reads as not final.
+ * Reads the log at one index of one transaction. The log counts as a payment only when a TIP-20
+ * token emitted it and it decodes as that token's `TransferWithMemo` event, and the caller checks
+ * that the token is the one the reference names and one it accepts. The receipt is final only
+ * when its block is at or below the chain's finalized block and is the chain's block at that
+ * height, so a receipt from a block that lost a reorg never reads as final.
  */
 export async function readTransfer(
   client: Client,
@@ -82,6 +93,8 @@ export async function readTransfer(
   transactionHash: Hex,
   logIndex: number,
 ): Promise<ObservedTransfer | null> {
+  // The finalized block is read first, so every block at or below it stays the chain's block.
+  const final = await getBlock(client, { blockTag: 'finalized' })
   let receipt: Awaited<ReturnType<typeof getTransactionReceipt>>
   try {
     receipt = await getTransactionReceipt(client, { hash: transactionHash })
@@ -91,19 +104,21 @@ export async function readTransfer(
   }
   const log = receipt.logs.find((l) => l.logIndex === logIndex)
   if (!log) return null
-  const finalized = await getBlock(client, { blockTag: 'finalized' })
-  const [decoded] = parseEventLogs({
-    abi: Abis.tip20,
-    eventName: 'TransferWithMemo',
-    logs: [log],
-    strict: true,
-  })
+  let finalized = false
+  if (final.number !== null && receipt.blockNumber <= final.number) {
+    const atHeight = await getBlock(client, { blockNumber: receipt.blockNumber })
+    finalized =
+      atHeight.hash !== null && atHeight.hash.toLowerCase() === receipt.blockHash.toLowerCase()
+  }
+  const [decoded] = isTip20(log.address)
+    ? parseEventLogs({ abi: Abis.tip20, eventName: 'TransferWithMemo', logs: [log], strict: true })
+    : []
   return {
     chainId,
     transactionHash: receipt.transactionHash,
     logIndex,
     succeeded: receipt.status === 'success',
-    finalized: finalized.number !== null && receipt.blockNumber <= finalized.number,
+    finalized,
     emitter: log.address,
     event: decoded
       ? {

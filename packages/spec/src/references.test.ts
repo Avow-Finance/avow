@@ -89,28 +89,41 @@ describe('referenceHash', () => {
 })
 
 describe('checkPaymentReference', () => {
+  const accepted = [{ chainId: CHAIN_ID, token: TOKEN.token }]
+  const check = (ref: PaymentReference, observed: ObservedTransfer | null) =>
+    checkPaymentReference(ref, observed, accepted)
+
   it("passes when the token's own TransferWithMemo event matches in a finalized, successful transaction", () => {
-    expect(checkPaymentReference(payment, seen)).toBeNull()
+    expect(check(payment, seen)).toBeNull()
+  })
+
+  it('refuses a token the reader does not accept, even when that contract emitted the event', () => {
+    // Any contract can emit an event shaped like a token's, with any amount it likes.
+    const lookalike = { ...payment, token: OTHER, amount: 10n ** 30n }
+    const event = seen.event
+    if (!event) throw new Error('the fixture has an event')
+    const emitted = { ...seen, emitter: OTHER, event: { ...event, amount: 10n ** 30n } }
+    expect(check(lookalike, emitted)).toBe('payment.token_not_accepted')
+    expect(checkPaymentReference(payment, seen, [])).toBe('payment.token_not_accepted')
+    expect(checkPaymentReference(payment, seen, [{ chainId: 1, token: TOKEN.token }])).toBe(
+      'payment.token_not_accepted',
+    )
   })
 
   it('refuses a transfer it cannot find at that chain, transaction and log index', () => {
-    expect(checkPaymentReference(payment, null)).toBe('payment.not_found')
-    expect(checkPaymentReference(payment, { ...seen, logIndex: 5 })).toBe('payment.not_found')
-    expect(checkPaymentReference(payment, { ...seen, chainId: 1 })).toBe('payment.not_found')
-    expect(checkPaymentReference(payment, { ...seen, transactionHash: id('other tx') })).toBe(
-      'payment.not_found',
-    )
+    expect(check(payment, null)).toBe('payment.not_found')
+    expect(check(payment, { ...seen, logIndex: 5 })).toBe('payment.not_found')
+    expect(check(payment, { ...seen, chainId: 1 })).toBe('payment.not_found')
+    expect(check(payment, { ...seen, transactionHash: id('other tx') })).toBe('payment.not_found')
   })
 
   it('refuses a failed or unfinalized transaction', () => {
-    expect(checkPaymentReference(payment, { ...seen, succeeded: false })).toBe('payment.failed')
-    expect(checkPaymentReference(payment, { ...seen, finalized: false })).toBe('payment.not_final')
+    expect(check(payment, { ...seen, succeeded: false })).toBe('payment.failed')
+    expect(check(payment, { ...seen, finalized: false })).toBe('payment.not_final')
   })
 
   it('refuses any log but a TransferWithMemo event, so a plain transfer or calldata never counts', () => {
-    expect(checkPaymentReference(payment, { ...seen, event: null })).toBe(
-      'payment.not_memo_transfer',
-    )
+    expect(check(payment, { ...seen, event: null })).toBe('payment.not_memo_transfer')
   })
 
   it("refuses an event whose token, sender, recipient, amount or memo differs from the reference's", () => {
@@ -123,8 +136,7 @@ describe('checkPaymentReference', () => {
       [{ ...seen, event: { ...e, amount: e.amount - 1n } }, 'payment.amount_mismatch'],
       [{ ...seen, event: { ...e, memo: id('another commitment') } }, 'payment.memo_mismatch'],
     ]
-    for (const [observed, reason] of cases)
-      expect(checkPaymentReference(payment, observed)).toBe(reason)
+    for (const [observed, reason] of cases) expect(check(payment, observed)).toBe(reason)
   })
 })
 

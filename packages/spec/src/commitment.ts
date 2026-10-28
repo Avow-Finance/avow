@@ -84,7 +84,7 @@ export interface Outcome {
   released: bigint
 }
 
-/** What stands behind one side. V1 backs the buyer's side only, with cash in the business's lock. */
+/** What stands behind one side. This release backs the buyer's side only, with cash in the business's lock. */
 export interface BackingRecord {
   side: Side
   type: 'cash'
@@ -132,6 +132,6 @@ export interface Commitment {
   start: StartRecord | null
   contest: ContestRecord | null
   outcome: Outcome | null
-  /** Other commitments and payments this record cites. V1 records cite none. */
+  /** Other commitments and payments this record cites. A version 1 record cites none. */
   references: readonly Reference[]
 }

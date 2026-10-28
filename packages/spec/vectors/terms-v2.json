@@ -1,5 +1,5 @@
 {
-  "description": "Version 2 terms under the gpu-reservation/1 template. Canonical JSON is RFC 8785 with bigints as decimal strings. Each section salt is HKDF-SHA256 of the commitment salt, with no HKDF salt, info \"avow:terms:v2:salt:<section>\" and 32 bytes out. Each section hash is keccak256(abi.encode(string \"avow:terms:v2:<section>\", bytes32 sectionSalt, string canonicalJson)). The terms hash is keccak256(abi.encode(string \"avow:terms:v2\", string headerJson, bytes32 subject, bytes32 consideration, bytes32 remedies, bytes32 resolution, bytes32 backing)). lockTerms is what Avow's approval carries for a 6-decimal token.",
+  "description": "Version 2 terms under the gpu-reservation/1 template. Canonical JSON is RFC 8785 with bigints as decimal strings, writing non-ASCII characters as UTF-8 without escaping them. The arbiter's address is written in lower case before the resolution section is hashed, whatever case the terms hold it in. Each section salt is HKDF-SHA256 of the commitment salt, with no HKDF salt, info \"avow:terms:v2:salt:<section>\" and 32 bytes out. Each section hash is keccak256(abi.encode(string \"avow:terms:v2:<section>\", bytes32 sectionSalt, string canonicalJson)). The terms hash is keccak256(abi.encode(string \"avow:terms:v2\", string headerJson, bytes32 subject, bytes32 consideration, bytes32 remedies, bytes32 resolution, bytes32 backing)). lockTerms is what Avow's approval carries for a 6-decimal token.",
   "vectors": [
     {
       "name": "testnet demo terms",
@@ -83,6 +83,7 @@
       },
       "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d",
       "lockTerms": {
+        "side": "buyer",
         "amount": "500000000",
         "freeCancelBy": "1799999400",
         "acceptBy": "1800000000",
@@ -213,6 +214,7 @@
       },
       "termsHash": "0x8cdd9b07c2ea760c2f3ee818d229d7e3182a1dddc336f14161710b180422296a",
       "lockTerms": {
+        "side": "buyer",
         "amount": "500000000",
         "freeCancelBy": "1799913600",
         "acceptBy": "1800000000",
@@ -258,6 +260,137 @@
           "remedies": "0x2c2f5915d522a1a98139b4bc4ad0747ab0eb9112c4d3e9ac1b1aeadea64e562c",
           "resolution": "0x5b478faf3a099f019f935a43fe46f1b3cf282ac18204cf817ca75d020118f493",
           "backing": "0xd547d07054e50deaf2768e53186d71ddbcf13bb0244485dad98cf1a7271ac8ea"
+        }
+      }
+    },
+    {
+      "name": "checksummed arbiter and a non-ASCII region",
+      "salt": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+      "terms": {
+        "version": 2,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "Zürich \"east\"",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799913600",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799913600"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800001800"
+            }
+          ],
+          "chargeDeadline": "1800086400"
+        },
+        "resolution": {
+          "contestWindow": "259200",
+          "arbiter": "0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800086400"
+        }
+      },
+      "header": "{\"amountDecimals\":6,\"currency\":\"USD\",\"template\":\"gpu-reservation/1\",\"version\":2}",
+      "sections": {
+        "subject": {
+          "canonicalJson": "{\"resource\":{\"count\":8,\"gpu\":\"H100\",\"region\":\"Zürich \\\"east\\\"\",\"sku\":\"demo-h100x8\"},\"windowDuration\":\"86400\",\"windowStart\":\"1800000000\"}",
+          "salt": "0xaae8b2932104d5360c499b7956f5b3785399149582540b1043535aa200f2b7d3",
+          "hash": "0x1e9e35ab2078cba689805fda21884ccb9cffe555a1ce92554491d6392beb2ea6"
+        },
+        "consideration": {
+          "canonicalJson": "{\"amount\":\"3000000\",\"kind\":\"rate\",\"unit\":\"gpu-hour\"}",
+          "salt": "0x8309c26bcec7353d6b1959a6741ef1f0bb0817b877e28049f453e40572ff79a5",
+          "hash": "0x7f0328929f9735e3a5a8543a7a99c864d1767708d34c08bab37463048096bb1c"
+        },
+        "remedies": {
+          "canonicalJson": "{\"acceptBy\":\"1800000000\",\"chargeDeadline\":\"1800086400\",\"charges\":[{\"amount\":\"250000000\",\"earliest\":\"1799913600\",\"kind\":\"lateCancellation\"},{\"amount\":\"500000000\",\"earliest\":\"1800001800\",\"kind\":\"noShow\"}],\"freeCancelBy\":\"1799913600\"}",
+          "salt": "0xcf2a31eb8d1de053727b827dac9912447b0fcabb7e9b0dd3f0f7714efae96005",
+          "hash": "0xe860dae49bcd44b7ba24526b4a02d761a42c8e605d9ee56095253b52821e2a1f"
+        },
+        "resolution": {
+          "canonicalJson": "{\"arbiter\":\"0x7b7b7e93b9de1b9cba5123f0570b56eb66c53173\",\"contestWindow\":\"259200\",\"day90SupplierShareBps\":5000}",
+          "salt": "0x12cde86d86a091e6edca8907c44f2e54b37cc0590b29d8e8670ec12f422bc022",
+          "hash": "0x5dbcff94442f9aca868bdf7c5123866d50000162338f65b38f4524de07d32b6a"
+        },
+        "backing": {
+          "canonicalJson": "{\"amount\":\"500000000\",\"kind\":\"reserve\",\"releaseDate\":\"1800086400\",\"side\":\"buyer\"}",
+          "salt": "0xab2f7017c982a07771004ca825402325e3ad18327f1f52d76293db637e71cc74",
+          "hash": "0x545a9bed6ae13af41e37200da592ebdaf45b593d2f4bc3e978b49720dcaf6319"
+        }
+      },
+      "termsHash": "0x9c8558dc94f1b37d938fc488ea2b24ae2e7c9c13f4b6c40807a7e1a8aaa421b3",
+      "lockTerms": {
+        "side": "buyer",
+        "amount": "500000000",
+        "freeCancelBy": "1799913600",
+        "acceptBy": "1800000000",
+        "chargeDeadline": "1800086400",
+        "releaseDate": "1800086400",
+        "contestWindow": "259200",
+        "charges": [
+          {
+            "kind": "lateCancellation",
+            "most": "250000000",
+            "earliest": "1799913600"
+          },
+          {
+            "kind": "noShow",
+            "most": "500000000",
+            "earliest": "1800001800"
+          }
+        ],
+        "day90SupplierShareBps": 5000,
+        "arbiter": "0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173"
+      },
+      "subjectShownAlone": {
+        "header": {
+          "version": 2,
+          "template": "gpu-reservation/1",
+          "currency": "USD",
+          "amountDecimals": 6
+        },
+        "section": "subject",
+        "content": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "Zürich \"east\"",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "salt": "0xaae8b2932104d5360c499b7956f5b3785399149582540b1043535aa200f2b7d3",
+        "others": {
+          "consideration": "0x7f0328929f9735e3a5a8543a7a99c864d1767708d34c08bab37463048096bb1c",
+          "remedies": "0xe860dae49bcd44b7ba24526b4a02d761a42c8e605d9ee56095253b52821e2a1f",
+          "resolution": "0x5dbcff94442f9aca868bdf7c5123866d50000162338f65b38f4524de07d32b6a",
+          "backing": "0x545a9bed6ae13af41e37200da592ebdaf45b593d2f4bc3e978b49720dcaf6319"
         }
       }
     }

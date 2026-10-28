@@ -21,9 +21,9 @@ import { readTransfer, tempoChainReader } from './tempo.js'
 
 /**
  * On Moderato, a payment with a memo is checked against the chain: the token's own
- * TransferWithMemo event at its log index, in a finalized, successful transaction. Every key is
- * generated for the run, the faucet pays for it, and nothing is saved. Runs when
- * AVOW_LIVE_TEMPO=1.
+ * TransferWithMemo event at its log index, in a finalized, successful transaction, from a token
+ * the reader accepts. Every key is generated for the run, the faucet pays for it, and nothing is
+ * saved. Runs when AVOW_LIVE_TEMPO=1.
  */
 const live = process.env.AVOW_LIVE_TEMPO === '1'
 const RPC = 'https://rpc.moderato.tempo.xyz'
@@ -93,10 +93,16 @@ describe.skipIf(!live)('a payment with a memo, on Moderato', () => {
       await sleep(1000)
     }
     const reader = tempoChainReader(pub, { factory: zeroAddress, chainId: chain.id })
-    expect(await verifyPaymentReference(ref, reader)).toEqual({ ok: true })
+    // Both tokens are accepted, so a reference naming the wrong one reaches the chain's event.
+    const accepted = [ALPHA, BETA].map((token) => ({ chainId: chain.id, token }))
+    expect(await verifyPaymentReference(ref, reader, accepted)).toEqual({ ok: true })
+    expect(await verifyPaymentReference(ref, reader, accepted.slice(1))).toEqual({
+      ok: false,
+      reason: 'payment.token_not_accepted',
+    })
 
     const refused = async (change: Partial<PaymentReference>) =>
-      verifyPaymentReference({ ...ref, ...change }, reader)
+      verifyPaymentReference({ ...ref, ...change }, reader, accepted)
     expect(await refused({ amount: amount + 1n })).toEqual({
       ok: false,
       reason: 'payment.amount_mismatch',

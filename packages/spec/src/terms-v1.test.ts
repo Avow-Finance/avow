@@ -56,6 +56,8 @@ describe('version 1 vectors, pinned from the published build', () => {
     expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBe(validateTermsV1(t, TESTNET_DEMO_PROFILE))
     expect(termsCharges(t, 6)).toEqual(termsChargesV1(t, 6))
     expect(lockTerms(t, 6)).toEqual({
+      // Version 1 terms back the buyer's side, the only side a version 1 lock holds.
+      side: 'buyer',
       amount: t.reserve,
       freeCancelBy: t.freeCancelBy,
       acceptBy: t.acceptBy,

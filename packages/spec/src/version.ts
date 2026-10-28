@@ -45,14 +45,21 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   StartReceipt: [MESSAGE_VERSIONS.StartReceipt],
 }
 
-/** Whether this package reads a message of this type at this domain version. */
+/**
+ * Whether this package reads a message of this type at this domain version. The type comes from
+ * whoever sent the message, so only the table's own keys count, never a name every object inherits
+ * such as `constructor`.
+ */
 export function isSupportedMessageVersion(type: string, version: string): boolean {
-  const known = (SUPPORTED_MESSAGE_VERSIONS as Record<string, readonly string[] | undefined>)[type]
-  return known?.includes(version) ?? false
+  if (!Object.hasOwn(SUPPORTED_MESSAGE_VERSIONS, type)) return false
+  return SUPPORTED_MESSAGE_VERSIONS[type as VersionedType].includes(version)
 }
 
-/** The version of a stored commitment record. Its terms carry their own version. */
-export const COMMITMENT_RECORD_VERSION = '1'
+/**
+ * The version of a stored commitment record. Version 2 added the references a record cites, and a
+ * version 1 record reads as version 2 with none. The record's terms carry their own version.
+ */
+export const COMMITMENT_RECORD_VERSION = '2'
 
 /** The version of the mandate check in `checkMandate`, recorded on every decision. */
 export const POLICY_VERSION = 'mandate-check/1'

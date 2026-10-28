@@ -47,8 +47,18 @@ const file = JSON.parse(
 ) as { vectors: Vector[] }
 
 describe('version 2 terms vectors', () => {
-  it('has vectors to check', () => {
-    expect(file.vectors.length).toBeGreaterThan(0)
+  it('has vectors to check, including a checksummed arbiter and non-ASCII text', () => {
+    expect(file.vectors.length).toBeGreaterThan(2)
+    const checksummed = file.vectors.find(
+      (v) => v.name === 'checksummed arbiter and a non-ASCII region',
+    )
+    expect(JSON.stringify(checksummed?.terms)).toContain(
+      '0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173',
+    )
+    expect(checksummed?.sections.subject.canonicalJson).toContain('"region":"Zürich \\"east\\""')
+    expect(checksummed?.sections.resolution.canonicalJson).toContain(
+      '"arbiter":"0x7b7b7e93b9de1b9cba5123f0570b56eb66c53173"',
+    )
   })
 
   for (const v of file.vectors) {
@@ -56,7 +66,10 @@ describe('version 2 terms vectors', () => {
       const parsed = parseTerms(v.terms)
       if (!parsed.ok) throw new Error(`the vector's terms don't parse: ${parsed.reason}`)
       const terms = parsed.value
-      expect(toWire(terms)).toEqual(v.terms)
+      // The parser reads addresses in lower case, the case the hash uses.
+      const written = v.terms as { resolution: { arbiter: string } }
+      const arbiter = written.resolution.arbiter.toLowerCase()
+      expect(toWire(terms)).toEqual({ ...written, resolution: { ...written.resolution, arbiter } })
       expect(canonicalJson(termsHeader(terms))).toBe(v.header)
       const sections = termsSections(terms)
       const hashes = sectionHashes(terms, v.salt)
@@ -68,7 +81,8 @@ describe('version 2 terms vectors', () => {
         expect(canonicalJson(hashedForm(s, sections[s])), s).toBe(expected.canonicalJson)
       }
       expect(termsHash(terms, v.salt)).toBe(v.termsHash)
-      expect(toWire(lockTerms(terms, 6))).toEqual(v.lockTerms)
+      const lock = v.lockTerms as { arbiter: string }
+      expect(toWire(lockTerms(terms, 6))).toEqual({ ...lock, arbiter: lock.arbiter.toLowerCase() })
       const shown = parseSectionDisclosure(v.subjectShownAlone)
       if (!shown.ok) throw new Error(`the shown subject doesn't parse: ${shown.reason}`)
       expect(checkSectionDisclosure(shown.value, v.termsHash)).toBeNull()

@@ -5,6 +5,7 @@ import {
   digestOf,
   type GpuReservationTerms,
   isKeySignature,
+  lockTerms,
   type Mandate,
   mandateHash,
   PRODUCTION_PROFILE,
@@ -50,6 +51,7 @@ import {
   signedAuthorization,
   signedMandate,
   supplierKey,
+  TOKEN,
   terms,
 } from './test-helpers.js'
 
@@ -265,6 +267,10 @@ describe('every term of the approval that binds the supplier', () => {
     expect([...changed].sort()).toEqual(Object.keys(approval()).sort())
   })
 
+  it("maps the supplier's terms to the lock fields these tests write out by hand", () => {
+    expect(lockTerms(terms, TOKEN.decimals)).toEqual(LOCK_TERMS)
+  })
+
   for (const [name, change, reason] of cases) {
     it(`refuses an approval with another ${name}, while the lock holds the original`, async () => {
       const tampered = await signedApproval(approval(change))
@@ -303,9 +309,22 @@ describe('a commitment made under version 1 terms', () => {
     expect(prepared.ok && prepared.acceptance.termsHash).toBe(hash)
   })
 
-  it('refuses version 2 terms named under a version 1 hash, and the other way round', async () => {
+  it("refuses one version's terms under the other version's hash for the same booking and salt", async () => {
     const v1 = testnetDemoTermsV1(START, ARBITER)
+    const v1Hash = termsHash(v1, SALT)
+    // Version 1 terms, where every message names the version 2 hash.
     expect(await prepare({ terms: v1 })).toEqual(refused('terms.hash_mismatch'))
+    // Version 2 terms, where every message and the lock name the version 1 hash.
+    const a = approval({ termsHash: v1Hash })
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, a))
+    const underV1 = {
+      terms,
+      agreed: { ...agreed, termsHash: v1Hash },
+      authorization: await signedAuthorization(authorization({ termsHash: v1Hash })),
+      approval: await signedApproval(a),
+    }
+    expect(await prepare(underV1)).toEqual(refused('terms.hash_mismatch'))
+    expect((await prepare({ ...underV1, terms: v1 })).ok).toBe(true)
   })
 })
 

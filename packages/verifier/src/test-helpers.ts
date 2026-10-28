@@ -3,7 +3,7 @@ import {
   approvalDigest,
   approvalTypedData,
   digestOf,
-  lockTerms,
+  type LockTerms,
   type Mandate,
   mandateHash,
   mandateTypedData,
@@ -56,8 +56,27 @@ export const supplierAccount = newKey()
 export const supplierKey = newKey()
 export const terms = testnetDemoTerms(START, ARBITER)
 export const TERMS_HASH = termsHash(terms, SALT)
-/** What the terms make the lock enforce, as Avow's API maps them. */
-export const LOCK_TERMS = lockTerms(terms, TOKEN.decimals)
+/**
+ * What the terms make the lock enforce, written out field by field from the sections rather than
+ * through `lockTerms`, so the tests check the mapping against an account of it kept apart from the
+ * code. The token has 6 decimals, so its base units equal micros.
+ */
+export const LOCK_TERMS: LockTerms = {
+  side: terms.backing.side,
+  amount: terms.backing.amount,
+  freeCancelBy: terms.remedies.freeCancelBy,
+  acceptBy: terms.remedies.acceptBy,
+  chargeDeadline: terms.remedies.chargeDeadline,
+  releaseDate: terms.backing.releaseDate,
+  contestWindow: terms.resolution.contestWindow,
+  charges: terms.remedies.charges.map((c) => ({
+    kind: c.kind,
+    most: c.amount,
+    earliest: c.earliest,
+  })),
+  day90SupplierShareBps: terms.resolution.day90SupplierShareBps,
+  arbiter: terms.resolution.arbiter,
+}
 
 export const mandate: Mandate = {
   mandateId: id('mandate-1'),
@@ -146,7 +165,6 @@ export async function signedMandate(m: Mandate, key = buyer): Promise<unknown> {
 export function approval(change: Partial<Approval> = {}): Approval {
   return {
     commitmentId: COMMITMENT,
-    side: 'buyer',
     token: TOKEN.token,
     ...LOCK_TERMS,
     supplier: supplierAccount.address,

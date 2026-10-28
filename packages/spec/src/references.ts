@@ -102,16 +102,34 @@ export interface ObservedTransfer {
   event: { from: Address; to: Address; amount: bigint; memo: Hex } | null
 }
 
+/** A token a reader accepts payments in, on one chain. */
+export interface PaymentToken {
+  chainId: number
+  token: Address
+}
+
+/** Whether the reference names a token the reader accepts, on the reference's own chain. */
+export function acceptsPaymentToken(
+  ref: Pick<PaymentReference, 'chainId' | 'token'>,
+  accepted: readonly PaymentToken[],
+): boolean {
+  return accepted.some((t) => t.chainId === ref.chainId && isAddressEqual(t.token, ref.token))
+}
+
 /**
- * Checks a payment reference against what a chain reader found. It passes only when the
- * transaction succeeded and is finalized, and the log at the reference's index is the token's own
- * `TransferWithMemo` event with exactly the sender, recipient, amount and memo the reference
- * states. A plain transfer with no memo doesn't count. Returns the first problem, or null.
+ * Checks a payment reference against what a chain reader found. The reference names its own token,
+ * so the reader says which tokens it accepts, and any contract can emit an event shaped like a
+ * token's. It passes only when the token is one the reader accepts, the transaction succeeded and
+ * is finalized, and the log at the reference's index is that token's own `TransferWithMemo` event
+ * with exactly the sender, recipient, amount and memo the reference states. A plain transfer with
+ * no memo doesn't count. Returns the first problem, or null.
  */
 export function checkPaymentReference(
   ref: PaymentReference,
   seen: ObservedTransfer | null,
+  accepted: readonly PaymentToken[],
 ): ReasonCode | null {
+  if (!acceptsPaymentToken(ref, accepted)) return 'payment.token_not_accepted'
   if (
     !seen ||
     seen.chainId !== ref.chainId ||
@@ -133,8 +151,8 @@ export function checkPaymentReference(
 
 /**
  * A record's use of a payment toward an obligation. Evidence cites the payment, and any number of
- * records can. Value counts the payment's amount toward the obligation, and v1 lets a payment's
- * value count once.
+ * records can. Value counts the payment's amount toward the obligation, and this release lets a
+ * payment's value count once.
  */
 export interface Attribution {
   payment: PaymentReference
@@ -145,8 +163,8 @@ export interface Attribution {
 /**
  * Checks a set of attributions against the rule that a payment's value counts at most once. Citing
  * a payment as evidence any number of times passes. A second attribution of the same payment's
- * value refuses, whichever obligation it names, since v1 allows exclusive attribution only and no
- * partial allocations. No attribution backs a commitment.
+ * value refuses, whichever obligation it names, since this release allows exclusive attribution
+ * only and no partial allocations. No attribution backs a commitment.
  *
  * This proves uniqueness only within the set it's given. It can't see an attribution another
  * service or a later request makes. Before any version lets a payment's value be allocated, Avow

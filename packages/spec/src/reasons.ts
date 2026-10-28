@@ -28,14 +28,14 @@ export const REASON_CODES = {
   'approval.human_required': 'The mandate asks the administrator to approve this reserve',
   'approval.human_invalid':
     "The administrator's approval is forged, expired, used already, or names another amount or supplier",
-  'terms.invalid': "The terms don't parse",
+  'terms.invalid': "The terms don't parse, or hold a field the terms hash doesn't cover",
   'terms.reserve_mismatch': "The reserve doesn't equal the largest charge in the terms",
   'terms.deadlines_out_of_order': "The terms' deadlines are out of order",
   'terms.contest_window_short': 'The contest window is shorter than this profile allows',
   'terms.hash_mismatch': "The terms and salt don't produce the signed terms hash",
   'terms.currency_mismatch': "The terms' currency isn't the one the lock's token stands for",
   'terms.incomplete':
-    "The supplier's terms don't carry every term it would be bound by, such as the day-90 share and the arbiter, so Avow's approval can't be checked against them",
+    "The terms leave out a field or section every reader needs, such as the arbiter and the day-90 share, so they can't be hashed or checked against Avow's approval",
   'terms.dispute_invalid':
     "The terms' arbiter is missing or zero, or the day-90 share is outside 0 to 10,000 basis points",
   'terms.version_unknown': "The terms' version isn't one this code reads",
@@ -43,7 +43,7 @@ export const REASON_CODES = {
     "The terms name a template this code doesn't know, so it can't read their subject",
   'terms.template_invalid': 'The terms break a rule of their template',
   'terms.backing_unsupported':
-    "The terms' backing is a kind or side a lock can't enforce, and v1 takes only the buyer's reserve",
+    "The terms' backing is a kind or side a lock can't enforce, and this release takes only the buyer's reserve",
   'terms.charges_invalid':
     "The terms' charges repeat a kind, come out of order, have no amount or name a kind a lock can't hold",
   'message.schema_unknown': "The message's schema version or type isn't one this code reads",
@@ -106,13 +106,14 @@ export const REASON_CODES = {
   'payment.not_final': "The payment's block isn't finalized yet",
   'payment.not_memo_transfer':
     "The log at that index isn't a TransferWithMemo event, and only that event counts as a payment",
+  'payment.token_not_accepted': "The payment's token isn't one this reader accepts payments in",
   'payment.token_mismatch': "A contract other than the reference's token emitted the transfer",
   'payment.sender_mismatch': 'The transfer came from another sender than the reference names',
   'payment.recipient_mismatch': 'The transfer went to another recipient than the reference names',
   'payment.amount_mismatch': 'The transfer moved another amount than the reference names',
   'payment.memo_mismatch': "The transfer's memo differs from the reference's",
   'payment.attributed_twice':
-    "The payment's value is attributed more than once in this set, and v1 lets it count once",
+    "The payment's value is attributed more than once in this set, and this release lets it count once",
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES

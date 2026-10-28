@@ -9,7 +9,7 @@ import type { ReasonCode } from './reasons.js'
  * unix seconds and durations are seconds.
  */
 
-/** ISO 4217. V1 runs in US dollars only. */
+/** ISO 4217. This release runs in US dollars only. */
 export const CURRENCIES = ['USD'] as const
 export type Currency = (typeof CURRENCIES)[number]
 
@@ -59,7 +59,7 @@ export interface Administrator {
 
 export type OutsideIdentityKind = 'visa' | 'mastercard' | 'erc-8004' | 'mppx'
 
-/** An identity the agent holds outside Avow. V1 records these and no check reads them. */
+/** An identity the agent holds outside Avow. This release records these and no check reads them. */
 export interface OutsideIdentity {
   kind: OutsideIdentityKind
   reference: string
@@ -187,11 +187,11 @@ export interface Resolution {
 
 /**
  * Money the buyer reserves in its own lock for the supplier, which the lock pays charges from and
- * gives back at the release date. It's the only backing v1 enforces.
+ * gives back at the release date. It's the only backing this release enforces.
  */
 export interface ReserveBacking {
   kind: 'reserve'
-  /** The side whose promise it backs. The other side benefits, and v1 backs the buyer only. */
+  /** The side whose promise it backs. The other side benefits, and this release backs the buyer only. */
   side: 'buyer'
   /** Equal to the largest charge. */
   amount: bigint

@@ -811,8 +811,9 @@ export function checkEnvelope(
   env: Pick<Signed<unknown>, 'type' | 'schemaVersion' | 'chainId' | 'lock'>,
   expected: { type: MessageType; chainId: number; lock?: Address },
 ): ReasonCode | null {
-  if (!isSupportedMessageVersion(env.type, env.schemaVersion)) return 'message.schema_unknown'
+  // The type is checked first, so the version lookup only ever sees a type this code names.
   if (env.type !== expected.type) return 'message.schema_unknown'
+  if (!isSupportedMessageVersion(env.type, env.schemaVersion)) return 'message.schema_unknown'
   if (env.chainId !== expected.chainId) return 'message.wrong_chain'
   if (expected.lock && !isAddressEqual(env.lock, expected.lock)) return 'message.wrong_contract'
   return null

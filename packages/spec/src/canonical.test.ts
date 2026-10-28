@@ -65,6 +65,16 @@ describe('canonicalJson', () => {
     expect(() => canonicalJson({ a: () => 1 })).toThrow()
     expect(() => canonicalJson({ a: Symbol('s') })).toThrow()
   })
+
+  it('writes plain objects only, so a Date, Map, Set or class instance throws', () => {
+    class Booking {
+      gpus = 8
+    }
+    for (const value of [new Date(0), new Map([[1, 2]]), new Set([1]), new Booking()]) {
+      expect(() => canonicalJson({ a: value }), value.constructor.name).toThrow('plain objects')
+    }
+    expect(canonicalJson({ a: Object.assign(Object.create(null), { b: 1 }) })).toBe('{"a":{"b":1}}')
+  })
 })
 
 describe('newSalt', () => {

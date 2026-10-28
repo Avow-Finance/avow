@@ -19,6 +19,7 @@ import {
   START,
   TOKEN,
 } from './test-helpers.js'
+import { COMMITMENT_RECORD_VERSION } from './version.js'
 import {
   approvalJson,
   parseAnyTerms,
@@ -295,7 +296,7 @@ describe("Avow's approval over JSON", () => {
 
 describe('parseCommitment', () => {
   const commitment: Commitment = {
-    schemaVersion: '1',
+    schemaVersion: COMMITMENT_RECORD_VERSION,
     commitmentId: id('commitment-1'),
     category: 'compute',
     buyer: { businessId: 'biz_buyer', agentId: 'agt_1', mandateId: id('mandate-1') },
@@ -333,28 +334,45 @@ describe('parseCommitment', () => {
     references: [],
   }
 
+  const v1 = testnetDemoTermsV1(START, ARBITER)
+  const underV1 = { ...commitment, terms: v1, termsHash: termsHash(v1, SALT) }
+
   it('round-trips a commitment', () => {
+    expect(COMMITMENT_RECORD_VERSION).toBe('2')
     expect(parseCommitment(roundTrip(commitment))).toEqual({
       ok: true,
       value: lowerHex(commitment),
     })
   })
 
-  it('reads a record made under version 1 terms, with no references', () => {
-    const v1 = testnetDemoTermsV1(START, ARBITER)
-    const { references: _, ...older } = { ...commitment, terms: v1, termsHash: termsHash(v1, SALT) }
-    expect(parseCommitment(roundTrip(older))).toEqual({
-      ok: true,
-      value: lowerHex({ ...older, references: [] }),
-    })
+  it('reads a version 2 record made under version 1 terms', () => {
+    expect(parseCommitment(roundTrip(underV1))).toEqual({ ok: true, value: lowerHex(underV1) })
+  })
+
+  it('reads a version 1 record as version 2, citing nothing, so it is written back as version 2', () => {
+    // A record as version 1 wrote it, with version 1 terms and no references.
+    const { references: _, ...older } = { ...underV1, schemaVersion: '1' }
+    expect(parseCommitment(roundTrip(older))).toEqual({ ok: true, value: lowerHex(underV1) })
+  })
+
+  it('refuses a version 1 record with version 2 terms or references, and a version 2 record without references', () => {
+    const { references: _, ...unreferenced } = commitment
+    const bad = [
+      { ...commitment, schemaVersion: '1' },
+      { ...underV1, schemaVersion: '1' },
+      unreferenced,
+    ]
+    for (const record of bad) {
+      expect(parseCommitment(roundTrip(record))).toEqual({ ok: false, reason: 'message.invalid' })
+    }
   })
 
   it('refuses a schema version it can read nothing of', () => {
-    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '2' })).toEqual({
+    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '3' })).toEqual({
       ok: false,
       reason: 'message.schema_unknown',
     })
-    expect(parseCommitment({ schemaVersion: '1' })).toEqual({
+    expect(parseCommitment({ schemaVersion: '2' })).toEqual({
       ok: false,
       reason: 'message.invalid',
     })
@@ -425,6 +443,15 @@ describe('parseSigned', () => {
       ok: false,
       reason: 'message.schema_unknown',
     })
+  })
+
+  it('refuses a type named after something every object inherits, without throwing', () => {
+    for (const type of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(parse({ ...envelope, type }), type).toEqual({
+        ok: false,
+        reason: 'message.schema_unknown',
+      })
+    }
   })
 
   it('refuses another type, chain or lock', () => {

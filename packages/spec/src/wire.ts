@@ -308,7 +308,8 @@ const outcomeKinds = Object.keys(OUTCOME_ENDINGS) as [
   ...(keyof typeof OUTCOME_ENDINGS)[],
 ]
 
-export const commitmentJson = z.strictObject({
+/** The fields every version of a commitment record holds. */
+const recordFields = {
   schemaVersion: z.string().min(1),
   commitmentId: bytes32,
   category: z.string().min(1),
@@ -321,8 +322,6 @@ export const commitmentJson = z.strictObject({
     businessId: z.string().min(1),
     agentId: z.string().min(1).nullable(),
   }),
-  // Version 1 terms carry no version field and version 2 terms do, so the two never overlap.
-  terms: z.union([computeTermsV1Json, termsJson]),
   termsHash: bytes32,
   state: z.enum(COMMITMENT_STATES),
   backing: z.array(
@@ -347,7 +346,17 @@ export const commitmentJson = z.strictObject({
     })
     .nullable(),
   outcome: z.strictObject({ kind: z.enum(outcomeKinds), charged: u256, released: u256 }).nullable(),
-  references: z.array(z.lazy(() => referenceJson)).default([]),
+}
+
+/** A version 1 record, written before records cited references and while all terms were version 1. */
+export const commitmentJsonV1 = z.strictObject({ ...recordFields, terms: computeTermsV1Json })
+
+/** A version 2 record, the version this code writes. */
+export const commitmentJson = z.strictObject({
+  ...recordFields,
+  // Version 1 terms carry no version field and version 2 terms do, so the two never overlap.
+  terms: z.union([computeTermsV1Json, termsJson]),
+  references: z.array(z.lazy(() => referenceJson)),
 })
 
 export const commitmentReferenceJson = z.strictObject({
@@ -482,10 +491,20 @@ export function parseReserveRequest(json: unknown): ReserveRequest {
   return reserveRequestJson.parse(json)
 }
 
-/** Parses a stored or sent commitment, refusing a record version this code can't read. */
+/**
+ * Parses a stored or sent commitment record. A version 1 record reads as a version 2 record that
+ * cites nothing, so writing it back writes version 2. A record version this code doesn't read is
+ * refused as unknown.
+ */
 export function parseCommitment(json: unknown): Parsed<Commitment> {
   const header = versionHeader.safeParse(json)
   if (!header.success) return { ok: false, reason: 'message.invalid' }
+  if (header.data.schemaVersion === '1') {
+    const older = commitmentJsonV1.safeParse(json)
+    if (!older.success) return { ok: false, reason: 'message.invalid' }
+    const value = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION, references: [] }
+    return { ok: true, value: value as Commitment }
+  }
   if (header.data.schemaVersion !== COMMITMENT_RECORD_VERSION) {
     return { ok: false, reason: 'message.schema_unknown' }
   }
@@ -506,7 +525,7 @@ const envelopeHeader = z.object({
 /**
  * Parses a signed message and checks its envelope. The version is read before the message
  * itself, so a message of a version this code doesn't read for its type is refused as unknown
- * (acceptance test 5) rather than as malformed.
+ * rather than as malformed.
  */
 export function parseSigned<S extends z.ZodType>(
   json: unknown,

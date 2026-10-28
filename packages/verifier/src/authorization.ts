@@ -16,6 +16,7 @@ import {
   supplierAuthorizationJson,
   supplierAuthorizationTypedData,
   termsHash,
+  termsShapeProblem,
   toTokenUnits,
   validateTerms,
 } from '@avow-finance/spec'
@@ -129,8 +130,10 @@ export async function checkAuthorization(
   }
   if (auth.kybTestData && !config.acceptTestData) return refuse('business.test_data')
 
-  // The supplier's terms against the ones Avow signed.
+  // The supplier's terms against the ones Avow signed, once they have a shape the hash covers.
   const t = input.terms
+  const shape = termsShapeProblem(t)
+  if (shape) return refuse(shape)
   if (!same(termsHash(t, auth.salt), auth.termsHash)) return refuse('terms.hash_mismatch')
   const termsProblem = validateTerms(t, config.profile)
   if (termsProblem) return refuse(termsProblem)

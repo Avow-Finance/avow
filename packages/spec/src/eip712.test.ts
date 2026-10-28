@@ -50,6 +50,7 @@ import {
   START,
   TOKEN,
 } from './test-helpers.js'
+import { isSupportedMessageVersion } from './version.js'
 
 const SALT = `0x${'22'.repeat(32)}` as const
 const admin = newKey()
@@ -393,6 +394,17 @@ describe('checkEnvelope', () => {
     expect(
       checkEnvelope({ ...env, schemaVersion: '2' }, { type: 'Approval', chainId: CHAIN_ID }),
     ).toBe('message.schema_unknown')
+  })
+
+  it('refuses a type named after something every object inherits, without throwing', () => {
+    for (const type of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      const sent = { ...env, type: type as 'Approval' }
+      expect(checkEnvelope(sent, { type: 'Approval', chainId: CHAIN_ID }), type).toBe(
+        'message.schema_unknown',
+      )
+      expect(isSupportedMessageVersion(type, '1'), type).toBe(false)
+    }
+    expect(isSupportedMessageVersion('Approval', '1')).toBe(true)
   })
 
   it('refuses another message type, chain or lock', () => {
