@@ -3,6 +3,7 @@ import {
   approvalDigest,
   approvalTypedData,
   digestOf,
+  lockTerms,
   type Mandate,
   mandateHash,
   mandateTypedData,
@@ -11,7 +12,6 @@ import {
   signForAccount,
   supplierAuthorizationTypedData,
   TESTNET_DEMO_PROFILE,
-  termsCharges,
   termsHash,
   testnetDemoTerms,
   toWire,
@@ -56,6 +56,8 @@ export const supplierAccount = newKey()
 export const supplierKey = newKey()
 export const terms = testnetDemoTerms(START, ARBITER)
 export const TERMS_HASH = termsHash(terms, SALT)
+/** What the terms make the lock enforce, as Avow's API maps them. */
+export const LOCK_TERMS = lockTerms(terms, TOKEN.decimals)
 
 export const mandate: Mandate = {
   mandateId: id('mandate-1'),
@@ -89,7 +91,7 @@ export function authorization(change: Partial<SupplierAuthorization> = {}): Supp
     commitmentId: COMMITMENT,
     termsHash: TERMS_HASH,
     salt: SALT,
-    amount: terms.reserve,
+    amount: LOCK_TERMS.amount,
     token: TOKEN.token,
     buyerBusinessId: 'biz_buyer',
     kybReference: 'mock-kyb-1',
@@ -98,9 +100,9 @@ export function authorization(change: Partial<SupplierAuthorization> = {}): Supp
     agentKeyAuthorizedIn: KEY_TX,
     mandateHash: mHash,
     payee: PAYEE,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
+    acceptBy: LOCK_TERMS.acceptBy,
+    chargeDeadline: LOCK_TERMS.chargeDeadline,
+    releaseDate: LOCK_TERMS.releaseDate,
     nonce: 1n,
     expiry: NOW + 300n,
     ...change,
@@ -146,18 +148,10 @@ export function approval(change: Partial<Approval> = {}): Approval {
     commitmentId: COMMITMENT,
     side: 'buyer',
     token: TOKEN.token,
-    amount: terms.reserve,
+    ...LOCK_TERMS,
     supplier: supplierAccount.address,
     supplierSigner: supplierKey.address,
     payee: PAYEE,
-    freeCancelBy: terms.freeCancelBy,
-    acceptBy: terms.acceptBy,
-    chargeDeadline: terms.chargeDeadline,
-    releaseDate: terms.releaseDate,
-    contestWindow: terms.contestWindow,
-    charges: termsCharges(terms, TOKEN.decimals),
-    day90SupplierShareBps: terms.dispute.day90SupplierShareBps,
-    arbiter: terms.dispute.arbiter,
     termsHash: TERMS_HASH,
     mandateHash: mHash,
     capPerCommitment: mandate.capPerCommitment,

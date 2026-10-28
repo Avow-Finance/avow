@@ -1,4 +1,6 @@
 import type { Address, Hex } from 'viem'
+import type { ChargeKind } from './eip712.js'
+import type { GpuReservationTerms } from './gpu-reservation.js'
 import type { ReasonCode } from './reasons.js'
 
 /**
@@ -131,31 +133,95 @@ export interface DisputeTerms {
   day90SupplierShareBps: number
 }
 
+/** The version of the terms this code writes. A reader refuses any version it doesn't know. */
+export const TERMS_VERSION = 2
+
+/** Every amount in version 2 terms is an integer count of millionths of the terms' currency. */
+export const AMOUNT_DECIMALS = 6
+
 /**
- * The terms of a GPU reservation. Nothing here names a rail, and the arbiter is an EVM address,
- * so the same terms and terms hash work on any EVM rail that backs them.
+ * The templates this code knows, by name and version. A template fixes what its subject holds and
+ * the rules its terms follow, and its meaning never changes. A new meaning is a new version.
  */
-export interface ComputeTerms {
-  kind: 'compute'
-  resource: { gpu: string; count: number; region: string; sku: string }
-  currency: Currency
-  windowStart: bigint
-  windowDuration: bigint
-  /** The last moment the supplier can accept, the window's start by default. */
-  acceptBy: bigint
-  /** Usage, paid like any other purchase and never from the reserve. */
-  price: { perGpuHour: bigint }
-  /** The most the supplier can charge, which equals the largest charge below. */
-  reserve: bigint
-  freeCancelBy: bigint
-  lateCancellation: bigint
-  noShow: bigint
-  gracePeriod: bigint
-  chargeDeadline: bigint
-  contestWindow: bigint
-  releaseDate: bigint
-  dispute: DisputeTerms
+export const TEMPLATE_IDS = ['gpu-reservation/1'] as const
+export type TemplateId = (typeof TEMPLATE_IDS)[number]
+
+/** What the buyer owes for the subject. The lock never reads it, so the terms describe it only. */
+export type Consideration =
+  /** An amount for each unit the template names, such as a GPU-hour. */
+  | { kind: 'rate'; amount: bigint; unit: string }
+  /** One amount for the whole subject. */
+  | { kind: 'fixed'; amount: bigint }
+
+/**
+ * One charge the supplier can report, up to `amount`, from `earliest` until the charge deadline.
+ * The kinds are the ones a lock can hold.
+ */
+export interface RemedyCharge {
+  kind: ChargeKind
+  amount: bigint
+  earliest: bigint
 }
+
+/** What the buyer owes when it doesn't go ahead as agreed, with the deadlines around a charge. */
+export interface Remedies {
+  /** The last moment the supplier can accept. After it, the backing goes back. */
+  acceptBy: bigint
+  /** Until this moment the buyer can cancel without a charge. */
+  freeCancelBy: bigint
+  /** In the order of the lock's charge codes, one of each kind at most. */
+  charges: readonly RemedyCharge[]
+  /** The last moment the supplier can report a charge. */
+  chargeDeadline: bigint
+}
+
+/** How a reported charge can be contested and who rules when Avow doesn't. */
+export interface Resolution {
+  /** How long the buyer has to contest a confirmed charge. */
+  contestWindow: bigint
+  /** The fallback arbiter's key, which the lock names for the commitment. */
+  arbiter: Address
+  /** The supplier's share of a confirmed charge still unruled at day 90, from 0 to 10,000. */
+  day90SupplierShareBps: number
+}
+
+/**
+ * Money the buyer reserves in its own lock for the supplier, which the lock pays charges from and
+ * gives back at the release date. It's the only backing v1 enforces.
+ */
+export interface ReserveBacking {
+  kind: 'reserve'
+  /** The side whose promise it backs. The other side benefits, and v1 backs the buyer only. */
+  side: 'buyer'
+  /** Equal to the largest charge. */
+  amount: bigint
+  /** When a reserve nobody released or charged goes back to the business. */
+  releaseDate: bigint
+}
+
+/** What secures a commitment. A change of backing changes the terms hash. */
+export type Backing = ReserveBacking
+
+/**
+ * The terms of a commitment, version 2. The header (version, template, currency and amount
+ * decimals) says how to read the five sections. Only the subject depends on the template.
+ * Remedies, resolution and backing hold everything a lock enforces, and consideration is
+ * described only. Nothing here names a rail, so the same terms and hash work on any EVM rail.
+ */
+export interface TermsOf<Subject, Template extends TemplateId> {
+  version: typeof TERMS_VERSION
+  template: Template
+  currency: Currency
+  amountDecimals: typeof AMOUNT_DECIMALS
+  subject: Subject
+  consideration: Consideration
+  remedies: Remedies
+  resolution: Resolution
+  backing: Backing
+}
+
+/** Version 2 terms under any template this code knows. */
+export type Terms = GpuReservationTerms
 
 /** An agent's request to reserve money for a supplier under terms. */
 export interface ReserveRequest {
@@ -166,7 +232,7 @@ export interface ReserveRequest {
   /** The supplier's payout address on the rail, which receives any charge. */
   payee: Address
   category: string
-  terms: ComputeTerms
+  terms: Terms
 }
 
 export type DecisionResult = 'approved' | 'denied' | 'needs_human'

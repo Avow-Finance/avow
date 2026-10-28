@@ -1,6 +1,8 @@
 import type { Hex } from 'viem'
 import type { BackingRef, RailState } from './rail.js'
-import type { ComputeTerms, Side } from './types.js'
+import type { Reference } from './references.js'
+import type { AnyTerms } from './terms.js'
+import type { Side } from './types.js'
 
 /**
  * The 11 commitment states. Draft, agreed, awaiting approval and expired live on
@@ -115,12 +117,14 @@ export interface ContestRecord {
 
 /** One promise between a buyer and a supplier, as the API stores it and the SDK reads it. */
 export interface Commitment {
+  /** The record's own version, `COMMITMENT_RECORD_VERSION`. Its terms carry theirs. */
   schemaVersion: string
   commitmentId: Hex
   category: string
   buyer: { businessId: string; agentId: string; mandateId: Hex }
   supplier: { businessId: string; agentId: string | null }
-  terms: ComputeTerms
+  /** Version 2 terms, or version 1 for a commitment made under them. */
+  terms: AnyTerms
   /** The salted terms hash. The salt stays with Avow and goes to the supplier. */
   termsHash: Hex
   state: CommitmentState
@@ -128,4 +132,6 @@ export interface Commitment {
   start: StartRecord | null
   contest: ContestRecord | null
   outcome: Outcome | null
+  /** Other commitments and payments this record cites. V1 records cite none. */
+  references: readonly Reference[]
 }

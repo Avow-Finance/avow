@@ -1,12 +1,15 @@
 import {
+  type AnyTerms,
   type Approval,
   acceptanceTypedData,
-  type ComputeTerms,
   digestOf,
+  type GpuReservationTerms,
   isKeySignature,
   type Mandate,
   mandateHash,
   PRODUCTION_PROFILE,
+  termsHash,
+  testnetDemoTermsV1,
   toWire,
 } from '@avow-finance/spec'
 import { type Address, zeroAddress } from 'viem'
@@ -32,6 +35,7 @@ import {
   id,
   KEY_TX,
   LOCK,
+  LOCK_TERMS,
   lockedBacking,
   lockInfo,
   mandate,
@@ -40,6 +44,8 @@ import {
   newKey,
   PAYEE,
   reservedChain,
+  SALT,
+  START,
   signedApproval,
   signedAuthorization,
   signedMandate,
@@ -62,7 +68,7 @@ async function prepare(
     authorization?: unknown
     approval?: unknown
     mandate?: unknown
-    terms?: ComputeTerms
+    terms?: AnyTerms
     agreed?: typeof agreed
     now?: bigint
     deps?: AcceptanceDeps
@@ -100,7 +106,7 @@ describe('the supported acceptance path', () => {
       termsHash: agreed.termsHash,
       amount: 500_000_000n,
       token: approval().token,
-      acceptBy: terms.acceptBy,
+      acceptBy: LOCK_TERMS.acceptBy,
       nonce: 7n,
       expiry: NOW + ACCEPTANCE_VALIDITY,
     })
@@ -109,10 +115,10 @@ describe('the supported acceptance path', () => {
   })
 
   it('never lets the acceptance outlive the acceptance deadline', async () => {
-    const late = terms.acceptBy - 60n
+    const late = LOCK_TERMS.acceptBy - 60n
     const auth = await signedAuthorization(authorization({ expiry: late + 300n }))
     const prepared = await prepare({ authorization: auth, now: late })
-    expect(prepared.ok && prepared.acceptance.expiry).toBe(terms.acceptBy)
+    expect(prepared.ok && prepared.acceptance.expiry).toBe(LOCK_TERMS.acceptBy)
   })
 
   it('accepts a reserve the business funded with its root key', async () => {
@@ -206,11 +212,19 @@ describe('every term of the approval that binds the supplier', () => {
     ['side', { side: 'supplier' }, 'approval.terms_mismatch'],
     ['token', { token: '0x20c0000000000000000000000000000000000002' }, 'approval.terms_mismatch'],
     ['amount', { amount: 500_000_001n }, 'approval.terms_mismatch'],
-    ['free cancellation', { freeCancelBy: terms.freeCancelBy + 1n }, 'approval.terms_mismatch'],
-    ['acceptance deadline', { acceptBy: terms.acceptBy + 1n }, 'approval.terms_mismatch'],
-    ['charge deadline', { chargeDeadline: terms.chargeDeadline + 1n }, 'approval.terms_mismatch'],
-    ['release date', { releaseDate: terms.releaseDate + 1n }, 'approval.terms_mismatch'],
-    ['contest window', { contestWindow: terms.contestWindow - 1n }, 'approval.terms_mismatch'],
+    [
+      'free cancellation',
+      { freeCancelBy: LOCK_TERMS.freeCancelBy + 1n },
+      'approval.terms_mismatch',
+    ],
+    ['acceptance deadline', { acceptBy: LOCK_TERMS.acceptBy + 1n }, 'approval.terms_mismatch'],
+    [
+      'charge deadline',
+      { chargeDeadline: LOCK_TERMS.chargeDeadline + 1n },
+      'approval.terms_mismatch',
+    ],
+    ['release date', { releaseDate: LOCK_TERMS.releaseDate + 1n }, 'approval.terms_mismatch'],
+    ['contest window', { contestWindow: LOCK_TERMS.contestWindow - 1n }, 'approval.terms_mismatch'],
     ['terms hash', { termsHash: id('other terms') }, 'approval.terms_mismatch'],
     ['first kind', { charges: [{ ...late, kind: 'noShow' }, noShow] }, 'approval.charges_mismatch'],
     [
@@ -273,24 +287,61 @@ describe('every term of the approval that binds the supplier', () => {
   })
 })
 
+describe('a commitment made under version 1 terms', () => {
+  it('still verifies end to end through the same checks, under its version 1 hash', async () => {
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    const hash = termsHash(v1, SALT)
+    expect(hash).not.toBe(agreed.termsHash)
+    const a = approval({ termsHash: hash })
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, a))
+    const prepared = await prepare({
+      terms: v1,
+      agreed: { ...agreed, termsHash: hash },
+      authorization: await signedAuthorization(authorization({ termsHash: hash })),
+      approval: await signedApproval(a),
+    })
+    expect(prepared.ok && prepared.acceptance.termsHash).toBe(hash)
+  })
+
+  it('refuses version 2 terms named under a version 1 hash, and the other way round', async () => {
+    const v1 = testnetDemoTermsV1(START, ARBITER)
+    expect(await prepare({ terms: v1 })).toEqual(refused('terms.hash_mismatch'))
+  })
+})
+
 describe("the supplier's own terms", () => {
-  it('refuses terms without the dispute block', async () => {
-    const { dispute: _, ...older } = terms
-    expect(await prepare({ terms: older as ComputeTerms })).toEqual(refused('terms.incomplete'))
+  it('refuses version 1 terms without the dispute block', async () => {
+    const { dispute: _, ...older } = testnetDemoTermsV1(START, ARBITER)
+    expect(await prepare({ terms: older as AnyTerms })).toEqual(refused('terms.incomplete'))
   })
 
   it('refuses terms other than the ones the supplier agreed to and Avow signed', async () => {
-    const changes: Partial<ComputeTerms>[] = [
-      { dispute: { ...terms.dispute, arbiter: newKey().address } },
-      { dispute: { ...terms.dispute, day90SupplierShareBps: 10_000 } },
-      { noShow: terms.noShow - 1n },
-      { gracePeriod: terms.gracePeriod + 1n },
+    const [late, noShow] = terms.remedies.charges
+    if (!late || !noShow) throw new Error('the test terms have two charges')
+    const changes: GpuReservationTerms[] = [
+      { ...terms, resolution: { ...terms.resolution, arbiter: newKey().address } },
+      { ...terms, resolution: { ...terms.resolution, day90SupplierShareBps: 10_000 } },
+      {
+        ...terms,
+        remedies: { ...terms.remedies, charges: [late, { ...noShow, amount: noShow.amount - 1n }] },
+      },
+      {
+        ...terms,
+        remedies: {
+          ...terms.remedies,
+          charges: [late, { ...noShow, earliest: noShow.earliest + 1n }],
+        },
+      },
+      { ...terms, backing: { ...terms.backing, releaseDate: terms.backing.releaseDate + 1n } },
+      {
+        ...terms,
+        subject: { ...terms.subject, resource: { ...terms.subject.resource, count: 4 } },
+      },
     ]
     for (const change of changes) {
-      expect(
-        await prepare({ terms: { ...terms, ...change } }),
-        JSON.stringify(toWire(change)),
-      ).toEqual(refused('terms.hash_mismatch'))
+      expect(await prepare({ terms: change }), JSON.stringify(toWire(change))).toEqual(
+        refused('terms.hash_mismatch'),
+      )
     }
   })
 
@@ -371,7 +422,7 @@ describe("the buyer's mandate and the agent's authority", () => {
 
   it('refuses a mandate that has expired or ends before the release date', async () => {
     expect(await under({ ...mandate, expiry: NOW })).toEqual(refused('mandate.expired'))
-    expect(await under({ ...mandate, expiry: terms.releaseDate - 1n })).toEqual(
+    expect(await under({ ...mandate, expiry: LOCK_TERMS.releaseDate - 1n })).toEqual(
       refused('mandate.ends_before_window'),
     )
   })
@@ -381,7 +432,7 @@ describe("the buyer's mandate and the agent's authority", () => {
       chain.setAgentKey(buyer.address, agent.address, info, KEY_TX)
     set({ active: false, expiry: null, witness: mHash })
     expect(await prepare()).toEqual(refused('chain.agent_key_inactive'))
-    set({ active: true, expiry: terms.releaseDate - 1n, witness: mHash })
+    set({ active: true, expiry: LOCK_TERMS.releaseDate - 1n, witness: mHash })
     expect(await prepare()).toEqual(refused('chain.agent_key_inactive'))
     set({ active: true, expiry: null, witness: id('another mandate') })
     expect(await prepare()).toEqual(refused('chain.mandate_mismatch'))
@@ -427,7 +478,7 @@ describe('the lock', () => {
     const changes: Partial<LockedBacking>[] = [
       { supplier: newKey().address },
       { supplierSigner: newKey().address },
-      { freeCancelBy: terms.freeCancelBy + 1n },
+      { freeCancelBy: LOCK_TERMS.freeCancelBy + 1n },
       { charges: approval().charges.slice(1) },
       { day90SupplierShareBps: 0 },
       { arbiter: newKey().address },
@@ -489,14 +540,15 @@ describe('the disclosure', () => {
       lockedBacking().approvalHash,
       'The business reserved USD 500 (500000000 base units',
       'A late cancellation can charge up to USD 250 (250000000 base units',
-      `reported from ${formatTime(terms.freeCancelBy)}`,
+      `reported from ${formatTime(LOCK_TERMS.freeCancelBy)}`,
       'A no-show can charge up to USD 500 (500000000 base units',
-      `reported from ${formatTime(terms.windowStart + terms.gracePeriod)}`,
-      `Free cancellation ends at ${formatTime(terms.freeCancelBy)}`,
+      // The no-show is chargeable once the 2-minute grace period after the window's start passes.
+      `reported from ${formatTime(START + 120n)}`,
+      `Free cancellation ends at ${formatTime(LOCK_TERMS.freeCancelBy)}`,
       `This acceptance stops working at ${formatTime(NOW + ACCEPTANCE_VALIDITY)}`,
-      `the lock takes no acceptance from ${formatTime(terms.acceptBy)}`,
-      `Report any charge before ${formatTime(terms.chargeDeadline)}`,
-      `goes back to the business at ${formatTime(terms.releaseDate)}`,
+      `the lock takes no acceptance from ${formatTime(LOCK_TERMS.acceptBy)}`,
+      `Report any charge before ${formatTime(LOCK_TERMS.chargeDeadline)}`,
+      `goes back to the business at ${formatTime(LOCK_TERMS.releaseDate)}`,
       'within 5 minutes',
       "contest a confirmed charge for 10 minutes, and a report Avow hasn't confirmed at any time",
       'Avow can also pause a confirmed charge before its contest window closes',

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import { assertTestSettingsOnTestnet, TEMPO_MODERATO } from './networks.js'
+import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
 import { toTokenUnits } from './rail.js'
 import { MemoryReplayGuard } from './replay.js'
-import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './terms.js'
 
 describe('toTokenUnits', () => {
   it('leaves micros as they are for a 6-decimal token, like every TIP-20', () => {

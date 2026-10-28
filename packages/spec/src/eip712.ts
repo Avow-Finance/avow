@@ -8,12 +8,12 @@ import {
 } from 'viem'
 import type { ReasonCode } from './reasons.js'
 import type { ApprovalRule, Mandate, Side } from './types.js'
-import { DOMAIN_NAME, isSupportedSchemaVersion, SCHEMA_VERSION } from './version.js'
+import { DOMAIN_NAME, isSupportedMessageVersion, MESSAGE_VERSIONS } from './version.js'
 
 /**
- * Every signed message is EIP-712 typed data. The domain names the schema version, the chain and
- * the buyer's lock, and each message carries a nonce and an expiry, so it can't be replayed on
- * another chain or lock or changed without breaking the signature.
+ * Every signed message is EIP-712 typed data. The domain names the message type's version, the
+ * chain and the buyer's lock, and each message carries a nonce and an expiry, so it can't be
+ * replayed on another chain or lock or changed without breaking the signature.
  */
 export interface AvowDomain {
   chainId: number
@@ -21,7 +21,7 @@ export interface AvowDomain {
   verifyingContract: Address
 }
 
-export function domain(d: AvowDomain, version: string = SCHEMA_VERSION): TypedDataDomain {
+export function domain(d: AvowDomain, version: string): TypedDataDomain {
   return {
     name: DOMAIN_NAME,
     version,
@@ -474,7 +474,7 @@ export const START_RECEIPT_TYPES = {
 
 export function mandateTypedData(m: Mandate, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.Mandate),
     types: MANDATE_TYPES,
     primaryType: 'Mandate' as const,
     message: {
@@ -504,7 +504,7 @@ export function mandateTypedData(m: Mandate, d: AvowDomain) {
 
 export function termsAgreementTypedData(a: TermsAgreement, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.TermsAgreement),
     types: TERMS_AGREEMENT_TYPES,
     primaryType: 'TermsAgreement' as const,
     message: { ...a },
@@ -513,7 +513,7 @@ export function termsAgreementTypedData(a: TermsAgreement, d: AvowDomain) {
 
 export function approvalTypedData(a: Approval, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.Approval),
     types: APPROVAL_TYPES,
     primaryType: 'Approval' as const,
     message: {
@@ -544,7 +544,7 @@ export function approvalDigest(a: Approval, d: AvowDomain): Hex {
  */
 export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.Acceptance),
     types: ACCEPTANCE_TYPES,
     primaryType: 'Acceptance' as const,
     message: { ...a, side: sideCode[a.side] },
@@ -553,7 +553,7 @@ export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {
 
 export function reportTypedData(r: ChargeReport, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.Report),
     types: REPORT_TYPES,
     primaryType: 'Report' as const,
     message: { ...r, side: sideCode[r.side], kind: CHARGE_KINDS[r.kind] },
@@ -562,7 +562,7 @@ export function reportTypedData(r: ChargeReport, d: AvowDomain) {
 
 export function releaseConsentTypedData(c: ReleaseConsent, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.ReleaseConsent),
     types: RELEASE_CONSENT_TYPES,
     primaryType: 'ReleaseConsent' as const,
     message: { ...c, side: sideCode[c.side], reason: RELEASE_REASONS[c.reason] },
@@ -571,7 +571,7 @@ export function releaseConsentTypedData(c: ReleaseConsent, d: AvowDomain) {
 
 export function evidenceTypedData(e: SupplierEvidence, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.Evidence),
     types: EVIDENCE_TYPES,
     primaryType: 'Evidence' as const,
     message: { ...e, side: sideCode[e.side] },
@@ -580,7 +580,7 @@ export function evidenceTypedData(e: SupplierEvidence, d: AvowDomain) {
 
 export function businessActionTypedData(a: BusinessAction, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.BusinessAction),
     types: BUSINESS_ACTION_TYPES,
     primaryType: 'BusinessAction' as const,
     message: { ...a, action: BUSINESS_ACTIONS[a.action], side: sideCode[a.side] },
@@ -589,7 +589,7 @@ export function businessActionTypedData(a: BusinessAction, d: AvowDomain) {
 
 export function supplierActionTypedData(a: SupplierAction, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.SupplierAction),
     types: SUPPLIER_ACTION_TYPES,
     primaryType: 'SupplierAction' as const,
     message: { ...a, action: SUPPLIER_ACTIONS[a.action], side: sideCode[a.side] },
@@ -670,7 +670,7 @@ export function supplierListAction(args: {
 
 export function supplierAuthorizationTypedData(a: SupplierAuthorization, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.SupplierAuthorization),
     types: SUPPLIER_AUTHORIZATION_TYPES,
     primaryType: 'SupplierAuthorization' as const,
     message: { ...a },
@@ -679,7 +679,7 @@ export function supplierAuthorizationTypedData(a: SupplierAuthorization, d: Avow
 
 export function humanApprovalTypedData(a: HumanApproval, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.HumanApproval),
     types: HUMAN_APPROVAL_TYPES,
     primaryType: 'HumanApproval' as const,
     message: { ...a },
@@ -688,7 +688,7 @@ export function humanApprovalTypedData(a: HumanApproval, d: AvowDomain) {
 
 export function startReceiptTypedData(r: StartReceipt, d: AvowDomain) {
   return {
-    domain: domain(d),
+    domain: domain(d, MESSAGE_VERSIONS.StartReceipt),
     types: START_RECEIPT_TYPES,
     primaryType: 'StartReceipt' as const,
     message: { ...r, side: sideCode[r.side] },
@@ -718,6 +718,14 @@ export type AvowTypedData =
   | ReturnType<typeof supplierActionTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
+
+// Every message type has a version, and no version names a type that doesn't exist.
+const _everyTypeVersioned: { readonly [T in MessageType]: string } = MESSAGE_VERSIONS
+const _noUnknownTypes: {
+  readonly [T in keyof typeof MESSAGE_VERSIONS]: T extends MessageType ? string : never
+} = MESSAGE_VERSIONS
+void _everyTypeVersioned
+void _noUnknownTypes
 
 /** The EIP-712 digest a signer signs. */
 export function digestOf(td: AvowTypedData): Hex {
@@ -782,7 +790,10 @@ export async function isSignedBy(
   }
 }
 
-/** How a signed message travels as data. Its version, chain and lock make up the EIP-712 domain. */
+/**
+ * How a signed message travels as data. Its version, chain and lock make up the EIP-712 domain, and
+ * `schemaVersion` is the message type's own version (`MESSAGE_VERSIONS`).
+ */
 export interface Signed<T> {
   type: MessageType
   schemaVersion: string
@@ -800,7 +811,7 @@ export function checkEnvelope(
   env: Pick<Signed<unknown>, 'type' | 'schemaVersion' | 'chainId' | 'lock'>,
   expected: { type: MessageType; chainId: number; lock?: Address },
 ): ReasonCode | null {
-  if (!isSupportedSchemaVersion(env.schemaVersion)) return 'message.schema_unknown'
+  if (!isSupportedMessageVersion(env.type, env.schemaVersion)) return 'message.schema_unknown'
   if (env.type !== expected.type) return 'message.schema_unknown'
   if (env.chainId !== expected.chainId) return 'message.wrong_chain'
   if (expected.lock && !isAddressEqual(env.lock, expected.lock)) return 'message.wrong_contract'

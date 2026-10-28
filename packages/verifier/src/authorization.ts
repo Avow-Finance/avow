@@ -1,9 +1,10 @@
 import {
+  type AnyTerms,
   type AvowDomain,
   assertTestSettingsOnTestnet,
-  type ComputeTerms,
   checkMandate,
   digestOf,
+  enforceableTerms,
   type Mandate,
   mandateHash,
   mandateJson,
@@ -41,7 +42,8 @@ export interface Agreed {
 export interface AuthorizationInput {
   authorization: unknown
   agreed: Agreed
-  terms: ComputeTerms
+  /** The supplier's own terms: version 2, or version 1 for a commitment made under it. */
+  terms: AnyTerms
   mandate?: unknown
   now: bigint
 }
@@ -132,24 +134,26 @@ export async function checkAuthorization(
   if (!same(termsHash(t, auth.salt), auth.termsHash)) return refuse('terms.hash_mismatch')
   const termsProblem = validateTerms(t, config.profile)
   if (termsProblem) return refuse(termsProblem)
+  // What the lock enforces, read from the supplier's terms the way Avow's API reads them.
+  const e = enforceableTerms(t)
   const token = config.acceptedTokens.find(
     (a) =>
       a.chainId === config.chainId &&
       isAddressEqual(a.token, auth.token) &&
-      a.currency === t.currency,
+      a.currency === e.currency,
   )
   if (!token) return refuse('authorization.token_not_accepted')
   let reserveUnits: bigint
   try {
-    reserveUnits = toTokenUnits(t.reserve, token.decimals)
+    reserveUnits = toTokenUnits(e.reserve, token.decimals)
   } catch {
     return refuse('authorization.token_not_accepted')
   }
   if (
     auth.amount !== reserveUnits ||
-    auth.acceptBy !== t.acceptBy ||
-    auth.chargeDeadline !== t.chargeDeadline ||
-    auth.releaseDate !== t.releaseDate
+    auth.acceptBy !== e.acceptBy ||
+    auth.chargeDeadline !== e.chargeDeadline ||
+    auth.releaseDate !== e.releaseDate
   ) {
     return refuse('authorization.terms_mismatch')
   }
@@ -169,10 +173,10 @@ export async function checkAuthorization(
     !isAddressEqual(backing.token, auth.token) ||
     backing.amount !== auth.amount ||
     !isAddressEqual(backing.payee, auth.payee) ||
-    backing.acceptBy !== t.acceptBy ||
-    backing.chargeDeadline !== t.chargeDeadline ||
-    backing.contestWindow !== t.contestWindow ||
-    backing.releaseDate !== t.releaseDate ||
+    backing.acceptBy !== e.acceptBy ||
+    backing.chargeDeadline !== e.chargeDeadline ||
+    backing.contestWindow !== e.contestWindow ||
+    backing.releaseDate !== e.releaseDate ||
     !same(backing.termsHash, auth.termsHash) ||
     !fundedByAgentOrRoot
   ) {
@@ -181,7 +185,7 @@ export async function checkAuthorization(
   const key = await chain.agentKey(lockInfo.account, auth.agentKey, auth.agentKeyAuthorizedIn)
   if (!key?.active) return refuse('chain.agent_key_inactive')
   // The key has to last until nothing more can happen to the commitment.
-  if (key.expiry !== null && key.expiry < t.releaseDate) return refuse('chain.agent_key_inactive')
+  if (key.expiry !== null && key.expiry < e.releaseDate) return refuse('chain.agent_key_inactive')
   if (key.witness === null || !same(key.witness, auth.mandateHash)) {
     return refuse('chain.mandate_mismatch')
   }

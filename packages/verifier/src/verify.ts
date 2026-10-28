@@ -1,6 +1,7 @@
 import {
-  type ComputeTerms,
+  type AnyTerms,
   commitmentKey,
+  enforceableTerms,
   type RailToken,
   type ReasonCode,
   type ReplayGuard,
@@ -42,8 +43,8 @@ export interface VerifyInput {
   authorization: unknown
   /** The commitment the supplier agreed to, from the terms agreement it signed. */
   agreed: Agreed
-  /** The supplier's own copy of the agreed terms. */
-  terms: ComputeTerms
+  /** The supplier's own copy of the agreed terms: version 2, or version 1 for one made under it. */
+  terms: AnyTerms
   /** The buyer's signed mandate, as JSON, when the supplier wants to check it too. */
   mandate?: unknown
   now: bigint
@@ -77,12 +78,13 @@ export async function verifySupplierAuthorization(
   const checked = await checkAuthorization(input, deps.config, deps.chain)
   if (!checked.ok) return checked
   const { authorization: auth, domain: d } = checked
+  const { acceptBy } = enforceableTerms(input.terms)
 
   // Last, so only an authorization that passed everything uses up its commitment.
   const recorded = await deps.replay.recordAll([
     {
       key: commitmentKey('SupplierAuthorization', d, auth.commitmentId),
-      expiry: input.terms.acceptBy > auth.expiry ? input.terms.acceptBy : auth.expiry,
+      expiry: acceptBy > auth.expiry ? acceptBy : auth.expiry,
     },
   ])
   if (!recorded) return { ok: false, reason: 'message.replayed' }

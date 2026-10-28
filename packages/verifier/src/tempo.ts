@@ -2,6 +2,7 @@ import {
   CHARGE_KINDS,
   type Charge,
   type ChargeKind,
+  type ObservedTransfer,
   RAIL_STATES,
   tempoKeychainCheck,
 } from '@avow-finance/spec'
@@ -11,9 +12,10 @@ import {
   type Hex,
   isAddressEqual,
   parseEventLogs,
+  TransactionReceiptNotFoundError,
   zeroAddress,
 } from 'viem'
-import { getTransactionReceipt, readContract } from 'viem/actions'
+import { getBlock, getTransactionReceipt, readContract } from 'viem/actions'
 import { Abis, Addresses } from 'viem/tempo'
 import type { AgentKeyInfo, ChainReader, LockedBacking, LockInfo } from './chain.js'
 import { FACTORY_ABI, LOCK_ABI } from './lock-abi.js'
@@ -65,6 +67,52 @@ export async function readAgentKey(
     active: !stored.isRevoked,
     expiry: stored.expiry >= NO_EXPIRY ? null : stored.expiry,
     witness: onlyThisKey && witnesses.length === 1 ? (witnesses[0] ?? null) : null,
+  }
+}
+
+/**
+ * Reads the log at one index of one transaction. The log counts as a payment only when it decodes
+ * as the TIP-20 `TransferWithMemo` event, and the caller checks that its emitter is the token the
+ * reference names. Finality comes from the chain's finalized block, so a receipt in a later block
+ * reads as not final.
+ */
+export async function readTransfer(
+  client: Client,
+  chainId: number,
+  transactionHash: Hex,
+  logIndex: number,
+): Promise<ObservedTransfer | null> {
+  let receipt: Awaited<ReturnType<typeof getTransactionReceipt>>
+  try {
+    receipt = await getTransactionReceipt(client, { hash: transactionHash })
+  } catch (error) {
+    if (error instanceof TransactionReceiptNotFoundError) return null
+    throw error
+  }
+  const log = receipt.logs.find((l) => l.logIndex === logIndex)
+  if (!log) return null
+  const finalized = await getBlock(client, { blockTag: 'finalized' })
+  const [decoded] = parseEventLogs({
+    abi: Abis.tip20,
+    eventName: 'TransferWithMemo',
+    logs: [log],
+    strict: true,
+  })
+  return {
+    chainId,
+    transactionHash: receipt.transactionHash,
+    logIndex,
+    succeeded: receipt.status === 'success',
+    finalized: finalized.number !== null && receipt.blockNumber <= finalized.number,
+    emitter: log.address,
+    event: decoded
+      ? {
+          from: decoded.args.from,
+          to: decoded.args.to,
+          amount: decoded.args.amount,
+          memo: decoded.args.memo,
+        }
+      : null,
   }
 }
 
@@ -186,5 +234,7 @@ export function tempoChainReader(client: Client, options: TempoReaderOptions): C
     agentKey: (account, key, authorizedIn) => readAgentKey(client, account, key, authorizedIn),
     isAccountSignature: (account, digest, signature) =>
       check({ signer: account, digest, signature }),
+    transfer: (transactionHash, logIndex) =>
+      readTransfer(client, chainId, transactionHash, logIndex),
   }
 }

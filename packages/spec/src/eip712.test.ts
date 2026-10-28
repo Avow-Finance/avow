@@ -35,7 +35,7 @@ import {
   type TermsAgreement,
   termsAgreementTypedData,
 } from './eip712.js'
-import { termsHash } from './terms.js'
+import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
   CHAIN_ID,
@@ -56,6 +56,7 @@ const admin = newKey()
 const agent = newKey()
 const mandate = demoMandate(admin.address, agent.address)
 const terms = testnetDemoTerms(START, ARBITER)
+const lock = lockTerms(terms, TOKEN.decimals)
 const hash = termsHash(terms, SALT)
 const mHash = mandateHash(mandate, DOMAIN)
 
@@ -77,19 +78,16 @@ const approval: Approval = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
   token: TOKEN.token,
-  amount: terms.reserve,
+  amount: lock.amount,
   supplier: supplierAccount.address,
   supplierSigner: supplierSigner.address,
   payee: PAYEE,
-  freeCancelBy: terms.freeCancelBy,
-  acceptBy: terms.acceptBy,
-  chargeDeadline: terms.chargeDeadline,
-  releaseDate: terms.releaseDate,
-  contestWindow: terms.contestWindow,
-  charges: [
-    { kind: 'lateCancellation', most: terms.lateCancellation, earliest: terms.freeCancelBy },
-    { kind: 'noShow', most: terms.noShow, earliest: terms.windowStart + terms.gracePeriod },
-  ],
+  freeCancelBy: lock.freeCancelBy,
+  acceptBy: lock.acceptBy,
+  chargeDeadline: lock.chargeDeadline,
+  releaseDate: lock.releaseDate,
+  contestWindow: lock.contestWindow,
+  charges: lock.charges,
   day90SupplierShareBps: 5000,
   arbiter: ARBITER,
   termsHash: hash,
@@ -106,9 +104,9 @@ const acceptance: Acceptance = {
   side: 'buyer',
   approvalHash: approvalDigest(approval, DOMAIN),
   termsHash: hash,
-  amount: terms.reserve,
+  amount: lock.amount,
   token: TOKEN.token,
-  acceptBy: terms.acceptBy,
+  acceptBy: lock.acceptBy,
   nonce: 12n,
   expiry: NOW + 600n,
 }
@@ -117,7 +115,7 @@ const chargeReport: ChargeReport = {
   commitmentId: id('commitment-1'),
   side: 'buyer',
   kind: 'lateCancellation',
-  amount: terms.lateCancellation,
+  amount: 250_000_000n,
   evidenceHash: id('late cancellation evidence'),
   nonce: 13n,
   expiry: NOW + 600n,
@@ -165,7 +163,7 @@ const authorization: SupplierAuthorization = {
   commitmentId: id('commitment-1'),
   termsHash: hash,
   salt: SALT,
-  amount: terms.reserve,
+  amount: lock.amount,
   token: TOKEN.token,
   buyerBusinessId: 'biz_buyer',
   kybReference: 'mock-kyb-1',
@@ -174,9 +172,9 @@ const authorization: SupplierAuthorization = {
   agentKeyAuthorizedIn: id('key authorization tx'),
   mandateHash: mHash,
   payee: PAYEE,
-  acceptBy: terms.acceptBy,
-  chargeDeadline: terms.chargeDeadline,
-  releaseDate: terms.releaseDate,
+  acceptBy: lock.acceptBy,
+  chargeDeadline: lock.chargeDeadline,
+  releaseDate: lock.releaseDate,
   nonce: 9n,
   expiry: NOW + 300n,
 }
@@ -187,7 +185,7 @@ const human: HumanApproval = {
   termsHash: hash,
   supplier: 'biz_supplier',
   payee: PAYEE,
-  amount: terms.reserve,
+  amount: lock.amount,
   nonce: 10n,
   expiry: NOW + 900n,
 }

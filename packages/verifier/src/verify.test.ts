@@ -1,6 +1,7 @@
 import {
-  type ComputeTerms,
+  type AnyTerms,
   digestOf,
+  type GpuReservationTerms,
   type Mandate,
   MemoryReplayGuard,
   mandateHash,
@@ -26,6 +27,7 @@ import {
   json,
   KEY_TX,
   LOCK,
+  LOCK_TERMS,
   lockedBacking,
   lockInfo,
   mandate,
@@ -51,7 +53,7 @@ beforeEach(() => {
 async function verify(
   auth?: unknown,
   rest: {
-    terms?: ComputeTerms
+    terms?: AnyTerms
     agreed?: Agreed
     mandate?: unknown
     now?: bigint
@@ -100,13 +102,13 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
 
   it('refuses a reserve that differs from the authorization on-chain', async () => {
     const changes: Partial<LockedBacking>[] = [
-      { amount: terms.reserve - 1n },
+      { amount: LOCK_TERMS.amount - 1n },
       { payee: '0x000000000000000000000000000000000000dead' },
       { token: '0x20c0000000000000000000000000000000000002' },
-      { acceptBy: terms.acceptBy + 1n },
-      { chargeDeadline: terms.chargeDeadline + 1n },
-      { contestWindow: terms.contestWindow - 1n },
-      { releaseDate: terms.releaseDate + 1n },
+      { acceptBy: LOCK_TERMS.acceptBy + 1n },
+      { chargeDeadline: LOCK_TERMS.chargeDeadline + 1n },
+      { contestWindow: LOCK_TERMS.contestWindow - 1n },
+      { releaseDate: LOCK_TERMS.releaseDate + 1n },
       { termsHash: id('other terms') },
       { fundingKey: newKey().address },
     ]
@@ -136,7 +138,7 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
     const cases = [
       { active: false, expiry: null },
       { active: true, expiry: NOW },
-      { active: true, expiry: terms.releaseDate - 1n },
+      { active: true, expiry: LOCK_TERMS.releaseDate - 1n },
     ]
     for (const c of cases) {
       chain.setAgentKey(buyer.address, agent.address, { ...c, witness: mHash }, KEY_TX)
@@ -145,7 +147,7 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
     chain.setAgentKey(
       buyer.address,
       agent.address,
-      { active: true, expiry: terms.releaseDate, witness: mHash },
+      { active: true, expiry: LOCK_TERMS.releaseDate, witness: mHash },
       KEY_TX,
     )
     expect((await verify()).ok).toBe(true)
@@ -262,14 +264,29 @@ describe('the envelope, the signer and the validity window', () => {
 
 describe('changes after signing', () => {
   it("refuses terms that aren't the ones Avow signed", async () => {
-    for (const change of [
-      { noShow: terms.noShow + 1n, reserve: terms.reserve + 1n },
-      { gracePeriod: terms.gracePeriod + 1n },
-      { resource: { ...terms.resource, count: 4 } },
-    ]) {
-      expect(await verify(undefined, { terms: { ...terms, ...change } })).toEqual(
-        refused('terms.hash_mismatch'),
-      )
+    const [late, noShow] = terms.remedies.charges
+    if (!late || !noShow) throw new Error('the test terms have two charges')
+    const changes: GpuReservationTerms[] = [
+      {
+        ...terms,
+        remedies: { ...terms.remedies, charges: [late, { ...noShow, amount: noShow.amount + 1n }] },
+        backing: { ...terms.backing, amount: terms.backing.amount + 1n },
+      },
+      {
+        ...terms,
+        remedies: {
+          ...terms.remedies,
+          charges: [late, { ...noShow, earliest: noShow.earliest + 1n }],
+        },
+      },
+      {
+        ...terms,
+        subject: { ...terms.subject, resource: { ...terms.subject.resource, count: 4 } },
+      },
+      { ...terms, consideration: { kind: 'rate', amount: 1n, unit: 'gpu-hour' } },
+    ]
+    for (const change of changes) {
+      expect(await verify(undefined, { terms: change })).toEqual(refused('terms.hash_mismatch'))
     }
   })
 
@@ -361,7 +378,7 @@ describe("the buyer's mandate, when the supplier has it", () => {
     const cases: [Partial<Mandate>, string][] = [
       [{ actions: ['cancel'] }, 'mandate.action_not_permitted'],
       [{ capPerCommitment: 100_000_000n }, 'mandate.over_commitment_cap'],
-      [{ expiry: terms.releaseDate - 1n }, 'mandate.ends_before_window'],
+      [{ expiry: LOCK_TERMS.releaseDate - 1n }, 'mandate.ends_before_window'],
       [{ suppliers: ['biz_someone_else'] }, 'mandate.supplier_not_allowed'],
       [{ categories: ['storage'] }, 'mandate.category_not_allowed'],
       [
@@ -421,13 +438,13 @@ describe("the supplier's own rules", () => {
 
   it("refuses an authorization whose deadlines don't match the terms", async () => {
     const auth = await signedAuthorization(
-      authorization({ chargeDeadline: terms.chargeDeadline - 60n }),
+      authorization({ chargeDeadline: LOCK_TERMS.chargeDeadline - 60n }),
     )
     expect(await verify(auth)).toEqual(refused('authorization.terms_mismatch'))
   })
 
   it('refuses once the acceptance deadline has passed', async () => {
-    const late = terms.acceptBy
+    const late = LOCK_TERMS.acceptBy
     const auth = await signedAuthorization(authorization({ expiry: late + 300n }))
     expect(await verify(auth, { now: late })).toEqual(refused('authorization.accept_by_passed'))
   })

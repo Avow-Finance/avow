@@ -1,22 +1,25 @@
 import {
   type Acceptance,
+  type AnyTerms,
   type Approval,
   type AvowDomain,
   acceptanceTypedData,
   approvalDigest,
   approvalJson,
+  approvalTermsProblem,
   CHARGE_KINDS,
   type Charge,
-  type ComputeTerms,
   digestOf,
   type HashSigner,
   isKeySignature,
+  isTermsV1,
+  type LockTerms,
   type LockTiming,
+  lockTerms,
+  MESSAGE_VERSIONS,
   parseSigned,
   type ReasonCode,
-  SCHEMA_VERSION,
   type Signed,
-  termsCharges,
   toTokenUnits,
 } from '@avow-finance/spec'
 import {
@@ -63,8 +66,11 @@ export interface AcceptanceRequest {
    * and the buyer's mandate that agreement names.
    */
   agreed: Required<Agreed>
-  /** The terms this supplier agreed to for the booking, from its own records. */
-  terms: ComputeTerms
+  /**
+   * The terms this supplier agreed to for the booking, from its own records. Version 2, or version
+   * 1 for a commitment made under it.
+   */
+  terms: AnyTerms
   now: bigint
   /** The acceptance's nonce, a fresh random one when left out. */
   nonce?: bigint
@@ -132,8 +138,8 @@ export async function prepareAcceptance(
   const { config, chain } = deps
   const refuse = (reason: ReasonCode): PreparedAcceptance => ({ ok: false, reason })
   const t = request.terms
-  // Terms written before the dispute block existed can't be checked against the approval.
-  if (!(t as Partial<ComputeTerms>).dispute) return refuse('terms.incomplete')
+  // Version 1 terms written before the dispute block existed can't be checked against the approval.
+  if (isTermsV1(t) && !(t as { dispute?: unknown }).dispute) return refuse('terms.incomplete')
   if (request.mandate === undefined || request.mandate === null) return refuse('mandate.missing')
   // The buyer and its mandate come from the agreement the supplier signed, so they're required.
   const { buyerBusinessId, mandateHash: agreedMandate } = request.agreed ?? {}
@@ -174,36 +180,27 @@ export async function prepareAcceptance(
   ) {
     return refuse('approval.parties_mismatch')
   }
-  let units: (micros: bigint) => bigint
-  let charges: Charge[]
+  let enforced: LockTerms
   let caps: [bigint, bigint]
   try {
-    units = (micros) => toTokenUnits(micros, token.decimals)
-    charges = termsCharges(t, token.decimals)
-    caps = [units(mandate.capPerCommitment), units(mandate.capOpenReserves)]
+    enforced = lockTerms(t, token.decimals)
+    caps = [
+      toTokenUnits(mandate.capPerCommitment, token.decimals),
+      toTokenUnits(mandate.capOpenReserves, token.decimals),
+    ]
   } catch {
     return refuse('authorization.token_not_accepted')
   }
-  if (
-    a.side !== 'buyer' ||
-    !isAddressEqual(a.token, token.token) ||
-    a.amount !== units(t.reserve) ||
-    a.freeCancelBy !== t.freeCancelBy ||
-    a.acceptBy !== t.acceptBy ||
-    a.chargeDeadline !== t.chargeDeadline ||
-    a.releaseDate !== t.releaseDate ||
-    a.contestWindow !== t.contestWindow ||
-    !same(a.termsHash, request.agreed.termsHash)
-  ) {
+  if (a.side !== 'buyer' || !isAddressEqual(a.token, token.token)) {
     return refuse('approval.terms_mismatch')
   }
-  if (!sameCharges(a.charges, charges)) return refuse('approval.charges_mismatch')
-  if (
-    a.day90SupplierShareBps !== t.dispute.day90SupplierShareBps ||
-    !isAddressEqual(a.arbiter, t.dispute.arbiter)
-  ) {
-    return refuse('approval.dispute_mismatch')
-  }
+  // Every field the lock enforces has to be what the supplier's own terms map to, through the
+  // same mapping Avow's API signs with, under the terms hash the supplier agreed to.
+  const differs = approvalTermsProblem(a, {
+    lock: enforced,
+    termsHash: request.agreed.termsHash,
+  })
+  if (differs) return refuse(differs)
 
   // The approval against the buyer's mandate, Avow's authorization and who funded the reserve.
   const fundedByAgentOrRoot =
@@ -319,7 +316,7 @@ export async function signAcceptance(
   }
   return {
     type: 'Acceptance',
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: MESSAGE_VERSIONS.Acceptance,
     chainId: prepared.domain.chainId,
     lock: prepared.domain.verifyingContract,
     message: prepared.acceptance,

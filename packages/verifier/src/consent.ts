@@ -2,13 +2,13 @@ import {
   type AvowDomain,
   digestOf,
   type HashSigner,
+  MESSAGE_VERSIONS,
   type RailToken,
   RELEASE_REASONS,
   type ReasonCode,
   type ReleaseConsent,
   type ReleaseReason,
   releaseConsentTypedData,
-  SCHEMA_VERSION,
   type Signed,
   signForAccount,
 } from '@avow-finance/spec'
@@ -182,7 +182,7 @@ export async function signReleaseConsent(
   }
   return {
     type: 'ReleaseConsent',
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: MESSAGE_VERSIONS.ReleaseConsent,
     chainId: prepared.domain.chainId,
     lock: prepared.domain.verifyingContract,
     message: prepared.consent,

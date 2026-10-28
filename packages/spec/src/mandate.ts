@@ -1,12 +1,14 @@
 import { isAddressEqual } from 'viem'
+import type { TermsProfile } from './profiles.js'
 import { type RailToken, toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
-import { type TermsProfile, validateTerms } from './terms.js'
+import { type AnyTerms, enforceableTerms, validateTerms } from './terms.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
   mandate: Mandate
-  request: ReserveRequest
+  /** The reserve request. A verifier checking a commitment made under version 1 terms passes those. */
+  request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms }
   /** The token the buyer's lock holds reserves in. */
   token: RailToken
   /** Micros already reserved and still open under this mandate, as the lock reports them. */
@@ -50,8 +52,9 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
 
   const termsProblem = validateTerms(r.terms, input.profile)
   if (termsProblem) return deny(termsProblem)
-  if (r.terms.currency !== m.currency) return deny('mandate.currency_not_allowed')
-  if (token.currency !== r.terms.currency) return deny('terms.currency_mismatch')
+  const enforced = enforceableTerms(r.terms)
+  if (enforced.currency !== m.currency) return deny('mandate.currency_not_allowed')
+  if (token.currency !== enforced.currency) return deny('terms.currency_mismatch')
 
   if (m.suppliers.length > 0 && !m.suppliers.includes(r.supplier)) {
     return deny('mandate.supplier_not_allowed')
@@ -60,7 +63,7 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
     return deny('mandate.category_not_allowed')
   }
 
-  const amount = r.terms.reserve
+  const amount = enforced.reserve
   const limit = m.paymentLimits.find((l) => isAddressEqual(l.token, token.token))
   if (!limit) return deny('mandate.token_not_allowed')
   let units: bigint
@@ -74,7 +77,7 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   if (units > limit.amount) return deny('mandate.over_payment_limit')
   if (amount > m.capPerCommitment) return deny('mandate.over_commitment_cap')
   if (input.openReserves + amount > m.capOpenReserves) return deny('mandate.over_open_reserves_cap')
-  if (m.expiry < r.terms.releaseDate) return deny('mandate.ends_before_window')
+  if (m.expiry < enforced.releaseDate) return deny('mandate.ends_before_window')
 
   const rule = m.approvalRule
   if (rule.kind === 'always' || (rule.kind === 'above' && amount > rule.amount)) {
