@@ -72,6 +72,11 @@ export interface AgentConfig {
   avow: AvowApi
   /** How long, in seconds, an offer stays open for the supplier and Avow. Ten minutes by default. */
   offerValidity?: bigint
+  /**
+   * The longest, in seconds, Avow's approval may stay valid. A failed funding is settled once the
+   * approval stops working, so a long one would leave it unsettled. Five minutes by default.
+   */
+  maxApprovalValidity?: bigint
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
   /**
@@ -110,8 +115,8 @@ export interface ApprovedCommitment {
 /** A commitment the agent made and funded. */
 export interface Commitment extends ApprovedCommitment {
   /**
-   * The transaction that funded the reserve, or null when the reserve landed in a transaction the
-   * agent didn't send itself.
+   * The transaction that funded the reserve. It's null when the reserve landed in a transaction
+   * the agent didn't send, or when the receipt of the agent's own couldn't be read.
    */
   reservedIn: Hex | null
 }
@@ -188,6 +193,7 @@ export function createAgent(config: AgentConfig) {
   const mHash = mandateHash(mandate, d)
   const now = config.now ?? systemClock
   const offerValidity = config.offerValidity ?? 600n
+  const maxApprovalValidity = config.maxApprovalValidity ?? 300n
   const permits = (action: Mandate['actions'][number]) => mandate.actions.includes(action)
   const send =
     config.send ??
@@ -244,6 +250,7 @@ export function createAgent(config: AgentConfig) {
     // The lock refuses an approval past its expiry or its acceptance deadline.
     if (a.expiry <= now()) return 'message.expired'
     if (a.acceptBy <= now()) return 'authorization.accept_by_passed'
+    if (a.expiry > now() + maxApprovalValidity) return 'message.validity_too_long'
     return null
   }
 
@@ -266,11 +273,20 @@ export function createAgent(config: AgentConfig) {
 
   const limits = config.limits ?? SEND_LIMITS
 
-  /** The first of the hashes whose transaction landed successfully, or null when none did. */
+  /**
+   * The first of the agent's own transactions whose receipt shows it succeeded with a log from the
+   * lock, or null when none shows one. That's when the reserve landed in a transaction the agent
+   * didn't send, or when a receipt couldn't be read.
+   */
   async function landedOf(hashes: readonly Hex[]): Promise<Hex | null> {
     for (const hash of hashes) {
       const receipt = await getTransactionReceipt(client, { hash }).catch(() => null)
-      if (receipt?.status === 'success') return hash
+      if (
+        receipt?.status === 'success' &&
+        receipt.logs.some((l) => isAddressEqual(l.address, d.verifyingContract))
+      ) {
+        return hash
+      }
     }
     return null
   }
@@ -293,19 +309,26 @@ export function createAgent(config: AgentConfig) {
     for (;;) {
       const final = await getBlock(client, { blockTag: 'finalized' }).catch(() => null)
       if (final && final.timestamp >= closes) {
-        const held = await readBacking(
-          client,
-          d.verifyingContract,
-          approved.commitmentId,
-          'buyer',
-          {
-            blockNumber: final.number,
-          },
-        ).catch(() => undefined)
-        if (held === null) return { outcome: 'failed' }
+        const read = (at?: bigint) =>
+          readBacking(
+            client,
+            d.verifyingContract,
+            approved.commitmentId,
+            'buyer',
+            at === undefined ? {} : { blockNumber: at },
+          ).catch(() => undefined)
+        // A read that fails is read again, never taken as an empty lock.
+        const held = await read(final.number)
         if (held) {
           if (held.approvalHash.toLowerCase() !== digest) return { outcome: 'unknown' }
           return { outcome: 'funded', reservedIn: await landedOf(hashes) }
+        }
+        if (held === null) {
+          // Nothing carrying the approval can land after that block, so the latest block has to
+          // agree. A node that answered the past block from other state shows up here.
+          const latest = await read()
+          if (latest === null) return { outcome: 'failed' }
+          if (latest) return { outcome: 'unknown' }
         }
       }
       if (Date.now() > deadline) return { outcome: 'unknown' }
@@ -492,8 +515,8 @@ export function createAgent(config: AgentConfig) {
 
     /**
      * Reads the lock for a commitment `book` approved but couldn't settle, once Avow's approval can
-     * no longer land, so the agent learns whether that booking was funded instead of making
-     * another. It takes what a `BookingError` carries.
+     * no longer land, so the agent learns whether that same booking was funded. It takes what a
+     * `BookingError` carries.
      */
     reconcile,
 

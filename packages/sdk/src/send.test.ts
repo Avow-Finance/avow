@@ -18,6 +18,8 @@ const node = vi.hoisted(() => {
     number: bigint
     timestamp: bigint
     transactions: string[]
+    hash: string
+    parentHash: string
   }
   interface Pending {
     hash: string
@@ -27,6 +29,12 @@ const node = vi.hoisted(() => {
     hold: number
     /** Whether its first block leaves it out, and a rewrite of that block adds it later. */
     reorgIn: boolean
+  }
+  let version = 0
+  /** A block's hash, which changes whenever a rewrite changes the block or one before it. */
+  const hashOf = (number: bigint) => {
+    version++
+    return `0x${number.toString(16).padStart(32, '0')}${version.toString(16).padStart(32, '0')}`
   }
   const fresh = () => ({
     prepareRefusals: 0,
@@ -72,7 +80,14 @@ const node = vi.hoisted(() => {
     const timestamp = state.times.shift() ?? last.timestamp + 2n
     const fits = (p: Pending) =>
       state.inclusive ? p.validBefore >= timestamp : p.validBefore > timestamp
-    const block: Block = { number: last.number + 1n, timestamp, transactions: [] }
+    const number = last.number + 1n
+    const block: Block = {
+      number,
+      timestamp,
+      transactions: [],
+      hash: hashOf(number),
+      parentHash: last.hash,
+    }
     const waiting: Pending[] = []
     for (const p of state.pending) {
       if (!fits(p)) continue
@@ -100,24 +115,30 @@ const node = vi.hoisted(() => {
     state.blocks.push(block)
     return block
   }
+  /**
+   * Rewrites a block to include a transaction, as a reorganized chain would. The block and every
+   * block after it get new hashes, each naming the new one before it.
+   */
+  function rewrite(number: bigint, hash: string) {
+    const at = state.blocks.findIndex((b) => b.number === number)
+    const block = state.blocks[at]
+    if (!block || block.transactions.includes(hash)) return
+    block.transactions.push(hash)
+    state.receipts.set(hash, { status: 'success', transactionHash: hash, blockNumber: number })
+    for (let i = at; i < state.blocks.length; i++) {
+      const b = state.blocks[i] as Block
+      b.hash = hashOf(b.number)
+      if (i > 0) b.parentHash = (state.blocks[i - 1] as Block).hash
+    }
+  }
   /** Every call to the node makes a block, and applies a rewrite that's due. */
   function tick() {
     state.calls++
-    for (const r of state.rewrites.filter((w) => w.at <= state.calls)) {
-      const block = state.blocks.find((b) => b.number === r.number)
-      if (block && !block.transactions.includes(r.hash)) {
-        block.transactions.push(r.hash)
-        state.receipts.set(r.hash, {
-          status: 'success',
-          transactionHash: r.hash,
-          blockNumber: r.number,
-        })
-      }
-    }
+    for (const r of state.rewrites.filter((w) => w.at <= state.calls)) rewrite(r.number, r.hash)
     state.rewrites = state.rewrites.filter((w) => w.at > state.calls)
     mine()
   }
-  return { state, fresh, head, mine, tick }
+  return { state, fresh, head, mine, tick, rewrite }
 })
 
 vi.mock('viem/actions', () => ({
@@ -320,7 +341,13 @@ beforeEach(() => {
   Object.assign(node.state, node.fresh())
   // The relay holds a transaction's expiry to the real clock, so the chain starts at it.
   node.state.blocks = [
-    { number: 100n, timestamp: BigInt(Math.floor(Date.now() / 1000)), transactions: [] },
+    {
+      number: 100n,
+      timestamp: BigInt(Math.floor(Date.now() / 1000)),
+      transactions: [],
+      hash: `0x${'64'.repeat(32)}`,
+      parentHash: `0x${'63'.repeat(32)}`,
+    },
   ]
 })
 
@@ -436,6 +463,18 @@ describe('deciding a transaction expired', () => {
     node.state.reorgIn = true
     node.state.reorgDelay = 8
     node.state.finalizedLag = 10n
+    node.state.receiptErrors = 60
+    const receipt = await send()
+    expect(node.state.signings).toBe(1)
+    expect(receipt.status).toBe('success')
+  })
+
+  it('starts again when a block it read no longer leads to the next one', async () => {
+    node.state.outcomes = ['success']
+    // The transaction lands in a block that first comes without it, and gains it after the scan
+    // read that block, as a reorganized chain would show it.
+    node.state.reorgIn = true
+    node.state.reorgDelay = 6
     node.state.receiptErrors = 60
     const receipt = await send()
     expect(node.state.signings).toBe(1)
@@ -571,12 +610,13 @@ describe("checking the relay's bytes", () => {
     expect(node.state.sent).toEqual([])
   })
 
-  it('says the outcome is unknown when the node answers with another hash', async () => {
+  it('says the outcome is unknown when the node answers with another hash, which it keeps apart', async () => {
     node.state.outcomes = ['success']
     node.state.answer = `0x${'ab'.repeat(32)}`
     const e = await failure(send())
     expect(e.outcome).toBe('unknown')
-    expect(e.hashes).toContain(node.state.answer)
+    expect(e.answered).toBe(node.state.answer)
+    expect(e.hashes).toEqual([keccak256(node.state.sent[0] as Hex)])
   })
 })
 

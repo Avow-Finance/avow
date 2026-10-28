@@ -49,13 +49,16 @@ export const SEND_LIMITS: SendLimits = {
  */
 export class SendError extends Error {
   readonly outcome: 'failed' | 'unknown'
+  /** The hash of every transaction the sender sent, each of them one the key signed. */
   readonly hashes: readonly Hex[]
   readonly signings: number
+  /** Another hash the node answered a send with, which may name any transaction. */
+  readonly answered: Hex | null
 
   constructor(
     message: string,
     outcome: 'failed' | 'unknown',
-    sent: { hashes: readonly Hex[]; signings: number },
+    sent: { hashes: readonly Hex[]; signings: number; answered?: Hex },
     options?: { cause?: unknown },
   ) {
     super(message, options)
@@ -63,6 +66,7 @@ export class SendError extends Error {
     this.outcome = outcome
     this.hashes = [...sent.hashes]
     this.signings = sent.signings
+    this.answered = sent.answered ?? null
   }
 }
 
@@ -180,8 +184,8 @@ async function submit(
       const answer = await client.request({ method: 'eth_sendRawTransaction', params: [bytes] })
       if (typeof answer === 'string' && answer.toLowerCase() !== hash.toLowerCase()) {
         throw new SendError(`The node answered with the hash ${answer}, not ${hash}`, 'unknown', {
-          hashes: [...sent.hashes, answer as Hex],
-          signings: sent.signings,
+          ...sent,
+          answered: answer as Hex,
         })
       }
       return null
@@ -224,8 +228,9 @@ async function latestBlock(
  * Waits for a transaction's outcome. It looks for the receipt, and reads each block by number for
  * the transaction's hash, from the block the node was at before the key signed. It reads only
  * blocks at or below the chain's finalized block, which no later answer can change, and a block
- * read by number comes whole or not at all, so a node that's behind can't hide a block. A failed or
- * missing read stops the scan at that block until a later read gets it. Once the scan reads a block
+ * read by number comes whole or not at all, so a node that's behind can't hide a block. Each block
+ * has to name the one read before it as its parent, or the scan starts again. A failed or missing
+ * read stops the scan at that block until a later read gets it. Once the scan reads a block
  * later than the transaction's expiry, and no block before it held the hash, the transaction never
  * landed and no later block can include it. Tempo only includes a transaction in a block before its
  * `validBefore`, and a block later than it counts here, one second more cautious than that rule.
@@ -242,6 +247,7 @@ async function outcomeOf(
   const late = () => Date.now() > deadline
   const wanted = hash.toLowerCase()
   let next = from
+  let parent: Hex | null = null
   let includedIn: bigint | null = null
   for (;;) {
     const receipt = await getTransactionReceipt(client, { hash }).catch(() => null)
@@ -251,9 +257,19 @@ async function outcomeOf(
       while (final && next <= final.number && includedIn === null && !late()) {
         const block = await getBlock(client, { blockNumber: next }).catch(() => null)
         if (!block) break
+        // Each block has to follow the one read before it. One that doesn't means the blocks
+        // read so far weren't all one chain, so the scan starts again.
+        if (parent !== null && block.parentHash.toLowerCase() !== parent.toLowerCase()) {
+          next = from
+          parent = null
+          break
+        }
         if (block.transactions.some((t) => String(t).toLowerCase() === wanted)) includedIn = next
         else if (block.timestamp > BigInt(validBefore)) return 'expired'
-        else next++
+        else {
+          parent = block.hash
+          next++
+        }
       }
     }
     if (late()) {

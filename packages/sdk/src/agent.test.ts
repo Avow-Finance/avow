@@ -52,10 +52,16 @@ const quick = { prepareTries: 1, sendTries: 1, signings: 1, wait: 1, receiptTime
 function lockChain() {
   const state = {
     holds: null as Approval | null,
+    /** What a read as of a past block shows, when a test makes it differ from the latest. */
+    heldBefore: undefined as Approval | null | undefined,
     readAt: [] as unknown[],
+    /** How many reads of the lock fail before one answers. */
+    readErrors: 0,
     /** The finalized block's time, past every approval's expiry unless a test moves it. */
     finalTime: START + 86_400n,
     landed: new Set<string>(),
+    /** Hashes whose receipts show a reverted transaction. */
+    reverted: new Set<string>(),
   }
   const client = createClient({
     chain: tempoModerato,
@@ -73,18 +79,22 @@ function lockChain() {
           }
           if (method === 'eth_getTransactionReceipt') {
             const [hash] = params as [Hex]
-            if (!state.landed.has(hash)) return null
+            if (!state.landed.has(hash) && !state.reverted.has(hash)) return null
             return {
-              status: '0x1',
+              status: state.reverted.has(hash) ? '0x0' : '0x1',
               transactionHash: hash,
               blockNumber: toHex(LANDED_IN),
               blockHash: id('a block'),
-              logs: [],
+              logs: [{ address: LOCK, topics: [], data: '0x', logIndex: '0x0' }],
             }
           }
           if (method !== 'eth_call') throw new Error(`the test reached the chain with ${method}`)
           const [call, block] = params as [{ to: Address; data: Hex }, unknown]
           state.readAt.push(block)
+          if (state.readErrors > 0) {
+            state.readErrors--
+            throw new Error('429 Too Many Requests')
+          }
           if (call.to.toLowerCase() !== LOCK) throw new Error(`a read of ${call.to}`)
           const { functionName } = decodeFunctionData({ abi: LOCK_ABI, data: call.data })
           if (functionName === 'token') {
@@ -95,10 +105,11 @@ function lockChain() {
             })
           }
           if (functionName === 'commitment') {
+            const past = block !== 'latest' && state.heldBefore !== undefined
             return encodeFunctionResult({
               abi: LOCK_ABI,
               functionName: 'commitment',
-              result: lockRecord(state.holds) as never,
+              result: lockRecord(past ? (state.heldBefore ?? null) : state.holds) as never,
             })
           }
           throw new Error(`a read of ${functionName}`)
@@ -296,6 +307,7 @@ describe('booking with a supplier', () => {
       [{ capOpenReserves: 1_500_000_001n }, 'approval.mandate_mismatch'],
       [{ fundingKey: other }, 'approval.mandate_mismatch'],
       [{ expiry: NOW }, 'message.expired'],
+      [{ expiry: NOW + 301n }, 'message.validity_too_long'],
     ]
     for (const [change, reason] of cases) {
       const s = await setup()
@@ -406,6 +418,51 @@ describe('when funding the reserve goes wrong', () => {
       reservedIn: id('a hash'),
     })
     expect(s.calls.filter((c) => c === 'approveReserve')).toHaveLength(1)
+  })
+
+  it('never takes a failed read of the lock for an empty one', async () => {
+    const s = await setup()
+    s.sending.fail = sendError('unknown')
+    s.sending.landsAnyway = true
+    s.chain.state.readErrors = 3
+    const result = await book(s)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.commitment.reservedIn).toBeNull()
+  })
+
+  it("waits for a finalized block at the approval's expiry, and reads the lock from that one", async () => {
+    // Avow's approval in these tests expires 120 seconds after the clock's now.
+    const s = await setup()
+    s.sending.fail = sendError('failed')
+    s.chain.state.finalTime = NOW + 119n
+    const early = await book(s).catch((e: unknown) => e)
+    expect((early as BookingError).outcome).toBe('unknown')
+    s.chain.state.finalTime = NOW + 120n
+    const e = early as BookingError
+    expect(await s.agent.reconcile(e.commitment, e.hashes)).toEqual({ outcome: 'failed' })
+  })
+
+  it("says the outcome is unknown when the latest block doesn't agree the lock is empty", async () => {
+    const s = await setup()
+    s.sending.fail = sendError('failed')
+    s.sending.landsAnyway = true
+    s.chain.state.heldBefore = null
+    const error = await book(s).catch((e: unknown) => e)
+    expect((error as BookingError).outcome).toBe('unknown')
+  })
+
+  it("names only the agent's own transaction that succeeded on the lock as the one that funded it", async () => {
+    const s = await setup()
+    s.sending.fail = new SendError('the send ended unknown', 'unknown', {
+      hashes: [id('reverted'), id('funded')],
+      signings: 2,
+    })
+    s.sending.landsAnyway = true
+    s.chain.state.reverted.add(id('reverted'))
+    s.chain.state.landed.add(id('funded'))
+    const result = await book(s)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.commitment.reservedIn).toBe(id('funded'))
   })
 
   it("settles a transaction that landed when the lock doesn't show the reserve under the approval", async () => {
