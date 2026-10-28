@@ -30,7 +30,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 - Money in terms and mandates is in micros, millionths of the currency unit, so $500 is `500_000_000n`. A USD token on Tempo has 6 decimals, so its base units equal micros.
 - Terms name a currency and never a token, so the same terms and terms hash work on any EVM rail. The token belongs to the backing, in `BackingRef`. The arbiter is an EVM address, hashed in lower case.
 - Every signed message names its schema version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A reader refuses a version it doesn't know.
-- The reserve equals the largest charge in the terms. A contest window under 72 hours passes only the testnet demo profile. Each profile also fixes the timing of the locks its factory creates, and a supplier's verifier accepts no other.
+- The reserve equals the largest charge in the terms. A contest window under 72 hours passes only the testnet demo profile. Each profile also fixes the timing of the locks its factory creates, and a supplier's verifier accepts no other. The production profile holds the intended production timing, which is unaudited and which no deployed factory uses yet. The testnet demo factory doesn't enforce every production limit.
 
 ## Develop
 

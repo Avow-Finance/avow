@@ -136,6 +136,7 @@ export async function prepareReleaseConsent(
       held: b.held,
       token: token ?? null,
       currentCount: b.reportCount,
+      now: request.now,
     }),
   })
 }

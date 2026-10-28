@@ -7,7 +7,7 @@ import {
   type ReleaseConsentRequest,
   signReleaseConsent,
 } from './consent.js'
-import { disclosureId, formatTime } from './disclosure.js'
+import { disclosureId, formatLength, formatTime } from './disclosure.js'
 import {
   CHAIN_ID,
   COMMITMENT,
@@ -150,11 +150,23 @@ describe('a consent for the commitment as it stands', () => {
     const { disclosure } = await ready()
     const text = disclosure.sections.flatMap((s) => s.lines).join('\n')
     expect(text).toContain('USD 250 (250000000 base units')
-    expect(text).toContain('You give up any charge on the commitment')
+    expect(text).toContain(
+      'You give up any charge on the commitment, reported or not, including one Avow has confirmed.',
+    )
     expect(text).toContain('the commitment was kept')
     expect(text).toContain('report count 0, the count the commitment has now')
+    expect(text).toContain(`Anyone holding it can send it until ${formatTime(EXPIRY)}`)
     expect(text).toContain('it stops working if another report is filed first')
-    expect(text).toContain(`It stops working at ${formatTime(EXPIRY)}`)
+    expect(text).toContain(
+      `It stops working at ${formatTime(EXPIRY)}, 1 hour after it was prepared, or sooner once a ruling is posted or the commitment ends.`,
+    )
+  })
+
+  it('says how long a consent lasts in days, hours, minutes and seconds', () => {
+    expect(formatLength(3600n)).toBe('1 hour')
+    expect(formatLength(90n)).toBe('1 minute and 30 seconds')
+    expect(formatLength(2_591_953n)).toBe('29 days, 23 hours, 59 minutes and 13 seconds')
+    expect(formatLength(0n)).toBe('0 seconds')
   })
 })
 
@@ -165,6 +177,9 @@ describe('a consent for a later report count', () => {
     const text = prepared.disclosure.sections.flatMap((s) => s.lines).join('\n')
     expect(text).toContain(
       'It names report count 1, and the commitment has 0, so the lock refuses it now',
+    )
+    expect(text).toContain(
+      `anyone holding this consent can send it until ${formatTime(EXPIRY)} and release the reserve, which gives up the charge in that report`,
     )
     expect(text).toContain("That's preauthorization")
     const confirm = { disclosureId: prepared.disclosure.id }

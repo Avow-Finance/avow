@@ -70,6 +70,26 @@ export function formatDuration(seconds: bigint): string {
   return `${seconds} second${seconds === 1n ? '' : 's'}`
 }
 
+/** A length of time in days, hours, minutes and seconds, leaving out the parts that are zero. */
+export function formatLength(seconds: bigint): string {
+  const units: [bigint, string][] = [
+    [86_400n, 'day'],
+    [3600n, 'hour'],
+    [60n, 'minute'],
+    [1n, 'second'],
+  ]
+  const parts: string[] = []
+  let rest = seconds
+  for (const [size, name] of units) {
+    const n = rest / size
+    rest %= size
+    if (n > 0n) parts.push(`${n} ${name}${n === 1n ? '' : 's'}`)
+  }
+  const last = parts.pop()
+  if (last === undefined) return '0 seconds'
+  return parts.length === 0 ? last : `${parts.join(', ')} and ${last}`
+}
+
 /** Base units of a token as an amount of its currency, with the base units beside it. */
 export function formatAmount(units: bigint, token: RailToken): string {
   return `${token.currency} ${formatUnits(units, token.decimals)} (${units} base units of ${getAddress(token.token)})`
@@ -162,12 +182,15 @@ export function releaseConsentDisclosure(args: {
   held: bigint
   token: RailToken | null
   currentCount: number
+  /** When the consent was prepared. */
+  now: bigint
 }): Disclosure {
   const { consent: c } = args
   const held = args.token
     ? formatAmount(args.held, args.token)
     : `${args.held} base units of the lock's token`
   const later = c.reportCount > args.currentCount
+  const until = formatTime(c.expiry)
   return seal({
     title: 'Consent to release a reserve',
     digest: args.digest,
@@ -179,7 +202,7 @@ export function releaseConsentDisclosure(args: {
         heading: "What you're consenting to",
         lines: [
           `This consent releases everything lock ${getAddress(args.lock)}, chain ${args.chainId}, holds for commitment ${c.commitmentId} back to the business account ${getAddress(args.account)}, ${held} now.`,
-          'You give up any charge on the commitment, reported or not.',
+          'You give up any charge on the commitment, reported or not, including one Avow has confirmed.',
           `It records that ${REASON_NAMES[c.reason]}.`,
         ],
       },
@@ -188,13 +211,18 @@ export function releaseConsentDisclosure(args: {
         lines: later
           ? [
               `It names report count ${c.reportCount}, and the commitment has ${args.currentCount}, so the lock refuses it now.`,
-              `Once the commitment has ${c.reportCount} reports, anyone holding this consent can send it and release the reserve until it expires, which gives up the charge in that report. That's preauthorization, so sign it only if you mean to give that charge up in advance.`,
+              `Once the commitment has ${c.reportCount} reports, anyone holding this consent can send it until ${until} and release the reserve, which gives up the charge in that report. That's preauthorization, so sign it only if you mean to give that charge up in advance.`,
             ]
           : [
-              `It names report count ${c.reportCount}, the count the commitment has now. Anyone holding it can send it and release the reserve until it expires, and it stops working if another report is filed first.`,
+              `It names report count ${c.reportCount}, the count the commitment has now. Anyone holding it can send it until ${until} and release the reserve, and it stops working if another report is filed first.`,
             ],
       },
-      { heading: 'Expiry', lines: [`It stops working at ${formatTime(c.expiry)}.`] },
+      {
+        heading: 'Expiry',
+        lines: [
+          `It stops working at ${until}, ${formatLength(c.expiry - args.now)} after it was prepared, or sooner once a ruling is posted or the commitment ends.`,
+        ],
+      },
     ],
   })
 }

@@ -74,6 +74,10 @@ export interface TermsProfile {
 const HOUR = 3600n
 const DAY = 24n * HOUR
 
+/**
+ * The intended production limits and lock timing. They're unaudited, and no deployed factory
+ * creates locks with this timing yet, so a supplier that uses this profile refuses today's locks.
+ */
 export const PRODUCTION_PROFILE: TermsProfile = {
   name: 'production',
   minContestWindow: 72n * HOUR,
@@ -86,6 +90,10 @@ export const PRODUCTION_PROFILE: TermsProfile = {
   },
 }
 
+/**
+ * The testnet demo factory's limits, with dispute timing in minutes so a whole commitment runs in
+ * one sitting. That factory doesn't enforce every production limit.
+ */
 export const TESTNET_DEMO_PROFILE: TermsProfile = {
   name: 'testnet-demo',
   minContestWindow: 600n,

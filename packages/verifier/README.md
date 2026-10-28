@@ -32,7 +32,7 @@ Then it builds the acceptance, which names the lock's digest of the approval and
 
 ## Release consents
 
-A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. Like `signAcceptance`, it signs only the frozen object its prepare call returned. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
+A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. It gives up the supplier's charge, a reported or confirmed one included. Nothing caps how long a consent lasts, so its disclosure states the exact expiry and how long that is from when it was prepared. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. Like `signAcceptance`, it signs only the frozen object its prepare call returned. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
 
 ## What this doesn't protect
 
@@ -45,6 +45,7 @@ The checks also rest on things the verifier doesn't prove.
 - **Avow's signature.** The authorization stands for the business's KYB, for a person's approval when the mandate asks for one, and for any revocation Avow recorded off the chain.
 - **The supplier's own records.** The terms, the agreed commitment and the supplier's account, key and payout come from the supplier, so a wrong record checks the wrong terms.
 - **The mandate's contents.** The supplier sees the buyer's whole mandate, including its other suppliers, categories and caps.
+- **The lock after the read.** The prepare calls read the lock once. Before an acceptance lands, the reserve can still go back to the business, and the lock then refuses the acceptance, so a supplier grants capacity only once the acceptance's receipt shows it landed.
 - **The person.** The disclosure is only as good as the screen that shows it. The library can make an integration fetch it, but it can't make a person read it, and code that holds the signing key can always sign without this library.
 
 ## Use
