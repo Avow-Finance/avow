@@ -1,276 +1,119 @@
 import {
   type Approval,
-  type AvowDomain,
   approvalTypedData,
   digestOf,
   dollars,
-  type GpuReservationInput,
-  lockTerms,
-  type Mandate,
-  MESSAGE_VERSIONS,
-  mandateHash,
   PRODUCTION_PROFILE,
-  type RailToken,
   type Signed,
-  type StartReceipt,
-  type SupplierProfile,
   TESTNET_DEMO_PROFILE,
   termsAgreementTypedData,
   termsHash,
-  toTokenUnits,
 } from '@avow-finance/spec'
+import { LOCK_ABI } from '@avow-finance/verifier'
 import {
   type Address,
   createClient,
   custom,
   decodeFunctionData,
   encodeFunctionData,
-  keccak256,
+  encodeFunctionResult,
+  type Hex,
   recoverAddress,
-  stringToHex,
 } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { tempoModerato } from 'viem/chains'
 import { Abis, Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { createAgent } from './agent.js'
-import type { AvowApi, ReserveApprovalRequest } from './avow-api.js'
+import { type AgentConfig, BookingError, createAgent } from './agent.js'
 import { type Call, RESERVE_ABI } from './lock.js'
-import { accountSigner, signMandate } from './sign.js'
-import type { SupplierConnection } from './supplier.js'
+import { SendError } from './send.js'
+import {
+  bookingFixture,
+  D,
+  gpuBooking,
+  id,
+  LOCK,
+  lockRecord,
+  NOW,
+  START,
+  startReceipt,
+  TOKEN,
+} from './test/fixture.js'
 
-// Every key is generated for the run and held only in memory.
-const id = (label: string) => keccak256(stringToHex(label))
-const LOCK: Address = '0x00000000000000000000000000000000000010c4'
-const CHAIN_ID = 42431
-const D: AvowDomain = { chainId: CHAIN_ID, verifyingContract: LOCK }
-const TOKEN: RailToken = {
-  rail: 'tempo',
-  chainId: CHAIN_ID,
-  token: '0x20c0000000000000000000000000000000000001',
-  currency: 'USD',
-  decimals: 6,
-}
-const NOW = 1_800_000_000n
-const START = NOW + 3600n
-const ARBITER: Address = '0x000000000000000000000000000000000000a4b1'
+const LANDED_IN = 7n
 
-/** A chain the agent must never touch in these tests. */
-const noChain = createClient({
-  chain: tempoModerato,
-  transport: custom({
-    request: async ({ method }) => {
-      throw new Error(`the test reached the chain with ${method}`)
-    },
-  }),
-})
-
-function supplierParty() {
-  const account = privateKeyToAccount(generatePrivateKey())
-  const signingKey = privateKeyToAccount(generatePrivateKey())
-  const profile: SupplierProfile = {
-    businessId: 'biz_supplier',
-    account: account.address,
-    signingKey: signingKey.address,
-    payee: '0x000000000000000000000000000000000000beef',
-  }
-  return { profile, signingKey }
-}
-
-/** A booking on testnet timing: a 30-minute window an hour away, with two minutes of grace. */
-function gpuBooking(change: Partial<GpuReservationInput> = {}): GpuReservationInput {
-  return {
-    resource: { gpu: 'H100', count: 8, region: 'demo', sku: 'demo-h100x8' },
-    currency: 'USD',
-    windowStart: START,
-    windowDuration: 1800n,
-    pricePerGpuHour: dollars(3),
-    freeCancelBy: START - 600n,
-    lateCancellation: dollars(250),
-    noShow: dollars(500),
-    gracePeriod: 120n,
-    chargeDeadline: START + 1800n,
-    contestWindow: 600n,
-    releaseDate: START + 1800n,
-    arbiter: ARBITER,
-    day90SupplierShareBps: 5000,
-    ...change,
-  }
+/**
+ * A chain that answers only reads of the lock, with what it holds once the agent's reserve
+ * landed. It records the block every read named.
+ */
+function lockChain() {
+  const state = { holds: null as Approval | null, readAt: [] as unknown[] }
+  const client = createClient({
+    chain: tempoModerato,
+    transport: custom({
+      async request({ method, params }) {
+        if (method !== 'eth_call') throw new Error(`the test reached the chain with ${method}`)
+        const [call, block] = params as [{ to: Address; data: Hex }, unknown]
+        state.readAt.push(block)
+        if (call.to.toLowerCase() !== LOCK) throw new Error(`a read of ${call.to}`)
+        const { functionName } = decodeFunctionData({ abi: LOCK_ABI, data: call.data })
+        if (functionName === 'token') {
+          return encodeFunctionResult({ abi: LOCK_ABI, functionName: 'token', result: TOKEN.token })
+        }
+        if (functionName === 'commitment') {
+          return encodeFunctionResult({
+            abi: LOCK_ABI,
+            functionName: 'commitment',
+            result: lockRecord(state.holds) as never,
+          })
+        }
+        throw new Error(`a read of ${functionName}`)
+      },
+    }),
+  })
+  return { state, client }
 }
 
-async function setup(options: { actions?: Mandate['actions'] } = {}) {
-  const root = Account.fromSecp256k1(generatePrivateKey())
-  const key = Account.fromSecp256k1(generatePrivateKey(), { access: root })
-  const avowKey = privateKeyToAccount(generatePrivateKey())
-  const supplier = supplierParty()
-  const mandate: Mandate = {
-    mandateId: id('mandate-1'),
-    businessId: 'biz_buyer',
-    agentId: 'agt_1',
-    account: root.address,
-    agentKey: key.accessKeyAddress,
-    actions: options.actions ?? ['reserve', 'cancel', 'start'],
-    currency: 'USD',
-    capPerCommitment: dollars(500),
-    capOpenReserves: dollars(1500),
-    suppliers: ['biz_supplier'],
-    categories: ['compute'],
-    paymentLimits: [{ token: TOKEN.token, amount: dollars(1500), period: 86_400n }],
-    approvalRule: { kind: 'above', amount: dollars(800) },
-    expiry: NOW + 86_400n,
-    nonce: 1n,
-  }
-  const signedMandate = await signMandate(mandate, D, accountSigner(root.address, root))
-  const mHash = mandateHash(mandate, D)
-
-  /** Avow's approval as the API builds it, with one field changed when a test asks. */
-  async function approve(
-    r: ReserveApprovalRequest,
-    change: Partial<Approval> = {},
-    envelope: Partial<Signed<Approval>> = {},
-  ): Promise<Signed<Approval>> {
-    const message: Approval = {
-      commitmentId: r.request.commitmentId,
-      token: TOKEN.token,
-      ...lockTerms(r.request.terms, TOKEN.decimals),
-      supplier: supplier.profile.account,
-      supplierSigner: supplier.profile.signingKey,
-      payee: r.request.payee,
-      termsHash: termsHash(r.request.terms, r.salt),
-      mandateHash: mHash,
-      capPerCommitment: toTokenUnits(mandate.capPerCommitment, TOKEN.decimals),
-      capOpenReserves: toTokenUnits(mandate.capOpenReserves, TOKEN.decimals),
-      fundingKey: key.accessKeyAddress,
-      nonce: 1n,
-      expiry: NOW + 120n,
-      ...change,
-    }
-    const signature = await avowKey.sign({ hash: digestOf(approvalTypedData(message, D)) })
-    return {
-      type: 'Approval',
-      schemaVersion: MESSAGE_VERSIONS.Approval,
-      chainId: CHAIN_ID,
-      lock: LOCK,
-      message,
-      signature,
-      ...envelope,
-    }
-  }
-
-  const calls: string[] = []
-  const requests: ReserveApprovalRequest[] = []
+async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
+  const f = await bookingFixture(options)
+  const chain = lockChain()
   const sent: Call[][] = []
-  let approvalChange: Partial<Approval> = {}
-  let envelopeChange: Partial<Signed<Approval>> = {}
-  let refusal: string | null = null
-  const avow: AvowApi = {
-    async approveReserve(r) {
-      calls.push('approveReserve')
-      requests.push(r)
-      if (refusal) return { ok: false, decisionId: 'dec_1', reason: refusal as never }
-      return {
-        ok: true,
-        decisionId: 'dec_1',
-        approval: await approve(r, approvalChange, envelopeChange),
-      }
-    },
-    async sponsor(transaction) {
-      calls.push('sponsor')
-      return transaction
-    },
-    async cancel() {
-      calls.push('cancel')
-      return { cancelledAt: NOW + 60n }
-    },
-    async requestStart({ commitmentId }) {
-      calls.push('requestStart')
-      return { startRequestHash: id(`start ${commitmentId}`), requestedAt: NOW + 120n }
-    },
-    async recordStart() {
-      calls.push('recordStart')
-    },
+  const clock = { now: NOW }
+  const sending = {
+    /** What the lock holds after the transaction lands, the approval it carried by default. */
+    holds: (approval: Approval): Approval | null => approval,
+    fail: null as Error | null,
   }
-
-  let signWith = supplier.signingKey
-  const connection: SupplierConnection = {
-    profile: supplier.profile,
-    async signAgreement({ agreement, terms, salt, domain }) {
-      calls.push('signAgreement')
-      // The supplier checks the terms and salt give the hash it signs.
-      expect(termsHash(terms, salt)).toBe(agreement.termsHash)
-      return signWith.sign({ hash: digestOf(termsAgreementTypedData(agreement, domain)) })
-    },
-    async startJob(r) {
-      calls.push('startJob')
-      const receipt: StartReceipt = {
-        commitmentId: r.commitmentId,
-        side: 'buyer',
-        startRequestHash: r.startRequestHash,
-        startedAt: r.requestedAt + 1n,
-        nonce: 1n,
-        expiry: NOW + 600n,
-      }
-      return {
-        type: 'StartReceipt',
-        schemaVersion: MESSAGE_VERSIONS.StartReceipt,
-        chainId: CHAIN_ID,
-        lock: LOCK,
-        message: receipt,
-        signature: '0x',
-      }
-    },
+  const send: NonNullable<AgentConfig['send']> = async (c) => {
+    f.calls.push('send')
+    sent.push(c)
+    if (sending.fail) throw sending.fail
+    const last = f.approvals.at(-1)
+    chain.state.holds = last ? sending.holds(last.message) : null
+    return { transactionHash: id('the reserve transaction'), blockNumber: LANDED_IN }
   }
-
-  const agent = createAgent({
-    client: noChain,
-    key,
-    mandate: signedMandate,
+  const config: AgentConfig = {
+    client: chain.client,
+    key: f.key,
+    mandate: f.signedMandate,
     token: TOKEN,
     profile: TESTNET_DEMO_PROFILE,
-    avow,
-    now: () => NOW,
-    send: async (c) => {
-      calls.push('send')
-      sent.push(c)
-      return { transactionHash: id('the reserve transaction') }
-    },
-  })
-
-  return {
-    agent,
-    key,
-    root,
-    supplier,
-    connection,
-    signedMandate,
-    mHash,
-    calls,
-    requests,
-    sent,
-    avow,
-    changeApproval: (c: Partial<Approval>) => {
-      approvalChange = c
-    },
-    changeEnvelope: (c: Partial<Signed<Approval>>) => {
-      envelopeChange = c
-    },
-    refuse: (reason: string) => {
-      refusal = reason
-    },
-    signAgreementWith: (k: typeof supplier.signingKey) => {
-      signWith = k
-    },
+    avow: f.avow,
+    now: () => clock.now,
+    send,
   }
+  return { ...f, chain, sent, clock, sending, config, agent: createAgent(config) }
 }
+
+const book = (
+  s: Awaited<ReturnType<typeof setup>>,
+  change: Parameters<typeof gpuBooking>[0] = {},
+) => s.agent.book({ supplier: s.connection, booking: gpuBooking(change), category: 'compute' })
 
 describe('booking with a supplier', () => {
   it('agrees the terms, has Avow approve, checks the approval and funds the reserve', async () => {
     const s = await setup()
-    const result = await s.agent.book({
-      supplier: s.connection,
-      booking: gpuBooking(),
-      category: 'compute',
-    })
+    const result = await book(s)
     if (!result.ok) throw new Error(result.reason)
     expect(s.calls).toEqual(['signAgreement', 'approveReserve', 'send'])
     const c = result.commitment
@@ -299,7 +142,7 @@ describe('booking with a supplier', () => {
       commitmentId: c.commitmentId,
       agentKey: s.key.accessKeyAddress,
       supplier: 'biz_supplier',
-      payee: s.supplier.profile.payee,
+      payee: s.supplier.payee,
     })
 
     // One transaction approves the lock to pull the reserve, then calls reserve with the approval.
@@ -319,19 +162,14 @@ describe('booking with a supplier', () => {
         args: [approvalTypedData(c.approval.message, D).message, c.approval.signature],
       }),
     )
+
+    // It read the lock as of the block the reserve landed in, never an older one.
+    expect(s.chain.state.readAt).toEqual(['0x7', '0x7'])
   })
 
   it('refuses terms that break their rules before asking anyone', async () => {
     const s = await setup()
-    const production = createAgent({
-      client: noChain,
-      key: s.key,
-      mandate: s.signedMandate,
-      token: TOKEN,
-      profile: PRODUCTION_PROFILE,
-      avow: s.avow,
-      now: () => NOW,
-    })
+    const production = createAgent({ ...s.config, profile: PRODUCTION_PROFILE })
     // A 10-minute contest window is the testnet profile's, and production refuses it.
     expect(
       await production.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
@@ -339,21 +177,53 @@ describe('booking with a supplier', () => {
     expect(s.calls).toEqual([])
   })
 
+  it("refuses a booking the mandate doesn't allow before asking anyone, as Avow and the verifier do", async () => {
+    const other = await setup()
+    const elsewhere = await other.agent.book({
+      supplier: { ...other.connection, profile: { ...other.supplier, businessId: 'biz_other' } },
+      booking: gpuBooking(),
+      category: 'compute',
+    })
+    expect(elsewhere).toEqual({ ok: false, reason: 'mandate.supplier_not_allowed' })
+
+    const s = await setup()
+    expect(
+      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'storage' }),
+    ).toEqual({ ok: false, reason: 'mandate.category_not_allowed' })
+    const short = await setup({ mandate: { expiry: START + 60n } })
+    expect(await book(short)).toEqual({ ok: false, reason: 'mandate.ends_before_window' })
+    const capped = await setup({ mandate: { capPerCommitment: dollars(400) } })
+    expect(await book(capped)).toEqual({ ok: false, reason: 'mandate.over_commitment_cap' })
+    for (const x of [other, s, short, capped]) expect(x.calls).toEqual([])
+  })
+
+  it('refuses a reserve the mandate sends to the administrator, which it cannot carry yet', async () => {
+    const s = await setup({ mandate: { approvalRule: { kind: 'always' } } })
+    expect(await book(s)).toEqual({ ok: false, reason: 'approval.human_required' })
+    expect(s.calls).toEqual([])
+  })
+
+  it("refuses to book when the mandate doesn't permit reserves", async () => {
+    const s = await setup({ mandate: { actions: ['start'] } })
+    expect(await book(s)).toEqual({ ok: false, reason: 'mandate.action_not_permitted' })
+    expect(s.calls).toEqual([])
+  })
+
   it('refuses a supplier signature from another key, before Avow sees the agreement', async () => {
     const s = await setup()
-    s.signAgreementWith(privateKeyToAccount(generatePrivateKey()))
-    expect(
-      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
-    ).toEqual({ ok: false, reason: 'message.signature_invalid' })
+    s.hooks.signAgreementWith = privateKeyToAccount(generatePrivateKey())
+    expect(await book(s)).toEqual({ ok: false, reason: 'message.signature_invalid' })
     expect(s.calls).toEqual(['signAgreement'])
   })
 
   it("passes on Avow's refusal with its decision, and sends nothing", async () => {
     const s = await setup()
-    s.refuse('mandate.over_commitment_cap')
-    expect(
-      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
-    ).toEqual({ ok: false, reason: 'mandate.over_commitment_cap', decisionId: 'dec_1' })
+    s.hooks.refusal = 'mandate.over_open_reserves_cap'
+    expect(await book(s)).toEqual({
+      ok: false,
+      reason: 'mandate.over_open_reserves_cap',
+      decisionId: 'dec_1',
+    })
     expect(s.sent).toEqual([])
   })
 
@@ -375,22 +245,33 @@ describe('booking with a supplier', () => {
       [{ capPerCommitment: 500_000_001n }, 'approval.mandate_mismatch'],
       [{ capOpenReserves: 1_500_000_001n }, 'approval.mandate_mismatch'],
       [{ fundingKey: other }, 'approval.mandate_mismatch'],
+      [{ expiry: NOW }, 'message.expired'],
     ]
     for (const [change, reason] of cases) {
       const s = await setup()
-      s.changeApproval(change)
-      const result = await s.agent.book({
-        supplier: s.connection,
-        booking: gpuBooking(),
-        category: 'compute',
-      })
-      expect(result, JSON.stringify(Object.keys(change))).toEqual({
+      s.hooks.approvalChange = change
+      expect(await book(s), JSON.stringify(Object.keys(change))).toEqual({
         ok: false,
         reason,
         decisionId: 'dec_1',
       })
       expect(s.sent).toEqual([])
     }
+  })
+
+  it('funds no approval the lock would refuse as past its acceptance deadline', async () => {
+    const s = await setup()
+    // Avow answers late, after the window opened, with an approval that hasn't itself expired.
+    s.hooks.approvalChange = { expiry: START + 60n }
+    s.hooks.afterApproval = () => {
+      s.clock.now = START
+    }
+    expect(await book(s)).toEqual({
+      ok: false,
+      reason: 'authorization.accept_by_passed',
+      decisionId: 'dec_1',
+    })
+    expect(s.sent).toEqual([])
   })
 
   it('funds only an approval signed for this chain and lock', async () => {
@@ -401,23 +282,50 @@ describe('booking with a supplier', () => {
     ]
     for (const [change, reason] of cases) {
       const s = await setup()
-      s.changeEnvelope(change)
-      const result = await s.agent.book({
-        supplier: s.connection,
-        booking: gpuBooking(),
-        category: 'compute',
-      })
-      expect(result).toEqual({ ok: false, reason, decisionId: 'dec_1' })
+      s.hooks.envelopeChange = change
+      expect(await book(s)).toEqual({ ok: false, reason, decisionId: 'dec_1' })
       expect(s.sent).toEqual([])
     }
   })
+})
 
-  it("refuses to book when the mandate doesn't permit reserves", async () => {
-    const s = await setup({ actions: ['start'] })
-    expect(
-      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
-    ).toEqual({ ok: false, reason: 'mandate.action_not_permitted' })
-    expect(s.calls).toEqual([])
+describe('when funding the reserve goes wrong', () => {
+  it('throws with the commitment and the hashes sent, and says no reserve was funded', async () => {
+    const s = await setup()
+    s.sending.fail = new SendError('The transaction reverted', 'failed', [id('a hash')])
+    const error = await book(s).catch((e: unknown) => e)
+    if (!(error instanceof BookingError)) throw new Error('expected a BookingError')
+    expect(error.outcome).toBe('failed')
+    expect(error.hashes).toEqual([id('a hash')])
+    const [request] = s.requests
+    expect(error.commitment.commitmentId).toBe(request?.request.commitmentId)
+    expect(error.commitment.salt).toBe(request?.salt)
+    expect(error.commitment.approval.message.commitmentId).toBe(request?.request.commitmentId)
+  })
+
+  it("says the outcome is unknown when the send can't tell, or fails some other way", async () => {
+    for (const fail of [
+      new SendError('No receipt after waiting', 'unknown', [id('a hash')]),
+      new Error('socket hang up'),
+    ]) {
+      const s = await setup()
+      s.sending.fail = fail
+      const error = await book(s).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(BookingError)
+      expect((error as BookingError).outcome).toBe('unknown')
+    }
+  })
+
+  it("throws when the transaction landed but the lock doesn't hold the reserve under the approval", async () => {
+    const s = await setup()
+    s.sending.holds = () => null
+    await expect(book(s)).rejects.toThrow("the lock doesn't show the reserve")
+    const t = await setup()
+    t.sending.holds = (a) => ({ ...a, nonce: a.nonce + 1n })
+    const error = await book(t).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(BookingError)
+    expect((error as BookingError).outcome).toBe('unknown')
+    expect((error as BookingError).hashes).toEqual([id('the reserve transaction')])
   })
 })
 
@@ -425,7 +333,7 @@ describe('cancelling and starting', () => {
   it('tells Avow the business cancels, when the mandate permits it', async () => {
     const s = await setup()
     expect(await s.agent.cancel(id('commitment'))).toEqual({ ok: true, cancelledAt: NOW + 60n })
-    const reservesOnly = await setup({ actions: ['reserve'] })
+    const reservesOnly = await setup({ mandate: { actions: ['reserve'] } })
     expect(await reservesOnly.agent.cancel(id('commitment'))).toEqual({
       ok: false,
       reason: 'mandate.action_not_permitted',
@@ -440,25 +348,68 @@ describe('cancelling and starting', () => {
     expect(s.calls).toEqual(['requestStart', 'startJob', 'recordStart'])
     expect(started.receipt.message.startRequestHash).toBe(id(`start ${id('commitment')}`))
   })
+
+  it("records no receipt that doesn't answer the request or isn't the supplier's", async () => {
+    const stranger = privateKeyToAccount(generatePrivateKey())
+    type Request = { commitmentId: Hex; startRequestHash: Hex; requestedAt: bigint }
+    const cases: [(r: Request, key: typeof stranger) => Promise<Signed<never>>, string][] = [
+      [(r) => startReceipt(stranger, r) as never, 'message.signature_invalid'],
+      [(r, k) => startReceipt(k, r, { commitmentId: id('another') }) as never, 'message.invalid'],
+      [(r, k) => startReceipt(k, r, { startRequestHash: id('other') }) as never, 'message.invalid'],
+      [(r, k) => startReceipt(k, r, { startedAt: r.requestedAt - 1n }) as never, 'message.invalid'],
+      [(r, k) => startReceipt(k, r, { side: 'supplier' }) as never, 'message.invalid'],
+      [(r, k) => startReceipt(k, r, { expiry: NOW }) as never, 'message.expired'],
+      [
+        (r, k) =>
+          startReceipt(k, r, {}, { lock: '0x00000000000000000000000000000000000010c5' }) as never,
+        'message.wrong_contract',
+      ],
+    ]
+    for (const [receipt, reason] of cases) {
+      const s = await setup()
+      s.hooks.receipt = (r) => receipt(r, s.supplierKey) as never
+      expect(await s.agent.start(id('commitment'), s.connection)).toEqual({ ok: false, reason })
+      expect(s.calls).toEqual(['requestStart', 'startJob'])
+    }
+  })
+
+  it("passes on Avow's refusal of the receipt", async () => {
+    const s = await setup()
+    s.hooks.startRefusal = 'message.replayed'
+    expect(await s.agent.start(id('commitment'), s.connection)).toEqual({
+      ok: false,
+      reason: 'message.replayed',
+    })
+  })
+
+  it("refuses to start when the mandate doesn't permit it", async () => {
+    const s = await setup({ mandate: { actions: ['reserve'] } })
+    expect(await s.agent.start(id('commitment'), s.connection)).toEqual({
+      ok: false,
+      reason: 'mandate.action_not_permitted',
+    })
+    expect(s.calls).toEqual([])
+  })
 })
 
 describe('setting up an agent', () => {
-  it('refuses a mandate for another key, another account or another chain', async () => {
+  it('refuses a mandate for another key, another account or another chain, and a token it can’t use', async () => {
     const s = await setup()
-    const base = {
-      client: noChain,
-      mandate: s.signedMandate,
-      token: TOKEN,
-      profile: TESTNET_DEMO_PROFILE,
-      avow: s.avow,
-    }
     const strangerKey = Account.fromSecp256k1(generatePrivateKey(), { access: s.root })
-    expect(() => createAgent({ ...base, key: strangerKey })).toThrow('another agent key')
-    expect(() =>
-      createAgent({ ...base, key: s.key, mandate: { ...s.signedMandate, chainId: 1 } }),
-    ).toThrow("can't be used on this chain")
-    expect(() => createAgent({ ...base, key: s.key, token: { ...TOKEN, chainId: 1 } })).toThrow(
+    expect(() => createAgent({ ...s.config, key: strangerKey })).toThrow('another agent key')
+    // The same key on another account has the same address, so only the account tells them apart.
+    const elsewhere = Account.fromSecp256k1(s.agentKey, {
+      access: Account.fromSecp256k1(generatePrivateKey()),
+    })
+    expect(() => createAgent({ ...s.config, key: elsewhere })).toThrow('another business account')
+    expect(() => createAgent({ ...s.config, mandate: { ...s.signedMandate, chainId: 1 } })).toThrow(
+      "can't be used on this chain",
+    )
+    expect(() => createAgent({ ...s.config, token: { ...TOKEN, chainId: 1 } })).toThrow(
       "isn't on the mandate's chain",
     )
+    expect(() =>
+      createAgent({ ...s.config, token: { ...TOKEN, currency: 'EUR' as never } }),
+    ).toThrow('or in its currency')
   })
 })

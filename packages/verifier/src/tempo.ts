@@ -142,22 +142,27 @@ const KIND_NAMES = new Map<number, ChargeKind>(
 
 /**
  * Reads what a lock holds for one side of a commitment, or null when it holds nothing. It reads
- * only the lock, so it needs no factory, and the caller decides whether the lock is Avow's.
+ * only the lock, so it needs no factory, and the caller decides whether the lock is Avow's. Given
+ * a block number it reads the lock as of that block, which a node without the block refuses
+ * rather than answering from an older one.
  */
 export async function readBacking(
   client: Client,
   lock: Address,
   commitmentId: Hex,
   side: 'buyer' | 'supplier',
+  options: { blockNumber?: bigint } = {},
 ): Promise<LockedBacking | null> {
+  const at = options.blockNumber === undefined ? {} : { blockNumber: options.blockNumber }
   const [c, token] = await Promise.all([
     readContract(client, {
       address: lock,
       abi: LOCK_ABI,
       functionName: 'commitment',
       args: [commitmentId, side === 'buyer' ? 0 : 1],
+      ...at,
     }),
-    readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' }),
+    readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token', ...at }),
   ])
   if (c.state === 0) return null
   const state = RAIL_STATES[c.state]

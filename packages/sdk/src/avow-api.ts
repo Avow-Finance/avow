@@ -40,9 +40,10 @@ export interface AvowApi {
   approveReserve(request: ReserveApprovalRequest): Promise<ReserveApproval>
   /**
    * Has Avow's relay co-sign a transaction the agent signed with `feePayer: true`, so the relay
-   * pays its fee and the business needs no fee token. It takes and returns serialized bytes. The
-   * relay signs only when each call goes to the business's own lock or approves that lock to pull
-   * the reserve token. The agent sends the co-signed bytes itself and tracks their hash.
+   * pays its fee and the business needs no fee token. It takes and returns serialized bytes, and
+   * never sends them. The relay signs only when each call goes to the business's own lock or
+   * approves that lock to pull the reserve token. The agent checks the co-signed bytes, sends them
+   * itself and tracks their hash.
    */
   sponsor(transaction: Hex): Promise<Hex>
   /** Records the business cancelling a commitment, timestamped by Avow. */
@@ -54,6 +55,9 @@ export interface AvowApi {
   requestStart(request: {
     commitmentId: Hex
   }): Promise<{ startRequestHash: Hex; requestedAt: bigint }>
-  /** Records the supplier's start receipt, which a kept booking rests on. */
-  recordStart(request: { commitmentId: Hex; receipt: Signed<StartReceipt> }): Promise<void>
+  /** Records the supplier's start receipt, which a kept booking rests on, or refuses it. */
+  recordStart(request: {
+    commitmentId: Hex
+    receipt: Signed<StartReceipt>
+  }): Promise<{ ok: true } | { ok: false; reason: ReasonCode }>
 }

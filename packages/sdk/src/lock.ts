@@ -5,8 +5,8 @@ import { Abis } from 'viem/tempo'
 /**
  * The lock function an agent's key calls to fund a reserve, as the testnet lock declares it. The
  * lock is unaudited testnet code, and a new factory can change this interface. Knowing it grants
- * nothing, since the lock checks Avow's signature, the calling key and every field of the approval
- * on each call.
+ * nothing, since on each call the lock checks Avow's signature over every field of the approval,
+ * the calling account and key, the supplier, the caps and the expiry.
  */
 export const RESERVE_ABI = [
   {

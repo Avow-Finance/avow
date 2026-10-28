@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { RESERVE_ABI, RESERVE_SELECTOR } from './lock.js'
 
 describe("the lock's reserve function", () => {
+  it('has the selector the compiled testnet lock dispatches reserve on', () => {
+    // The deployed locks' dispatchers carry it, so a change to the copy can't slip by.
+    expect(RESERVE_SELECTOR).toBe('0x10a5e004')
+  })
+
   it('has the selector of reserve over the approval tuple and a signature', () => {
     expect(RESERVE_SELECTOR).toBe(
       toFunctionSelector(getAbiItem({ abi: RESERVE_ABI, name: 'reserve' })),
