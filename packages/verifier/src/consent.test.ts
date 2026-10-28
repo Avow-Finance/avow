@@ -7,7 +7,7 @@ import {
   type ReleaseConsentRequest,
   signReleaseConsent,
 } from './consent.js'
-import { formatTime } from './disclosure.js'
+import { disclosureId, formatTime } from './disclosure.js'
 import {
   CHAIN_ID,
   COMMITMENT,
@@ -123,7 +123,26 @@ describe('a consent for the commitment as it stands', () => {
         { disclosureId: prepared.disclosure.id },
         { chain },
       ),
-    ).rejects.toThrow(/changed/)
+    ).rejects.toThrow(/as it returned it/)
+    // A consent rebuilt for a later count, with its digest and disclosure recomputed to match,
+    // would otherwise sign without preauthorize.
+    const later = { ...prepared.consent, reportCount: 1 }
+    const digest = digestOf(releaseConsentTypedData(later, prepared.domain))
+    const disclosure = { ...prepared.disclosure, digest }
+    const rebuilt = {
+      ...prepared,
+      consent: later,
+      digest,
+      disclosure: { ...disclosure, id: disclosureId(disclosure) },
+    }
+    await expect(
+      signReleaseConsent(
+        rebuilt,
+        supplierAccount,
+        { disclosureId: rebuilt.disclosure.id },
+        { chain },
+      ),
+    ).rejects.toThrow(/as it returned it/)
   })
 
   it('shows what it releases, the count it names and when it stops working', async () => {
@@ -211,6 +230,7 @@ describe('what the lock would never take', () => {
 
   it('refuses a reason or an evidence hash the lock has no place for', async () => {
     expect(await prepare({ reason: 'whatever' as never })).toEqual(refused('message.invalid'))
+    expect(await prepare({ reason: 'toString' as never })).toEqual(refused('message.invalid'))
     expect(await prepare({ evidenceHash: '0x1234' })).toEqual(refused('message.invalid'))
   })
 

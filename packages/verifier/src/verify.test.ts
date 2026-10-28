@@ -38,7 +38,7 @@ import {
   TOKEN,
   terms,
 } from './test-helpers.js'
-import { type VerifierDeps, verifySupplierAuthorization } from './verify.js'
+import { type Agreed, type VerifierDeps, verifySupplierAuthorization } from './verify.js'
 
 let chain: MemoryChain
 let deps: VerifierDeps
@@ -52,7 +52,7 @@ async function verify(
   auth?: unknown,
   rest: {
     terms?: ComputeTerms
-    agreed?: typeof agreed
+    agreed?: Agreed
     mandate?: unknown
     now?: bigint
     deps?: VerifierDeps
@@ -289,6 +289,40 @@ describe('changes after signing', () => {
   })
 })
 
+describe('the buyer the supplier agreed with', () => {
+  it("refuses an authorization for another buyer, or another mandate, than the agreement's", async () => {
+    expect(
+      await verify(undefined, { agreed: { ...agreed, buyerBusinessId: 'biz_other' } }),
+    ).toEqual(refused('authorization.buyer_mismatch'))
+    expect(await verify(undefined, { agreed: { ...agreed, mandateHash: id('other') } })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
+  })
+
+  it('checks neither when the supplier leaves them out', async () => {
+    const { buyerBusinessId: _b, mandateHash: _m, ...older } = agreed
+    expect((await verify(undefined, { agreed: older })).ok).toBe(true)
+  })
+
+  it("refuses a mandate signed for another business than the authorization's buyer", async () => {
+    const other = { ...mandate, businessId: 'biz_someone_else' }
+    const otherHash = mandateHash(other, DOMAIN)
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: otherHash },
+      KEY_TX,
+    )
+    const auth = await signedAuthorization(authorization({ mandateHash: otherHash }))
+    expect(
+      await verify(auth, {
+        mandate: await signedMandate(other),
+        agreed: { ...agreed, mandateHash: otherHash },
+      }),
+    ).toEqual(refused('authorization.mandate_mismatch'))
+  })
+})
+
 describe("the buyer's mandate, when the supplier has it", () => {
   it("refuses a mandate that isn't the one the authorization names", async () => {
     const wider = { ...mandate, capPerCommitment: 2_000_000_000n }
@@ -345,9 +379,11 @@ describe("the buyer's mandate, when the supplier has it", () => {
         KEY_TX,
       )
       const auth = await signedAuthorization(authorization({ mandateHash: narrowHash }))
-      expect(await verify(auth, { mandate: await signedMandate(narrow) }), reason).toEqual(
-        refused(reason),
-      )
+      const narrowAgreed = { ...agreed, mandateHash: narrowHash }
+      expect(
+        await verify(auth, { mandate: await signedMandate(narrow), agreed: narrowAgreed }),
+        reason,
+      ).toEqual(refused(reason))
     }
   })
 })

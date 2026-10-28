@@ -56,7 +56,6 @@ export const supplierAccount = newKey()
 export const supplierKey = newKey()
 export const terms = testnetDemoTerms(START, ARBITER)
 export const TERMS_HASH = termsHash(terms, SALT)
-export const agreed = { commitmentId: COMMITMENT, termsHash: TERMS_HASH, category: 'compute' }
 
 export const mandate: Mandate = {
   mandateId: id('mandate-1'),
@@ -76,6 +75,14 @@ export const mandate: Mandate = {
   nonce: 1n,
 }
 export const mHash = mandateHash(mandate, DOMAIN)
+/** What the supplier's signed terms agreement names. */
+export const agreed = {
+  commitmentId: COMMITMENT,
+  termsHash: TERMS_HASH,
+  category: 'compute',
+  buyerBusinessId: 'biz_buyer',
+  mandateHash: mHash,
+}
 
 export function authorization(change: Partial<SupplierAuthorization> = {}): SupplierAuthorization {
   return {

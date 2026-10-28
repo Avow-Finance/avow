@@ -93,6 +93,8 @@ const REASON_NAMES: Record<ReleaseReason, string> = {
 /** The disclosure for an acceptance, built from the approval the lock holds and the lock's timing. */
 export function acceptanceDisclosure(args: {
   digest: Hex
+  /** When the acceptance itself stops working. */
+  expiry: bigint
   approval: Approval
   approvalDigest: Hex
   lock: Address
@@ -131,7 +133,7 @@ export function acceptanceDisclosure(args: {
         heading: 'Deadlines',
         lines: [
           `Free cancellation ends at ${formatTime(a.freeCancelBy)}. Until then the business can take the whole reserve back without your consent.`,
-          `This acceptance has to reach the lock before ${formatTime(a.acceptBy)}.`,
+          `This acceptance stops working at ${formatTime(args.expiry)}, and the lock takes no acceptance from ${formatTime(a.acceptBy)}.`,
           `Report any charge before ${formatTime(a.chargeDeadline)}.`,
           `With no report, the reserve goes back to the business at ${formatTime(a.releaseDate)}.`,
         ],
@@ -140,7 +142,8 @@ export function acceptanceDisclosure(args: {
         heading: 'Disputes',
         lines: [
           `Avow confirms or refers each report within ${formatDuration(timing.confirmWindow)}, and a report it doesn't answer in time goes to a ruling.`,
-          `The business can contest a confirmed charge for ${formatDuration(a.contestWindow)}.`,
+          `The business can contest a confirmed charge for ${formatDuration(a.contestWindow)}, and a report Avow hasn't confirmed at any time. Avow can also pause a confirmed charge before its contest window closes. Each of these sends the charge to a ruling.`,
+          'The commitment takes at most two reports, one at a time.',
           `A contested or referred charge is paused. Avow's ruling key can rule for ${formatDuration(timing.rulingKeyEnd)} after the pause, then the arbiter ${getAddress(a.arbiter)} can rule until ${formatDuration(timing.day90)} after it, and a ruling takes effect ${formatDuration(timing.rulingDelay)} after it's posted.`,
           `A confirmed charge still unruled ${formatDuration(timing.day90)} after the pause pays you ${formatShare(a.day90SupplierShareBps)} of it, and the rest goes back to the business. A charge Avow never confirmed goes back to the business in full.`,
         ],

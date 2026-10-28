@@ -23,16 +23,16 @@ It throws, rather than refusing, when the setup is wrong, such as a chain reader
 
 An acceptance binds the supplier to everything in Avow's approval, so a supplier gets one to sign only from `prepareAcceptance`, and signs it only with `signAcceptance`. `prepareAcceptance` refuses with the first reason that applies.
 
-1. Avow's authorization passes every check above, with the buyer's signed mandate required. A mandate that's forged, expired, revoked with its agent key, or that doesn't allow this supplier, category, currency, token or amount refuses.
+1. Avow's authorization passes every check above, with the buyer's signed mandate required. It names the buyer and the mandate the supplier's own terms agreement names, and the mandate is that buyer's. A mandate that's forged, expired, revoked with its agent key, or that doesn't allow this supplier, category, currency, token or amount refuses.
 2. Avow's approval names the commitment the supplier agreed to, the supplier's own account, signing key and payout, and the token, amount, deadlines, contest window, terms hash, charges, day-90 share and arbiter of the supplier's own terms.
 3. It names the mandate the authorization names, that mandate's two caps, and a funding key that's the mandate's agent key or the account's root key and that funded the reserve.
 4. The lock stores the digest of exactly this approval and the same terms, and its token and dispute timing are the ones the supplier's profile accepts.
 
-Then it builds the acceptance, which names the lock's digest of the approval and expires within ten minutes, and a disclosure for the person who approves the signature. The disclosure states the reserve and what each charge can take and from when, who receives charges, the free-cancellation and acceptance deadlines, the charge deadline and the release date, and the dispute terms: Avow's confirmation window, the contest window, how long Avow's ruling key and then the arbiter can rule, when a ruling takes effect, and the supplier's day-90 share. `signAcceptance` takes the disclosure's id back, so nothing is signed until an integration has fetched the disclosure and the person has confirmed it. It refuses an acceptance or disclosure changed after they were built, and a key other than the signing key the approval names.
+Then it builds the acceptance, which names the lock's digest of the approval and expires within ten minutes, and a disclosure for the person who approves the signature. The disclosure states the reserve and what each charge can take and from when, who receives charges, the free-cancellation and acceptance deadlines, the charge deadline and the release date, and the dispute terms: Avow's confirmation window, the contest window, how long Avow's ruling key and then the arbiter can rule, when a ruling takes effect, and the supplier's day-90 share. `signAcceptance` takes the disclosure's id back, so nothing is signed until an integration has fetched the disclosure and the person has confirmed it. It signs only the frozen object `prepareAcceptance` returned, so a copy or an edit throws, and it refuses a key other than the signing key the approval names.
 
 ## Release consents
 
-A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
+A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. Like `signAcceptance`, it signs only the frozen object its prepare call returned. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
 
 ## What this doesn't protect
 
@@ -45,7 +45,7 @@ The checks also rest on things the verifier doesn't prove.
 - **Avow's signature.** The authorization stands for the business's KYB, for a person's approval when the mandate asks for one, and for any revocation Avow recorded off the chain.
 - **The supplier's own records.** The terms, the agreed commitment and the supplier's account, key and payout come from the supplier, so a wrong record checks the wrong terms.
 - **The mandate's contents.** The supplier sees the buyer's whole mandate, including its other suppliers, categories and caps.
-- **The person.** The disclosure is only as good as the screen that shows it. The library can make an integration fetch it, but it can't make a person read it.
+- **The person.** The disclosure is only as good as the screen that shows it. The library can make an integration fetch it, but it can't make a person read it, and code that holds the signing key can always sign without this library.
 
 ## Use
 
@@ -66,7 +66,7 @@ const config = {
   acceptTestData: true,
 }
 // From the terms agreement this supplier signed for the booking.
-const agreed = { commitmentId, termsHash, category: 'compute' }
+const agreed = { commitmentId, termsHash, category: 'compute', buyerBusinessId, mandateHash }
 const now = BigInt(Math.floor(Date.now() / 1000))
 
 const prepared = await prepareAcceptance(
@@ -82,6 +82,6 @@ const acceptance = await signAcceptance(prepared, signingKey, {
 // Send the acceptance to the lock, wait for the transaction's receipt, then grant the capacity.
 ```
 
-Accept on the lock before granting anything. Until acceptance lands, the reserve can still go back to the buyer, for example when the buyer revokes the agent or the acceptance deadline passes.
+Accept on the lock before granting anything. Until acceptance lands, the reserve can still go back to the buyer, for example when the buyer revokes the agent or the acceptance deadline passes. Even after it lands, the business can take the whole reserve back until the free-cancellation deadline.
 
 `verifySupplierAuthorization` passes each commitment once, so a supplier that uses it keeps the first successful result, and keeps its replay guard in a database so a restart doesn't forget which commitments have passed. `prepareAcceptance` records nothing, since the lock takes one acceptance per reserve.

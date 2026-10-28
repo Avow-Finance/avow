@@ -1,7 +1,6 @@
 import {
   type Approval,
   acceptanceTypedData,
-  approvalDigest,
   type ComputeTerms,
   digestOf,
   isKeySignature,
@@ -19,7 +18,7 @@ import {
   signAcceptance,
 } from './accept.js'
 import type { LockedBacking, MemoryChain } from './chain.js'
-import { formatDuration, formatTime } from './disclosure.js'
+import { disclosureId, formatDuration, formatTime } from './disclosure.js'
 import {
   ARBITER,
   acceptanceConfig,
@@ -156,23 +155,42 @@ describe('signing the acceptance', () => {
     ).rejects.toThrow(/signing key/)
   })
 
-  it('refuses an acceptance or a disclosure changed after they were prepared', async () => {
+  it('refuses a copy or an edit of what prepareAcceptance returned', async () => {
     const prepared = await ready()
     const confirm = { disclosureId: prepared.disclosure.id }
+    const notBuilt = /as it returned it/
+    // A copy with another amount.
     const changedAcceptance = {
       ...prepared,
       acceptance: { ...prepared.acceptance, amount: prepared.acceptance.amount - 1n },
     }
-    await expect(signAcceptance(changedAcceptance, supplierKey, confirm)).rejects.toThrow(/changed/)
-    const [first, ...rest] = prepared.disclosure.sections
-    const changedDisclosure = {
+    await expect(signAcceptance(changedAcceptance, supplierKey, confirm)).rejects.toThrow(notBuilt)
+    // A copy with its digest and disclosure rebuilt to match, so it agrees with itself.
+    const later = { ...prepared.acceptance, expiry: prepared.acceptance.expiry + 3600n }
+    const digest = digestOf(acceptanceTypedData(later, prepared.domain))
+    const sections = [{ heading: 'Nothing to see', lines: ['Sign here'] }]
+    const rebuilt = {
       ...prepared,
+      acceptance: later,
+      digest,
       disclosure: {
         ...prepared.disclosure,
-        sections: [{ ...first, heading: first?.heading ?? '', lines: ['Nothing to see'] }, ...rest],
+        digest,
+        sections,
+        id: disclosureId({ ...prepared.disclosure, digest, sections }),
       },
     }
-    await expect(signAcceptance(changedDisclosure, supplierKey, confirm)).rejects.toThrow(/changed/)
+    await expect(
+      signAcceptance(rebuilt, supplierKey, { disclosureId: rebuilt.disclosure.id }),
+    ).rejects.toThrow(notBuilt)
+    // The object itself can't be changed in place.
+    expect(() => {
+      ;(prepared.acceptance as { amount: bigint }).amount = 1n
+    }).toThrow(TypeError)
+    const lines = (prepared.disclosure.sections[0]?.lines ?? []) as string[]
+    expect(lines.length).toBeGreaterThan(0)
+    expect(() => lines.push('More')).toThrow(TypeError)
+    expect((await signAcceptance(prepared, supplierKey, confirm)).message.amount).toBe(500_000_000n)
   })
 })
 
@@ -276,6 +294,24 @@ describe("the supplier's own terms", () => {
     }
   })
 
+  it("refuses a buyer or a mandate other than the ones the supplier's agreement names", async () => {
+    expect(await prepare({ agreed: { ...agreed, buyerBusinessId: 'biz_other' } })).toEqual(
+      refused('authorization.buyer_mismatch'),
+    )
+    expect(await prepare({ agreed: { ...agreed, mandateHash: id('other mandate') } })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
+  })
+
+  it('needs the buyer and the mandate from the agreement', async () => {
+    const { buyerBusinessId: _b, ...noBuyer } = agreed
+    expect(await prepare({ agreed: noBuyer as typeof agreed })).toEqual(refused('message.invalid'))
+    const { mandateHash: _m, ...noMandate } = agreed
+    expect(await prepare({ agreed: noMandate as typeof agreed })).toEqual(
+      refused('message.invalid'),
+    )
+  })
+
   it('refuses a commitment the supplier did not agree to', async () => {
     expect(await prepare({ agreed: { ...agreed, commitmentId: id('commitment-2') } })).toEqual(
       refused('authorization.commitment_mismatch'),
@@ -303,6 +339,7 @@ describe("the buyer's mandate and the agent's authority", () => {
       authorization: await signedAuthorization(authorization({ mandateHash: h })),
       approval: await signedApproval(a),
       mandate: await signedMandate(m),
+      agreed: { ...agreed, mandateHash: h },
     })
   }
 
@@ -324,6 +361,12 @@ describe("the buyer's mandate and the agent's authority", () => {
   it("refuses a mandate other than the one Avow's authorization names", async () => {
     const other = await signedMandate({ ...mandate, capPerCommitment: 900_000_000n })
     expect(await prepare({ mandate: other })).toEqual(refused('authorization.mandate_mismatch'))
+  })
+
+  it("refuses a mandate signed for another business than the agreement's buyer", async () => {
+    expect(await under({ ...mandate, businessId: 'biz_someone_else' })).toEqual(
+      refused('authorization.mandate_mismatch'),
+    )
   })
 
   it('refuses a mandate that has expired or ends before the release date', async () => {
@@ -450,11 +493,14 @@ describe('the disclosure', () => {
       'A no-show can charge up to USD 500 (500000000 base units',
       `reported from ${formatTime(terms.windowStart + terms.gracePeriod)}`,
       `Free cancellation ends at ${formatTime(terms.freeCancelBy)}`,
-      `before ${formatTime(terms.acceptBy)}`,
+      `This acceptance stops working at ${formatTime(NOW + ACCEPTANCE_VALIDITY)}`,
+      `the lock takes no acceptance from ${formatTime(terms.acceptBy)}`,
       `Report any charge before ${formatTime(terms.chargeDeadline)}`,
       `goes back to the business at ${formatTime(terms.releaseDate)}`,
       'within 5 minutes',
-      'contest a confirmed charge for 10 minutes',
+      "contest a confirmed charge for 10 minutes, and a report Avow hasn't confirmed at any time",
+      'Avow can also pause a confirmed charge before its contest window closes',
+      'The commitment takes at most two reports, one at a time.',
       'rule for 30 minutes after the pause',
       `the arbiter ${'0x000000000000000000000000000000000000A4b1'}`,
       'until 90 minutes after it',

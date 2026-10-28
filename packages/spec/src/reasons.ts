@@ -54,7 +54,9 @@ export const REASON_CODES = {
   'authorization.commitment_mismatch':
     'The authorization is for another commitment than the one the supplier agreed to',
   'authorization.mandate_mismatch':
-    "The mandate given isn't the one the authorization names, or names another account or agent key",
+    "The mandate given isn't the one the authorization or the supplier's agreement names, or names another business, account or agent key",
+  'authorization.buyer_mismatch':
+    'The authorization names another buyer than the one the supplier agreed with',
   'authorization.accept_by_passed':
     'The acceptance deadline has passed, so the reserve can no longer be accepted',
   'authorization.token_not_accepted':

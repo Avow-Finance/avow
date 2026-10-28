@@ -7,10 +7,11 @@ import {
   type SupplierAuthorization,
   type TermsProfile,
 } from '@avow-finance/spec'
-import type { Address, Hex } from 'viem'
-import { checkAuthorization } from './authorization.js'
+import type { Address } from 'viem'
+import { type Agreed, checkAuthorization } from './authorization.js'
 import type { ChainReader } from './chain.js'
 
+export type { Agreed } from './authorization.js'
 export { AUTHORIZATION_VALIDITY } from './authorization.js'
 
 export interface VerifierConfig {
@@ -40,7 +41,7 @@ export interface VerifyInput {
   /** The signed supplier authorization, as JSON. */
   authorization: unknown
   /** The commitment the supplier agreed to, from the terms agreement it signed. */
-  agreed: { commitmentId: Hex; termsHash: Hex; category: string }
+  agreed: Agreed
   /** The supplier's own copy of the agreed terms. */
   terms: ComputeTerms
   /** The buyer's signed mandate, as JSON, when the supplier wants to check it too. */

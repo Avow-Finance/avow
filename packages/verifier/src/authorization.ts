@@ -27,9 +27,20 @@ export const AUTHORIZATION_VALIDITY = 300n
 /** Room for the supplier's clock to run behind Avow's. */
 const CLOCK_ALLOWANCE = 60n
 
+/** What the supplier agreed to, from the terms agreement it signed. */
+export interface Agreed {
+  commitmentId: Hex
+  termsHash: Hex
+  category: string
+  /** The buyer the agreement names. Checked when given. */
+  buyerBusinessId?: string
+  /** The buyer's mandate the agreement names, which also names the buyer's lock. Checked when given. */
+  mandateHash?: Hex
+}
+
 export interface AuthorizationInput {
   authorization: unknown
-  agreed: { commitmentId: Hex; termsHash: Hex; category: string }
+  agreed: Agreed
   terms: ComputeTerms
   mandate?: unknown
   now: bigint
@@ -107,6 +118,13 @@ export async function checkAuthorization(
     return refuse('authorization.commitment_mismatch')
   }
   if (!same(auth.termsHash, input.agreed.termsHash)) return refuse('terms.hash_mismatch')
+  const { buyerBusinessId, mandateHash: agreedMandate } = input.agreed
+  if (buyerBusinessId !== undefined && auth.buyerBusinessId !== buyerBusinessId) {
+    return refuse('authorization.buyer_mismatch')
+  }
+  if (agreedMandate !== undefined && !same(auth.mandateHash, agreedMandate)) {
+    return refuse('authorization.mandate_mismatch')
+  }
   if (auth.kybTestData && !config.acceptTestData) return refuse('business.test_data')
 
   // The supplier's terms against the ones Avow signed.
@@ -179,6 +197,7 @@ export async function checkAuthorization(
     mandate = m.value.message
     if (
       !same(mandateHash(mandate, d), auth.mandateHash) ||
+      mandate.businessId !== auth.buyerBusinessId ||
       !isAddressEqual(mandate.account, lockInfo.account) ||
       !isAddressEqual(mandate.agentKey, auth.agentKey)
     ) {

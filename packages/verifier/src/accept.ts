@@ -19,10 +19,20 @@ import {
   termsCharges,
   toTokenUnits,
 } from '@avow-finance/spec'
-import { type Address, type Hex, hexToBigInt, isAddressEqual, toHex, zeroAddress } from 'viem'
-import { checkAuthorization, same } from './authorization.js'
+import {
+  type Address,
+  type Hex,
+  hexToBigInt,
+  isAddressEqual,
+  isHex,
+  size,
+  toHex,
+  zeroAddress,
+} from 'viem'
+import { type Agreed, checkAuthorization, same } from './authorization.js'
 import type { ChainReader, LockedBacking } from './chain.js'
 import { acceptanceDisclosure, type Disclosure, disclosureId } from './disclosure.js'
+import { issue, wasIssued } from './issued.js'
 import type { VerifierConfig } from './verify.js'
 
 /** An acceptance stays valid for ten minutes at most, and never past the acceptance deadline. */
@@ -48,8 +58,11 @@ export interface AcceptanceRequest {
   approval: unknown
   /** The buyer's signed mandate, as JSON. The acceptance path refuses without it. */
   mandate: unknown
-  /** The commitment the supplier agreed to, from the terms agreement it signed. */
-  agreed: { commitmentId: Hex; termsHash: Hex; category: string }
+  /**
+   * The commitment the supplier agreed to, from the terms agreement it signed, with the buyer
+   * and the buyer's mandate that agreement names.
+   */
+  agreed: Required<Agreed>
   /** The terms this supplier agreed to for the booking, from its own records. */
   terms: ComputeTerms
   now: bigint
@@ -105,9 +118,10 @@ const randomNonce = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Arra
  * 4. The lock stores the digest of exactly this approval and the same terms, and its token and
  *    dispute timing are the ones the supplier's profile accepts.
  *
- * It records nothing, since the lock takes one acceptance per reserve. The checks protect a
- * supplier who signs only what this returns. The lock checks the signature and the digest, so it
- * takes a correctly signed acceptance however it was built.
+ * It records nothing, since the lock takes one acceptance per reserve. What it returns is frozen,
+ * and `signAcceptance` signs nothing else. The checks protect a supplier who signs only through
+ * these two calls. The lock checks the signature and the digest, so it takes a correctly signed
+ * acceptance however it was built.
  *
  * Throws when the setup is wrong or the chain can't be read, as `verifySupplierAuthorization` does.
  */
@@ -121,6 +135,11 @@ export async function prepareAcceptance(
   // Terms written before the dispute block existed can't be checked against the approval.
   if (!(t as Partial<ComputeTerms>).dispute) return refuse('terms.incomplete')
   if (request.mandate === undefined || request.mandate === null) return refuse('mandate.missing')
+  // The buyer and its mandate come from the agreement the supplier signed, so they're required.
+  const { buyerBusinessId, mandateHash: agreedMandate } = request.agreed ?? {}
+  if (typeof buyerBusinessId !== 'string' || !isHex(agreedMandate) || size(agreedMandate) !== 32) {
+    return refuse('message.invalid')
+  }
 
   const checked = await checkAuthorization(
     {
@@ -224,7 +243,7 @@ export async function prepareAcceptance(
     expiry: latest < a.acceptBy ? latest : a.acceptBy,
   }
   const digest = digestOf(acceptanceTypedData(acceptance, d))
-  return {
+  return issue({
     ok: true,
     acceptance,
     domain: d,
@@ -233,6 +252,7 @@ export async function prepareAcceptance(
     signingKey: config.signingKey,
     disclosure: acceptanceDisclosure({
       digest,
+      expiry: acceptance.expiry,
       approval: a,
       approvalDigest: approvalHash,
       lock,
@@ -241,7 +261,7 @@ export async function prepareAcceptance(
       token,
       timing: lockInfo.timing,
     }),
-  }
+  })
 }
 
 /** Whether the lock's record carries the approval's terms, field by field. */
@@ -266,16 +286,19 @@ function holdsApproval(b: LockedBacking, a: Approval): boolean {
 }
 
 /**
- * Signs an acceptance `prepareAcceptance` built, with the supplier's signing key, once the person
- * has seen its disclosure. It throws when the confirmation names another disclosure, when the
- * acceptance or the disclosure changed after they were built, or when the key isn't the signing
- * key Avow's approval names.
+ * Signs an acceptance with the supplier's signing key, once the person has seen its disclosure. It
+ * signs only the object `prepareAcceptance` returned, which is frozen, so a copy or an edit of it
+ * throws. It also throws when the confirmation names another disclosure, or when the key isn't
+ * the signing key Avow's approval names.
  */
 export async function signAcceptance(
   prepared: ReadyAcceptance,
   key: HashSigner,
   confirmation: { disclosureId: Hex },
 ): Promise<Signed<Acceptance>> {
+  if (!wasIssued(prepared)) {
+    throw new Error('Sign only the acceptance prepareAcceptance returned, as it returned it')
+  }
   const digest = digestOf(acceptanceTypedData(prepared.acceptance, prepared.domain))
   const { disclosure } = prepared
   if (

@@ -16,6 +16,7 @@ import { type Address, type Hex, hexToBigInt, isAddressEqual, isHex, size, toHex
 import { same } from './authorization.js'
 import type { ChainReader } from './chain.js'
 import { type Disclosure, disclosureId, releaseConsentDisclosure } from './disclosure.js'
+import { issue, wasIssued } from './issued.js'
 
 /** The most reports a lock takes for one commitment. */
 export const MAX_REPORTS = 2
@@ -71,7 +72,8 @@ const randomNonce = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Arra
  * commitment from the lock and refuses a commitment that isn't this supplier's, one the lock
  * wouldn't release on consent, a consent that has already expired, and a report count the
  * commitment has passed or can never reach. A count above the current one is preauthorization,
- * and the disclosure says so. The lock takes a correctly signed consent however it was built.
+ * and the disclosure says so. What it returns is frozen, and `signReleaseConsent` signs nothing
+ * else. The lock takes a correctly signed consent however it was built.
  */
 export async function prepareReleaseConsent(
   request: ReleaseConsentRequest,
@@ -83,7 +85,7 @@ export async function prepareReleaseConsent(
   }
   const refuse = (reason: ReasonCode): PreparedReleaseConsent => ({ ok: false, reason })
   if (
-    !(request.reason in RELEASE_REASONS) ||
+    !Object.hasOwn(RELEASE_REASONS, request.reason) ||
     !isHex(request.evidenceHash) ||
     size(request.evidenceHash) !== 32
   ) {
@@ -119,7 +121,7 @@ export async function prepareReleaseConsent(
   const token = config.acceptedTokens.find(
     (a) => a.chainId === config.chainId && isAddressEqual(a.token, lockInfo.token),
   )
-  return {
+  return issue({
     ok: true,
     consent,
     domain: d,
@@ -135,15 +137,15 @@ export async function prepareReleaseConsent(
       token: token ?? null,
       currentCount: b.reportCount,
     }),
-  }
+  })
 }
 
 /**
- * Signs a consent `prepareReleaseConsent` built, as the supplier account with its root key or an
- * admin key, once the person has seen its disclosure. A consent that names a later report count
- * than the commitment has also needs `preauthorize: true`. It throws when the confirmation doesn't
- * match, when the consent or the disclosure changed after they were built, or when the signature
- * isn't one the chain accepts for the supplier account.
+ * Signs a consent as the supplier account, with its root key or an admin key, once the person has
+ * seen its disclosure. A consent that names a later report count than the commitment has also
+ * needs `preauthorize: true`. It signs only the object `prepareReleaseConsent` returned, which is
+ * frozen, so a copy or an edit of it throws. It also throws when the confirmation doesn't match,
+ * or when the signature isn't one the chain accepts for the supplier account.
  */
 export async function signReleaseConsent(
   prepared: ReadyReleaseConsent,
@@ -151,6 +153,9 @@ export async function signReleaseConsent(
   confirmation: { disclosureId: Hex; preauthorize?: boolean },
   deps: { chain: ChainReader },
 ): Promise<Signed<ReleaseConsent>> {
+  if (!wasIssued(prepared)) {
+    throw new Error('Sign only the consent prepareReleaseConsent returned, as it returned it')
+  }
   const digest = digestOf(releaseConsentTypedData(prepared.consent, prepared.domain))
   const { disclosure } = prepared
   if (
