@@ -8,11 +8,12 @@ import {
   keccak256,
   stringToHex,
   toHex,
+  zeroAddress,
 } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { canonicalJson } from './canonical.js'
 import { demoTerms, dollars, testnetDemoTerms } from './demo.js'
-import type { Approval } from './eip712.js'
+import type { Approval, Charge } from './eip712.js'
 import {
   GPU_HOUR,
   type GPU_RESERVATION,
@@ -20,12 +21,25 @@ import {
   gpuGracePeriod,
 } from './gpu-reservation.js'
 import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
+import type { ReasonCode } from './reasons.js'
 import {
+  AUTHORIZATION_TERMS_FIELDS,
+  approvalCaps,
+  approvalMandateProblem,
+  approvalPartiesProblem,
   approvalTermsProblem,
+  approvalTokenProblem,
   checkSectionDisclosure,
   discloseSection,
   enforceableTerms,
+  LOCK_RECORD_FIELDS,
+  LOCK_TERMS_FIELDS,
+  type LockTerms,
+  type LockTermsField,
+  lockRecordDifferences,
   lockTerms,
+  lockTermsDifferences,
+  sameCharges,
   sectionHash,
   sectionHashes,
   sectionSalt,
@@ -580,5 +594,162 @@ describe('approvalTermsProblem', () => {
         reason,
       )
     }
+  })
+})
+
+describe('the lock-enforced fields every check compares', () => {
+  const lock = lockTerms(base, 6)
+  const hash = termsHash(base, SALT)
+  const [late, noShow] = lock.charges
+  if (!late || !noShow) throw new Error('two charges')
+  // One change to each lock-enforced field, and the reason an approval with it gets. Both are
+  // typed over every field, so a field added to LockTerms fails the type check here until it has
+  // a change and a reason, and then every test below checks each comparison catches it.
+  const changed: { readonly [K in LockTermsField]: LockTerms[K] } = {
+    side: 'supplier',
+    amount: lock.amount + 1n,
+    freeCancelBy: lock.freeCancelBy + 1n,
+    acceptBy: lock.acceptBy - 1n,
+    chargeDeadline: lock.chargeDeadline + 1n,
+    releaseDate: lock.releaseDate + 1n,
+    contestWindow: lock.contestWindow + 1n,
+    charges: [late, { ...noShow, most: noShow.most - 1n }],
+    day90SupplierShareBps: lock.day90SupplierShareBps + 1,
+    arbiter: OTHER,
+  }
+  const reasons: { readonly [K in LockTermsField]: ReasonCode } = {
+    side: 'approval.terms_mismatch',
+    amount: 'approval.terms_mismatch',
+    freeCancelBy: 'approval.terms_mismatch',
+    acceptBy: 'approval.terms_mismatch',
+    chargeDeadline: 'approval.terms_mismatch',
+    releaseDate: 'approval.terms_mismatch',
+    contestWindow: 'approval.terms_mismatch',
+    charges: 'approval.charges_mismatch',
+    day90SupplierShareBps: 'approval.dispute_mismatch',
+    arbiter: 'approval.dispute_mismatch',
+  }
+  const withChange = (f: LockTermsField): LockTerms => ({ ...lock, [f]: changed[f] })
+
+  it('lists every field lockTerms gives, once', () => {
+    expect([...LOCK_TERMS_FIELDS].sort()).toEqual(Object.keys(lock).sort())
+    expect(new Set(LOCK_TERMS_FIELDS).size).toBe(LOCK_TERMS_FIELDS.length)
+  })
+
+  it('finds a change to any one field, and only that field', () => {
+    expect(lockTermsDifferences(lock, lock, LOCK_TERMS_FIELDS)).toEqual([])
+    for (const f of LOCK_TERMS_FIELDS) {
+      expect(lockTermsDifferences(withChange(f), lock, LOCK_TERMS_FIELDS), f).toEqual([f])
+    }
+    // An arbiter in other letter case is the same arbiter.
+    const upper = { ...lock, arbiter: lock.arbiter.toUpperCase().replace('0X', '0x') as Address }
+    expect(lockTermsDifferences(upper, lock, LOCK_TERMS_FIELDS)).toEqual([])
+  })
+
+  it("refuses an approval that differs in any field, with that field's reason", () => {
+    for (const f of LOCK_TERMS_FIELDS) {
+      const approval = { ...withChange(f), termsHash: hash }
+      expect(approvalTermsProblem(approval, { lock, termsHash: hash }), f).toBe(reasons[f])
+    }
+  })
+
+  it("compares a lock's record in every field but the side, whatever order it holds charges in", () => {
+    expect(LOCK_RECORD_FIELDS).toEqual(LOCK_TERMS_FIELDS.filter((f) => f !== 'side'))
+    for (const f of LOCK_RECORD_FIELDS) {
+      expect(lockRecordDifferences(withChange(f), lock), f).toEqual([f])
+    }
+    // A record names its side by where it's read from, so the side isn't one of its fields.
+    expect(lockRecordDifferences(withChange('side'), lock)).toEqual([])
+    // The lock stores charges by kind, so a record's charges have no order of their own.
+    expect(lockRecordDifferences({ ...lock, charges: [noShow, late] }, lock)).toEqual([])
+    expect(lockRecordDifferences({ ...lock, charges: [noShow] }, lock)).toEqual(['charges'])
+  })
+
+  it('compares a supplier authorization in the four lock-enforced fields it carries', () => {
+    expect([...AUTHORIZATION_TERMS_FIELDS]).toEqual([
+      'amount',
+      'acceptBy',
+      'chargeDeadline',
+      'releaseDate',
+    ])
+    for (const f of AUTHORIZATION_TERMS_FIELDS) {
+      expect(lockTermsDifferences(withChange(f), lock, AUTHORIZATION_TERMS_FIELDS), f).toEqual([f])
+    }
+  })
+
+  it('compares charges in order, in every field the signed Charge type holds', () => {
+    expect(sameCharges(lock.charges, [late, noShow])).toBe(true)
+    expect(sameCharges(lock.charges, [noShow, late])).toBe(false)
+    expect(sameCharges(lock.charges, [late])).toBe(false)
+    const changes: Partial<Charge>[] = [
+      { kind: 'noShow' },
+      { most: late.most + 1n },
+      { earliest: late.earliest + 1n },
+    ]
+    for (const change of changes) {
+      expect(sameCharges(lock.charges, [{ ...late, ...change }, noShow])).toBe(false)
+    }
+  })
+})
+
+describe("the approval's parties, token and mandate", () => {
+  const ACCOUNT: Address = '0x00000000000000000000000000000000000000c1'
+  const SIGNER: Address = '0x00000000000000000000000000000000000000c3'
+  const PAYOUT: Address = '0x00000000000000000000000000000000000000c5'
+  const AGENT: Address = '0x00000000000000000000000000000000000000a1'
+  const TOKEN: Address = '0x20c0000000000000000000000000000000000001'
+  const MANDATE = keccak256(stringToHex('mandate'))
+  const parties = { account: ACCOUNT, signingKey: SIGNER, payee: PAYOUT }
+  const named = { supplier: ACCOUNT, supplierSigner: SIGNER, payee: PAYOUT }
+  const caps = { capPerCommitment: dollars(500), capOpenReserves: dollars(1500) }
+
+  it("passes an approval naming the supplier's own parties, in any letter case", () => {
+    expect(approvalPartiesProblem(named, parties)).toBeNull()
+    const upper = (a: Address) => a.toUpperCase().replace('0X', '0x') as Address
+    expect(approvalPartiesProblem(named, { ...parties, payee: upper(PAYOUT) })).toBeNull()
+  })
+
+  it('refuses another supplier account, signing key or payout', () => {
+    for (const change of [{ supplier: OTHER }, { supplierSigner: OTHER }, { payee: OTHER }]) {
+      expect(approvalPartiesProblem({ ...named, ...change }, parties)).toBe(
+        'approval.parties_mismatch',
+      )
+    }
+  })
+
+  it("refuses a token other than the lock's", () => {
+    expect(approvalTokenProblem({ token: TOKEN }, TOKEN)).toBeNull()
+    expect(approvalTokenProblem({ token: OTHER }, TOKEN)).toBe('approval.terms_mismatch')
+  })
+
+  it("gives the mandate's caps in the token's base units, and throws on one it can't hold", () => {
+    expect(approvalCaps(caps, 6)).toEqual(caps)
+    expect(approvalCaps(caps, 18)).toEqual({
+      capPerCommitment: 500n * 10n ** 18n,
+      capOpenReserves: 1500n * 10n ** 18n,
+    })
+    expect(() => approvalCaps({ ...caps, capPerCommitment: 1n }, 2)).toThrow(RangeError)
+  })
+
+  it('refuses another mandate, other caps, or a funding key the caller does not allow', () => {
+    const approval = { mandateHash: MANDATE, ...caps, fundingKey: AGENT }
+    const expected = { mandateHash: MANDATE, caps, fundingKeys: [AGENT] }
+    expect(approvalMandateProblem(approval, expected)).toBeNull()
+    const changes = [
+      { mandateHash: keccak256(stringToHex('another mandate')) },
+      { capPerCommitment: caps.capPerCommitment + 1n },
+      { capOpenReserves: caps.capOpenReserves - 1n },
+      { fundingKey: zeroAddress },
+    ]
+    for (const change of changes) {
+      expect(approvalMandateProblem({ ...approval, ...change }, expected)).toBe(
+        'approval.mandate_mismatch',
+      )
+    }
+    // The account's root key, the zero address, funds only where the caller allows it.
+    const byRoot = { ...approval, fundingKey: zeroAddress }
+    expect(
+      approvalMandateProblem(byRoot, { ...expected, fundingKeys: [AGENT, zeroAddress] }),
+    ).toBeNull()
   })
 })

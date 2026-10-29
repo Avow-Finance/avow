@@ -1,10 +1,15 @@
 import {
   type AnyTerms,
+  AUTHORIZATION_TERMS_FIELDS,
   type AvowDomain,
   assertTestSettingsOnTestnet,
   checkMandate,
   digestOf,
   enforceableTerms,
+  type LockTerms,
+  lockRecordDifferences,
+  lockTerms,
+  lockTermsDifferences,
   type Mandate,
   mandateHash,
   mandateJson,
@@ -17,7 +22,6 @@ import {
   supplierAuthorizationTypedData,
   termsHash,
   termsShapeProblem,
-  toTokenUnits,
   validateTerms,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual, recoverAddress, zeroAddress } from 'viem'
@@ -146,18 +150,14 @@ export async function checkAuthorization(
       a.currency === e.currency,
   )
   if (!token) return refuse('authorization.token_not_accepted')
-  let reserveUnits: bigint
+  // Every value the lock enforces, in the token's base units.
+  let expected: LockTerms
   try {
-    reserveUnits = toTokenUnits(e.reserve, token.decimals)
+    expected = lockTerms(t, token.decimals)
   } catch {
     return refuse('authorization.token_not_accepted')
   }
-  if (
-    auth.amount !== reserveUnits ||
-    auth.acceptBy !== e.acceptBy ||
-    auth.chargeDeadline !== e.chargeDeadline ||
-    auth.releaseDate !== e.releaseDate
-  ) {
+  if (lockTermsDifferences(auth, expected, AUTHORIZATION_TERMS_FIELDS).length > 0) {
     return refuse('authorization.terms_mismatch')
   }
   if (!isAddressEqual(auth.payee, config.payee)) return refuse('authorization.payee_mismatch')
@@ -172,16 +172,14 @@ export async function checkAuthorization(
   const fundedByAgentOrRoot =
     isAddressEqual(backing.fundingKey, auth.agentKey) ||
     isAddressEqual(backing.fundingKey, zeroAddress)
+  // The lock's record has to hold Avow's authorization and enforce exactly what the terms map to,
+  // in every field it stores.
   if (
     !isAddressEqual(backing.token, auth.token) ||
-    backing.amount !== auth.amount ||
     !isAddressEqual(backing.payee, auth.payee) ||
-    backing.acceptBy !== e.acceptBy ||
-    backing.chargeDeadline !== e.chargeDeadline ||
-    backing.contestWindow !== e.contestWindow ||
-    backing.releaseDate !== e.releaseDate ||
     !same(backing.termsHash, auth.termsHash) ||
-    !fundedByAgentOrRoot
+    !fundedByAgentOrRoot ||
+    lockRecordDifferences(backing, expected).length > 0
   ) {
     return refuse('chain.reserve_mismatch')
   }

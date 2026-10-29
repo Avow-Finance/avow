@@ -2,6 +2,7 @@ import {
   type AnyTerms,
   digestOf,
   type GpuReservationTerms,
+  LOCK_RECORD_FIELDS,
   type Mandate,
   MemoryReplayGuard,
   mandateHash,
@@ -34,6 +35,7 @@ import {
   mHash,
   NOW,
   newKey,
+  RECORD_CHANGES,
   reservedChain,
   signedAuthorization,
   signedMandate,
@@ -117,6 +119,13 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
       expect(await verify(), JSON.stringify(toWire(change))).toEqual(
         refused('chain.reserve_mismatch'),
       )
+    }
+  })
+
+  it('refuses a reserve whose lock enforces another value than the terms in any field it stores', async () => {
+    for (const field of LOCK_RECORD_FIELDS) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ [field]: RECORD_CHANGES[field] }))
+      expect(await verify(), field).toEqual(refused('chain.reserve_mismatch'))
     }
   })
 

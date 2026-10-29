@@ -5,6 +5,7 @@ import {
   digestOf,
   type GpuReservationTerms,
   isKeySignature,
+  LOCK_RECORD_FIELDS,
   lockTerms,
   type Mandate,
   mandateHash,
@@ -53,6 +54,7 @@ import {
   NOW,
   newKey,
   PAYEE,
+  RECORD_CHANGES,
   reservedChain,
   SALT,
   START,
@@ -535,14 +537,10 @@ describe('the lock', () => {
     expect(await prepare()).toEqual(refused('chain.approval_mismatch'))
   })
 
-  it("refuses when the lock's record differs from the approval it names", async () => {
+  it("refuses when the lock's record names other parties or another mandate than the approval", async () => {
     const changes: Partial<LockedBacking>[] = [
       { supplier: newKey().address },
       { supplierSigner: newKey().address },
-      { freeCancelBy: LOCK_TERMS.freeCancelBy + 1n },
-      { charges: approval().charges.slice(1) },
-      { day90SupplierShareBps: 0 },
-      { arbiter: newKey().address },
       { mandateHash: id('another mandate') },
     ]
     for (const change of changes) {
@@ -550,6 +548,14 @@ describe('the lock', () => {
       expect(await prepare(), Object.keys(change).join()).toEqual(
         refused('chain.approval_mismatch'),
       )
+    }
+  })
+
+  it('refuses when the lock enforces another value than the terms in any field it stores', async () => {
+    // The authorization's checks compare the record with the terms before the approval is read.
+    for (const field of LOCK_RECORD_FIELDS) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ [field]: RECORD_CHANGES[field] }))
+      expect(await prepare(), field).toEqual(refused('chain.reserve_mismatch'))
     }
   })
 

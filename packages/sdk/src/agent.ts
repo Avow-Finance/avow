@@ -1,8 +1,12 @@
 import {
   type Approval,
   type AvowDomain,
+  approvalCaps,
   approvalDigest,
+  approvalMandateProblem,
+  approvalPartiesProblem,
   approvalTermsProblem,
+  approvalTokenProblem,
   checkEnvelope,
   checkMandate,
   digestOf,
@@ -26,7 +30,6 @@ import {
   type TermsProfile,
   termsAgreementTypedData,
   termsHash,
-  toTokenUnits,
 } from '@avow-finance/spec'
 import { type LockedBacking, readBacking } from '@avow-finance/verifier'
 import {
@@ -225,28 +228,22 @@ export function createAgent(config: AgentConfig) {
     if (a.commitmentId.toLowerCase() !== expected.commitmentId.toLowerCase()) {
       return 'approval.commitment_mismatch'
     }
-    const s = expected.supplier
-    if (
-      !isAddressEqual(a.supplier, s.account) ||
-      !isAddressEqual(a.supplierSigner, s.signingKey) ||
-      !isAddressEqual(a.payee, s.payee)
-    ) {
-      return 'approval.parties_mismatch'
-    }
-    if (!isAddressEqual(a.token, token.token)) return 'approval.terms_mismatch'
+    const parties = approvalPartiesProblem(a, expected.supplier)
+    if (parties) return parties
+    const tokenProblem = approvalTokenProblem(a, token.token)
+    if (tokenProblem) return tokenProblem
     const termsProblem = approvalTermsProblem(a, {
       lock: lockTerms(expected.terms, token.decimals),
       termsHash: expected.termsHash,
     })
     if (termsProblem) return termsProblem
-    if (
-      a.mandateHash.toLowerCase() !== mHash.toLowerCase() ||
-      !isAddressEqual(a.fundingKey, key.accessKeyAddress) ||
-      a.capPerCommitment !== toTokenUnits(mandate.capPerCommitment, token.decimals) ||
-      a.capOpenReserves !== toTokenUnits(mandate.capOpenReserves, token.decimals)
-    ) {
-      return 'approval.mandate_mismatch'
-    }
+    // The agent funds the reserve with its own key, so the approval has to name that key.
+    const mandateProblem = approvalMandateProblem(a, {
+      mandateHash: mHash,
+      caps: approvalCaps(mandate, token.decimals),
+      fundingKeys: [key.accessKeyAddress],
+    })
+    if (mandateProblem) return mandateProblem
     // The lock refuses an approval past its expiry or its acceptance deadline.
     if (a.expiry <= now()) return 'message.expired'
     if (a.acceptBy <= now()) return 'authorization.accept_by_passed'

@@ -1,12 +1,12 @@
 import {
   type AnyTerms,
   acceptsPaymentToken,
-  CHARGE_KINDS,
-  type Charge,
   type CommitmentReference,
   checkPaymentReference,
   enforceableTerms,
   isTermsV1,
+  type LockTerms,
+  lockRecordDifferences,
   lockTerms,
   type PaymentReference,
   type PaymentToken,
@@ -112,29 +112,12 @@ export async function verifyCommitmentTerms(
       a.currency === enforced.currency,
   )
   if (!token) return refuse('authorization.token_not_accepted')
-  let expected: ReturnType<typeof lockTerms>
+  let expected: LockTerms
   try {
     expected = lockTerms(t, token.decimals)
   } catch {
     return refuse('authorization.token_not_accepted')
   }
-  const byKind = (x: Charge, y: Charge) => CHARGE_KINDS[x.kind] - CHARGE_KINDS[y.kind]
-  const heldCharges = [...held.charges].sort(byKind)
-  const sameCharges =
-    heldCharges.length === expected.charges.length &&
-    heldCharges.every((c, i) => {
-      const e = expected.charges[i]
-      return e !== undefined && c.kind === e.kind && c.most === e.most && c.earliest === e.earliest
-    })
-  const matches =
-    held.amount === expected.amount &&
-    held.freeCancelBy === expected.freeCancelBy &&
-    held.acceptBy === expected.acceptBy &&
-    held.chargeDeadline === expected.chargeDeadline &&
-    held.releaseDate === expected.releaseDate &&
-    held.contestWindow === expected.contestWindow &&
-    sameCharges &&
-    held.day90SupplierShareBps === expected.day90SupplierShareBps &&
-    isAddressEqual(held.arbiter, expected.arbiter)
-  return matches ? { ok: true } : refuse('chain.reserve_mismatch')
+  const differs = lockRecordDifferences(held, expected)
+  return differs.length === 0 ? { ok: true } : refuse('chain.reserve_mismatch')
 }

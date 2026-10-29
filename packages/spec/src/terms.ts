@@ -7,7 +7,6 @@ import {
   type Hex,
   hexToBytes,
   isAddress,
-  isAddressEqual,
   isHex,
   keccak256,
   size,
@@ -15,7 +14,13 @@ import {
   zeroAddress,
 } from 'viem'
 import { canonicalJson } from './canonical.js'
-import { type Approval, CHARGE_KINDS, type Charge } from './eip712.js'
+import {
+  APPROVAL_TYPES,
+  type Approval,
+  CHARGE_KINDS,
+  type Charge,
+  type SupplierAuthorization,
+} from './eip712.js'
 import { type GpuReservationTerms, validateGpuReservation } from './gpu-reservation.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
@@ -30,8 +35,10 @@ import {
 import {
   AMOUNT_DECIMALS,
   type Currency,
+  type Mandate,
   type RemedyCharge,
   type Side,
+  type SupplierProfile,
   TEMPLATE_IDS,
   TERMS_VERSION,
   type TemplateId,
@@ -458,14 +465,141 @@ export function termsCharges(terms: AnyTerms, decimals: number): Charge[] {
   return lockTerms(terms, decimals).charges
 }
 
-function sameCharges(a: readonly Charge[], b: readonly Charge[]): boolean {
+/**
+ * Every field of `LockTerms`, the values a lock enforces for a commitment, in the order Avow's
+ * approval carries them. The build fails when `LockTerms` gains a field this list leaves out, and
+ * every comparison of lock-enforced values runs through `lockTermsDifferences`, so a new field is
+ * compared everywhere at once.
+ */
+export const LOCK_TERMS_FIELDS = [
+  'side',
+  'amount',
+  'freeCancelBy',
+  'acceptBy',
+  'chargeDeadline',
+  'releaseDate',
+  'contestWindow',
+  'charges',
+  'day90SupplierShareBps',
+  'arbiter',
+] as const
+export type LockTermsField = (typeof LOCK_TERMS_FIELDS)[number]
+
+// The list names every field of `LockTerms` and nothing else.
+const _everyLockTermsField: [
+  Exclude<keyof LockTerms, LockTermsField>,
+  Exclude<LockTermsField, keyof LockTerms>,
+] extends [never, never]
+  ? true
+  : { notListed: Exclude<keyof LockTerms, LockTermsField> } = true
+void _everyLockTermsField
+
+/**
+ * The lock-enforced fields a lock's record of one side of a commitment holds: every field but
+ * `side`. The lock files each record under its side, so a record names its side by where it's
+ * read from rather than in a field.
+ */
+export const LOCK_RECORD_FIELDS = LOCK_TERMS_FIELDS.filter(
+  (f): f is Exclude<LockTermsField, 'side'> => f !== 'side',
+)
+export type LockRecordField = (typeof LOCK_RECORD_FIELDS)[number]
+
+/**
+ * The lock-enforced fields Avow's supplier authorization carries: the reserve and three deadlines.
+ * Its EIP-712 type fixes them, and the build fails when that type and this list disagree about
+ * which lock-enforced fields it holds.
+ */
+export const AUTHORIZATION_TERMS_FIELDS = [
+  'amount',
+  'acceptBy',
+  'chargeDeadline',
+  'releaseDate',
+] as const
+export type AuthorizationTermsField = (typeof AUTHORIZATION_TERMS_FIELDS)[number]
+
+const _authorizationTermsFields: [
+  Exclude<Extract<keyof SupplierAuthorization, LockTermsField>, AuthorizationTermsField>,
+  Exclude<AuthorizationTermsField, keyof SupplierAuthorization>,
+] extends [never, never]
+  ? true
+  : { notListed: Extract<keyof SupplierAuthorization, LockTermsField> } = true
+void _authorizationTermsFields
+
+/** Lock-enforced values as a record, an approval or the terms hold them. */
+export type LockTermsValues<F extends LockTermsField = LockTermsField> = {
+  readonly [K in F]: K extends 'charges' ? readonly Charge[] : LockTerms[K]
+}
+
+/** Two addresses in any letter case. Anything that isn't an address is never equal. */
+function sameAddress(a: string, b: string): boolean {
+  return (
+    isAddress(a, { strict: false }) &&
+    isAddress(b, { strict: false }) &&
+    a.toLowerCase() === b.toLowerCase()
+  )
+}
+
+const CHARGE_FIELD_NAMES = APPROVAL_TYPES.Charge.map((f) => f.name)
+
+/**
+ * Whether two lists of charges are the same: the same kinds in the same order, each equal in
+ * every field the signed `Charge` type holds.
+ */
+export function sameCharges(a: readonly Charge[], b: readonly Charge[]): boolean {
   return (
     a.length === b.length &&
     a.every((c, i) => {
       const d = b[i]
-      return d !== undefined && c.kind === d.kind && c.most === d.most && c.earliest === d.earliest
+      return d !== undefined && CHARGE_FIELD_NAMES.every((name) => c[name] === d[name])
     })
   )
+}
+
+/** How each lock-enforced field compares. The build fails when a field has no entry. */
+const FIELD_EQUALS: {
+  readonly [K in LockTermsField]: (a: LockTermsValues[K], b: LockTermsValues[K]) => boolean
+} = {
+  side: (a, b) => a === b,
+  amount: (a, b) => a === b,
+  freeCancelBy: (a, b) => a === b,
+  acceptBy: (a, b) => a === b,
+  chargeDeadline: (a, b) => a === b,
+  releaseDate: (a, b) => a === b,
+  contestWindow: (a, b) => a === b,
+  charges: sameCharges,
+  day90SupplierShareBps: (a, b) => a === b,
+  arbiter: sameAddress,
+}
+
+/**
+ * The fields where `actual` differs from `expected`, among `fields` and in their order, or an empty
+ * list when they agree. Amounts, times and the day-90 share compare exactly, the arbiter in any
+ * letter case, and charges kind by kind in order. Every check of lock-enforced values uses this,
+ * with `LOCK_TERMS_FIELDS`, `LOCK_RECORD_FIELDS` or `AUTHORIZATION_TERMS_FIELDS` as the fields.
+ */
+export function lockTermsDifferences<F extends LockTermsField>(
+  actual: LockTermsValues<F>,
+  expected: LockTermsValues<F>,
+  fields: readonly F[],
+): F[] {
+  return fields.filter((f) => {
+    const equals = FIELD_EQUALS[f] as (a: unknown, b: unknown) => boolean
+    return !equals(actual[f], expected[f])
+  })
+}
+
+/**
+ * The fields where a lock's record of one side of a commitment differs from the values expected of
+ * it, among `LOCK_RECORD_FIELDS`. The lock stores charges by kind, so a record's charges have no
+ * order of their own and are put in the order of the lock's codes, which is the order terms and
+ * approvals list them in.
+ */
+export function lockRecordDifferences(
+  record: LockTermsValues<LockRecordField>,
+  expected: LockTermsValues<LockRecordField>,
+): LockRecordField[] {
+  const charges = [...record.charges].sort((x, y) => CHARGE_KINDS[x.kind] - CHARGE_KINDS[y.kind])
+  return lockTermsDifferences({ ...record, charges }, expected, LOCK_RECORD_FIELDS)
 }
 
 /** The fields of Avow's approval that have to match the terms. */
@@ -485,6 +619,24 @@ export type ApprovalTermsFields = Pick<
 >
 
 /**
+ * The reason `approvalTermsProblem` gives for each field. The fields come in the order of
+ * `LOCK_TERMS_FIELDS`, so a difference in the side, the amount, a deadline or the contest window
+ * outranks one in the charges, which outranks one in the dispute terms.
+ */
+const APPROVAL_FIELD_REASONS: { readonly [K in LockTermsField]: ReasonCode } = {
+  side: 'approval.terms_mismatch',
+  amount: 'approval.terms_mismatch',
+  freeCancelBy: 'approval.terms_mismatch',
+  acceptBy: 'approval.terms_mismatch',
+  chargeDeadline: 'approval.terms_mismatch',
+  releaseDate: 'approval.terms_mismatch',
+  contestWindow: 'approval.terms_mismatch',
+  charges: 'approval.charges_mismatch',
+  day90SupplierShareBps: 'approval.dispute_mismatch',
+  arbiter: 'approval.dispute_mismatch',
+}
+
+/**
  * Checks that an approval carries exactly what the signed terms map to, and the terms hash both
  * businesses signed. The API runs it before it signs an approval, and a supplier's verifier runs
  * it before it accepts one, so an approval can't make a lock enforce anything the terms don't say.
@@ -494,25 +646,84 @@ export function approvalTermsProblem(
   approval: ApprovalTermsFields,
   expected: { lock: LockTerms; termsHash: Hex },
 ): ReasonCode | null {
-  const l = expected.lock
-  if (
-    approval.side !== l.side ||
-    approval.amount !== l.amount ||
-    approval.freeCancelBy !== l.freeCancelBy ||
-    approval.acceptBy !== l.acceptBy ||
-    approval.chargeDeadline !== l.chargeDeadline ||
-    approval.releaseDate !== l.releaseDate ||
-    approval.contestWindow !== l.contestWindow ||
-    approval.termsHash.toLowerCase() !== expected.termsHash.toLowerCase()
-  ) {
+  if (approval.termsHash.toLowerCase() !== expected.termsHash.toLowerCase()) {
     return 'approval.terms_mismatch'
   }
-  if (!sameCharges(approval.charges, l.charges)) return 'approval.charges_mismatch'
-  if (
-    approval.day90SupplierShareBps !== l.day90SupplierShareBps ||
-    !isAddressEqual(approval.arbiter, l.arbiter)
-  ) {
-    return 'approval.dispute_mismatch'
+  const [first] = lockTermsDifferences(approval, expected.lock, LOCK_TERMS_FIELDS)
+  return first ? APPROVAL_FIELD_REASONS[first] : null
+}
+
+/** The supplier's own account, signing key and payout address, which its approvals have to name. */
+export type ApprovalParties = Pick<SupplierProfile, 'account' | 'signingKey' | 'payee'>
+
+/**
+ * Checks that an approval names the supplier's own account, which consents to releases, its
+ * signing key, which accepts the reserve and reports charges, and its payout address. Returns
+ * `approval.parties_mismatch` when any of them differs, or null.
+ */
+export function approvalPartiesProblem(
+  approval: Pick<Approval, 'supplier' | 'supplierSigner' | 'payee'>,
+  parties: ApprovalParties,
+): ReasonCode | null {
+  const named =
+    sameAddress(approval.supplier, parties.account) &&
+    sameAddress(approval.supplierSigner, parties.signingKey) &&
+    sameAddress(approval.payee, parties.payee)
+  return named ? null : 'approval.parties_mismatch'
+}
+
+/**
+ * Checks that an approval names the token the buyer's lock holds reserves in. Returns
+ * `approval.terms_mismatch` when it names another, or null.
+ */
+export function approvalTokenProblem(
+  approval: Pick<Approval, 'token'>,
+  token: Address,
+): ReasonCode | null {
+  return sameAddress(approval.token, token) ? null : 'approval.terms_mismatch'
+}
+
+/** A mandate's two caps as Avow's approval carries them. */
+export type ApprovalCaps = Pick<Approval, 'capPerCommitment' | 'capOpenReserves'>
+
+/**
+ * A mandate's two caps in a token's base units, as Avow's approval carries them and the lock
+ * enforces them. Throws when a cap can't be paid exactly in a token with these decimals.
+ */
+export function approvalCaps(
+  mandate: Pick<Mandate, 'capPerCommitment' | 'capOpenReserves'>,
+  decimals: number,
+): ApprovalCaps {
+  return {
+    capPerCommitment: toTokenUnits(mandate.capPerCommitment, decimals),
+    capOpenReserves: toTokenUnits(mandate.capOpenReserves, decimals),
   }
-  return null
+}
+
+/** What an approval has to say about the buyer's mandate. */
+export interface ApprovalMandate {
+  /** The mandate's hash under the buyer's lock. */
+  mandateHash: Hex
+  /** The mandate's caps in the token's base units, from `approvalCaps`. */
+  caps: ApprovalCaps
+  /** The keys the caller lets the reserve come from. The zero address is the account's root key. */
+  fundingKeys: readonly Address[]
+}
+
+/**
+ * Checks that an approval names the buyer's mandate, that mandate's two caps and a funding key the
+ * caller allows. The lock enforces the caps and checks the key that funds the reserve against the
+ * one the approval names, so other values would let through a reserve the mandate doesn't allow.
+ * Returns `approval.mandate_mismatch` when any of them differs, or null.
+ */
+export function approvalMandateProblem(
+  approval: Pick<Approval, 'mandateHash' | 'capPerCommitment' | 'capOpenReserves' | 'fundingKey'>,
+  expected: ApprovalMandate,
+): ReasonCode | null {
+  const named =
+    approval.mandateHash.toLowerCase() === expected.mandateHash.toLowerCase() &&
+    approval.capPerCommitment === expected.caps.capPerCommitment &&
+    approval.capOpenReserves === expected.caps.capOpenReserves &&
+    expected.fundingKeys.some((k) => sameAddress(approval.fundingKey, k))
+  return named ? null : 'approval.mandate_mismatch'
 }

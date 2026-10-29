@@ -2,26 +2,29 @@ import {
   type Acceptance,
   type AnyTerms,
   type Approval,
+  type ApprovalCaps,
   type AvowDomain,
   acceptanceTypedData,
+  approvalCaps,
   approvalDigest,
   approvalJson,
+  approvalMandateProblem,
+  approvalPartiesProblem,
   approvalTermsProblem,
-  CHARGE_KINDS,
-  type Charge,
+  approvalTokenProblem,
   digestOf,
   type HashSigner,
   isKeySignature,
   isTermsV1,
   type LockTerms,
   type LockTiming,
+  lockRecordDifferences,
   lockTerms,
   MESSAGE_VERSIONS,
   parseSigned,
   type ReasonCode,
   type Signed,
   termsShapeProblem,
-  toTokenUnits,
 } from '@avow-finance/spec'
 import {
   type Address,
@@ -93,13 +96,6 @@ export interface ReadyAcceptance {
 }
 
 export type PreparedAcceptance = ReadyAcceptance | { ok: false; reason: ReasonCode }
-
-const sameCharges = (a: readonly Charge[], b: readonly Charge[]) =>
-  a.length === b.length &&
-  a.every((c, i) => {
-    const d = b[i]
-    return d !== undefined && c.kind === d.kind && c.most === d.most && c.earliest === d.earliest
-  })
 
 const sameTiming = (a: LockTiming, b: LockTiming) =>
   a.minContestWindow === b.minContestWindow &&
@@ -177,27 +173,19 @@ export async function prepareAcceptance(
   if (!same(a.commitmentId, request.agreed.commitmentId)) {
     return refuse('approval.commitment_mismatch')
   }
-  if (
-    !isAddressEqual(a.supplier, config.account) ||
-    !isAddressEqual(a.supplierSigner, config.signingKey) ||
-    !isAddressEqual(a.payee, config.payee)
-  ) {
-    return refuse('approval.parties_mismatch')
-  }
+  const parties = approvalPartiesProblem(a, config)
+  if (parties) return refuse(parties)
   let enforced: LockTerms
-  let caps: [bigint, bigint]
+  let caps: ApprovalCaps
   try {
     enforced = lockTerms(t, token.decimals)
-    caps = [
-      toTokenUnits(mandate.capPerCommitment, token.decimals),
-      toTokenUnits(mandate.capOpenReserves, token.decimals),
-    ]
+    caps = approvalCaps(mandate, token.decimals)
   } catch {
     return refuse('authorization.token_not_accepted')
   }
-  if (a.side !== 'buyer' || !isAddressEqual(a.token, token.token)) {
-    return refuse('approval.terms_mismatch')
-  }
+  if (a.side !== 'buyer') return refuse('approval.terms_mismatch')
+  const tokenProblem = approvalTokenProblem(a, token.token)
+  if (tokenProblem) return refuse(tokenProblem)
   // Every field the lock enforces has to be what the supplier's own terms map to, through the
   // same mapping Avow's API signs with, under the terms hash the supplier agreed to.
   const differs = approvalTermsProblem(a, {
@@ -206,18 +194,16 @@ export async function prepareAcceptance(
   })
   if (differs) return refuse(differs)
 
-  // The approval against the buyer's mandate, Avow's authorization and who funded the reserve.
-  const fundedByAgentOrRoot =
-    isAddressEqual(a.fundingKey, mandate.agentKey) || isAddressEqual(a.fundingKey, zeroAddress)
-  if (
-    !same(a.mandateHash, auth.mandateHash) ||
-    a.capPerCommitment !== caps[0] ||
-    a.capOpenReserves !== caps[1] ||
-    !fundedByAgentOrRoot ||
-    !isAddressEqual(a.fundingKey, backing.fundingKey)
-  ) {
-    return refuse('approval.mandate_mismatch')
-  }
+  // The approval against the buyer's mandate and Avow's authorization. The reserve may come from
+  // the mandate's agent key or the account's root key.
+  const mandateProblem = approvalMandateProblem(a, {
+    mandateHash: auth.mandateHash,
+    caps,
+    fundingKeys: [mandate.agentKey, zeroAddress],
+  })
+  if (mandateProblem) return refuse(mandateProblem)
+  // And it has to name the key that funded the reserve.
+  if (!isAddressEqual(a.fundingKey, backing.fundingKey)) return refuse('approval.mandate_mismatch')
 
   // The lock holds this exact approval, under settings the supplier accepts.
   const approvalHash = approvalDigest(a, d)
@@ -265,22 +251,16 @@ export async function prepareAcceptance(
   })
 }
 
-/** Whether the lock's record carries the approval's terms, field by field. */
+/**
+ * Whether the lock's record carries the approval: every lock-enforced field it stores, the
+ * parties, the terms hash and the mandate hash.
+ */
 function holdsApproval(b: LockedBacking, a: Approval): boolean {
-  const byKind = (x: Charge, y: Charge) => CHARGE_KINDS[x.kind] - CHARGE_KINDS[y.kind]
   return (
-    b.amount === a.amount &&
+    lockRecordDifferences(b, a).length === 0 &&
     isAddressEqual(b.payee, a.payee) &&
     isAddressEqual(b.supplier, a.supplier) &&
     isAddressEqual(b.supplierSigner, a.supplierSigner) &&
-    b.freeCancelBy === a.freeCancelBy &&
-    b.acceptBy === a.acceptBy &&
-    b.chargeDeadline === a.chargeDeadline &&
-    b.releaseDate === a.releaseDate &&
-    b.contestWindow === a.contestWindow &&
-    sameCharges([...b.charges].sort(byKind), [...a.charges].sort(byKind)) &&
-    b.day90SupplierShareBps === a.day90SupplierShareBps &&
-    isAddressEqual(b.arbiter, a.arbiter) &&
     same(b.termsHash, a.termsHash) &&
     same(b.mandateHash, a.mandateHash)
   )

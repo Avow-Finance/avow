@@ -104,7 +104,8 @@ export const REASON_CODES = {
     'The commitment already has more reports than the consent names, so the lock would never take it',
   'consent.count_out_of_range': 'The consent names a report count no commitment can reach',
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',
-  'chain.reserve_mismatch': 'The on-chain reserve differs from the authorization',
+  'chain.reserve_mismatch':
+    'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',
   'chain.reserve_accepted': 'The reserve has already been accepted',
   'chain.lock_unknown': "The lock isn't running the code Avow's factory deploys",
   'chain.agent_key_inactive':
