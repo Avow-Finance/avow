@@ -6,6 +6,7 @@ A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, 
 
 - `GET /profile` gives agents the supplier's business id, account, payout address and signing key.
 - `POST /agreements` signs an agent's terms agreement. It signs GPU reservation terms that meet Avow's testnet profile, reserve no more than its limit and leave it at least a minute to accept. It records the booking before it answers, and it answers the same offer again with the same signature.
+- Both routes and their bodies are the ones `@avow-finance/spec` fixes for every supplier adapter, so an agent that talks to this adapter talks to yours.
 - Every few seconds it asks Avow to authorize each booking it signed, with a request its signing key signs. Once the agent has funded the reserve, Avow answers with its authorization, its approval and the buyer's mandate.
 - The verifier checks all three against the supplier's own terms and the lock before the supplier holds capacity, then builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
 - A booking whose reserve never arrives lapses at its acceptance deadline, and Avow returns any reserve then.

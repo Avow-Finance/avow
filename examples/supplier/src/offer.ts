@@ -1,13 +1,10 @@
 import {
-  type AvowDomain,
+  type AgreementOffer,
   GPU_RESERVATION,
-  type Terms,
-  type TermsAgreement,
   type TermsProfile,
   termsHash,
   validateTerms,
 } from '@avow-finance/spec'
-import type { Hex } from 'viem'
 
 /** What this supplier signs. A real supplier checks its own catalog and capacity here too. */
 export interface OfferRules {
@@ -18,14 +15,6 @@ export interface OfferRules {
   profile: TermsProfile
   /** Seconds the supplier needs between signing and the acceptance deadline. */
   minTimeToAccept: bigint
-}
-
-/** An agent's request to sign a terms agreement, as the SDK's `SupplierConnection` sends it. */
-export interface AgreementOffer {
-  agreement: TermsAgreement
-  terms: Terms
-  salt: Hex
-  domain: AvowDomain
 }
 
 /**

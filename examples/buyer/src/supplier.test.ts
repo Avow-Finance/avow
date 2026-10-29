@@ -1,15 +1,20 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { isKeySignature } from '@avow-finance/spec'
+import { type Address, type Hex, keccak256, stringToHex } from 'viem'
+import { generatePrivateKey } from 'viem/accounts'
+import { Account, P256 } from 'viem/tempo'
 import { afterEach, describe, expect, it } from 'vitest'
 import { httpSupplier } from './supplier.js'
 
+// Every key is generated for the run and held only in memory.
 const profile = {
   businessId: 'biz_supplier',
   account: '0x00000000000000000000000000000000000000C1',
   payee: '0x00000000000000000000000000000000000000C1',
   signingKey: '0x00000000000000000000000000000000000000C3',
 }
-const SIGNATURE = `0x${'ab'.repeat(65)}`
+const DIGEST = keccak256(stringToHex('an agreement'))
 
 let server: Server | null = null
 afterEach(async () => {
@@ -41,12 +46,30 @@ const offer = {
   domain: { chainId: 42431, verifyingContract: '0x00000000000000000000000000000000000010c4' },
 } as never
 
+/** A supplier's signing key of each kind Tempo reads, as `isKeySignature` checks them. */
+const signingKeys = {
+  secp256k1: () => Account.fromSecp256k1(generatePrivateKey()),
+  'P-256': () => Account.fromP256(P256.randomPrivateKey()),
+  WebAuthn: () =>
+    Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), {
+      rpId: 'supplier.example',
+      origin: 'https://supplier.example',
+    }),
+}
+
 describe("the agent's channel to a supplier", () => {
   it("reads the supplier's profile and sends an offer as JSON, returning the signature", async () => {
-    const { url, bodies } = await supplierAt({ agreement: [200, { signature: SIGNATURE }] })
+    const signature = await signingKeys.secp256k1().sign({ hash: DIGEST })
+    const { url, bodies } = await supplierAt({ agreement: [200, { signature }] })
     const supplier = await httpSupplier(url)
-    expect(supplier.profile).toEqual(profile)
-    expect(await supplier.signAgreement(offer)).toBe(SIGNATURE)
+    // Addresses read in lower case, as every wire form in the spec reads them.
+    expect(supplier.profile).toEqual({
+      businessId: 'biz_supplier',
+      account: '0x00000000000000000000000000000000000000c1',
+      payee: '0x00000000000000000000000000000000000000c1',
+      signingKey: '0x00000000000000000000000000000000000000c3',
+    })
+    expect(await supplier.signAgreement(offer)).toBe(signature)
     expect(bodies).toEqual([
       {
         agreement: { commitmentId: `0x${'11'.repeat(32)}`, nonce: '9', expiry: '1800000600' },
@@ -56,6 +79,16 @@ describe("the agent's channel to a supplier", () => {
       },
     ])
   })
+
+  for (const [kind, make] of Object.entries(signingKeys)) {
+    it(`returns a supplier's ${kind} signature, which the SDK then checks`, async () => {
+      const key = make()
+      const signature: Hex = await key.sign({ hash: DIGEST })
+      expect(isKeySignature(DIGEST, signature, key.address as Address)).toBe(true)
+      const { url } = await supplierAt({ agreement: [200, { signature }] })
+      expect(await (await httpSupplier(url)).signAgreement(offer)).toBe(signature.toLowerCase())
+    })
+  }
 
   it("says why the supplier refused, and refuses an answer that isn't a signature", async () => {
     const refused = await supplierAt({

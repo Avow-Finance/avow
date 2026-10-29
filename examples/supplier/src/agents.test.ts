@@ -1,5 +1,14 @@
 import type { AddressInfo } from 'node:net'
-import { digestOf, TESTNET_DEMO_PROFILE, termsAgreementTypedData, toWire } from '@avow-finance/spec'
+import {
+  digestOf,
+  parseAgreementSignature,
+  parseSupplierProfile,
+  parseSupplierRefusal,
+  SUPPLIER_ADAPTER_PATHS,
+  TESTNET_DEMO_PROFILE,
+  termsAgreementTypedData,
+  toWire,
+} from '@avow-finance/spec'
 import { isAddressEqual, recoverAddress } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type AgentDeps, agentServer, signAgreement } from './agents.js'
@@ -84,25 +93,42 @@ describe('signing an agent’s terms agreement', () => {
     expect((await signAgreement(deps, offer())).status).toBe(422)
   })
 
-  it('refuses a body that isn’t an offer', async () => {
-    expect((await signAgreement(deps, { hello: 'there' })).status).toBe(400)
-    expect((await signAgreement(deps, offer({ terms: { template: 'nope' } }))).status).toBe(400)
+  it('refuses a body that isn’t an offer, saying why as the spec reads a refusal', async () => {
+    for (const body of [{ hello: 'there' }, offer({ terms: { template: 'nope' } })]) {
+      const answer = await signAgreement(deps, body)
+      expect(answer.status).toBe(400)
+      expect(parseSupplierRefusal(answer.body)?.error).toContain('the body is no agreement offer')
+    }
   })
 
-  it('serves its profile and signs agreements over HTTP', async () => {
+  it('serves its profile and signs agreements over HTTP, at the routes and in the bodies the spec fixes', async () => {
     const server = agentServer(deps).listen(0)
     await new Promise((resolve) => server.once('listening', resolve))
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
     try {
-      expect(await (await fetch(`${url}/profile`)).json()).toEqual(deps.profile)
-      const signed = await fetch(`${url}/agreements`, {
+      const profile = await fetch(`${url}${SUPPLIER_ADAPTER_PATHS.profile}`)
+      expect(parseSupplierProfile(await profile.json())).toEqual({
+        ok: true,
+        value: {
+          businessId: deps.profile.businessId,
+          account: deps.profile.account.toLowerCase(),
+          payee: deps.profile.payee.toLowerCase(),
+          signingKey: deps.profile.signingKey.toLowerCase(),
+        },
+      })
+      const signed = await fetch(`${url}${SUPPLIER_ADAPTER_PATHS.agreements}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(offer()),
       })
       expect(signed.status).toBe(200)
-      const broken = await fetch(`${url}/agreements`, { method: 'POST', body: '{' })
+      expect(parseAgreementSignature(await signed.json()).ok).toBe(true)
+      const broken = await fetch(`${url}${SUPPLIER_ADAPTER_PATHS.agreements}`, {
+        method: 'POST',
+        body: '{',
+      })
       expect(broken.status).toBe(400)
+      expect(parseSupplierRefusal(await broken.json())).not.toBeNull()
       expect((await fetch(`${url}/other`)).status).toBe(404)
     } finally {
       await new Promise((resolve) => server.close(resolve))

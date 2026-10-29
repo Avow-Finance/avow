@@ -1,6 +1,6 @@
-import { TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
+import { type AgreementOffer, TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
 import { describe, expect, it } from 'vitest'
-import { type AgreementOffer, agreementProblem, type OfferRules } from './offer.js'
+import { agreementProblem, type OfferRules } from './offer.js'
 import { agreement, CHAIN_ID, DOMAIN, NOW, SALT, terms } from './test/fixtures.js'
 
 const rules: OfferRules = {

@@ -1,17 +1,18 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import {
+  type AgreementSignature,
   canonicalJson,
   digestOf,
-  parseTerms,
+  parseAgreementOffer,
+  SUPPLIER_ADAPTER_PATHS,
   type SupplierProfile,
-  termsAgreementJson,
+  type SupplierRefusal,
   termsAgreementTypedData,
   toWire,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
-import { z } from 'zod'
-import { type AgreementOffer, agreementProblem, type OfferRules } from './offer.js'
+import { agreementProblem, type OfferRules } from './offer.js'
 import type { SupplierStore } from './store.js'
 
 export interface AgentDeps {
@@ -32,36 +33,10 @@ export interface Answer {
 }
 
 const MAX_BODY = 64 * 1024
-const fail = (status: number, error: string): Answer => ({ status, body: { error } })
-
-const offerJson = z.strictObject({
-  agreement: z.unknown(),
-  terms: z.unknown(),
-  salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
-  domain: z.strictObject({
-    chainId: z.number().int().positive(),
-    verifyingContract: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  }),
+const fail = (status: number, error: string): Answer => ({
+  status,
+  body: { error } satisfies SupplierRefusal,
 })
-
-/** Reads an agent's request to sign a terms agreement, or says what's wrong with it. */
-function readOffer(json: unknown): AgreementOffer | string {
-  const outer = offerJson.safeParse(json)
-  if (!outer.success) return 'the body is no agreement offer'
-  const agreement = termsAgreementJson.safeParse(outer.data.agreement)
-  if (!agreement.success) return "the agreement doesn't parse"
-  const terms = parseTerms(outer.data.terms)
-  if (!terms.ok) return `the terms don't parse (${terms.reason})`
-  return {
-    agreement: agreement.data,
-    terms: terms.value,
-    salt: outer.data.salt.toLowerCase() as Hex,
-    domain: {
-      chainId: outer.data.domain.chainId,
-      verifyingContract: outer.data.domain.verifyingContract.toLowerCase() as Address,
-    },
-  }
-}
 
 /**
  * Signs an agent's terms agreement, the first thing an agent asks a supplier for. The supplier
@@ -69,8 +44,9 @@ function readOffer(json: unknown): AgreementOffer | string {
  * sent again gets the same signature, and another offer for the same commitment is refused.
  */
 export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Answer> {
-  const offer = readOffer(json)
-  if (typeof offer === 'string') return fail(400, offer)
+  const parsed = parseAgreementOffer(json)
+  if (!parsed.ok) return fail(400, `the body is no agreement offer (${parsed.reason})`)
+  const offer = parsed.value
   const { agreement, terms, salt, domain } = offer
   const commitmentId = agreement.commitmentId.toLowerCase() as Hex
   const record = {
@@ -92,7 +68,7 @@ export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Ans
         lock: known.lock,
       })
     return same
-      ? { status: 200, body: { signature: known.signature } }
+      ? { status: 200, body: { signature: known.signature } satisfies AgreementSignature }
       : fail(409, 'another agreement for this commitment is already signed')
   }
   const problem = agreementProblem(offer, deps.rules, deps.now())
@@ -105,7 +81,7 @@ export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Ans
   })
   deps.store.put({ commitmentId, ...record, signature, status: 'agreed' })
   deps.log(`signed the agreement for ${commitmentId} on lock ${domain.verifyingContract}`)
-  return { status: 200, body: { signature } }
+  return { status: 200, body: { signature } satisfies AgreementSignature }
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -120,16 +96,17 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * The supplier's endpoint for agents. `GET /profile` gives the supplier's business id, account,
- * payout address and signing key, and `POST /agreements` signs a terms agreement.
+ * The supplier's endpoint for agents, at the routes the spec fixes for every adapter. A `GET` of
+ * the profile route gives the supplier's business id, account, payout address and signing key,
+ * and a `POST` to the agreements route signs a terms agreement.
  */
 export function agentServer(deps: AgentDeps): Server {
   return createServer(async (req, res) => {
     let answer: Answer
     try {
-      if (req.method === 'GET' && req.url === '/profile') {
-        answer = { status: 200, body: deps.profile }
-      } else if (req.method === 'POST' && req.url === '/agreements') {
+      if (req.method === 'GET' && req.url === SUPPLIER_ADAPTER_PATHS.profile) {
+        answer = { status: 200, body: deps.profile satisfies SupplierProfile }
+      } else if (req.method === 'POST' && req.url === SUPPLIER_ADAPTER_PATHS.agreements) {
         let json: unknown
         try {
           json = await readBody(req)
