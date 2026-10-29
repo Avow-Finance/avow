@@ -15,7 +15,7 @@ import {
   verifySupplierAuthorization,
 } from '@avow-finance/verifier'
 import type { Address, Hex } from 'viem'
-import type { Booking, SupplierStore } from './store.js'
+import type { Booking, BookingStatus, SupplierStore } from './store.js'
 
 export interface AcceptDeps {
   store: SupplierStore
@@ -52,20 +52,24 @@ const json = (value: unknown): unknown => JSON.parse(JSON.stringify(toWire(value
  * receipt, or the lock itself, shows the lock took it. A booking whose reserve never arrives
  * lapses at its acceptance deadline.
  */
-export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['status']> {
+export async function advance(deps: AcceptDeps, booking: Booking): Promise<BookingStatus> {
   const { store } = deps
-  const save = (status: Booking['status'], sent?: Booking['sent'] | null) => {
-    b.status = status
-    if (sent === null) delete b.sent
-    else if (sent) b.sent = sent
-    store.put(b)
-    return status
+  // What every status shares. Each save builds the booking whole from it, so a status records an
+  // acceptance transaction only when it's one that sends or keeps one.
+  const { status: _status, sent: _sent, ...record } = booking
+  let b = booking
+  const save = (next: Booking): BookingStatus => {
+    store.put(next)
+    b = next
+    return next.status
   }
   /** Grants the capacity the supplier held, which it does only once the lock holds the acceptance. */
   const grant = (shownBy: string) => {
     // Here a real supplier grants the capacity it held for the booking.
     deps.log(`granting the capacity held for ${b.commitmentId}, now that ${shownBy}`)
-    return save('accepted')
+    // The accepted booking keeps the acceptance transaction sent for it, when there was one.
+    const { sent } = b
+    return save(sent ? { ...record, status: 'accepted', sent } : { ...record, status: 'accepted' })
   }
 
   if (b.status === 'accepting') {
@@ -80,11 +84,11 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
       if (validBefore === null || (await deps.finalizedTime()) <= validBefore) return 'accepting'
       deps.log(`the acceptance for ${b.commitmentId} never landed, so it goes again`)
     }
-    save('held', null)
+    save({ ...record, status: 'held' })
   }
   if (deps.now() >= b.terms.remedies.acceptBy) {
     deps.log(`the reserve for ${b.commitmentId} never came before its acceptance deadline`)
-    return save('lapsed')
+    return save({ ...record, status: 'lapsed' })
   }
 
   const answer = await deps.authorize({
@@ -135,7 +139,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
     deps.log(
       `holding capacity for ${b.commitmentId}, which Avow authorized, until the lock accepts`,
     )
-    save('held')
+    save({ ...record, status: 'held' })
   }
 
   const prepared = await prepareAcceptance(
@@ -162,22 +166,22 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
   const acceptance = await signAcceptance(prepared, deps.signingKey, {
     disclosureId: prepared.disclosure.id,
   })
-  save('accepting', null)
+  save({ ...record, status: 'accepting' })
   let receipt: { status: 'success' | 'reverted' }
   try {
     receipt = await deps.send(acceptCall(acceptance), (hash, validBefore) => {
-      save('accepting', { hash, validBefore })
+      save({ ...record, status: 'accepting', sent: { hash, validBefore } })
     })
   } catch (e) {
     if (e instanceof SendError && e.outcome === 'failed') {
       deps.log(`sending the acceptance for ${b.commitmentId} failed: ${e.message}`)
-      return save('held', null)
+      return save({ ...record, status: 'held' })
     }
     throw e
   }
   if (receipt.status !== 'success') {
     deps.log(`the acceptance for ${b.commitmentId} reverted, so the lock didn't take it`)
-    return save('held', null)
+    return save({ ...record, status: 'held' })
   }
   return grant("the acceptance's receipt shows the lock took it")
 }

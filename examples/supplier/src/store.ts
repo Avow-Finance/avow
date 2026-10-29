@@ -38,8 +38,14 @@ export interface SupplierKeys {
 export const BOOKING_STATUSES = ['agreed', 'held', 'accepting', 'accepted', 'lapsed'] as const
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]
 
-/** One booking an agent made, as the supplier keeps it. */
-export interface Booking {
+/** The acceptance transaction last sent, recorded before its bytes went to the chain. */
+export interface SentAcceptance {
+  hash: Hex
+  validBefore: bigint | null
+}
+
+/** What a booking holds whatever its status. */
+interface BookingRecord {
   commitmentId: Hex
   chainId: number
   lock: Address
@@ -50,10 +56,16 @@ export interface Booking {
   salt: Hex
   /** The supplier's signature on the agreement. */
   signature: Hex
-  status: BookingStatus
-  /** The acceptance transaction last sent, recorded before its bytes went to the chain. */
-  sent?: { hash: Hex; validBefore: bigint | null }
 }
+
+/**
+ * One booking an agent made, as the supplier keeps it, keyed on its status. Only an accepting
+ * booking sends an acceptance, and an accepted one keeps the send that got it there, so those two
+ * are the only statuses that can record one.
+ */
+export type Booking =
+  | (BookingRecord & { status: 'agreed' | 'held' | 'lapsed'; sent?: never })
+  | (BookingRecord & { status: 'accepting' | 'accepted'; sent?: SentAcceptance })
 
 const lower = <T extends string>(s: string) => s.toLowerCase() as T
 const bytes32 = z
@@ -144,7 +156,8 @@ export class SupplierStore {
 
   /**
    * The booking for a commitment, or null when there's none. It refuses a file that doesn't hold
-   * a booking, that holds another commitment's, or whose agreement or terms don't parse.
+   * a booking, that holds another commitment's, whose agreement or terms don't parse, or that
+   * records an acceptance transaction under a status that never sends one.
    */
   booking(commitmentId: Hex): Booking | null {
     const id = commitmentId.toLowerCase() as Hex
@@ -154,7 +167,7 @@ export class SupplierStore {
     const refuse = (what: string) => new Error(`${path} ${what}`)
     const outer = bookingJson.safeParse(json)
     if (!outer.success) throw refuse("doesn't hold a booking")
-    const { agreement: agreementJson, terms: termsJson, sent, ...rest } = outer.data
+    const { agreement: agreementJson, terms: termsJson, status, sent, ...rest } = outer.data
     if (rest.commitmentId !== id) throw refuse(`holds the booking for ${rest.commitmentId}`)
     const agreement = termsAgreementJson.safeParse(agreementJson)
     if (!agreement.success) throw refuse("holds an agreement that doesn't parse")
@@ -162,12 +175,12 @@ export class SupplierStore {
       throw refuse('holds an agreement for another commitment')
     const terms = parseTerms(termsJson)
     if (!terms.ok) throw refuse(`holds terms that don't parse (${terms.reason})`)
-    return {
-      ...rest,
-      agreement: agreement.data,
-      terms: terms.value,
-      ...(sent ? { sent } : {}),
+    const record = { ...rest, agreement: agreement.data, terms: terms.value }
+    if (sent === undefined) return { ...record, status }
+    if (status !== 'accepting' && status !== 'accepted') {
+      throw refuse(`holds an acceptance transaction, which a booking that's ${status} never has`)
     }
+    return { ...record, status, sent }
   }
 
   put(booking: Booking) {

@@ -90,6 +90,8 @@ describe("the supplier's acceptance of a booking", () => {
   it("checks Avow's authorization, holds capacity, sends the acceptance the verifier built, and grants once it lands", async () => {
     expect(await advance(deps, put())).toBe('accepted')
     expect(status()).toBe('accepted')
+    // The accepted booking keeps the acceptance transaction that got it there.
+    expect(store.booking(COMMITMENT)?.sent).toEqual({ hash: HASH, validBefore: NOW + 25n })
     expect(sent).toHaveLength(1)
     const call = sent[0] as Call
     expect(call.to.toLowerCase()).toBe(LOCK)

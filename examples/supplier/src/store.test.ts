@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
 import type { Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Booking, SupplierStore } from './store.js'
+import type { Booking, SentAcceptance, SupplierStore } from './store.js'
 import { agreedBooking, COMMITMENT, NOW, tempStore } from './test/fixtures.js'
 
 let store: SupplierStore
@@ -34,7 +34,7 @@ describe("the supplier's state directory", () => {
 
   it('writes a booking as JSON and reads it back parsed, its terms, agreement and send included', () => {
     expect(store.booking(COMMITMENT)).toBeNull()
-    const sent: Booking['sent'] = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
+    const sent: SentAcceptance = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
     const booking: Booking = { ...agreedBooking(), status: 'accepting', sent }
     store.put(booking)
     expect(store.booking(COMMITMENT)).toEqual(booking)
@@ -42,6 +42,24 @@ describe("the supplier's state directory", () => {
     expect(store.booking(COMMITMENT)?.sent).toEqual({ ...sent, validBefore: null })
     expect(store.commitmentIds()).toEqual([COMMITMENT])
     expect(store.bookings()).toHaveLength(1)
+  })
+
+  it('keeps an acceptance transaction only on a booking that is accepting or accepted', () => {
+    const sent: SentAcceptance = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
+    for (const status of ['accepting', 'accepted'] as const) {
+      const booking: Booking = { ...agreedBooking(), status, sent }
+      store.put(booking)
+      expect(store.booking(COMMITMENT), status).toEqual(booking)
+    }
+    // @ts-expect-error A held booking never sends an acceptance, so it can't record one.
+    store.put({ ...agreedBooking(), status: 'held', sent })
+    for (const status of ['agreed', 'held', 'lapsed'] as const) {
+      writeBooking(COMMITMENT, (j) => Object.assign(j, { status, sent: toWire(sent) }))
+      expect(() => store.booking(COMMITMENT), status).toThrow(
+        `${bookingFile(COMMITMENT)} holds an acceptance transaction, which a booking that's ${status} never has`,
+      )
+      expect(() => store.bookings(), status).toThrow('holds an acceptance transaction')
+    }
   })
 
   it("refuses a booking file that doesn't hold what it should, saying which and why", () => {
