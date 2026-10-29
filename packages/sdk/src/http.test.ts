@@ -188,7 +188,7 @@ describe('httpAvowApi', () => {
     expect(v.ok && v.value.credentials.signer).toBe(agent.accessKeyAddress.toLowerCase())
   })
 
-  it('takes only an origin and a validity Avow accepts, and says which calls wait', async () => {
+  it('takes only an origin and a validity Avow accepts', async () => {
     const { fetcher } = fakeApi([])
     for (const baseUrl of [
       'ftp://api.testnet.avow.finance',
@@ -201,10 +201,14 @@ describe('httpAvowApi', () => {
     }
     expect(() => client(fetcher, { requestValidity: 301n })).toThrow(RangeError)
     expect(() => client(fetcher, { requestValidity: 0n })).toThrow(RangeError)
-    const api = client(fetcher)
-    const commitmentId = `0x${'11'.repeat(32)}` as Hex
-    await expect(api.cancel({ commitmentId })).rejects.toThrow(/cancellations/)
-    await expect(api.requestStart({ commitmentId })).rejects.toThrow(/start requests/)
+  })
+
+  it('serves only the reserve check and the relay, leaving out the calls Avow does not serve yet', () => {
+    const api = client(fakeApi([]).fetcher)
+    expect(Object.keys(api).sort()).toEqual(['approveReserve', 'sponsor'])
+    expect(api.cancel).toBeUndefined()
+    expect(api.requestStart).toBeUndefined()
+    expect(api.recordStart).toBeUndefined()
   })
 
   it('hands each signed request to the caller to keep', async () => {

@@ -211,17 +211,14 @@ export function avowRequests(config: AvowRequestConfig) {
 /**
  * Avow's hosted API as an `AvowApi`, for an agent whose mandate names `domain`. Each call is one
  * operation sent through `avowRequests`, so a lost answer never turns into a second approval or a
- * second co-signature. Cancelling and starting a job come with the start-request and cancellation
- * records, and until then those calls throw.
+ * second co-signature. It serves the reserve check and the relay, and leaves out `cancel`,
+ * `requestStart` and `recordStart` until Avow serves its records of cancellations and job starts,
+ * so code can't call them on it by accident.
  */
 export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
   const send = avowRequests(config)
   const { domain } = config
   const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
-
-  const notYet = (what: string) => async () => {
-    throw new Error(`Avow's hosted API doesn't ${what} yet`)
-  }
 
   return {
     approveReserve: (body) =>
@@ -244,9 +241,6 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
           return parsed.ok ? parsed.value.transaction : null
         },
       }),
-    cancel: notYet('record cancellations'),
-    requestStart: notYet('timestamp start requests'),
-    recordStart: notYet('record start receipts'),
   }
 }
 

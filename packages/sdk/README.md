@@ -1,6 +1,6 @@
 # @avow-finance/sdk
 
-The TypeScript SDK an agent uses to make commitments backed by Avow reserves. An agent books with a supplier, has Avow approve the reserve, checks the approval against the terms, and funds the reserve from its business's account with its own key, while Avow's relay pays the fee. It then cancels or starts the job and reads what the lock holds.
+The TypeScript SDK an agent uses to make commitments backed by Avow reserves. An agent books with a supplier, has Avow approve the reserve, checks the approval against the terms, and funds the reserve from its business's account with its own key, while Avow's relay pays the fee. It then reads what the lock holds, and it cancels or starts the job once Avow serves the records those calls need.
 
 > **Status:** pre-release and testnet only. The lock it calls is unaudited testnet code, and every interface here may change before 1.0.
 
@@ -18,11 +18,11 @@ It returns the commitment with its terms, salt, agreement and approval. Keep the
 
 When funding fails, `book` settles the booking against the lock. Avow's approval stops working at the earlier of its expiry and the acceptance deadline, so `book` waits for a finalized block at or past that moment and reads the lock as of it. A read that fails is read again, and an empty lock counts only when the latest block agrees. If the reserve landed anyway, `book` returns the commitment. Its `reservedIn` is null when the reserve landed in a transaction the agent didn't send, or the receipt of the agent's own couldn't be read. Otherwise `book` throws a `BookingError` carrying the commitment and every hash sent. Its outcome is `failed` when the lock holds no reserve, and `unknown` when the chain didn't reach that block in time. `reconcile` takes what the error carries and reads the lock again later, so the agent settles the same booking.
 
-`cancel` tells Avow the business cancels. `start` reads the lock first and starts only a commitment the lock holds with that supplier's signing key. It has Avow timestamp the request and the supplier sign its start receipt, checks the receipt answers the request and comes from that key, and has Avow record the start. Both need the mandate to permit the action. `commitment` reads what the lock holds for a commitment.
+`commitment` reads what the lock holds for a commitment. `cancel` tells Avow the business cancels. `start` reads the lock first and starts only a commitment the lock holds with that supplier's signing key. It has Avow timestamp the request and the supplier sign its start receipt, checks the receipt answers the request and comes from that key, and has Avow record the start. Both need the mandate to permit the action, and an `AvowApi` that serves Avow's records of cancellations and starts. Avow's hosted API doesn't serve them yet, so through `httpAvowApi` both throw before reading or sending anything, with an error naming the call that isn't served.
 
 ## What it talks to
 
-- **Avow.** `AvowApi` is Avow's side of the commitments: the reserve check, the relay that pays fees, and the records of cancellations and starts. `httpAvowApi` implements it over Avow's hosted API, with each call signed by the agent's own access key through `agentRequestKey`, as [signed requests](../spec/signed-requests.md) sets out. Each call is one operation with its own request id. After no answer, a broken answer, a 5xx or `request.in_progress`, the client sends the same bytes again until Avow answers definitely, and Avow answers an identical repeat without acting again. It never follows a redirect. It covers the reserve check and the relay now, and cancellations and starts once their records are agreed. Demos and tests can pass a local implementation instead.
+- **Avow.** `AvowApi` is Avow's side of the commitments: the reserve check, the relay that pays fees, and the records of cancellations and starts. Those three record calls, `cancel`, `requestStart` and `recordStart`, are optional. `httpAvowApi` implements it over Avow's hosted API, with each call signed by the agent's own access key through `agentRequestKey`, as [signed requests](../spec/signed-requests.md) sets out. Each call is one operation with its own request id. After no answer, a broken answer, a 5xx or `request.in_progress`, the client sends the same bytes again until Avow answers definitely, and Avow answers an identical repeat without acting again. It never follows a redirect. It serves the reserve check and the relay, and it leaves out the record calls until Avow serves them, so code can't call them on it by accident. Demos and tests can pass a local implementation instead.
 - **The supplier.** `SupplierConnection` is the agent's channel to one supplier, which the supplier's own integration implements.
 - **The chain.** The agent's client reads the lock and sends the funding transaction.
 
@@ -53,8 +53,7 @@ const booked = await agent.book({ supplier, booking, category: 'compute' })
 if (!booked.ok) throw new Error(booked.reason)
 const { commitmentId } = booked.commitment
 
-// When it's time to run the job, start it. Avow records the supplier's signed start receipt.
-await agent.start(commitmentId, supplier)
+// The lock holds the reserve, and shows the supplier's acceptance once it lands.
 console.log(await agent.commitment(commitmentId))
 ```
 

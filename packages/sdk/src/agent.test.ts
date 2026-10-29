@@ -26,6 +26,7 @@ import { tempoModerato } from 'viem/chains'
 import { Abis, Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import { type AgentConfig, BookingError, createAgent } from './agent.js'
+import { agentRequestKey, httpAvowApi } from './http.js'
 import { type Call, RESERVE_ABI } from './lock.js'
 import { SendError } from './send.js'
 import {
@@ -561,6 +562,47 @@ describe('cancelling and starting', () => {
       reason: 'mandate.action_not_permitted',
     })
     expect(s.calls).toEqual([])
+  })
+
+  it('says which call is missing when its AvowApi serves no cancellations or starts, and reads nothing', async () => {
+    const s = await setup()
+    const { approveReserve, sponsor, requestStart } = s.avow
+    if (!requestStart) throw new Error('the stand-in serves start requests')
+    const agent = createAgent({ ...s.config, avow: { approveReserve, sponsor } })
+    await expect(agent.cancel(id('commitment'))).rejects.toThrow(
+      "has no cancel, so it can't record a cancellation. Avow's hosted API doesn't serve cancel yet",
+    )
+    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow(
+      "has no requestStart, so it can't start the job",
+    )
+    const withoutRecord = createAgent({
+      ...s.config,
+      avow: { approveReserve, sponsor, requestStart },
+    })
+    await expect(withoutRecord.start(id('commitment'), s.connection)).rejects.toThrow(
+      "has no recordStart, so it can't start the job",
+    )
+    expect(s.calls).toEqual([])
+    expect(s.chain.state.readAt).toEqual([])
+  })
+
+  it("refuses to cancel or start through Avow's hosted API, before it sends anything", async () => {
+    const s = await setup()
+    const fetched: unknown[] = []
+    const avow = httpAvowApi({
+      baseUrl: 'https://api.testnet.avow.finance',
+      key: agentRequestKey(s.key),
+      domain: D,
+      fetch: (async (url: unknown) => {
+        fetched.push(url)
+        throw new Error('no request should go out')
+      }) as typeof fetch,
+    })
+    const agent = createAgent({ ...s.config, avow })
+    await expect(agent.cancel(id('commitment'))).rejects.toThrow('has no cancel')
+    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow('has no requestStart')
+    expect(fetched).toEqual([])
+    expect(s.chain.state.readAt).toEqual([])
   })
 })
 

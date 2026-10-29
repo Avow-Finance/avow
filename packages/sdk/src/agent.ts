@@ -198,6 +198,11 @@ export function createAgent(config: AgentConfig) {
   const offerValidity = config.offerValidity ?? 600n
   const maxApprovalValidity = config.maxApprovalValidity ?? 300n
   const permits = (action: Mandate['actions'][number]) => mandate.actions.includes(action)
+  /** The error for a record of Avow's that `avow` doesn't serve, as the hosted API doesn't yet. */
+  const notServed = (call: 'cancel' | 'requestStart' | 'recordStart', what: string) =>
+    new Error(
+      `The AvowApi this agent uses has no ${call}, so it can't ${what}. Avow's hosted API doesn't serve ${call} yet.`,
+    )
   const send =
     config.send ??
     ((calls: Call[]) =>
@@ -520,9 +525,10 @@ export function createAgent(config: AgentConfig) {
     /**
      * Tells Avow the business cancels a commitment, which Avow timestamps. Before free
      * cancellation ends the reserve can go back in full, and after it a late cancellation charge
-     * can apply.
+     * can apply. It throws when `avow` has no `cancel`, which Avow's hosted API doesn't serve yet.
      */
     async cancel(commitmentId: Hex) {
+      if (!avow.cancel) throw notServed('cancel', 'record a cancellation')
       if (!permits('cancel')) {
         return { ok: false as const, reason: 'mandate.action_not_permitted' as ReasonCode }
       }
@@ -534,12 +540,15 @@ export function createAgent(config: AgentConfig) {
      * Starts the job with the supplier. The lock has to hold the commitment with this supplier's
      * signing key. Avow timestamps the request, the supplier returns its signed start receipt,
      * which the agent checks answers the request and comes from that key, and Avow records the
-     * start the kept booking rests on.
+     * start the kept booking rests on. It throws before reading anything when `avow` has no
+     * `requestStart` or `recordStart`, which Avow's hosted API doesn't serve yet.
      */
     async start(
       commitmentId: Hex,
       supplier: SupplierConnection,
     ): Promise<{ ok: true; receipt: Signed<StartReceipt> } | { ok: false; reason: ReasonCode }> {
+      if (!avow.requestStart) throw notServed('requestStart', 'start the job')
+      if (!avow.recordStart) throw notServed('recordStart', 'start the job')
       if (!permits('start')) return { ok: false, reason: 'mandate.action_not_permitted' }
       // The receipt has to come from the signing key the lock holds for the commitment.
       const held = await readBacking(client, d.verifyingContract, commitmentId, 'buyer')

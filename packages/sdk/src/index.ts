@@ -1,8 +1,9 @@
 /**
  * Avow SDK for agents. An agent books with a supplier, has Avow approve the reserve, checks the
- * approval against the terms and funds the reserve with its own key, then cancels or starts the
- * job and reads what the lock holds. The administrator's side signs for the business account in
- * Tempo's keychain V2 envelope, which the lock and Avow's API check.
+ * approval against the terms and funds the reserve with its own key, then reads what the lock
+ * holds, and cancels or starts the job through an `AvowApi` that serves those records. The
+ * administrator's side signs for the business account in Tempo's keychain V2 envelope, which the
+ * lock and Avow's API check.
  *
  * Pre-release and testnet only. The lock it calls is unaudited, and every interface may change
  * before 1.0.
