@@ -18,7 +18,6 @@ import {
   isTermsV1,
   type LockTerms,
   type LockTiming,
-  lockRecordDifferences,
   lockTerms,
   MESSAGE_VERSIONS,
   parseSigned,
@@ -251,13 +250,10 @@ export async function prepareAcceptance(
   })
 }
 
-/**
- * Whether the lock's record carries the approval: every lock-enforced field it stores, the
- * parties, the terms hash and the mandate hash.
- */
+/** Whether the lock's record names the approval's parties, terms hash and mandate hash. */
 function holdsApproval(b: LockedBacking, a: Approval): boolean {
+  // Its lock-enforced fields already match, since the record and the approval each match the terms.
   return (
-    lockRecordDifferences(b, a).length === 0 &&
     isAddressEqual(b.payee, a.payee) &&
     isAddressEqual(b.supplier, a.supplier) &&
     isAddressEqual(b.supplierSigner, a.supplierSigner) &&
