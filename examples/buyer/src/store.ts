@@ -10,7 +10,7 @@ import {
   TEMPO_MODERATO,
   toWire,
 } from '@avow-finance/spec'
-import type { Address, Hex } from 'viem'
+import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { z } from 'zod'
 
@@ -68,6 +68,32 @@ function readJson(path: string): unknown {
 }
 
 /**
+ * The setup some JSON holds, with every check a read of the setup file makes. The mandate has to
+ * be signed for the setup's own lock on Moderato, and the enrollment has to be one Avow's API could
+ * have answered with. `refuse` turns what's wrong into the error thrown.
+ */
+function parseSetup(json: unknown, refuse: (what: string) => Error): BuyerSetup {
+  const outer = setupJson.safeParse(json)
+  if (!outer.success) throw refuse("doesn't hold the business's setup")
+  const { lock, mandate, keyAuthorizedIn, enrollment } = outer.data
+  const setup: BuyerSetup = {}
+  if (lock !== undefined) setup.lock = lock
+  if (keyAuthorizedIn !== undefined) setup.keyAuthorizedIn = keyAuthorizedIn
+  if (mandate !== undefined) {
+    if (!lock) throw refuse('holds a mandate but no lock')
+    const parsed = parseSigned(mandate, 'Mandate', mandateJson, { chainId: TEMPO_MODERATO, lock })
+    if (!parsed.ok) throw refuse(`holds a mandate that doesn't parse (${parsed.reason})`)
+    setup.mandate = parsed.value as Signed<Mandate>
+  }
+  if (enrollment !== undefined) {
+    const parsed = parseEnrollment(enrollment)
+    if (!parsed.ok) throw refuse(`holds an enrollment that doesn't parse (${parsed.reason})`)
+    setup.enrollment = parsed.value
+  }
+  return setup
+}
+
+/**
  * The business's state directory: its keys, its setup and one file per booking. Keep it out of
  * version control and back it up, since the keys can't be made again. A booking's file holds its
  * salt, which only the two parties should see. Each file is parsed as it's read, and one that
@@ -95,38 +121,47 @@ export class BuyerStore {
     return keys
   }
 
+  get #setupFile() {
+    return join(this.dir, 'setup.json')
+  }
+
   /**
    * What setting up has done so far. The mandate has to be signed for the setup's own lock on
    * Moderato, and the enrollment has to be one Avow's API could have answered with.
    */
   setup(): BuyerSetup {
-    const path = join(this.dir, 'setup.json')
+    const path = this.#setupFile
     const json = readJson(path)
     if (json === null) return {}
-    const refuse = (what: string) => new Error(`${path} ${what}`)
-    const outer = setupJson.safeParse(json)
-    if (!outer.success) throw refuse("doesn't hold the business's setup")
-    const { lock, mandate, keyAuthorizedIn, enrollment } = outer.data
-    const setup: BuyerSetup = {}
-    if (lock !== undefined) setup.lock = lock
-    if (keyAuthorizedIn !== undefined) setup.keyAuthorizedIn = keyAuthorizedIn
-    if (mandate !== undefined) {
-      if (!lock) throw refuse('holds a mandate but no lock')
-      const parsed = parseSigned(mandate, 'Mandate', mandateJson, { chainId: TEMPO_MODERATO, lock })
-      if (!parsed.ok) throw refuse(`holds a mandate that doesn't parse (${parsed.reason})`)
-      setup.mandate = parsed.value as Signed<Mandate>
-    }
-    if (enrollment !== undefined) {
-      const parsed = parseEnrollment(enrollment)
-      if (!parsed.ok) throw refuse(`holds an enrollment that doesn't parse (${parsed.reason})`)
-      setup.enrollment = parsed.value
-    }
-    return setup
+    return parseSetup(json, (what) => new Error(`${path} ${what}`))
   }
 
+  /**
+   * Refuses a lock the setup can't take. Once a mandate is saved it's signed for the saved lock,
+   * so the setup keeps that lock, and starting over with another one takes a new state directory.
+   */
+  checkLock(lock: Address) {
+    const { lock: saved, mandate } = this.setup()
+    if (mandate && saved && !isAddressEqual(saved, lock)) {
+      throw new Error(
+        `${this.dir} holds a mandate signed for the lock ${saved}, so it keeps that lock and can't take ${lock}. Use a new STATE_DIR to start over.`,
+      )
+    }
+  }
+
+  /**
+   * Saves a change to the setup. What it would write gets every check a read makes first, so a
+   * save never leaves a file that later reads refuse, and a refused change writes nothing.
+   */
   saveSetup(change: BuyerSetup): BuyerSetup {
-    const next = { ...this.setup(), ...change }
-    writeAtomically(join(this.dir, 'setup.json'), `${JSON.stringify(toWire(next), null, 2)}\n`)
+    if (change.lock !== undefined) this.checkLock(change.lock)
+    const path = this.#setupFile
+    const text = `${JSON.stringify(toWire({ ...this.setup(), ...change }), null, 2)}\n`
+    const next = parseSetup(
+      JSON.parse(text),
+      (what) => new Error(`${path} wasn't changed, since with this change it ${what}`),
+    )
+    writeAtomically(path, text)
     return next
   }
 

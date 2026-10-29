@@ -48,21 +48,27 @@ function lockOf(store: BuyerStore) {
   return lock
 }
 
-/** Makes the business's keys, funds the account's fees from the faucet and creates its lock. */
+/**
+ * Makes the business's keys, funds the account's fees from the faucet and creates its lock. Once
+ * `enroll` has saved a mandate, it keeps that mandate's lock and refuses a factory that gives
+ * another one, before it asks the faucet or sends anything.
+ */
 async function init() {
   const settings = initSettings(process.env)
   const store = new BuyerStore(settings.stateDir)
   if (!store.keys()) store.makeKeys()
   const { root } = keysOf(store)
   const client = moderatoClient(settings.rpcUrl)
-  log(`funding the business account ${root.address} from Moderato's faucet, for fees`)
-  await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
   const lock = await client.readContract({
     address: settings.factory,
     abi: FACTORY_ABI,
     functionName: 'lockAddress',
     args: [root.address],
   })
+  // A saved mandate is signed for the saved lock, so another factory's lock is refused up front.
+  store.checkLock(lock)
+  log(`funding the business account ${root.address} from Moderato's faucet, for fees`)
+  await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
   if ((await client.getCode({ address: lock })) === undefined) {
     log('creating the business lock')
     await sendOwn({

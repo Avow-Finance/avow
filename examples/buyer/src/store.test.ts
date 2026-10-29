@@ -1,13 +1,19 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { accountSigner, signMandate } from '@avow-finance/sdk'
-import { type AvowDomain, TEMPO_MODERATO, toWire } from '@avow-finance/spec'
-import type { Address, Hex } from 'viem'
+import {
+  type AvowDomain,
+  type Mandate,
+  type Signed,
+  TEMPO_MODERATO,
+  toWire,
+} from '@avow-finance/spec'
+import { type Address, getAddress, type Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { quickstartMandate } from './plan.js'
-import { BuyerStore } from './store.js'
+import { type BuyerSetup, BuyerStore } from './store.js'
 
 // Every key is generated for the run, and every state directory is removed after its test.
 const LOCK: Address = '0x00000000000000000000000000000000000010c4'
@@ -35,6 +41,14 @@ async function signedMandate(lock: Address) {
   })
   return signMandate(mandate, d, accountSigner(root.address, root))
 }
+
+/** What Avow records when it enrolls the agent a mandate names. */
+const enrollmentFor = (mandate: Signed<Mandate>) => ({
+  businessId: 'biz_buyer',
+  agentId: 'agt_quickstart',
+  agentKey: mandate.message.agentKey.toLowerCase() as Address,
+  mandateHash: `0x${'cd'.repeat(32)}` as Hex,
+})
 
 /** The same value apart from the letter case of its hex, which the store reads in lower case. */
 const caseless = (value: unknown) => JSON.stringify(toWire(value)).toLowerCase()
@@ -70,12 +84,7 @@ describe("the business's state directory", () => {
   it('saves the setup as JSON and reads back the mandate and enrollment it holds, parsed', async () => {
     expect(store.setup()).toEqual({})
     const mandate = await signedMandate(LOCK)
-    const enrollment = {
-      businessId: 'biz_buyer',
-      agentId: 'agt_quickstart',
-      agentKey: mandate.message.agentKey.toLowerCase() as Address,
-      mandateHash: `0x${'cd'.repeat(32)}` as Hex,
-    }
+    const enrollment = enrollmentFor(mandate)
     store.saveSetup({ lock: LOCK })
     store.saveSetup({ mandate, keyAuthorizedIn: KEY_TX })
     store.saveSetup({ enrollment })
@@ -85,6 +94,65 @@ describe("the business's state directory", () => {
     expect(setup.enrollment).toEqual(enrollment)
     expect(caseless(setup.mandate)).toBe(caseless(mandate))
     expect(setup.mandate?.message.capPerCommitment).toBe(500_000_000n)
+  })
+
+  it("keeps the mandate's lock once enroll saves one, so init with another factory changes nothing", async () => {
+    // init, then enroll.
+    store.saveSetup({ lock: LOCK })
+    const mandate = await signedMandate(LOCK)
+    store.saveSetup({ mandate, keyAuthorizedIn: KEY_TX })
+    store.saveSetup({ enrollment: enrollmentFor(mandate) })
+    const file = readFileSync(join(dir, 'setup.json'), 'utf8')
+    // init again with another factory, whose lock the saved mandate isn't signed for.
+    const refusal = `${dir} holds a mandate signed for the lock ${LOCK}, so it keeps that lock and can't take ${OTHER_LOCK}. Use a new STATE_DIR to start over.`
+    expect(() => store.checkLock(OTHER_LOCK)).toThrow(refusal)
+    expect(() => store.saveSetup({ lock: OTHER_LOCK })).toThrow(refusal)
+    expect(readFileSync(join(dir, 'setup.json'), 'utf8')).toBe(file)
+    // Every command still reads the setup, and init with the original factory still works. The
+    // factory gives the lock's address checksummed, which is the same lock.
+    expect(store.setup().lock).toBe(LOCK)
+    store.checkLock(getAddress(LOCK))
+    expect(store.saveSetup({ lock: getAddress(LOCK) }).lock).toBe(LOCK)
+    const setup = store.setup()
+    expect(caseless(setup.mandate)).toBe(caseless(mandate))
+    expect(setup.keyAuthorizedIn).toBe(KEY_TX)
+    expect(setup.enrollment).toEqual(enrollmentFor(mandate))
+  })
+
+  it('takes another lock until a mandate is saved', () => {
+    store.saveSetup({ lock: LOCK })
+    store.checkLock(OTHER_LOCK)
+    expect(store.saveSetup({ lock: OTHER_LOCK }).lock).toBe(OTHER_LOCK)
+    expect(store.setup().lock).toBe(OTHER_LOCK)
+  })
+
+  it('refuses to save a change that a later read would refuse, and writes nothing', async () => {
+    const path = join(dir, 'setup.json')
+    // A mandate with no lock to be signed for.
+    const mandate = await signedMandate(LOCK)
+    expect(() => store.saveSetup({ mandate })).toThrow(
+      `${path} wasn't changed, since with this change it holds a mandate but no lock`,
+    )
+    expect(existsSync(path)).toBe(false)
+    store.saveSetup({ lock: LOCK })
+    const file = readFileSync(path, 'utf8')
+    const changes: [BuyerSetup, string][] = [
+      [
+        { mandate: await signedMandate(OTHER_LOCK) },
+        "holds a mandate that doesn't parse (message.wrong_contract)",
+      ],
+      [
+        { enrollment: { agentId: 'agt_quickstart' } as never },
+        "holds an enrollment that doesn't parse",
+      ],
+      [{ keyAuthorizedIn: '0x1234' }, "doesn't hold the business's setup"],
+    ]
+    for (const [change, says] of changes) {
+      expect(() => store.saveSetup(change), says).toThrow(
+        `${path} wasn't changed, since with this change it ${says}`,
+      )
+      expect(readFileSync(path, 'utf8'), says).toBe(file)
+    }
   })
 
   it("refuses a setup file that doesn't hold what it should", async () => {
