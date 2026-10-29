@@ -7,6 +7,7 @@ import {
   checkEnvelope,
   type MessageType,
   type Signed,
+  type SignedAgreement,
 } from './eip712.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
 import { RAIL_STATES } from './rail.js'
@@ -391,7 +392,8 @@ export const attributionJson = z.strictObject({
   use: z.enum(['evidence', 'value']),
 })
 
-type Parsed<T> = { ok: true; value: T } | { ok: false; reason: ReasonCode }
+/** A parse result: the value, or the reason code a reader refuses it with. */
+export type Parsed<T> = { ok: true; value: T } | { ok: false; reason: ReasonCode }
 
 const objectJson = z.record(z.string(), z.unknown())
 
@@ -557,6 +559,41 @@ export function parseSigned<S extends z.ZodType>(
     .safeParse(json)
   if (!full.success) return { ok: false, reason: 'message.invalid' }
   return { ok: true, value: full.data as Signed<z.output<S>> }
+}
+
+/**
+ * Parses a terms agreement both sides signed, which carries two signatures in place of one, and
+ * checks its envelope the way `parseSigned` does.
+ */
+export function parseSignedAgreement(
+  json: unknown,
+  expected: { chainId: number; lock?: Address },
+): Parsed<SignedAgreement> {
+  const version = versionHeader.safeParse(json)
+  if (!version.success) return { ok: false, reason: 'message.invalid' }
+  if (!isSupportedMessageVersion('TermsAgreement', version.data.schemaVersion)) {
+    return { ok: false, reason: 'message.schema_unknown' }
+  }
+  const header = envelopeHeader.safeParse(json)
+  if (!header.success) return { ok: false, reason: 'message.invalid' }
+  const problem = checkEnvelope(
+    { ...header.data, type: header.data.type as MessageType },
+    { type: 'TermsAgreement', ...expected },
+  )
+  if (problem) return { ok: false, reason: problem }
+  const full = z
+    .strictObject({
+      type: z.literal('TermsAgreement'),
+      schemaVersion: z.string(),
+      chainId: z.number().int().positive(),
+      lock: address,
+      message: termsAgreementJson,
+      buyerSignature: hexBytes,
+      supplierSignature: hexBytes,
+    })
+    .safeParse(json)
+  if (!full.success) return { ok: false, reason: 'message.invalid' }
+  return { ok: true, value: full.data }
 }
 
 /** Turns bigints into decimal strings, so a record or message can go through JSON.stringify. */

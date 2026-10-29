@@ -22,7 +22,7 @@ When funding fails, `book` settles the booking against the lock. Avow's approval
 
 ## What it talks to
 
-- **Avow.** `AvowApi` is Avow's side of the commitments: the reserve check, the relay that pays fees, and the records of cancellations and starts. Avow's hosted API will implement it over HTTP, with each call signed by the agent's key. Until then the interface serves Avow's demos and tests, and it will change when the API ships.
+- **Avow.** `AvowApi` is Avow's side of the commitments: the reserve check, the relay that pays fees, and the records of cancellations and starts. `httpAvowApi` implements it over Avow's hosted API, with each call signed by the agent's key through `agentRequestKey`, as [signed requests](../spec/signed-requests.md) sets out. Each call is one operation with its own request id, and the client sends the same bytes again after a lost answer, which Avow answers without repeating anything. It covers the reserve check and the relay now, and cancellations and starts once their records are agreed. Demos and tests can pass a local implementation instead.
 - **The supplier.** `SupplierConnection` is the agent's channel to one supplier, which the supplier's own integration implements.
 - **The chain.** The agent's client reads the lock and sends the funding transaction.
 

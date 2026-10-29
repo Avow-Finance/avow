@@ -6,6 +6,8 @@
  * Pre-release. Every interface may change before 1.0.
  */
 export * from './ap2.js'
+export * from './api.js'
+export * from './api-request.js'
 export * from './canonical.js'
 export * from './commitment.js'
 export * from './demo.js'
