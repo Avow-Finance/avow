@@ -134,12 +134,14 @@ function audienceOf(baseUrl: string): string {
 
 /**
  * Sends operations to Avow's hosted API, each with a fresh request id and signed with `key` for the
- * deployment at `baseUrl`. It sends the same bytes again after no answer, an answer that isn't
- * JSON, a 5xx or `request.in_progress`, until Avow answers definitely or `retryFor` runs out. Avow
- * answers an identical repeat with its first answer and does nothing again, so a lost answer never
- * turns into a second action. It never follows a redirect, so a signed body goes nowhere but the
- * deployment it was signed for. A refusal, a 2xx answer `read` refuses, or no definite answer in
- * time, throws an `AvowApiError` with the reason.
+ * deployment at `baseUrl`. It sends the same bytes again after no answer, an answer of any status
+ * whose body isn't JSON, a 5xx or `request.in_progress`, until Avow answers definitely or
+ * `retryFor` runs out. Avow answers with JSON whatever the status, so bytes that aren't JSON never
+ * came whole from Avow. Avow answers an identical repeat with its first answer and does nothing
+ * again, so a lost answer never turns into a second action. It never follows a redirect, so a
+ * signed body goes nowhere but the deployment it was signed for. A refusal, which is any other 4xx
+ * with a JSON body, a 2xx answer `read` refuses, or no definite answer in time, throws an
+ * `AvowApiError` with the reason.
  */
 export function avowRequests(config: AvowRequestConfig) {
   const audience = audienceOf(config.baseUrl)
@@ -184,19 +186,19 @@ export function avowRequests(config: AvowRequestConfig) {
         })
         const json = readJson(await response.text())
         lastStatus = response.status
-        if (response.ok) {
-          // Bytes that aren't JSON may be an answer cut off or replaced on its way, so they go again.
-          if (json === undefined) {
-            last = "Avow's answer isn't JSON"
-            lastReason = 'message.invalid'
-          } else {
-            const answer = read(json)
-            if (answer.ok) return answer.value
-            throw new AvowApiError(
-              `Avow's answer can't be used: ${describeReason(answer.reason)}`,
-              { status: lastStatus, reason: answer.reason, requestId },
-            )
-          }
+        if (json === undefined) {
+          // Avow answers with JSON whatever the status, its refusals included, so bytes that aren't
+          // JSON were cut off or replaced on their way, as by a proxy's error page, and go again.
+          last = `The last answer was unreadable, a ${response.status} whose body isn't JSON.`
+          lastReason = 'message.invalid'
+        } else if (response.ok) {
+          const answer = read(json)
+          if (answer.ok) return answer.value
+          throw new AvowApiError(`Avow's answer can't be used: ${describeReason(answer.reason)}`, {
+            status: lastStatus,
+            reason: answer.reason,
+            requestId,
+          })
         } else {
           const error = parseApiError(json)
           lastReason = error?.reason ?? null

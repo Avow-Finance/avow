@@ -122,6 +122,7 @@ describe('httpAvowApi', () => {
       },
       broken,
       () => json(502, 'bad gateway'),
+      notJson(502, '<html>Bad Gateway</html>'),
       error(503, 'service.unavailable'),
       error(409, 'request.in_progress', { retryAfter: 1 }),
       notJson(200, '<html>maintenance</html>'),
@@ -129,7 +130,60 @@ describe('httpAvowApi', () => {
       ok,
     ])
     expect(await client(fetcher).sponsor('0x1234')).toBe('0xabcd')
-    expect(seen).toHaveLength(8)
+    expect(seen).toHaveLength(9)
+    for (const s of seen) {
+      expect(s.authorization).toBe(seen[0]?.authorization)
+      expect(s.body).toEqual(seen[0]?.body)
+    }
+  })
+
+  it("sends a 4xx whose body isn't JSON again, since Avow's own refusals are JSON", async () => {
+    const { seen, fetcher } = fakeApi([
+      notJson(429, '<html><body><h1>429 Too Many Requests</h1></body></html>'),
+      notJson(408, '<html><body><h1>408 Request Timeout</h1></body></html>'),
+      notJson(404, ''),
+      ok,
+    ])
+    expect(await client(fetcher).sponsor('0x1234')).toBe('0xabcd')
+    expect(seen).toHaveLength(4)
+    for (const s of seen) {
+      expect(s.authorization).toBe(seen[0]?.authorization)
+      expect(s.body).toEqual(seen[0]?.body)
+    }
+  })
+
+  it('stops at once at a 4xx whose body is JSON, whoever sent it', async () => {
+    const { seen, fetcher } = fakeApi([() => json(429, { message: 'Too Many Requests' }), ok])
+    const e = await client(fetcher)
+      .sponsor('0x1234')
+      .catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(AvowApiError)
+    expect(e).toMatchObject({ status: 429, reason: null, message: "Avow's API answered 429" })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('gives up on unreadable answers once retryFor runs out, naming the last one and its status', async () => {
+    let clock = NOW
+    const plainText = () => {
+      clock += 200n
+      return new Response('upstream request timeout', {
+        status: 408,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+    const { seen, fetcher } = fakeApi([plainText, plainText, plainText, plainText])
+    const e = await client(fetcher, { now: () => clock })
+      .sponsor('0x1234')
+      .catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(AvowApiError)
+    expect(e).toMatchObject({
+      status: 408,
+      reason: 'message.invalid',
+      message:
+        "No definite answer from Avow. The last answer was unreadable, a 408 whose body isn't JSON.",
+    })
+    // Ten minutes by default, and each answer came 200 seconds after the one before.
+    expect(seen).toHaveLength(3)
     for (const s of seen) {
       expect(s.authorization).toBe(seen[0]?.authorization)
       expect(s.body).toEqual(seen[0]?.body)
