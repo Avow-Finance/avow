@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import type { Commitment } from './commitment.js'
+import {
+  COMMITMENT_STATES,
+  type Commitment,
+  type CommitmentFields,
+  type CommitmentIn,
+  type CommitmentState,
+  type ContestRecord,
+  commitmentFitsState,
+  ENDINGS,
+  isContested,
+  isEnding,
+  OUTCOME_ENDINGS,
+  type Outcome,
+  type OutcomeKind,
+  type UncheckedCommitment,
+} from './commitment.js'
 import { testnetDemoTerms } from './demo.js'
 import type { Approval, SupplierAuthorization } from './eip712.js'
 import type { PaymentReference } from './references.js'
@@ -295,7 +310,7 @@ describe("Avow's approval over JSON", () => {
 })
 
 describe('parseCommitment', () => {
-  const commitment: Commitment = {
+  const fields: CommitmentFields = {
     schemaVersion: COMMITMENT_RECORD_VERSION,
     commitmentId: id('commitment-1'),
     category: 'compute',
@@ -303,7 +318,6 @@ describe('parseCommitment', () => {
     supplier: { businessId: 'biz_supplier', agentId: null },
     terms,
     termsHash: termsHash(terms, SALT),
-    state: 'reserved',
     backing: [
       {
         side: 'buyer',
@@ -329,13 +343,129 @@ describe('parseCommitment', () => {
       },
     ],
     start: null,
-    contest: null,
-    outcome: null,
     references: [],
   }
+  const commitment: Commitment = { ...fields, state: 'reserved', contest: null, outcome: null }
 
   const v1 = testnetDemoTermsV1(START, ARBITER)
   const underV1 = { ...commitment, terms: v1, termsHash: termsHash(v1, SALT) }
+
+  const reserve = terms.backing.amount
+  const contest: ContestRecord = {
+    reasonCode: 'supplier_did_not_deliver',
+    statementHash: id('contest statement'),
+    evidenceHashes: [id('job log')],
+    contestedAt: START + 900n,
+  }
+  // A record in each state with the contest and outcome it holds there. The table is typed over
+  // every state, so a new state fails the type check here until it has a record.
+  const records: { readonly [S in CommitmentState]: CommitmentIn<S> } = {
+    draft: { ...fields, state: 'draft', contest: null, outcome: null },
+    agreed: { ...fields, state: 'agreed', contest: null, outcome: null },
+    awaiting_approval: { ...fields, state: 'awaiting_approval', contest: null, outcome: null },
+    reserved: { ...fields, state: 'reserved', contest: null, outcome: null },
+    accepted: { ...fields, state: 'accepted', contest: null, outcome: null },
+    charge_pending: { ...fields, state: 'charge_pending', contest: null, outcome: null },
+    paused: { ...fields, state: 'paused', contest, outcome: null },
+    expired: {
+      ...fields,
+      state: 'expired',
+      contest: null,
+      outcome: { kind: 'expired', charged: 0n, released: 0n },
+    },
+    released: {
+      ...fields,
+      state: 'released',
+      contest: null,
+      outcome: { kind: 'kept', charged: 0n, released: reserve },
+    },
+    charged: {
+      ...fields,
+      state: 'charged',
+      contest: null,
+      outcome: { kind: 'no_show', charged: reserve, released: 0n },
+    },
+    resolved: {
+      ...fields,
+      state: 'resolved',
+      contest,
+      outcome: { kind: 'ruled', charged: reserve / 2n, released: reserve - reserve / 2n },
+    },
+  }
+  /** A record of any shape, for the combinations no state holds. */
+  const anyRecord = (
+    state: CommitmentState,
+    contest: ContestRecord | null,
+    outcome: Outcome | null,
+  ): UncheckedCommitment => ({ ...fields, state, contest, outcome })
+  const outcomeOf = (kind: OutcomeKind): Outcome => ({ kind, charged: 0n, released: reserve })
+
+  it('reads a record in every state, holding the contest and outcome that state calls for', () => {
+    for (const state of COMMITMENT_STATES) {
+      const record = records[state]
+      expect(commitmentFitsState(record), state).toBe(true)
+      expect(parseCommitment(roundTrip(record)), state).toEqual({
+        ok: true,
+        value: lowerHex(record),
+      })
+    }
+  })
+
+  it('refuses a draft with an outcome, and every other contest or outcome a state cannot hold', () => {
+    const impossible: UncheckedCommitment[] = [
+      anyRecord('draft', null, outcomeOf('kept')),
+      // A contest outside the contested states, or none inside them.
+      ...COMMITMENT_STATES.map((s) =>
+        anyRecord(s, isContested(s) ? null : contest, records[s].outcome),
+      ),
+      // An outcome before an ending, or none in one.
+      ...COMMITMENT_STATES.map((s) =>
+        anyRecord(s, records[s].contest, isEnding(s) ? null : outcomeOf('expired')),
+      ),
+      // An outcome of a kind that belongs to another ending.
+      ...ENDINGS.flatMap((s) =>
+        (Object.keys(OUTCOME_ENDINGS) as OutcomeKind[])
+          .filter((kind) => OUTCOME_ENDINGS[kind] !== s)
+          .map((kind) => anyRecord(s, records[s].contest, outcomeOf(kind))),
+      ),
+    ]
+    for (const record of impossible) {
+      const label = `${record.state} ${record.contest ? 'contested' : ''} ${record.outcome?.kind}`
+      expect(commitmentFitsState(record), label).toBe(false)
+      expect(parseCommitment(roundTrip(record)), label).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    // A version 1 record goes through the same check, and reads once it holds no outcome.
+    const olderDraft = (outcome: Outcome | null) => {
+      const { references: _, ...older } = {
+        ...anyRecord('draft', null, outcome),
+        terms: v1,
+        schemaVersion: '1',
+      }
+      return roundTrip(older)
+    }
+    expect(parseCommitment(olderDraft(null)).ok).toBe(true)
+    expect(parseCommitment(olderDraft(outcomeOf('kept')))).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+  })
+
+  it('types a record so that its state decides its contest and outcome', () => {
+    // @ts-expect-error A draft holds no outcome.
+    const withOutcome: Commitment = { ...records.draft, outcome: records.released.outcome }
+    // @ts-expect-error A paused commitment holds the contest that paused it.
+    const uncontested: Commitment = { ...records.paused, contest: null }
+    // @ts-expect-error A released commitment can't end as a no-show, which ends in a charge.
+    const noShow: Commitment = { ...records.released, outcome: records.charged.outcome }
+    expect([withOutcome, uncontested, noShow].map((r) => commitmentFitsState(r))).toEqual([
+      false,
+      false,
+      false,
+    ])
+  })
 
   it('round-trips a commitment', () => {
     expect(COMMITMENT_RECORD_VERSION).toBe('2')

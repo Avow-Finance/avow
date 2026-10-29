@@ -15,7 +15,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 
 | Part | What it does |
 | --- | --- |
-| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them, and the references a record cites |
+| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states, the moves between them, the contest and outcome a record holds in each, and the references a record cites. `parseCommitment` refuses a record whose state can't hold its contest or outcome |
 | Terms | Version 2 terms: a header and five sections, each hashed apart, with templates for what each kind of commitment promises. GPU reservation is the first template |
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
 | References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
