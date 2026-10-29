@@ -1,5 +1,7 @@
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { type Call, SendError } from '@avow-finance/sdk'
-import { MemoryReplayGuard } from '@avow-finance/spec'
+import { MemoryReplayGuard, toWire } from '@avow-finance/spec'
 import { ACCEPT_ABI } from '@avow-finance/verifier'
 import { decodeFunctionData, type Hex, keccak256, stringToHex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -137,7 +139,7 @@ describe("the supplier's acceptance of a booking", () => {
   })
 
   it('takes an acceptance the lock already holds, whatever sent it, and grants then', async () => {
-    put({ status: 'accepting', sent: { hash: HASH, validBefore: String(NOW + 25n) } })
+    put({ status: 'accepting', sent: { hash: HASH, validBefore: NOW + 25n } })
     lock.state = 'accepted'
     expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepted')
     expect(sent).toEqual([])
@@ -177,11 +179,17 @@ describe("the supplier's acceptance of a booking", () => {
     expect(grants()).toEqual([])
   })
 
-  it('moves every open booking on, past one that fails', async () => {
+  it('moves every open booking on, past one whose file the store refuses', async () => {
     put()
-    store.put({ ...agreedBooking(), commitmentId: `0x${'ee'.repeat(32)}`, terms: { broken: true } })
+    const other: Hex = `0x${'ee'.repeat(32)}`
+    const broken = toWire({ ...agreedBooking(), commitmentId: other }) as Record<string, unknown>
+    broken.agreement = { ...(broken.agreement as object), commitmentId: other }
+    broken.terms = { broken: true }
+    writeFileSync(join(store.dir, 'bookings', `${other}.json`), JSON.stringify(broken))
     await advanceAll(deps)
     expect(status()).toBe('accepted')
-    expect(logged.some((l) => l.includes("won't parse"))).toBe(true)
+    const refused = logged.filter((l) => l.startsWith(`booking ${other}: `))
+    expect(refused).toHaveLength(1)
+    expect(refused[0]).toContain("holds terms that don't parse (terms.version_unknown)")
   })
 })

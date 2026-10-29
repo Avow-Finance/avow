@@ -1,5 +1,10 @@
 #!/usr/bin/env node
-import { requestSupplierAuthorization, sendOwn } from '@avow-finance/sdk'
+import {
+  moderatoClient,
+  moderatoUsdToken,
+  requestSupplierAuthorization,
+  sendOwn,
+} from '@avow-finance/sdk'
 import {
   MemoryReplayGuard,
   type SupplierProfile,
@@ -7,24 +12,15 @@ import {
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
-import { createClient, http, publicActions } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { tempoModerato } from 'viem/chains'
 import { Actions } from 'viem/tempo'
 import { type AcceptDeps, advanceAll } from './accept.js'
 import { agentServer } from './agents.js'
-import { ALPHA_USD, baseSettings, serveSettings } from './settings.js'
+import { baseSettings, serveSettings } from './settings.js'
 import { SupplierStore } from './store.js'
 
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
 const clock = () => BigInt(Math.floor(Date.now() / 1000))
-
-function clientFor(rpcUrl: string) {
-  return createClient({
-    chain: tempoModerato.extend({ feeToken: ALPHA_USD }),
-    transport: http(rpcUrl, { retryCount: 3 }),
-  }).extend(publicActions)
-}
 
 function keysOf(store: SupplierStore) {
   const keys = store.keys()
@@ -41,7 +37,7 @@ async function init() {
   if (!store.keys()) store.makeKeys()
   const { account, signingKey } = keysOf(store)
   log(`funding the signing key ${signingKey.address} from Moderato's faucet`)
-  await Actions.faucet.fundSync(clientFor(rpcUrl), {
+  await Actions.faucet.fundSync(moderatoClient(rpcUrl), {
     account: signingKey.address,
     timeout: 60_000,
   })
@@ -61,7 +57,7 @@ async function serve() {
   const settings = serveSettings(process.env)
   const store = new SupplierStore(settings.stateDir)
   const { account, signingKey } = keysOf(store)
-  const client = clientFor(settings.rpcUrl)
+  const client = moderatoClient(settings.rpcUrl)
   const chain = tempoChainReader(client, { factory: settings.factory, chainId: TEMPO_MODERATO })
   const profile: SupplierProfile = {
     businessId: settings.businessId,
@@ -100,15 +96,7 @@ async function serve() {
       avowKeys: settings.approvalKeys,
       businessId: settings.businessId,
       payee: account.address,
-      acceptedTokens: [
-        {
-          rail: 'tempo',
-          chainId: TEMPO_MODERATO,
-          token: settings.token,
-          currency: 'USD',
-          decimals: 6,
-        },
-      ],
+      acceptedTokens: [moderatoUsdToken(settings.token)],
       profile: TESTNET_DEMO_PROFILE,
       acceptTestData: true,
       account: account.address,

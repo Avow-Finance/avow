@@ -1,9 +1,5 @@
+import { MODERATO_RPC_URL } from '@avow-finance/sdk'
 import { type Address, getAddress, isAddress } from 'viem'
-
-/** Moderato, Tempo's testnet, where every Avow deployment so far runs. */
-export const MODERATO_RPC = 'https://rpc.moderato.tempo.xyz'
-/** AlphaUSD, which pays Moderato's fees and comes from its faucet. */
-export const ALPHA_USD: Address = '0x20C0000000000000000000000000000000000001'
 
 type Env = Record<string, string | undefined>
 
@@ -48,7 +44,7 @@ const ID = /^[a-z0-9_-]{1,64}$/
 export function baseSettings(env: Env) {
   return {
     stateDir: env.STATE_DIR?.trim() || '.avow-buyer',
-    rpcUrl: env.RPC_URL?.trim() || MODERATO_RPC,
+    rpcUrl: env.RPC_URL?.trim() || MODERATO_RPC_URL,
   }
 }
 

@@ -1,7 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  type Enrollment,
+  type Mandate,
+  mandateJson,
+  parseEnrollment,
+  parseSigned,
+  type Signed,
+  TEMPO_MODERATO,
+  toWire,
+} from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
+import { z } from 'zod'
 
 /**
  * The business's two keys. The root key holds the business account and stands in for the
@@ -16,12 +27,29 @@ export interface BuyerKeys {
 /** What setting up has done so far, so each command picks up where the last one stopped. */
 export interface BuyerSetup {
   lock?: Address
-  /** The mandate the administrator signed, as JSON. */
-  mandate?: unknown
+  /** The mandate the administrator signed for the agent, under the business's lock on Moderato. */
+  mandate?: Signed<Mandate>
   /** The transaction that put the agent's key on the account with the mandate's hash. */
   keyAuthorizedIn?: Hex
-  enrollment?: unknown
+  /** What Avow recorded when it enrolled the agent. */
+  enrollment?: Enrollment
 }
+
+const bytes32 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/)
+  .transform((s) => s.toLowerCase() as Hex)
+const keysJson = z.strictObject({ rootKey: bytes32, agentKey: bytes32 })
+const setupJson = z.strictObject({
+  lock: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .transform((s) => s.toLowerCase() as Address)
+    .optional(),
+  mandate: z.unknown().optional(),
+  keyAuthorizedIn: bytes32.optional(),
+  enrollment: z.unknown().optional(),
+})
 
 function writeAtomically(path: string, text: string) {
   const temporary = `${path}.${process.pid}.tmp`
@@ -29,13 +57,21 @@ function writeAtomically(path: string, text: string) {
   renameSync(temporary, path)
 }
 
-const readJson = <T>(path: string): T | null =>
-  existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as T) : null
+/** A file's JSON, or null when there's no file. A file that isn't JSON is refused. */
+function readJson(path: string): unknown {
+  if (!existsSync(path)) return null
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    throw new Error(`${path} isn't JSON`)
+  }
+}
 
 /**
  * The business's state directory: its keys, its setup and one file per booking. Keep it out of
  * version control and back it up, since the keys can't be made again. A booking's file holds its
- * salt, which only the two parties should see.
+ * salt, which only the two parties should see. Each file is parsed as it's read, and one that
+ * doesn't hold what it should is refused, so nothing unchecked from disk reaches the agent.
  */
 export class BuyerStore {
   constructor(readonly dir: string) {
@@ -43,7 +79,12 @@ export class BuyerStore {
   }
 
   keys(): BuyerKeys | null {
-    return readJson<BuyerKeys>(join(this.dir, 'keys.json'))
+    const path = join(this.dir, 'keys.json')
+    const json = readJson(path)
+    if (json === null) return null
+    const parsed = keysJson.safeParse(json)
+    if (!parsed.success) throw new Error(`${path} doesn't hold the business's two keys`)
+    return parsed.data
   }
 
   /** Makes the business's keys once. It refuses to replace keys that exist. */
@@ -54,13 +95,38 @@ export class BuyerStore {
     return keys
   }
 
+  /**
+   * What setting up has done so far. The mandate has to be signed for the setup's own lock on
+   * Moderato, and the enrollment has to be one Avow's API could have answered with.
+   */
   setup(): BuyerSetup {
-    return readJson<BuyerSetup>(join(this.dir, 'setup.json')) ?? {}
+    const path = join(this.dir, 'setup.json')
+    const json = readJson(path)
+    if (json === null) return {}
+    const refuse = (what: string) => new Error(`${path} ${what}`)
+    const outer = setupJson.safeParse(json)
+    if (!outer.success) throw refuse("doesn't hold the business's setup")
+    const { lock, mandate, keyAuthorizedIn, enrollment } = outer.data
+    const setup: BuyerSetup = {}
+    if (lock !== undefined) setup.lock = lock
+    if (keyAuthorizedIn !== undefined) setup.keyAuthorizedIn = keyAuthorizedIn
+    if (mandate !== undefined) {
+      if (!lock) throw refuse('holds a mandate but no lock')
+      const parsed = parseSigned(mandate, 'Mandate', mandateJson, { chainId: TEMPO_MODERATO, lock })
+      if (!parsed.ok) throw refuse(`holds a mandate that doesn't parse (${parsed.reason})`)
+      setup.mandate = parsed.value as Signed<Mandate>
+    }
+    if (enrollment !== undefined) {
+      const parsed = parseEnrollment(enrollment)
+      if (!parsed.ok) throw refuse(`holds an enrollment that doesn't parse (${parsed.reason})`)
+      setup.enrollment = parsed.value
+    }
+    return setup
   }
 
   saveSetup(change: BuyerSetup): BuyerSetup {
     const next = { ...this.setup(), ...change }
-    writeAtomically(join(this.dir, 'setup.json'), `${JSON.stringify(next, null, 2)}\n`)
+    writeAtomically(join(this.dir, 'setup.json'), `${JSON.stringify(toWire(next), null, 2)}\n`)
     return next
   }
 

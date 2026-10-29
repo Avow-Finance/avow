@@ -40,6 +40,10 @@ A sponsored transaction is valid for under half a minute. The sender reads the l
 
 `signMandate` and `signHumanApproval` sign for the business account with its root or an admin key, in Tempo's keychain V2 envelope, which the lock and Avow's API need. A browser passkey signs bare, and the envelope is added for it. `agentKeyTerms` turns a mandate into the key authorization Tempo enforces. Pass `[RESERVE_SELECTOR]` as the lock functions, so `reserve` is the one lock function the key can call.
 
+## Moderato
+
+Every Avow deployment so far runs on Moderato, Tempo's testnet. `moderatoClient` gives a client for it that pays fees in AlphaUSD, `MODERATO_FEE_TOKEN`, through `MODERATO_RPC_URL` unless you pass another RPC, and `createAgent`, `sendOwn` and the verifier's `tempoChainReader` all take it. `moderatoUsdToken` describes a USD token on Moderato as the `RailToken` the agent and the verifier take, with the 6 decimals every USD token on Tempo has. Both quickstarts use these.
+
 ## Use
 
 ```ts

@@ -18,12 +18,11 @@ import {
   type TermsAgreement,
   termsHash,
   testnetDemoTerms,
-  toWire,
 } from '@avow-finance/spec'
 import { type AcceptanceConfig, MemoryChain } from '@avow-finance/verifier'
 import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { SupplierStore } from '../store.js'
+import { type Booking, SupplierStore } from '../store.js'
 
 /** One booking's worth of parties, terms and signed messages. Every key lives only in memory. */
 
@@ -216,15 +215,15 @@ export function tempStore(): { store: SupplierStore; remove: () => void } {
 }
 
 /** The booking the supplier records once it signs the agreement. */
-export function agreedBooking() {
+export function agreedBooking(): Booking {
   return {
     commitmentId: COMMITMENT,
     chainId: CHAIN_ID,
     lock: LOCK,
-    agreement: toWire(agreement),
-    terms: toWire(terms),
+    agreement,
+    terms,
     salt: SALT,
-    signature: '0x00' as Hex,
-    status: 'agreed' as const,
+    signature: '0x00',
+    status: 'agreed',
   }
 }

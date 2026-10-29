@@ -10,6 +10,8 @@ import {
   enrollAgent,
   FACTORY_ABI,
   httpAvowApi,
+  moderatoClient,
+  moderatoUsdToken,
   RESERVE_SELECTOR,
   sendOwn,
   signMandate,
@@ -18,30 +20,18 @@ import {
   type AvowDomain,
   gpuReservationTerms,
   type Mandate,
-  mandateJson,
-  parseSigned,
-  type RailToken,
   type Signed,
   TEMPO_MODERATO,
   TESTNET_DEMO_PROFILE,
   toWire,
 } from '@avow-finance/spec'
-import { createClient, type Hex, http, publicActions } from 'viem'
-import { tempoModerato } from 'viem/chains'
 import { Account, Actions } from 'viem/tempo'
 import { quickstartBooking, quickstartMandate } from './plan.js'
-import { ALPHA_USD, baseSettings, bookSettings, enrollSettings, initSettings } from './settings.js'
-import { BuyerStore } from './store.js'
+import { baseSettings, bookSettings, enrollSettings, initSettings } from './settings.js'
+import { type BuyerSetup, BuyerStore } from './store.js'
 import { httpSupplier } from './supplier.js'
 
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
-
-function clientFor(rpcUrl: string) {
-  return createClient({
-    chain: tempoModerato.extend({ feeToken: ALPHA_USD }),
-    transport: http(rpcUrl, { retryCount: 3 }),
-  }).extend(publicActions)
-}
 
 function keysOf(store: BuyerStore) {
   const keys = store.keys()
@@ -64,7 +54,7 @@ async function init() {
   const store = new BuyerStore(settings.stateDir)
   if (!store.keys()) store.makeKeys()
   const { root } = keysOf(store)
-  const client = clientFor(settings.rpcUrl)
+  const client = moderatoClient(settings.rpcUrl)
   log(`funding the business account ${root.address} from Moderato's faucet, for fees`)
   await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
   const lock = await client.readContract({
@@ -97,7 +87,7 @@ async function enroll() {
   const store = new BuyerStore(settings.stateDir)
   const { root, agentKey } = keysOf(store)
   const lock = lockOf(store)
-  const client = clientFor(settings.rpcUrl)
+  const client = moderatoClient(settings.rpcUrl)
   const d: AvowDomain = { chainId: TEMPO_MODERATO, verifyingContract: lock }
   let setup = store.setup()
   if (!setup.keyAuthorizedIn || !setup.mandate) {
@@ -126,24 +116,22 @@ async function enroll() {
       calls: [approveSupplierCall(lock, supplier.profile.account)],
       keyAuthorization,
     })
-    setup = store.saveSetup({ mandate: toWire(signed), keyAuthorizedIn: receipt.transactionHash })
+    setup = store.saveSetup({ mandate: signed, keyAuthorizedIn: receipt.transactionHash })
   }
-  const mandate = readMandate(setup.mandate, d)
+  const { keyAuthorizedIn } = setup
+  if (!keyAuthorizedIn) throw new Error("The agent's key isn't on the account yet")
   const enrollment = await enrollAgent(
     { baseUrl: settings.apiUrl, key: agentRequestKey(agentKey) },
-    { mandate, keyAuthorizedIn: setup.keyAuthorizedIn as Hex },
+    { mandate: mandateOf(setup), keyAuthorizedIn },
   )
-  store.saveSetup({ enrollment: toWire(enrollment) })
+  store.saveSetup({ enrollment })
   log(`Avow enrolled ${enrollment.agentId} for ${enrollment.businessId}`)
 }
 
-function readMandate(json: unknown, d: AvowDomain): Signed<Mandate> {
-  const parsed = parseSigned(json, 'Mandate', mandateJson, {
-    chainId: d.chainId,
-    lock: d.verifyingContract,
-  })
-  if (!parsed.ok) throw new Error(`The saved mandate doesn't parse (${parsed.reason})`)
-  return parsed.value as Signed<Mandate>
+/** The mandate the setup holds, which the store checked is signed for the business's lock. */
+function mandateOf(setup: BuyerSetup): Signed<Mandate> {
+  if (!setup.mandate) throw new Error('No mandate yet. Run enroll first.')
+  return setup.mandate
 }
 
 /** The agent books with the supplier, funds the reserve and waits for the supplier to accept. */
@@ -153,20 +141,13 @@ async function book() {
   const store = new BuyerStore(settings.stateDir)
   const { agentKey } = keysOf(store)
   const lock = lockOf(store)
-  const client = clientFor(settings.rpcUrl)
+  const client = moderatoClient(settings.rpcUrl)
   const d: AvowDomain = { chainId: TEMPO_MODERATO, verifyingContract: lock }
-  const token: RailToken = {
-    rail: 'tempo',
-    chainId: TEMPO_MODERATO,
-    token: settings.token,
-    currency: 'USD',
-    decimals: 6,
-  }
   const agent = createAgent({
     client,
     key: agentKey,
-    mandate: readMandate(store.setup().mandate, d),
-    token,
+    mandate: mandateOf(store.setup()),
+    token: moderatoUsdToken(settings.token),
     profile: TESTNET_DEMO_PROFILE,
     avow: httpAvowApi({ baseUrl: settings.apiUrl, key: agentRequestKey(agentKey), domain: d }),
   })

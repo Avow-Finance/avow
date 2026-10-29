@@ -1,10 +1,8 @@
 import { type Call, type OnSent, SendError } from '@avow-finance/sdk'
 import {
   type HashSigner,
-  parseTerms,
   type ReplayGuard,
   type SupplierAuthorizationAnswer,
-  termsAgreementJson,
   toWire,
 } from '@avow-finance/spec'
 import {
@@ -56,9 +54,6 @@ const json = (value: unknown): unknown => JSON.parse(JSON.stringify(toWire(value
  */
 export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['status']> {
   const { store } = deps
-  const terms = parseTerms(b.terms)
-  const agreement = termsAgreementJson.safeParse(b.agreement)
-  if (!terms.ok || !agreement.success) throw new Error(`The booking ${b.commitmentId} won't parse`)
   const save = (status: Booking['status'], sent?: Booking['sent'] | null) => {
     b.status = status
     if (sent === null) delete b.sent
@@ -80,14 +75,14 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
     }
     // A send is recorded before its bytes go out, so without one nothing went out.
     if (b.sent) {
-      const validBefore = b.sent.validBefore === null ? null : BigInt(b.sent.validBefore)
+      const { validBefore } = b.sent
       // Until the chain is past the transaction's validity, it may still land.
       if (validBefore === null || (await deps.finalizedTime()) <= validBefore) return 'accepting'
       deps.log(`the acceptance for ${b.commitmentId} never landed, so it goes again`)
     }
     save('held', null)
   }
-  if (deps.now() >= terms.value.remedies.acceptBy) {
+  if (deps.now() >= b.terms.remedies.acceptBy) {
     deps.log(`the reserve for ${b.commitmentId} never came before its acceptance deadline`)
     return save('lapsed')
   }
@@ -110,7 +105,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
     return b.status
   }
 
-  const a = agreement.data
+  const a = b.agreement
   const agreed: Required<Agreed> = {
     commitmentId: a.commitmentId,
     termsHash: a.termsHash,
@@ -124,7 +119,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
       {
         authorization: json(answer.authorization),
         agreed,
-        terms: terms.value,
+        terms: b.terms,
         mandate: json(answer.mandate),
         now,
       },
@@ -149,7 +144,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
       approval: json(answer.approval),
       mandate: json(answer.mandate),
       agreed,
-      terms: terms.value,
+      terms: b.terms,
       now,
     },
     { config: deps.config, chain: deps.chain },
@@ -171,7 +166,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
   let receipt: { status: 'success' | 'reverted' }
   try {
     receipt = await deps.send(acceptCall(acceptance), (hash, validBefore) => {
-      save('accepting', { hash, validBefore: validBefore?.toString() ?? null })
+      save('accepting', { hash, validBefore })
     })
   } catch (e) {
     if (e instanceof SendError && e.outcome === 'failed') {
@@ -187,14 +182,18 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
   return grant("the acceptance's receipt shows the lock took it")
 }
 
-/** Moves every open booking on, each on its own, so one that fails holds up none of the rest. */
+/**
+ * Moves every open booking on, each on its own, so one that fails, or whose file the store
+ * refuses, holds up none of the rest.
+ */
 export async function advanceAll(deps: AcceptDeps): Promise<void> {
-  for (const b of deps.store.bookings()) {
-    if (b.status === 'accepted' || b.status === 'lapsed') continue
+  for (const id of deps.store.commitmentIds()) {
     try {
+      const b = deps.store.booking(id)
+      if (!b || b.status === 'accepted' || b.status === 'lapsed') continue
       await advance(deps, b)
     } catch (e) {
-      deps.log(`booking ${b.commitmentId}: ${e instanceof Error ? e.message : String(e)}`)
+      deps.log(`booking ${id}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 }

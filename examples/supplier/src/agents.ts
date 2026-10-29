@@ -49,24 +49,20 @@ export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Ans
   const offer = parsed.value
   const { agreement, terms, salt, domain } = offer
   const commitmentId = agreement.commitmentId.toLowerCase() as Hex
-  const record = {
-    agreement: toWire(agreement),
-    terms: toWire(terms),
-    salt,
-    chainId: domain.chainId,
-    lock: domain.verifyingContract,
-  }
+  const record = { agreement, terms, salt, chainId: domain.chainId, lock: domain.verifyingContract }
   const known = deps.store.booking(commitmentId)
   if (known) {
     const same =
-      canonicalJson({ ...record }) ===
-      canonicalJson({
-        agreement: known.agreement,
-        terms: known.terms,
-        salt: known.salt,
-        chainId: known.chainId,
-        lock: known.lock,
-      })
+      canonicalJson(toWire(record)) ===
+      canonicalJson(
+        toWire({
+          agreement: known.agreement,
+          terms: known.terms,
+          salt: known.salt,
+          chainId: known.chainId,
+          lock: known.lock,
+        }),
+      )
     return same
       ? { status: 200, body: { signature: known.signature } satisfies AgreementSignature }
       : fail(409, 'another agreement for this commitment is already signed')
