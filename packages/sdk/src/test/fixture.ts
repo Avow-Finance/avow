@@ -225,8 +225,9 @@ export async function bookingFixture(options: { mandate?: Partial<Mandate> } = {
     }
   }
 
-  const avow: AvowApi = {
-    async approveReserve(r) {
+  // A stand-in that serves Avow's records of cancellations and starts, which the hosted API doesn't.
+  const avow = {
+    async approveReserve(r: ReserveApprovalRequest) {
       calls.push('approveReserve')
       requests.push(r)
       hooks.afterApproval()
@@ -235,23 +236,27 @@ export async function bookingFixture(options: { mandate?: Partial<Mandate> } = {
       approvals.push(approval)
       return { ok: true, decisionId: 'dec_1', approval }
     },
-    async sponsor(transaction) {
+    async sponsor(transaction: Hex) {
       calls.push('sponsor')
       return transaction
     },
-    async cancel() {
-      calls.push('cancel')
-      return { cancelledAt: NOW + 60n }
+    records: {
+      async cancel() {
+        calls.push('cancel')
+        return { cancelledAt: NOW + 60n }
+      },
+      async requestStart({ commitmentId }: { commitmentId: Hex }) {
+        calls.push('requestStart')
+        return { startRequestHash: id(`start ${commitmentId}`), requestedAt: NOW + 120n }
+      },
+      async recordStart() {
+        calls.push('recordStart')
+        return hooks.startRefusal
+          ? { ok: false as const, reason: hooks.startRefusal }
+          : { ok: true as const }
+      },
     },
-    async requestStart({ commitmentId }) {
-      calls.push('requestStart')
-      return { startRequestHash: id(`start ${commitmentId}`), requestedAt: NOW + 120n }
-    },
-    async recordStart() {
-      calls.push('recordStart')
-      return hooks.startRefusal ? { ok: false, reason: hooks.startRefusal } : { ok: true }
-    },
-  }
+  } satisfies AvowApi
 
   const connection: SupplierConnection = {
     profile: supplier,

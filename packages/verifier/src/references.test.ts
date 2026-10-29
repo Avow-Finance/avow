@@ -1,6 +1,7 @@
 import {
   type AnyTerms,
   type CommitmentReference,
+  LOCK_RECORD_FIELDS,
   lockTerms,
   type ObservedTransfer,
   type PaymentReference,
@@ -33,9 +34,11 @@ import {
   COMMITMENT,
   id,
   LOCK,
+  LOCK_TERMS,
   lockedBacking,
   lockInfo,
   PAYEE,
+  RECORD_CHANGES,
   reservedChain,
   SALT,
   START,
@@ -260,6 +263,22 @@ describe('verifyCommitmentReference and verifyCommitmentTerms', () => {
     ).toEqual({ ok: false, reason: 'terms.hash_mismatch' })
     chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ contestWindow: 1n }))
     expect(await check()).toEqual({ ok: false, reason: 'chain.reserve_mismatch' })
+  })
+
+  it('refuse a lock enforcing another value in any field its record stores', async () => {
+    expect(Object.keys(RECORD_CHANGES).sort()).toEqual([...LOCK_RECORD_FIELDS].sort())
+    for (const field of LOCK_RECORD_FIELDS) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ [field]: RECORD_CHANGES[field] }))
+      expect(await check(), field).toEqual({ ok: false, reason: 'chain.reserve_mismatch' })
+    }
+    // The lock stores charges by kind, so the order a record lists them in changes nothing.
+    chain.setBacking(
+      LOCK,
+      COMMITMENT,
+      'buyer',
+      lockedBacking({ charges: [...LOCK_TERMS.charges].reverse() }),
+    )
+    expect(await check()).toEqual({ ok: true })
   })
 
   it('check a commitment made under version 1 terms by its version 1 hash', async () => {

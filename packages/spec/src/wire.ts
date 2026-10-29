@@ -1,6 +1,12 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
-import { COMMITMENT_STATES, type Commitment, OUTCOME_ENDINGS } from './commitment.js'
+import {
+  COMMITMENT_STATES,
+  type Commitment,
+  commitmentFitsState,
+  OUTCOME_ENDINGS,
+  type UncheckedCommitment,
+} from './commitment.js'
 import {
   CHARGE_KINDS,
   type ChargeKind,
@@ -309,7 +315,10 @@ const outcomeKinds = Object.keys(OUTCOME_ENDINGS) as [
   ...(keyof typeof OUTCOME_ENDINGS)[],
 ]
 
-/** The fields every version of a commitment record holds. */
+/**
+ * The fields every version of a commitment record holds. Their schemas read each field on its own,
+ * and `parseCommitment` then checks that the contest and outcome fit the state.
+ */
 const recordFields = {
   schemaVersion: z.string().min(1),
   commitmentId: bytes32,
@@ -496,23 +505,26 @@ export function parseReserveRequest(json: unknown): ReserveRequest {
 /**
  * Parses a stored or sent commitment record. A version 1 record reads as a version 2 record that
  * cites nothing, so writing it back writes version 2. A record version this code doesn't read is
- * refused as unknown.
+ * refused as unknown, and a record whose contest or outcome its state can't hold, such as a draft
+ * with an outcome, is refused as invalid.
  */
 export function parseCommitment(json: unknown): Parsed<Commitment> {
   const header = versionHeader.safeParse(json)
   if (!header.success) return { ok: false, reason: 'message.invalid' }
+  let record: UncheckedCommitment
   if (header.data.schemaVersion === '1') {
     const older = commitmentJsonV1.safeParse(json)
     if (!older.success) return { ok: false, reason: 'message.invalid' }
-    const value = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION, references: [] }
-    return { ok: true, value: value as Commitment }
-  }
-  if (header.data.schemaVersion !== COMMITMENT_RECORD_VERSION) {
+    record = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION, references: [] }
+  } else if (header.data.schemaVersion === COMMITMENT_RECORD_VERSION) {
+    const parsed = commitmentJson.safeParse(json)
+    if (!parsed.success) return { ok: false, reason: 'message.invalid' }
+    record = parsed.data
+  } else {
     return { ok: false, reason: 'message.schema_unknown' }
   }
-  const parsed = commitmentJson.safeParse(json)
-  return parsed.success
-    ? { ok: true, value: parsed.data as Commitment }
+  return commitmentFitsState(record)
+    ? { ok: true, value: record }
     : { ok: false, reason: 'message.invalid' }
 }
 

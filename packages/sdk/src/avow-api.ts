@@ -10,21 +10,10 @@ import type { Hex } from 'viem'
 export type { ReserveApproval, ReserveApprovalRequest } from '@avow-finance/spec'
 
 /**
- * Avow's side of an agent's commitments. Avow's hosted API implements it over HTTP through
- * `httpAvowApi`, which signs each request with the agent's key, and a local stand-in implements it
- * for a demo or a test. Pre-release, so it may change before 1.0.
+ * Avow's records of cancellations and job starts. An `AvowApi` serves all three calls together, as
+ * its `records`, or none of them. Avow's hosted API doesn't serve them yet.
  */
-export interface AvowApi {
-  /** Avow's reserve check. It signs an approval the lock takes, or refuses with a reason code. */
-  approveReserve(request: ReserveApprovalRequest): Promise<ReserveApproval>
-  /**
-   * Has Avow's relay co-sign a transaction the agent signed with `feePayer: true`, so the relay
-   * pays its fee and the business needs no fee token. It takes and returns serialized bytes, and
-   * never sends them. The relay signs only when each call goes to the business's own lock or
-   * approves that lock to pull the reserve token. The agent checks the co-signed bytes, sends them
-   * itself and tracks their hash.
-   */
-  sponsor(transaction: Hex): Promise<Hex>
+export interface AvowRecords {
   /** Records the business cancelling a commitment, timestamped by Avow. */
   cancel(request: { commitmentId: Hex }): Promise<{ cancelledAt: bigint }>
   /**
@@ -39,4 +28,28 @@ export interface AvowApi {
     commitmentId: Hex
     receipt: Signed<StartReceipt>
   }): Promise<{ ok: true } | { ok: false; reason: ReasonCode }>
+}
+
+/**
+ * Avow's side of an agent's commitments. Avow's hosted API implements it over HTTP through
+ * `httpAvowApi`, which signs each request with the agent's key, and a local stand-in implements it
+ * for a demo or a test. Pre-release, so it may change before 1.0.
+ *
+ * Avow's records of cancellations and job starts are one optional group, `records`, because the
+ * hosted API doesn't serve them yet and `httpAvowApi` leaves them out. `createAgent` gives an agent
+ * `cancel` and `start` only when its `AvowApi` has `records`.
+ */
+export interface AvowApi {
+  /** Avow's reserve check. It signs an approval the lock takes, or refuses with a reason code. */
+  approveReserve(request: ReserveApprovalRequest): Promise<ReserveApproval>
+  /**
+   * Has Avow's relay co-sign a transaction the agent signed with `feePayer: true`, so the relay
+   * pays its fee and the business needs no fee token. It takes and returns serialized bytes, and
+   * never sends them. The relay signs only when each call goes to the business's own lock or
+   * approves that lock to pull the reserve token. The agent checks the co-signed bytes, sends them
+   * itself and tracks their hash.
+   */
+  sponsor(transaction: Hex): Promise<Hex>
+  /** Avow's records of cancellations and job starts, all three calls or none. */
+  records?: AvowRecords
 }

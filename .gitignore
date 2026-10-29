@@ -7,3 +7,5 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+# The quickstarts' state directories, which hold their keys
+.avow-*/

@@ -1,4 +1,5 @@
 import { type Approval, type AvowDomain, approvalTypedData, type Signed } from '@avow-finance/spec'
+import { FACTORY_ABI } from '@avow-finance/verifier'
 import { type Address, encodeFunctionData, type Hex, toFunctionSelector } from 'viem'
 import { Abis } from 'viem/tempo'
 
@@ -62,6 +63,27 @@ export const RESERVE_ABI = [
  */
 export const RESERVE_SELECTOR: Hex = toFunctionSelector(RESERVE_ABI[0])
 
+/**
+ * The calls a business account's root key makes on its own lock and on the factory, as the testnet
+ * contracts declare them. Approving a supplier lets an agent reserve for it, and only the account's
+ * root key can do it.
+ */
+export const ADMINISTRATOR_ABI = [
+  {
+    type: 'function',
+    name: 'approveSupplier',
+    inputs: [{ name: 'supplier', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+/**
+ * The lock factory's functions. The verifier defines them once, and the SDK passes the same
+ * definition on, so an agent and a supplier never read the factory through two different ABIs.
+ */
+export { FACTORY_ABI }
+
 /** One call in a Tempo transaction. */
 export interface Call {
   to: Address
@@ -93,4 +115,24 @@ export function reserveCalls(approval: Signed<Approval>, d: AvowDomain): Call[] 
       }),
     },
   ]
+}
+
+/** The call that creates a business account's lock from the factory. */
+export function createLockCall(factory: Address, account: Address): Call {
+  return {
+    to: factory,
+    data: encodeFunctionData({ abi: FACTORY_ABI, functionName: 'createLock', args: [account] }),
+  }
+}
+
+/** The call, from the business account's root key, that lets its agents reserve for a supplier. */
+export function approveSupplierCall(lock: Address, supplier: Address): Call {
+  return {
+    to: lock,
+    data: encodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      functionName: 'approveSupplier',
+      args: [supplier],
+    }),
+  }
 }

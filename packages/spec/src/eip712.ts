@@ -7,7 +7,7 @@ import {
   type TypedDataDomain,
 } from 'viem'
 import type { ReasonCode } from './reasons.js'
-import type { ApprovalRule, Mandate, Side } from './types.js'
+import type { ApprovalRule, Mandate, PaymentLimit, Side } from './types.js'
 import { DOMAIN_NAME, isSupportedMessageVersion, MESSAGE_VERSIONS } from './version.js'
 
 /**
@@ -777,6 +777,86 @@ const _noUnknownTypes: {
 } = MESSAGE_VERSIONS
 void _everyTypeVersioned
 void _noUnknownTypes
+
+/** The field names one struct of a type table lists. */
+type FieldNames<Fields extends readonly { readonly name: string }[]> = Fields[number]['name']
+
+/**
+ * `true` when an interface's keys and a table's field names are the same set. Otherwise it names
+ * the fields each side lacks, so a build that fails says which field is missing where.
+ */
+type SameFields<Keys extends PropertyKey, Names extends PropertyKey> = [
+  Exclude<Keys, Names>,
+  Exclude<Names, Keys>,
+] extends [never, never]
+  ? true
+  : { notInTable: Exclude<Keys, Names>; notInInterface: Exclude<Names, Keys> }
+
+/**
+ * Each signed message's interface against its type table, and each struct a message nests, field
+ * for field in both directions. viem encodes only the fields a table lists, so a field added to an
+ * interface alone would travel unsigned, and the build fails here instead. The mandate's approval
+ * rule is the one field a table writes as two, its kind as `approvalRule` and the amount of an
+ * `above` rule as `approvalAbove`.
+ */
+interface InterfacesMatchTables {
+  Mandate: SameFields<keyof Mandate | 'approvalAbove', FieldNames<typeof MANDATE_TYPES.Mandate>>
+  PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>
+  TermsAgreement: SameFields<
+    keyof TermsAgreement,
+    FieldNames<typeof TERMS_AGREEMENT_TYPES.TermsAgreement>
+  >
+  Approval: SameFields<keyof Approval, FieldNames<typeof APPROVAL_TYPES.Approval>>
+  Charge: SameFields<keyof Charge, FieldNames<typeof APPROVAL_TYPES.Charge>>
+  SupplierAuthorization: SameFields<
+    keyof SupplierAuthorization,
+    FieldNames<typeof SUPPLIER_AUTHORIZATION_TYPES.SupplierAuthorization>
+  >
+  HumanApproval: SameFields<
+    keyof HumanApproval,
+    FieldNames<typeof HUMAN_APPROVAL_TYPES.HumanApproval>
+  >
+  StartReceipt: SameFields<keyof StartReceipt, FieldNames<typeof START_RECEIPT_TYPES.StartReceipt>>
+  ApiRequest: SameFields<keyof ApiRequest, FieldNames<typeof API_REQUEST_TYPES.ApiRequest>>
+  Acceptance: SameFields<keyof Acceptance, FieldNames<typeof ACCEPTANCE_TYPES.Acceptance>>
+  Report: SameFields<keyof ChargeReport, FieldNames<typeof REPORT_TYPES.Report>>
+  ReleaseConsent: SameFields<
+    keyof ReleaseConsent,
+    FieldNames<typeof RELEASE_CONSENT_TYPES.ReleaseConsent>
+  >
+  Evidence: SameFields<keyof SupplierEvidence, FieldNames<typeof EVIDENCE_TYPES.Evidence>>
+  BusinessAction: SameFields<
+    keyof BusinessAction,
+    FieldNames<typeof BUSINESS_ACTION_TYPES.BusinessAction>
+  >
+  SupplierAction: SameFields<
+    keyof SupplierAction,
+    FieldNames<typeof SUPPLIER_ACTION_TYPES.SupplierAction>
+  >
+}
+const _interfacesMatchTables: InterfacesMatchTables = {
+  Mandate: true,
+  PaymentLimit: true,
+  TermsAgreement: true,
+  Approval: true,
+  Charge: true,
+  SupplierAuthorization: true,
+  HumanApproval: true,
+  StartReceipt: true,
+  ApiRequest: true,
+  Acceptance: true,
+  Report: true,
+  ReleaseConsent: true,
+  Evidence: true,
+  BusinessAction: true,
+  SupplierAction: true,
+}
+// No message type goes unchecked, so a new one needs its line above.
+const _everyMessageChecked: [Exclude<MessageType, keyof InterfacesMatchTables>] extends [never]
+  ? true
+  : Exclude<MessageType, keyof InterfacesMatchTables> = true
+void _interfacesMatchTables
+void _everyMessageChecked
 
 /** The EIP-712 digest a signer signs. */
 export function digestOf(td: AvowTypedData): Hex {

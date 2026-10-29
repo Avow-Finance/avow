@@ -3,11 +3,15 @@ import {
   approvalTypedData,
   digestOf,
   dollars,
+  gpuReservationTerms,
   PRODUCTION_PROFILE,
+  parseTerms,
   type Signed,
   TESTNET_DEMO_PROFILE,
   termsAgreementTypedData,
   termsHash,
+  testnetDemoTermsV1,
+  toWire,
 } from '@avow-finance/spec'
 import { LOCK_ABI } from '@avow-finance/verifier'
 import {
@@ -26,6 +30,8 @@ import { tempoModerato } from 'viem/chains'
 import { Abis, Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import { type AgentConfig, BookingError, createAgent } from './agent.js'
+import type { AvowApi } from './avow-api.js'
+import { agentRequestKey, httpAvowApi } from './http.js'
 import { type Call, RESERVE_ABI } from './lock.js'
 import { SendError } from './send.js'
 import {
@@ -144,7 +150,7 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
     chain.state.holds = last ? sending.holds(last.message) : null
     return { transactionHash: id('the reserve transaction'), blockNumber: LANDED_IN }
   }
-  const config: AgentConfig = {
+  const config: AgentConfig<typeof f.avow> = {
     client: chain.client,
     key: f.key,
     mandate: f.signedMandate,
@@ -161,7 +167,12 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
 const book = (
   s: Awaited<ReturnType<typeof setup>>,
   change: Parameters<typeof gpuBooking>[0] = {},
-) => s.agent.book({ supplier: s.connection, booking: gpuBooking(change), category: 'compute' })
+) =>
+  s.agent.book({
+    supplier: s.connection,
+    terms: gpuReservationTerms(gpuBooking(change)),
+    category: 'compute',
+  })
 
 /** Books, and returns the commitment's id, with the lock holding its reserve. */
 async function booked(s: Awaited<ReturnType<typeof setup>>): Promise<Hex> {
@@ -233,8 +244,43 @@ describe('booking with a supplier', () => {
     const production = createAgent({ ...s.config, profile: PRODUCTION_PROFILE })
     // A 10-minute contest window is the testnet profile's, and production refuses it.
     expect(
-      await production.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
+      await production.book({
+        supplier: s.connection,
+        terms: gpuReservationTerms(gpuBooking()),
+        category: 'compute',
+      }),
     ).toEqual({ ok: false, reason: 'terms.contest_window_short' })
+    expect(s.calls).toEqual([])
+  })
+
+  it('books terms built outside the SDK, such as ones read from JSON, and carries them unchanged', async () => {
+    const s = await setup()
+    // Terms as another service would send them, read with the spec's own parser.
+    const parsed = parseTerms(JSON.parse(JSON.stringify(toWire(gpuReservationTerms(gpuBooking())))))
+    if (!parsed.ok) throw new Error(parsed.reason)
+    const result = await s.agent.book({
+      supplier: s.connection,
+      terms: parsed.value,
+      category: 'compute',
+    })
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.commitment.terms).toBe(parsed.value)
+    expect(s.requests[0]?.request.terms).toBe(parsed.value)
+    expect(result.commitment.termsHash).toBe(termsHash(parsed.value, result.commitment.salt))
+  })
+
+  it("refuses terms built outside the SDK that break their template's rules or aren't version 2, before asking anyone", async () => {
+    const s = await setup()
+    const terms = gpuReservationTerms(gpuBooking())
+    const larger = { ...terms, backing: { ...terms.backing, amount: terms.backing.amount + 1n } }
+    expect(
+      await s.agent.book({ supplier: s.connection, terms: larger, category: 'compute' }),
+    ).toEqual({ ok: false, reason: 'terms.reserve_mismatch' })
+    // Version 1 terms stay readable for commitments made under them, and no new commitment takes them.
+    const older = testnetDemoTermsV1(START, '0x000000000000000000000000000000000000a4b1')
+    expect(
+      await s.agent.book({ supplier: s.connection, terms: older as never, category: 'compute' }),
+    ).toEqual({ ok: false, reason: 'terms.version_unknown' })
     expect(s.calls).toEqual([])
   })
 
@@ -242,14 +288,18 @@ describe('booking with a supplier', () => {
     const other = await setup()
     const elsewhere = await other.agent.book({
       supplier: { ...other.connection, profile: { ...other.supplier, businessId: 'biz_other' } },
-      booking: gpuBooking(),
+      terms: gpuReservationTerms(gpuBooking()),
       category: 'compute',
     })
     expect(elsewhere).toEqual({ ok: false, reason: 'mandate.supplier_not_allowed' })
 
     const s = await setup()
     expect(
-      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'storage' }),
+      await s.agent.book({
+        supplier: s.connection,
+        terms: gpuReservationTerms(gpuBooking()),
+        category: 'storage',
+      }),
     ).toEqual({ ok: false, reason: 'mandate.category_not_allowed' })
     const short = await setup({ mandate: { expiry: START + 60n } })
     expect(await book(short)).toEqual({ ok: false, reason: 'mandate.ends_before_window' })
@@ -561,6 +611,53 @@ describe('cancelling and starting', () => {
       reason: 'mandate.action_not_permitted',
     })
     expect(s.calls).toEqual([])
+  })
+
+  it('tells a JavaScript caller whose AvowApi lacks its records what is missing, and reads nothing', async () => {
+    const s = await setup()
+    const { approveReserve, sponsor, records } = s.avow
+    // JavaScript checks no types, so its agent has cancel and start whatever AvowApi it passed.
+    const untyped = (avow: object) => createAgent({ ...s.config, avow: avow as typeof s.avow })
+    const none = untyped({ approveReserve, sponsor })
+    await expect(none.cancel(id('commitment'))).rejects.toThrow(
+      "The AvowApi this agent uses has no records, so it can't record a cancellation. Avow's hosted API doesn't serve its records of cancellations and starts yet.",
+    )
+    await expect(none.start(id('commitment'), s.connection)).rejects.toThrow(
+      "has no records, so it can't start the job",
+    )
+    // The three calls loose beside the others, outside the group they belong to.
+    const loose = untyped({ approveReserve, sponsor, ...records })
+    await expect(loose.cancel(id('commitment'))).rejects.toThrow('has no records')
+    const withoutRecord = { cancel: records.cancel, requestStart: records.requestStart }
+    // @ts-expect-error An AvowApi serves all three records or none, so TypeScript refuses this.
+    const partialApi: AvowApi = { approveReserve, sponsor, records: withoutRecord }
+    // A partial group is refused when the agent is made, before any call could need it.
+    expect(() => untyped(partialApi)).toThrow(
+      "The AvowApi's records lack recordStart. An AvowApi serves all of Avow's record calls or none.",
+    )
+    expect(s.calls).toEqual([])
+    expect(s.chain.state.readAt).toEqual([])
+  })
+
+  it("has no cancel or start through Avow's hosted API, and refuses both before it sends anything", async () => {
+    const s = await setup()
+    const fetched: unknown[] = []
+    const avow = httpAvowApi({
+      baseUrl: 'https://api.testnet.avow.finance',
+      key: agentRequestKey(s.key),
+      domain: D,
+      fetch: (async (url: unknown) => {
+        fetched.push(url)
+        throw new Error('no request should go out')
+      }) as typeof fetch,
+    })
+    const agent = createAgent({ ...s.config, avow })
+    // @ts-expect-error The hosted API serves no records, so its agent has no cancel to call.
+    await expect(agent.cancel(id('commitment'))).rejects.toThrow('has no records')
+    // @ts-expect-error The hosted API serves no records, so its agent has no start to call.
+    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow('has no records')
+    expect(fetched).toEqual([])
+    expect(s.chain.state.readAt).toEqual([])
   })
 })
 

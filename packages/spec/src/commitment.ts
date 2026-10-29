@@ -62,6 +62,17 @@ export function canMove(from: CommitmentState, to: CommitmentState): boolean {
   return TRANSITIONS[from].includes(to)
 }
 
+/**
+ * The states a commitment reaches only through the business contesting a pending charge. A record
+ * in one of them carries that contest, and a record in any other state has none.
+ */
+export const CONTESTED_STATES = ['paused', 'resolved'] as const satisfies readonly CommitmentState[]
+export type ContestedState = (typeof CONTESTED_STATES)[number]
+
+export function isContested(state: CommitmentState): state is ContestedState {
+  return (CONTESTED_STATES as readonly string[]).includes(state)
+}
+
 /** How a commitment ended, with the ending each kind belongs to. */
 export const OUTCOME_ENDINGS = {
   expired: 'expired',
@@ -77,9 +88,17 @@ export const OUTCOME_ENDINGS = {
 } as const satisfies Record<string, Ending>
 export type OutcomeKind = keyof typeof OUTCOME_ENDINGS
 
-/** Amounts are micros. Charged plus released equals the reserve, or zero when nothing was locked. */
-export interface Outcome {
-  kind: OutcomeKind
+/** The kinds of outcome that end a commitment in `E`. */
+export type OutcomeKindIn<E extends Ending> = {
+  [K in OutcomeKind]: (typeof OUTCOME_ENDINGS)[K] extends E ? K : never
+}[OutcomeKind]
+
+/**
+ * How a commitment ended, as one of the kinds `K`, or as any kind when `K` is left out. Amounts
+ * are micros. Charged plus released equals the reserve, or zero when nothing was locked.
+ */
+export interface Outcome<K extends OutcomeKind = OutcomeKind> {
+  kind: K
   charged: bigint
   released: bigint
 }
@@ -115,8 +134,8 @@ export interface ContestRecord {
   contestedAt: bigint
 }
 
-/** One promise between a buyer and a supplier, as the API stores it and the SDK reads it. */
-export interface Commitment {
+/** The fields a commitment record holds in every state. */
+export interface CommitmentFields {
   /** The record's own version, `COMMITMENT_RECORD_VERSION`. Its terms carry theirs. */
   schemaVersion: string
   commitmentId: Hex
@@ -127,11 +146,45 @@ export interface Commitment {
   terms: AnyTerms
   /** The salted terms hash. The salt stays with Avow and goes to the supplier. */
   termsHash: Hex
-  state: CommitmentState
   backing: readonly BackingRecord[]
   start: StartRecord | null
-  contest: ContestRecord | null
-  outcome: Outcome | null
   /** Other commitments and payments this record cites. A version 1 record cites none. */
   references: readonly Reference[]
+}
+
+/** A commitment record in the state `S`, holding the contest and outcome that state calls for. */
+export type CommitmentIn<S extends CommitmentState> = CommitmentFields & {
+  state: S
+  /** The business's contest in a state reached through one, and null in every other state. */
+  contest: S extends ContestedState ? ContestRecord : null
+  /** How the commitment ended, of a kind that belongs to its ending, and null before one. */
+  outcome: S extends Ending ? Outcome<OutcomeKindIn<S>> : null
+}
+
+/**
+ * One promise between a buyer and a supplier, as the API stores it and the SDK reads it. Its state
+ * decides what else it holds, so a draft with an outcome or a paused commitment without a contest
+ * can't be written as one.
+ */
+export type Commitment = { [S in CommitmentState]: CommitmentIn<S> }[CommitmentState]
+
+/**
+ * A commitment record whose contest and outcome nobody has checked against its state yet, as a
+ * reader holds one before `commitmentFitsState` passes it.
+ */
+export type UncheckedCommitment = CommitmentFields & {
+  state: CommitmentState
+  contest: ContestRecord | null
+  outcome: Outcome | null
+}
+
+/**
+ * Whether a record holds the contest and outcome its state calls for. A contest belongs to the
+ * contested states and to no other, and an outcome to the endings and to no other, with a kind
+ * that belongs to the record's own ending.
+ */
+export function commitmentFitsState(record: UncheckedCommitment): record is Commitment {
+  if ((record.contest !== null) !== isContested(record.state)) return false
+  if (!isEnding(record.state)) return record.outcome === null
+  return record.outcome !== null && OUTCOME_ENDINGS[record.outcome.kind] === record.state
 }

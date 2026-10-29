@@ -1,13 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import {
   COMMITMENT_STATES,
+  CONTESTED_STATES,
   type CommitmentState,
   canMove,
   ENDINGS,
+  isContested,
   isEnding,
   OUTCOME_ENDINGS,
   TRANSITIONS,
 } from './commitment.js'
+
+/** Every state reachable from `start`, itself included, without passing through `avoid`. */
+function reachable(start: CommitmentState, avoid?: CommitmentState): Set<CommitmentState> {
+  const seen = new Set<CommitmentState>([start])
+  const queue: CommitmentState[] = [start]
+  for (let s = queue.shift(); s; s = queue.shift()) {
+    for (const next of TRANSITIONS[s]) {
+      if (next !== avoid && !seen.has(next)) {
+        seen.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  return seen
+}
 
 describe('commitment states', () => {
   it('has 11 states and 4 endings', () => {
@@ -47,22 +64,26 @@ describe('commitment states', () => {
   it('lets every state reach an ending, so nothing can be stuck', () => {
     for (const start of COMMITMENT_STATES) {
       if (start === 'draft') continue // a draft nobody signs stays a draft, with nothing locked
-      const seen = new Set<CommitmentState>([start])
-      const queue: CommitmentState[] = [start]
-      for (let s = queue.shift(); s; s = queue.shift()) {
-        for (const next of TRANSITIONS[s]) {
-          if (!seen.has(next)) {
-            seen.add(next)
-            queue.push(next)
-          }
-        }
-      }
-      expect([...seen].some(isEnding), start).toBe(true)
+      expect([...reachable(start)].some(isEnding), start).toBe(true)
     }
   })
 
   it('gives every outcome an ending, and every ending an outcome', () => {
     const endings = new Set(Object.values(OUTCOME_ENDINGS))
     expect([...endings].sort()).toEqual([...ENDINGS].sort())
+  })
+
+  it('carries a contest in exactly the states a commitment reaches only through one', () => {
+    // A contest moves a pending charge to paused, and every state after paused keeps it.
+    expect(TRANSITIONS.charge_pending).toContain('paused')
+    const contested = reachable('paused')
+    expect([...contested].sort()).toEqual([...CONTESTED_STATES].sort())
+    // No contested state can be reached without the contest, so none can lack one.
+    for (const state of reachable('draft', 'paused')) {
+      expect(contested.has(state), state).toBe(false)
+    }
+    for (const state of COMMITMENT_STATES) {
+      expect(isContested(state), state).toBe(contested.has(state))
+    }
   })
 })

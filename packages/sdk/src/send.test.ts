@@ -39,6 +39,7 @@ const node = vi.hoisted(() => {
   const fresh = () => ({
     prepareRefusals: 0,
     prepared: 0,
+    preparedWith: null as Record<string, unknown> | null,
     signings: 0,
     lastValidBefore: 0n,
     sent: [] as string[],
@@ -142,10 +143,14 @@ const node = vi.hoisted(() => {
 })
 
 vi.mock('viem/actions', () => ({
-  prepareTransactionRequest: async (_client: unknown, args: { calls: unknown }) => {
+  prepareTransactionRequest: async (
+    _client: unknown,
+    args: { calls: unknown; feePayer?: boolean },
+  ) => {
     node.tick()
     const s = node.state
     s.prepared++
+    s.preparedWith = args
     if (s.prepareRefusals > 0) {
       s.prepareRefusals--
       throw new Error('execution reverted: not due yet')
@@ -161,7 +166,7 @@ vi.mock('viem/actions', () => ({
       nonceKey: 2n ** 256n - 1n,
       nonce: 0,
       validBefore: Number(s.lastValidBefore),
-      feePayer: true,
+      ...(args.feePayer ? { feePayer: true } : {}),
     }
   },
   signTransaction: async (
@@ -230,7 +235,7 @@ vi.mock('viem/actions', () => ({
   },
 }))
 
-const { SendError, sendSponsored } = await import('./send.js')
+const { SendError, sendOwn, sendSponsored } = await import('./send.js')
 
 const limits = { prepareTries: 3, sendTries: 3, signings: 3, wait: 1, receiptTimeout: 300 }
 const ALPHA = '0x20c0000000000000000000000000000000000001'
@@ -265,6 +270,8 @@ const client = createClient({
         const [bytes] = params as [Hex]
         const hash = keccak256(bytes)
         s.sent.push(bytes)
+        // A transaction its account paid for reaches the node without the relay recording it.
+        if (!s.validBefore.has(hash)) remember(bytes)
         if (s.sendErrors > 0) {
           s.sendErrors--
           if (s.takesDespiteError) take(hash)
@@ -433,6 +440,46 @@ describe('sending a transaction whose fee Avow pays', () => {
   it('refuses limits under one try', async () => {
     await expect(send(cosign, { ...limits, sendTries: 0 })).rejects.toThrow(RangeError)
     expect(node.state.prepared).toBe(0)
+  })
+})
+
+describe('sending a transaction its account pays for', () => {
+  it('signs on an expiring nonce with no fee payer, and records each hash before the node has it', async () => {
+    node.state.outcomes = ['success']
+    const recorded: { hash: Hex; validBefore: bigint | null; known: boolean }[] = []
+    const receipt = await sendOwn({
+      client,
+      account: sender as never,
+      calls: CALLS,
+      limits,
+      onSent: async (hash, validBefore) => {
+        // The record is awaited, so the bytes wait for it.
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        recorded.push({ hash, validBefore, known: node.state.known.has(hash) })
+      },
+    })
+    expect(node.state.preparedWith).toMatchObject({ calls: CALLS, nonceKey: 'expiring' })
+    expect(node.state.preparedWith).not.toHaveProperty('feePayer')
+    expect(node.state.sent).toHaveLength(1)
+    const hash = keccak256(node.state.sent[0] as Hex)
+    expect(recorded).toEqual([{ hash, validBefore: node.state.lastValidBefore, known: false }])
+    expect(receipt.transactionHash).toBe(hash)
+    const tx = TxEnvelopeTempo.deserialize(node.state.sent[0] as TxEnvelopeTempo.Serialized)
+    expect(tx.feePayerSignature).toBeUndefined()
+  })
+
+  it("carries a key authorization the account's root key signed", async () => {
+    node.state.outcomes = ['success']
+    const keyAuthorization = { stands: 'for a signed key authorization' }
+    await sendOwn({ client, account: sender as never, calls: CALLS, keyAuthorization, limits })
+    expect(node.state.preparedWith).toMatchObject({ keyAuthorization })
+  })
+
+  it('throws with every hash it sent when the transaction reverts', async () => {
+    node.state.outcomes = ['reverted']
+    const e = await failure(sendOwn({ client, account: sender as never, calls: CALLS, limits }))
+    expect(e.outcome).toBe('failed')
+    expect(e.hashes).toEqual([keccak256(node.state.sent[0] as Hex)])
   })
 })
 
@@ -624,7 +671,7 @@ describe('an agent sending through the relay by default', () => {
   it('signs, has Avow co-sign, sends and checks the lock holds its reserve', async () => {
     const { createAgent } = await import('./agent.js')
     const { bookingFixture, gpuBooking, lockRecord } = await import('./test/fixture.js')
-    const { TESTNET_DEMO_PROFILE } = await import('@avow-finance/spec')
+    const { TESTNET_DEMO_PROFILE, gpuReservationTerms } = await import('@avow-finance/spec')
     const f = await bookingFixture()
     const sponsored: Hex[] = []
     node.state.outcomes = ['success']
@@ -655,7 +702,7 @@ describe('an agent sending through the relay by default', () => {
     })
     const result = await agent.book({
       supplier: f.connection,
-      booking: gpuBooking(),
+      terms: gpuReservationTerms(gpuBooking()),
       category: 'compute',
     })
     if (!result.ok) throw new Error(result.reason)

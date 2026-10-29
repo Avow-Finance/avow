@@ -9,7 +9,14 @@ import type { Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { AvowApiError, agentRequestKey, httpAvowApi } from './http.js'
+import {
+  AvowApiError,
+  type AvowResend,
+  agentRequestKey,
+  enrollAgent,
+  httpAvowApi,
+  requestSupplierAuthorization,
+} from './http.js'
 
 // Every key is generated for the run and held only in memory.
 const account = privateKeyToAccount(generatePrivateKey())
@@ -52,6 +59,9 @@ const json = (status: number, body: unknown) =>
     status,
     headers: { 'content-type': 'application/json' },
   })
+/** An answer whose bytes aren't JSON, such as a proxy's page or a body cut off on its way. */
+const notJson = (status: number, text: string) => () =>
+  new Response(text, { status, headers: { 'content-type': 'text/html' } })
 const ok = () => json(200, { transaction: '0xabcd' })
 const error =
   (status: number, reason: string, extra: object = {}) =>
@@ -113,13 +123,85 @@ describe('httpAvowApi', () => {
       },
       broken,
       () => json(502, 'bad gateway'),
+      notJson(502, '<html>Bad Gateway</html>'),
       error(503, 'service.unavailable'),
       error(409, 'request.in_progress', { retryAfter: 1 }),
-      () => json(200, '<html>maintenance</html>'),
+      notJson(200, '<html>maintenance</html>'),
+      notJson(200, '{"transaction":"0xab'),
       ok,
     ])
     expect(await client(fetcher).sponsor('0x1234')).toBe('0xabcd')
-    expect(seen).toHaveLength(7)
+    expect(seen).toHaveLength(9)
+    for (const s of seen) {
+      expect(s.authorization).toBe(seen[0]?.authorization)
+      expect(s.body).toEqual(seen[0]?.body)
+    }
+  })
+
+  it("sends a 4xx whose body isn't JSON again, since Avow's own refusals are JSON", async () => {
+    const { seen, fetcher } = fakeApi([
+      notJson(429, '<html><body><h1>429 Too Many Requests</h1></body></html>'),
+      notJson(408, '<html><body><h1>408 Request Timeout</h1></body></html>'),
+      notJson(404, ''),
+      ok,
+    ])
+    expect(await client(fetcher).sponsor('0x1234')).toBe('0xabcd')
+    expect(seen).toHaveLength(4)
+    for (const s of seen) {
+      expect(s.authorization).toBe(seen[0]?.authorization)
+      expect(s.body).toEqual(seen[0]?.body)
+    }
+  })
+
+  it('stops at once at a 4xx whose body is JSON, whoever sent it', async () => {
+    const { seen, fetcher } = fakeApi([() => json(429, { message: 'Too Many Requests' }), ok])
+    const e = await client(fetcher)
+      .sponsor('0x1234')
+      .catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(AvowApiError)
+    expect(e).toMatchObject({
+      status: 429,
+      reason: null,
+      definite: true,
+      message: "Avow's API answered 429",
+    })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('gives up on unreadable answers once retryFor runs out, naming the last one and its status', async () => {
+    let clock = NOW
+    const plainText = () => {
+      clock += 200n
+      return new Response('upstream request timeout', {
+        status: 408,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+    const { seen, fetcher } = fakeApi([plainText, plainText, plainText, plainText])
+    const resends: AvowResend[] = []
+    const e = await client(fetcher, {
+      now: () => clock,
+      onResend: (r: AvowResend) => resends.push(r),
+    })
+      .sponsor('0x1234')
+      .catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(AvowApiError)
+    // No reason and not definite, so it can't be read as Avow's own refusal of the request.
+    expect(e).toMatchObject({
+      status: 408,
+      reason: null,
+      definite: false,
+      message:
+        "No definite answer from Avow. The last answer was unreadable, a 408 whose body isn't JSON.",
+    })
+    // Ten minutes by default, and each answer came 200 seconds after the one before.
+    expect(seen).toHaveLength(3)
+    // Each resend was heard before it went, with what the attempt before it saw.
+    expect(resends.map((r) => [r.status, r.reason, r.message])).toEqual([
+      [408, null, "The last answer was unreadable, a 408 whose body isn't JSON."],
+      [408, null, "The last answer was unreadable, a 408 whose body isn't JSON."],
+    ])
+    expect(resends.every((r) => r.requestId === (e as AvowApiError).requestId)).toBe(true)
     for (const s of seen) {
       expect(s.authorization).toBe(seen[0]?.authorization)
       expect(s.body).toEqual(seen[0]?.body)
@@ -138,10 +220,52 @@ describe('httpAvowApi', () => {
         .sponsor('0x1234')
         .catch((x: unknown) => x)
       expect(e).toBeInstanceOf(AvowApiError)
-      expect(e).toMatchObject({ status, reason, message: `refused: ${reason}` })
+      expect(e).toMatchObject({ status, reason, definite: true, message: `refused: ${reason}` })
       const v = verified(seen[0] as Seen)
       expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
       expect(seen).toHaveLength(1)
+    }
+  })
+
+  it("throws an answer that is JSON but not the call's answer at once, with the parser's reason", async () => {
+    const approval = (change: object) => ({
+      ok: true,
+      decisionId: 'dec_1',
+      approval: {
+        type: 'Approval',
+        schemaVersion: '1',
+        chainId: domain.chainId,
+        lock: domain.verifyingContract,
+        message: {},
+        signature: '0x00',
+        ...change,
+      },
+    })
+    const cases: [(api: ReturnType<typeof client>) => Promise<unknown>, unknown, string][] = [
+      [
+        (api) => api.approveReserve({} as never),
+        approval({ lock: '0x00000000000000000000000000000000000010c5' }),
+        'message.wrong_contract',
+      ],
+      [(api) => api.approveReserve({} as never), approval({ chainId: 1 }), 'message.wrong_chain'],
+      [
+        (api) => api.approveReserve({} as never),
+        approval({ schemaVersion: '9' }),
+        'message.schema_unknown',
+      ],
+      [(api) => api.approveReserve({} as never), approval({}), 'message.invalid'],
+      [(api) => api.sponsor('0x1234'), { surprise: true }, 'message.invalid'],
+    ]
+    for (const [call, answer, reason] of cases) {
+      // Were the answer sent again, the refusal that follows would end the call instead.
+      const { seen, fetcher } = fakeApi([() => json(200, answer), error(400, 'request.invalid')])
+      const e = await call(client(fetcher)).catch((x: unknown) => x)
+      expect(e, reason).toBeInstanceOf(AvowApiError)
+      expect(e, reason).toMatchObject({ status: 200, reason })
+      const v = verified(seen[0] as Seen, (seen[0]?.url ?? '').slice(AUDIENCE.length))
+      expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
+      // A repeat would get the same recorded answer, so nothing went again.
+      expect(seen, reason).toHaveLength(1)
     }
   })
 
@@ -182,7 +306,7 @@ describe('httpAvowApi', () => {
     expect(v.ok && v.value.credentials.signer).toBe(agent.accessKeyAddress.toLowerCase())
   })
 
-  it('takes only an origin and a validity Avow accepts, and says which calls wait', async () => {
+  it('takes only an origin and a validity Avow accepts', async () => {
     const { fetcher } = fakeApi([])
     for (const baseUrl of [
       'ftp://api.testnet.avow.finance',
@@ -195,10 +319,13 @@ describe('httpAvowApi', () => {
     }
     expect(() => client(fetcher, { requestValidity: 301n })).toThrow(RangeError)
     expect(() => client(fetcher, { requestValidity: 0n })).toThrow(RangeError)
-    const api = client(fetcher)
-    const commitmentId = `0x${'11'.repeat(32)}` as Hex
-    await expect(api.cancel({ commitmentId })).rejects.toThrow(/cancellations/)
-    await expect(api.requestStart({ commitmentId })).rejects.toThrow(/start requests/)
+  })
+
+  it('serves only the reserve check and the relay, leaving out the records Avow does not serve yet', () => {
+    const api = client(fakeApi([]).fetcher)
+    expect(Object.keys(api).sort()).toEqual(['approveReserve', 'sponsor'])
+    // @ts-expect-error The hosted client's type has no records either.
+    expect(api.records).toBeUndefined()
   })
 
   it('hands each signed request to the caller to keep', async () => {
@@ -207,5 +334,67 @@ describe('httpAvowApi', () => {
     await client(fetcher, { onSigned: (r: unknown) => kept.push(r) }).sponsor('0x1234')
     expect(kept).toHaveLength(1)
     expect(kept[0]).toMatchObject({ type: 'ApiRequest', lock: domain.verifyingContract })
+  })
+})
+
+describe('enrolling an agent and asking for a supplier authorization', () => {
+  const settings = (fetcher: typeof fetch) => ({
+    baseUrl: AUDIENCE,
+    key,
+    fetch: fetcher,
+    now: () => NOW,
+    retryWait: 0,
+  })
+  const keyTx: Hex = `0x${'ab'.repeat(32)}`
+  const mHash: Hex = `0x${'cd'.repeat(32)}`
+
+  it("enrolls under the mandate's own lock, and reads what Avow recorded", async () => {
+    const mandate = {
+      type: 'Mandate',
+      schemaVersion: '1',
+      chainId: domain.chainId,
+      lock: domain.verifyingContract,
+      message: { agentId: 'agt_1' },
+      signature: '0x00',
+    }
+    const enrolled = {
+      businessId: 'biz_buyer',
+      agentId: 'agt_1',
+      agentKey: account.address.toLowerCase(),
+      mandateHash: mHash,
+    }
+    const { seen, fetcher } = fakeApi([
+      notJson(200, '{"businessId":"biz_'),
+      () => json(200, enrolled),
+    ])
+    const answer = await enrollAgent(settings(fetcher), {
+      mandate: mandate as never,
+      keyAuthorizedIn: keyTx,
+    })
+    expect(answer).toEqual(enrolled)
+    // An answer whose bytes aren't JSON counts as none, so the same bytes went again.
+    expect(seen).toHaveLength(2)
+    expect(seen[1]?.body).toEqual(seen[0]?.body)
+    expect(seen[1]?.authorization).toBe(seen[0]?.authorization)
+    const v = await verified(seen[0] as Seen, '/v1/enrollments')
+    expect(v.ok).toBe(true)
+    expect(seen[0]?.body).toEqual(encodeApiBody({ mandate, keyAuthorizedIn: keyTx }))
+  })
+
+  it("asks as the supplier under the buyer's lock, and reads a refusal as Avow's answer", async () => {
+    const commitmentId: Hex = `0x${'1f'.repeat(32)}`
+    const { seen, fetcher } = fakeApi([
+      () => json(200, { ok: false, reason: 'chain.reserve_missing' }),
+    ])
+    const answer = await requestSupplierAuthorization(settings(fetcher), {
+      chainId: domain.chainId,
+      lock: domain.verifyingContract,
+      commitmentId,
+    })
+    expect(answer).toEqual({ ok: false, reason: 'chain.reserve_missing' })
+    const path = `/v1/commitments/${commitmentId}/supplier-authorizations`
+    expect(seen[0]?.url).toBe(`${AUDIENCE}${path}`)
+    expect(seen[0]?.body).toEqual(encodeApiBody({}))
+    expect((await verified(seen[0] as Seen, path)).ok).toBe(true)
   })
 })

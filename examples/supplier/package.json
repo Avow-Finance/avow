@@ -1,0 +1,24 @@
+{
+  "name": "@avow-examples/supplier",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A minimal supplier adapter: it signs agreements for agents, then checks and accepts each reserve Avow authorizes",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "avow-supplier": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@avow-finance/spec": "workspace:*",
+    "@avow-finance/verifier": "workspace:*",
+    "viem": "2.57.11",
+    "zod": "4.6.7"
+  }
+}

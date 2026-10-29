@@ -5,6 +5,7 @@ import {
   digestOf,
   type GpuReservationTerms,
   isKeySignature,
+  LOCK_RECORD_FIELDS,
   lockTerms,
   type Mandate,
   mandateHash,
@@ -13,11 +14,20 @@ import {
   testnetDemoTermsV1,
   toWire,
 } from '@avow-finance/spec'
-import { type Address, zeroAddress } from 'viem'
+import {
+  type Address,
+  decodeFunctionData,
+  getAbiItem,
+  getAddress,
+  toFunctionSelector,
+  zeroAddress,
+} from 'viem'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  ACCEPT_ABI,
   ACCEPTANCE_VALIDITY,
   type AcceptanceDeps,
+  acceptCall,
   prepareAcceptance,
   signAcceptance,
 } from './accept.js'
@@ -44,6 +54,7 @@ import {
   NOW,
   newKey,
   PAYEE,
+  RECORD_CHANGES,
   reservedChain,
   SALT,
   START,
@@ -132,6 +143,33 @@ describe('the supported acceptance path', () => {
   it('records nothing, so the same reserve can be prepared again', async () => {
     expect((await prepare()).ok).toBe(true)
     expect((await prepare()).ok).toBe(true)
+  })
+})
+
+describe('the call that hands an acceptance to the lock', () => {
+  it("has the selector of the compiled testnet lock's accept", () => {
+    expect(toFunctionSelector(getAbiItem({ abi: ACCEPT_ABI, name: 'accept' }))).toBe(
+      toFunctionSelector(
+        'accept((bytes32,uint8,bytes32,bytes32,uint256,address,uint64,uint256,uint64),bytes)',
+      ),
+    )
+  })
+
+  it('carries the acceptance to its lock exactly as it was signed', async () => {
+    const prepared = await ready()
+    const signed = await signAcceptance(prepared, supplierKey, {
+      disclosureId: prepared.disclosure.id,
+    })
+    const call = acceptCall(signed)
+    expect(call.to).toBe(LOCK)
+    const { args } = decodeFunctionData({ abi: ACCEPT_ABI, data: call.data })
+    const [message, signature] = args
+    expect(signature).toBe(signed.signature)
+    expect(message).toEqual({
+      ...prepared.acceptance,
+      side: 0,
+      token: getAddress(prepared.acceptance.token),
+    })
   })
 })
 
@@ -499,14 +537,10 @@ describe('the lock', () => {
     expect(await prepare()).toEqual(refused('chain.approval_mismatch'))
   })
 
-  it("refuses when the lock's record differs from the approval it names", async () => {
+  it("refuses when the lock's record names other parties or another mandate than the approval", async () => {
     const changes: Partial<LockedBacking>[] = [
       { supplier: newKey().address },
       { supplierSigner: newKey().address },
-      { freeCancelBy: LOCK_TERMS.freeCancelBy + 1n },
-      { charges: approval().charges.slice(1) },
-      { day90SupplierShareBps: 0 },
-      { arbiter: newKey().address },
       { mandateHash: id('another mandate') },
     ]
     for (const change of changes) {
@@ -514,6 +548,14 @@ describe('the lock', () => {
       expect(await prepare(), Object.keys(change).join()).toEqual(
         refused('chain.approval_mismatch'),
       )
+    }
+  })
+
+  it('refuses when the lock enforces another value than the terms in any field it stores', async () => {
+    // The authorization's checks compare the record with the terms before the approval is read.
+    for (const field of LOCK_RECORD_FIELDS) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ [field]: RECORD_CHANGES[field] }))
+      expect(await prepare(), field).toEqual(refused('chain.reserve_mismatch'))
     }
   })
 

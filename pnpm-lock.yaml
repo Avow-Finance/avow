@@ -24,6 +24,42 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5))
 
+  examples/buyer:
+    dependencies:
+      '@avow-finance/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@avow-finance/spec':
+        specifier: workspace:*
+        version: link:../../packages/spec
+      '@avow-finance/verifier':
+        specifier: workspace:*
+        version: link:../../packages/verifier
+      viem:
+        specifier: 2.57.11
+        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
+  examples/supplier:
+    dependencies:
+      '@avow-finance/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@avow-finance/spec':
+        specifier: workspace:*
+        version: link:../../packages/spec
+      '@avow-finance/verifier':
+        specifier: workspace:*
+        version: link:../../packages/verifier
+      viem:
+        specifier: 2.57.11
+        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   packages/mcp-server: {}
 
   packages/sdk:

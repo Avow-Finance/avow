@@ -1,14 +1,17 @@
 import {
   type Approval,
   type AvowDomain,
+  approvalCaps,
   approvalDigest,
+  approvalMandateProblem,
+  approvalPartiesProblem,
   approvalTermsProblem,
+  approvalTokenProblem,
   checkEnvelope,
   checkMandate,
   digestOf,
-  type GpuReservationInput,
-  gpuReservationTerms,
   isKeySignature,
+  isTermsV1,
   lockTerms,
   type Mandate,
   MESSAGE_VERSIONS,
@@ -26,7 +29,6 @@ import {
   type TermsProfile,
   termsAgreementTypedData,
   termsHash,
-  toTokenUnits,
 } from '@avow-finance/spec'
 import { type LockedBacking, readBacking } from '@avow-finance/verifier'
 import {
@@ -41,7 +43,7 @@ import {
 } from 'viem'
 import { getBlock, getTransactionReceipt } from 'viem/actions'
 import type { Account as TempoAccount } from 'viem/tempo'
-import type { AvowApi } from './avow-api.js'
+import type { AvowApi, AvowRecords } from './avow-api.js'
 import { type Call, reserveCalls } from './lock.js'
 import { SEND_LIMITS, SendError, type SendLimits, sendSponsored } from './send.js'
 import type { SupplierConnection } from './supplier.js'
@@ -55,7 +57,7 @@ export interface Landed {
   blockNumber: bigint
 }
 
-export interface AgentConfig {
+export interface AgentConfig<A extends AvowApi = AvowApi> {
   /** A client for the chain the business's lock is on, with the chain's fee token set. */
   client: Client<Transport, Chain>
   /**
@@ -69,7 +71,11 @@ export interface AgentConfig {
   token: RailToken
   /** The rules the terms have to meet, the profile Avow and the supplier check them under. */
   profile: TermsProfile
-  avow: AvowApi
+  /**
+   * Avow's side of the commitments. The agent has `cancel` and `start` only when it has `records`,
+   * which Avow's hosted API doesn't serve yet.
+   */
+  avow: A
   /** How long, in seconds, an offer stays open for the supplier and Avow. Ten minutes by default. */
   offerValidity?: bigint
   /**
@@ -91,8 +97,12 @@ export interface AgentConfig {
 /** One booking the agent makes with one supplier. */
 export interface Booking {
   supplier: SupplierConnection
-  /** What the booking states, which the GPU reservation template turns into terms. */
-  booking: GpuReservationInput
+  /**
+   * The commitment's version 2 terms, built with the template the booking falls under, such as
+   * `gpuReservationTerms` for a GPU reservation. The agent checks them against their template's
+   * rules and the profile before anyone sees them.
+   */
+  terms: Terms
   /** The mandate category the booking falls under, such as `compute`. */
   category: string
 }
@@ -162,6 +172,75 @@ export class BookingError extends Error {
   }
 }
 
+/** What every agent does, whatever its `AvowApi` serves. */
+export interface AgentCalls {
+  /** The business account the agent acts for. */
+  account: Address
+  /** The business's lock, where its reserves sit. */
+  lock: Address
+  /** The chain and the business's lock, which every message the agent signs is signed under. */
+  domain: AvowDomain
+  /** The mandate's hash under the business's lock. */
+  mandateHash: Hex
+  /**
+   * Books with a supplier under the booking's terms and funds the reserve. Before any money
+   * moves it refuses, with a reason code, terms of another version than 2, terms or a booking
+   * the mandate doesn't allow, a reserve the mandate sends to the administrator, a supplier
+   * signature from another key, Avow's refusal, and an approval that differs from the terms or
+   * the mandate or that the lock would refuse as late. Once the reserve is funded it checks the
+   * lock holds it under Avow's approval. When funding fails it reads the lock after the approval
+   * stops working, and returns the commitment if the reserve landed anyway. Otherwise it throws
+   * a `BookingError`.
+   */
+  book(b: Booking): Promise<BookResult>
+  /**
+   * Reads the lock for a commitment `book` approved but couldn't settle, once Avow's approval can
+   * no longer land, so the agent learns whether that same booking was funded. It takes what a
+   * `BookingError` carries.
+   */
+  reconcile(approved: ApprovedCommitment, hashes?: readonly Hex[]): Promise<Reconciled>
+  /** What the lock holds for one of the business's commitments, or null when it holds nothing. */
+  commitment(commitmentId: Hex): Promise<LockedBacking | null>
+}
+
+/** What an agent does once its `AvowApi` serves Avow's records of cancellations and job starts. */
+export interface AgentRecordCalls {
+  /**
+   * Tells Avow the business cancels a commitment, which Avow timestamps. Before free
+   * cancellation ends the reserve can go back in full, and after it a late cancellation charge
+   * can apply.
+   */
+  cancel(
+    commitmentId: Hex,
+  ): Promise<{ ok: true; cancelledAt: bigint } | { ok: false; reason: ReasonCode }>
+  /**
+   * Starts the job with the supplier. The lock has to hold the commitment with this supplier's
+   * signing key. Avow timestamps the request, the supplier returns its signed start receipt,
+   * which the agent checks answers the request and comes from that key, and Avow records the
+   * start the kept booking rests on.
+   */
+  start(
+    commitmentId: Hex,
+    supplier: SupplierConnection,
+  ): Promise<{ ok: true; receipt: Signed<StartReceipt> } | { ok: false; reason: ReasonCode }>
+}
+
+/**
+ * An agent that makes commitments under its mandate, as `createAgent` returns it for an `AvowApi`
+ * of type `A`. It has `cancel` and `start` only when `A` has `records`, Avow's records of
+ * cancellations and job starts. An agent made with `httpAvowApi` has neither, since Avow's hosted
+ * API doesn't serve those records yet, so code that calls one doesn't compile.
+ */
+export type Agent<A extends AvowApi = AvowApi> = AgentCalls &
+  (A extends { records: AvowRecords } ? AgentRecordCalls : unknown)
+
+/** Every call of Avow's records, so a JavaScript caller's `records` is checked for each. */
+const RECORD_CALLS = Object.keys({
+  cancel: true,
+  requestStart: true,
+  recordStart: true,
+} satisfies Record<keyof AvowRecords, true>) as (keyof AvowRecords)[]
+
 const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(16))))
 const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -170,9 +249,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * An agent that makes commitments under its mandate. It agrees terms with a supplier, asks Avow to
  * approve the reserve, checks Avow's approval against the terms and the mandate before any money
  * moves, and funds the reserve from the business's account with its own key while Avow's relay
- * pays the fee.
+ * pays the fee. It cancels and starts jobs only through an `AvowApi` that has `records`.
  */
-export function createAgent(config: AgentConfig) {
+export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A> {
   const { client, key, avow, token } = config
   const mandate = config.mandate.message
   const d: AvowDomain = {
@@ -195,6 +274,30 @@ export function createAgent(config: AgentConfig) {
   const offerValidity = config.offerValidity ?? 600n
   const maxApprovalValidity = config.maxApprovalValidity ?? 300n
   const permits = (action: Mandate['actions'][number]) => mandate.actions.includes(action)
+  // An AvowApi serves all of Avow's record calls or none. TypeScript refuses a partial group, and
+  // this refuses one from a JavaScript caller when the agent is made, before any call needs it.
+  const served: Partial<AvowRecords> | null | undefined = avow.records
+  if (served) {
+    const missing = RECORD_CALLS.filter((call) => typeof served[call] !== 'function')
+    if (missing.length > 0) {
+      throw new Error(
+        `The AvowApi's records lack ${missing.join(' and ')}. An AvowApi serves all of Avow's record calls or none.`,
+      )
+    }
+  }
+  /**
+   * Avow's records of cancellations and starts. TypeScript gives an agent `cancel` and `start` only
+   * when its `AvowApi` has them, so this refusal is for a JavaScript caller, before anything is
+   * read or sent.
+   */
+  const records = (what: string): AvowRecords => {
+    if (!served) {
+      throw new Error(
+        `The AvowApi this agent uses has no records, so it can't ${what}. Avow's hosted API doesn't serve its records of cancellations and starts yet.`,
+      )
+    }
+    return served as AvowRecords
+  }
   const send =
     config.send ??
     ((calls: Call[]) =>
@@ -225,28 +328,22 @@ export function createAgent(config: AgentConfig) {
     if (a.commitmentId.toLowerCase() !== expected.commitmentId.toLowerCase()) {
       return 'approval.commitment_mismatch'
     }
-    const s = expected.supplier
-    if (
-      !isAddressEqual(a.supplier, s.account) ||
-      !isAddressEqual(a.supplierSigner, s.signingKey) ||
-      !isAddressEqual(a.payee, s.payee)
-    ) {
-      return 'approval.parties_mismatch'
-    }
-    if (!isAddressEqual(a.token, token.token)) return 'approval.terms_mismatch'
+    const parties = approvalPartiesProblem(a, expected.supplier)
+    if (parties) return parties
+    const tokenProblem = approvalTokenProblem(a, token.token)
+    if (tokenProblem) return tokenProblem
     const termsProblem = approvalTermsProblem(a, {
       lock: lockTerms(expected.terms, token.decimals),
       termsHash: expected.termsHash,
     })
     if (termsProblem) return termsProblem
-    if (
-      a.mandateHash.toLowerCase() !== mHash.toLowerCase() ||
-      !isAddressEqual(a.fundingKey, key.accessKeyAddress) ||
-      a.capPerCommitment !== toTokenUnits(mandate.capPerCommitment, token.decimals) ||
-      a.capOpenReserves !== toTokenUnits(mandate.capOpenReserves, token.decimals)
-    ) {
-      return 'approval.mandate_mismatch'
-    }
+    // The agent funds the reserve with its own key, so the approval has to name that key.
+    const mandateProblem = approvalMandateProblem(a, {
+      mandateHash: mHash,
+      caps: approvalCaps(mandate, token.decimals),
+      fundingKeys: [key.accessKeyAddress],
+    })
+    if (mandateProblem) return mandateProblem
     // The lock refuses an approval past its expiry or its acceptance deadline.
     if (a.expiry <= now()) return 'message.expired'
     if (a.acceptBy <= now()) return 'authorization.accept_by_passed'
@@ -364,25 +461,18 @@ export function createAgent(config: AgentConfig) {
     return null
   }
 
-  return {
-    /** The business account the agent acts for. */
+  // Every agent has `cancel` and `start` at run time, so a JavaScript caller whose `AvowApi` has
+  // no records learns why from the error. `Agent<A>` shows them only when `A` has records.
+  const agent: AgentCalls & AgentRecordCalls = {
     account: mandate.account,
-    /** The business's lock, where its reserves sit. */
     lock: d.verifyingContract,
     domain: d,
     mandateHash: mHash,
 
-    /**
-     * Books with a supplier and funds the reserve. Before any money moves it refuses, with a
-     * reason code, terms or a booking the mandate doesn't allow, a reserve the mandate sends to
-     * the administrator, a supplier signature from another key, Avow's refusal, and an approval
-     * that differs from the terms or the mandate or that the lock would refuse as late. Once the
-     * reserve is funded it checks the lock holds it under Avow's approval. When funding fails it
-     * reads the lock after the approval stops working, and returns the commitment if the reserve
-     * landed anyway. Otherwise it throws a `BookingError`.
-     */
     async book(b: Booking): Promise<BookResult> {
-      const terms = gpuReservationTerms(b.booking)
+      const { terms } = b
+      // A new commitment takes version 2 terms, which the mandate check alone wouldn't insist on.
+      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown' }
       const supplier = b.supplier.profile
       const commitmentId = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const request = {
@@ -513,36 +603,17 @@ export function createAgent(config: AgentConfig) {
       )
     },
 
-    /**
-     * Reads the lock for a commitment `book` approved but couldn't settle, once Avow's approval can
-     * no longer land, so the agent learns whether that same booking was funded. It takes what a
-     * `BookingError` carries.
-     */
     reconcile,
 
-    /**
-     * Tells Avow the business cancels a commitment, which Avow timestamps. Before free
-     * cancellation ends the reserve can go back in full, and after it a late cancellation charge
-     * can apply.
-     */
     async cancel(commitmentId: Hex) {
-      if (!permits('cancel')) {
-        return { ok: false as const, reason: 'mandate.action_not_permitted' as ReasonCode }
-      }
-      const { cancelledAt } = await avow.cancel({ commitmentId })
-      return { ok: true as const, cancelledAt }
+      const served = records('record a cancellation')
+      if (!permits('cancel')) return { ok: false, reason: 'mandate.action_not_permitted' }
+      const { cancelledAt } = await served.cancel({ commitmentId })
+      return { ok: true, cancelledAt }
     },
 
-    /**
-     * Starts the job with the supplier. The lock has to hold the commitment with this supplier's
-     * signing key. Avow timestamps the request, the supplier returns its signed start receipt,
-     * which the agent checks answers the request and comes from that key, and Avow records the
-     * start the kept booking rests on.
-     */
-    async start(
-      commitmentId: Hex,
-      supplier: SupplierConnection,
-    ): Promise<{ ok: true; receipt: Signed<StartReceipt> } | { ok: false; reason: ReasonCode }> {
+    async start(commitmentId: Hex, supplier: SupplierConnection) {
+      const served = records('start the job')
       if (!permits('start')) return { ok: false, reason: 'mandate.action_not_permitted' }
       // The receipt has to come from the signing key the lock holds for the commitment.
       const held = await readBacking(client, d.verifyingContract, commitmentId, 'buyer')
@@ -550,7 +621,7 @@ export function createAgent(config: AgentConfig) {
       if (!isAddressEqual(held.supplierSigner, supplier.profile.signingKey)) {
         return { ok: false, reason: 'chain.supplier_mismatch' }
       }
-      const request = await avow.requestStart({ commitmentId })
+      const request = await served.requestStart({ commitmentId })
       const receipt = await supplier.startJob({ commitmentId, ...request })
       const problem = receiptProblem(receipt, {
         commitmentId,
@@ -558,16 +629,14 @@ export function createAgent(config: AgentConfig) {
         signer: held.supplierSigner,
       })
       if (problem) return { ok: false, reason: problem }
-      const recorded = await avow.recordStart({ commitmentId, receipt })
+      const recorded = await served.recordStart({ commitmentId, receipt })
       if (!recorded.ok) return { ok: false, reason: recorded.reason }
       return { ok: true, receipt }
     },
 
-    /** What the lock holds for one of the business's commitments, or null when it holds nothing. */
     commitment(commitmentId: Hex): Promise<LockedBacking | null> {
       return readBacking(client, d.verifyingContract, commitmentId, 'buyer')
     },
   }
+  return agent
 }
-
-export type Agent = ReturnType<typeof createAgent>

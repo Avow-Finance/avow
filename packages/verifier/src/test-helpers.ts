@@ -3,6 +3,7 @@ import {
   approvalDigest,
   approvalTypedData,
   digestOf,
+  type LockRecordField,
   type LockTerms,
   type Mandate,
   mandateHash,
@@ -77,6 +78,27 @@ export const LOCK_TERMS: LockTerms = {
   day90SupplierShareBps: terms.resolution.day90SupplierShareBps,
   arbiter: terms.resolution.arbiter,
 }
+
+/**
+ * Another value for each lock-enforced field a lock's record stores. It's typed over every such
+ * field, so a field added to what a lock enforces fails the type check until it has a value here,
+ * and then the tests that use it check that every comparison catches it.
+ */
+export const RECORD_CHANGES: { readonly [K in LockRecordField]: LockedBacking[K] } = (() => {
+  const [late, noShow] = LOCK_TERMS.charges
+  if (!late || !noShow) throw new Error('the terms have two charges')
+  return {
+    amount: LOCK_TERMS.amount - 1n,
+    freeCancelBy: LOCK_TERMS.freeCancelBy + 1n,
+    acceptBy: LOCK_TERMS.acceptBy + 1n,
+    chargeDeadline: LOCK_TERMS.chargeDeadline + 1n,
+    releaseDate: LOCK_TERMS.releaseDate + 1n,
+    contestWindow: LOCK_TERMS.contestWindow - 1n,
+    charges: [late, { ...noShow, most: noShow.most - 1n }],
+    day90SupplierShareBps: LOCK_TERMS.day90SupplierShareBps - 1,
+    arbiter: '0x000000000000000000000000000000000000dead',
+  }
+})()
 
 export const mandate: Mandate = {
   mandateId: id('mandate-1'),

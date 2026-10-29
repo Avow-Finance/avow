@@ -15,12 +15,13 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 
 | Part | What it does |
 | --- | --- |
-| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states and the moves between them, and the references a record cites |
+| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states, the moves between them, the contest and outcome a record holds in each, and the references a record cites. `parseCommitment` refuses a record whose state can't hold its contest or outcome |
 | Terms | Version 2 terms: a header and five sections, each hashed apart, with templates for what each kind of commitment promises. GPU reservation is the first template |
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
 | References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
 | Signed requests | How an agent or a supplier signs each request to Avow's API, and the bodies the API takes and answers with. [Signed requests](signed-requests.md) fixes the deployment binding, the encoding, request ids and retries, and what a signature proves |
+| Supplier adapter | The two routes a supplier's adapter serves to agents, `SUPPLIER_ADAPTER_PATHS`, with the supplier's profile, the offer an agent sends and the signature or refusal the supplier answers with. The answer takes every kind of signature `isKeySignature` checks, so a supplier whose signing key is a passkey can answer |
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
@@ -52,6 +53,8 @@ A template's meaning never changes. A change in how a template reads its terms i
 ### What the lock enforces
 
 `lockTerms` maps terms to the fields of Avow's approval, which the lock stores and enforces. The side, amount and release date come from the backing, the deadlines and charges from the remedies, and the contest window, arbiter and day-90 share from the resolution. Avow's API builds its approval with this mapping, and `approvalTermsProblem` refuses an approval that differs from it in any field or names another terms hash. The verifier runs the same check against the supplier's own terms before it builds an acceptance, so an approval can't make a lock enforce anything the terms don't say. The terms name a currency and never a token, so the approval's token sits outside the mapping, and the API and the verifier each check that it's a token accepted for that currency.
+
+`LOCK_TERMS_FIELDS` names every field `lockTerms` gives, and `lockTermsDifferences` is the one comparison of them. `approvalTermsProblem` runs it on an approval. `lockRecordDifferences` runs it on a lock's record, which holds every field but the side, since the lock files each record under its side. The verifier runs it on the four fields a supplier authorization carries, `AUTHORIZATION_TERMS_FIELDS`. The build fails when `LockTerms` gains a field the list leaves out, so a new field is compared everywhere at once. `approvalPartiesProblem`, `approvalTokenProblem` and `approvalMandateProblem` check the rest of an approval, and the SDK and the verifier both use them.
 
 ### Hashing
 

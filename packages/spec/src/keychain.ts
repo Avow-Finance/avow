@@ -92,14 +92,36 @@ export function keychainSignatureCheck(
 }
 
 /**
+ * A signature read as one key's own, in a form Tempo's verifier reads for a single key, secp256k1,
+ * P-256 or WebAuthn, outside any keychain envelope. Null for anything else.
+ */
+function keySignatureEnvelope(signature: Hex) {
+  try {
+    const envelope = SignatureEnvelope.deserialize(signature)
+    return envelope.type === 'keychain' ? null : envelope
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether a signature has the form of one key's own signature that Tempo's verifier reads for a
+ * single key, secp256k1, P-256 or WebAuthn, outside any keychain envelope. `isKeySignature` reads
+ * a signature the same way before it checks who signed, so every signature it accepts passes.
+ */
+export function isKeySignatureForm(signature: Hex): boolean {
+  return keySignatureEnvelope(signature) !== null
+}
+
+/**
  * Whether a key's own signature, outside any keychain envelope, signed the digest. It reads the
  * kinds of signature Tempo's verifier reads for a single key, secp256k1, P-256 and WebAuthn, so it
  * answers as the lock's check of a supplier's signing key does.
  */
 export function isKeySignature(digest: Hex, signature: Hex, key: Address): boolean {
+  const envelope = keySignatureEnvelope(signature)
+  if (!envelope) return false
   try {
-    const envelope = SignatureEnvelope.deserialize(signature)
-    if (envelope.type === 'keychain') return false
     const signer = SignatureEnvelope.extractAddress({ payload: digest, signature: envelope })
     return (
       isAddressEqual(signer, key) &&

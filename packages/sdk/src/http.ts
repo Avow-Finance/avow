@@ -3,35 +3,49 @@ import {
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  describeReason,
+  type Enrollment,
+  type EnrollmentRequest,
   encodeApiBody,
   isApiAudience,
   newRequestId,
+  type Parsed,
   parseApiError,
+  parseEnrollment,
   parseReserveApproval,
   parseSponsorship,
+  parseSupplierAuthorizationAnswer,
   type ReasonCode,
   type RequestKey,
   type Signed,
+  type SupplierAuthorizationAnswer,
   signApiRequest,
 } from '@avow-finance/spec'
-import type { Hex } from 'viem'
+import type { Address, Hex } from 'viem'
 import type { AgentKey } from './agent.js'
 import type { AvowApi } from './avow-api.js'
 
 /**
- * Avow's API refused a request, or no definite answer came in time. `status` is the HTTP status,
- * 0 when no answer came, and `reason` the reason code Avow gave, when it gave one. `requestId`
- * names the operation. Sending the same signed bytes again is always safe, since Avow answers an
- * identical repeat without acting again.
+ * Avow's API refused a request, answered with something the client can't use, or gave no definite
+ * answer in time. `status` is the HTTP status, 0 when no answer came, and `reason` the reason code
+ * Avow gave, or the parser's reason for an answer that doesn't parse. `requestId` names the
+ * operation. Sending the same signed bytes again is always safe, since Avow answers an identical
+ * repeat without acting again.
  */
 export class AvowApiError extends Error {
   readonly status: number
   readonly reason: ReasonCode | null
   readonly requestId: Hex
+  /**
+   * Whether Avow answered definitely, with a refusal or an answer the client can't use. When it's
+   * false the client gave up with no definite answer, so Avow may still have recorded the request,
+   * and a caller shouldn't treat it as refused.
+   */
+  readonly definite: boolean
 
   constructor(
     message: string,
-    details: { status: number; reason: ReasonCode | null; requestId: Hex },
+    details: { status: number; reason: ReasonCode | null; requestId: Hex; definite: boolean },
     options?: { cause?: unknown },
   ) {
     super(message, options)
@@ -39,19 +53,31 @@ export class AvowApiError extends Error {
     this.status = details.status
     this.reason = details.reason
     this.requestId = details.requestId
+    this.definite = details.definite
   }
 }
 
-export interface HttpAvowApiConfig {
+/** One resend of the same bytes after no definite answer, as `onResend` receives it. */
+export interface AvowResend {
+  requestId: Hex
+  /** The last answer's status, or 0 when none came. */
+  status: number
+  /** The last answer's reason, when Avow gave one. */
+  reason: ReasonCode | null
+  /** What happened to the last attempt. */
+  message: string
+  /** Milliseconds until the bytes go again. */
+  waitMs: number
+}
+
+export interface AvowRequestConfig {
   /**
    * The deployment's origin, such as `https://api.testnet.avow.finance`. It is the audience every
    * request is signed for, so it can't carry a path, query or fragment.
    */
   baseUrl: string
-  /** The key that signs every request, the agent's own through `agentRequestKey`. */
+  /** The key that signs every request: an agent's through `agentRequestKey`, or a supplier's. */
   key: RequestKey
-  /** The chain and lock the agent's mandate names. Every request is signed under this domain. */
-  domain: AvowDomain
   /** Seconds each signed request stays valid, two minutes by default. Avow refuses more than five. */
   requestValidity?: bigint
   /**
@@ -67,8 +93,29 @@ export interface HttpAvowApiConfig {
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
   fetch?: typeof fetch
-  /** Receives each signed request, so the agent can keep the record of what it asked Avow. */
+  /** Receives each signed request, so the signer can keep the record of what it asked Avow. */
   onSigned?: (request: Signed<ApiRequest>) => void
+  /** Hears about each resend before it waits, so a long run of them never goes unseen. */
+  onResend?: (resend: AvowResend) => void
+}
+
+export interface HttpAvowApiConfig extends AvowRequestConfig {
+  /** The chain and lock the agent's mandate names. Every request is signed under this domain. */
+  domain: AvowDomain
+}
+
+/** One operation for Avow's API. */
+export interface AvowRequest<T> {
+  /** The chain and lock the request is signed under. */
+  domain: AvowDomain
+  path: string
+  body: unknown
+  /**
+   * Parses the JSON body of a 2xx answer, or gives the reason it can't. Avow answers a repeat with
+   * the answer it recorded, so an answer this refuses would come back the same, and it's thrown at
+   * once with that reason.
+   */
+  read: (json: unknown) => Parsed<T>
 }
 
 /** The agent's access key as a request signer: its own address and its bare signature. */
@@ -108,18 +155,19 @@ function audienceOf(baseUrl: string): string {
 }
 
 /**
- * Avow's hosted API as an `AvowApi`. Each call is one operation with a fresh request id, signed with
- * the agent's key for the deployment at `baseUrl`. The client sends the same bytes again after no
- * answer, a broken answer, a 5xx or `request.in_progress`, until Avow answers definitely or
- * `retryFor` runs out. Avow answers an identical repeat with its first answer and does nothing
- * again, so a lost answer never turns into a second approval or a second co-signature. It never
- * follows a redirect, so a signed body goes nowhere but the deployment it was signed for.
- * Cancelling and starting a job come with the start-request and cancellation records, and until
- * then those calls throw.
+ * Sends operations to Avow's hosted API, each with a fresh request id and signed with `key` for the
+ * deployment at `baseUrl`. It sends the same bytes again after no answer, an answer of any status
+ * whose body isn't JSON, a 5xx or `request.in_progress`, until Avow answers definitely or
+ * `retryFor` runs out. Avow answers with JSON whatever the status, so bytes that aren't JSON never
+ * came whole from Avow. Avow answers an identical repeat with its first answer and does nothing
+ * again, so a lost answer never turns into a second action. It never follows a redirect, so a
+ * signed body goes nowhere but the deployment it was signed for. A refusal, which is any other 4xx
+ * with a JSON body, a 2xx answer `read` refuses, or no definite answer in time, throws an
+ * `AvowApiError` with the reason.
  */
-export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
+export function avowRequests(config: AvowRequestConfig) {
   const audience = audienceOf(config.baseUrl)
-  const { key, domain } = config
+  const { key } = config
   const validity = config.requestValidity ?? 120n
   if (validity <= 0n || validity > API_REQUEST_MAX_VALIDITY) {
     throw new RangeError(`A request can stay valid for 1 to ${API_REQUEST_MAX_VALIDITY} seconds`)
@@ -128,18 +176,9 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
   const firstWait = config.retryWait ?? 1000
   const attemptTimeout = config.attemptTimeout ?? 30_000
   const now = config.now ?? systemClock
-  const send = config.fetch ?? fetch
-  const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
+  const fetchOnce = config.fetch ?? fetch
 
-  /**
-   * Sends one operation until Avow answers it definitely, and returns the answer `read` parses.
-   * `read` returns null for a body it can't parse, which counts as no answer.
-   */
-  async function post<T>(
-    path: string,
-    value: unknown,
-    read: (json: unknown) => T | null,
-  ): Promise<T> {
+  return async function send<T>({ domain, path, body: value, read }: AvowRequest<T>): Promise<T> {
     const body = encodeApiBody(value)
     const requestId = newRequestId()
     const { authorization, request } = await signApiRequest({
@@ -160,7 +199,7 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
     let lastReason: ReasonCode | null = null
     for (;;) {
       try {
-        const response = await send(`${audience}${path}`, {
+        const response = await fetchOnce(`${audience}${path}`, {
           method: 'POST',
           headers: { authorization, 'content-type': 'application/json' },
           body,
@@ -169,17 +208,31 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
         })
         const json = readJson(await response.text())
         lastStatus = response.status
-        if (response.ok) {
+        if (json === undefined) {
+          // Avow answers with JSON whatever the status, its refusals included, so bytes that aren't
+          // JSON were cut off or replaced on their way, as by a proxy's error page, and go again.
+          last = `The last answer was unreadable, a ${response.status} whose body isn't JSON.`
+          lastReason = null
+        } else if (response.ok) {
           const answer = read(json)
-          if (answer !== null) return answer
-          last = "Avow's answer doesn't parse"
-          lastReason = 'message.invalid'
+          if (answer.ok) return answer.value
+          throw new AvowApiError(`Avow's answer can't be used: ${describeReason(answer.reason)}`, {
+            status: lastStatus,
+            reason: answer.reason,
+            requestId,
+            definite: true,
+          })
         } else {
           const error = parseApiError(json)
           lastReason = error?.reason ?? null
           last = error?.message ?? `Avow's API answered ${response.status}`
           if (response.status < 500 && lastReason !== 'request.in_progress') {
-            throw new AvowApiError(last, { status: lastStatus, reason: lastReason, requestId })
+            throw new AvowApiError(last, {
+              status: lastStatus,
+              reason: lastReason,
+              requestId,
+              definite: true,
+            })
           }
         }
       } catch (e) {
@@ -193,30 +246,86 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
           status: lastStatus,
           reason: lastReason,
           requestId,
+          definite: false,
         })
       }
+      config.onResend?.({
+        requestId,
+        status: lastStatus,
+        reason: lastReason,
+        message: last,
+        waitMs: wait,
+      })
       await sleep(wait)
       wait = Math.min(wait * 2, MAX_WAIT)
     }
   }
+}
 
-  const notYet = (what: string) => async () => {
-    throw new Error(`Avow's hosted API doesn't ${what} yet`)
-  }
+/**
+ * Avow's hosted API as an `AvowApi`, for an agent whose mandate names `domain`. Each call is one
+ * operation sent through `avowRequests`, so a lost answer never turns into a second approval or a
+ * second co-signature. It serves the reserve check and the relay, and has no `records` until Avow
+ * serves its records of cancellations and job starts, so an agent made with it has no `cancel` or
+ * `start` to call by accident.
+ */
+export function httpAvowApi(config: HttpAvowApiConfig): Omit<AvowApi, 'records'> {
+  const send = avowRequests(config)
+  const { domain } = config
+  const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
 
   return {
-    approveReserve: (request) =>
-      post(API_PATHS.reserveApprovals, request, (json) => {
-        const parsed = parseReserveApproval(json, expected)
-        return parsed.ok ? parsed.value : null
+    approveReserve: (body) =>
+      send({
+        domain,
+        path: API_PATHS.reserveApprovals,
+        body,
+        read: (json) => parseReserveApproval(json, expected),
       }),
     sponsor: (transaction) =>
-      post(API_PATHS.sponsorships, { transaction }, (json) => {
-        const parsed = parseSponsorship(json)
-        return parsed.ok ? parsed.value.transaction : null
+      send({
+        domain,
+        path: API_PATHS.sponsorships,
+        body: { transaction },
+        read: (json) => {
+          const parsed = parseSponsorship(json)
+          return parsed.ok ? { ok: true, value: parsed.value.transaction } : parsed
+        },
       }),
-    cancel: notYet('record cancellations'),
-    requestStart: notYet('timestamp start requests'),
-    recordStart: notYet('record start receipts'),
   }
+}
+
+/**
+ * Enrolls an agent with Avow once its key is on the chain with the mandate's hash. The agent signs
+ * the request with that key, under the mandate's chain and lock, and gets back what Avow recorded.
+ */
+export function enrollAgent(
+  config: AvowRequestConfig,
+  enrollment: EnrollmentRequest,
+): Promise<Enrollment> {
+  return avowRequests(config)({
+    domain: { chainId: enrollment.mandate.chainId, verifyingContract: enrollment.mandate.lock },
+    path: API_PATHS.enrollments,
+    body: enrollment,
+    read: parseEnrollment,
+  })
+}
+
+/**
+ * Asks Avow for a fresh authorization for a commitment's reserve, signed with the supplier's
+ * signing key under the buyer's lock. Avow answers with its authorization, the approval the reserve
+ * was funded under and the buyer's mandate, which the supplier's verifier checks before it accepts,
+ * or with the reason it signed none, such as a reserve not funded yet.
+ */
+export function requestSupplierAuthorization(
+  config: AvowRequestConfig,
+  commitment: { chainId: number; lock: Address; commitmentId: Hex },
+): Promise<SupplierAuthorizationAnswer> {
+  const expected = { chainId: commitment.chainId, lock: commitment.lock }
+  return avowRequests(config)({
+    domain: { chainId: commitment.chainId, verifyingContract: commitment.lock },
+    path: API_PATHS.supplierAuthorizations(commitment.commitmentId),
+    body: {},
+    read: (json) => parseSupplierAuthorizationAnswer(json, expected),
+  })
 }

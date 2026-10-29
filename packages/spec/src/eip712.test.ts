@@ -21,6 +21,7 @@ import {
   type HumanApproval,
   humanApprovalTypedData,
   isSignedBy,
+  type MessageType,
   mandateHash,
   mandateTypedData,
   messageKey,
@@ -264,6 +265,54 @@ describe('signed messages', () => {
       expect(digestOf(td)).toBe(hashTypedData(td as Parameters<typeof hashTypedData>[0]))
     })
   }
+
+  describe('the fields each message signs', () => {
+    // One message of each type with the value it was built from, keyed by type, so a new type
+    // without a sample fails the type check. Each value is typed as its interface, which has no
+    // optional fields, so its keys are the interface's keys.
+    const samples: { [T in MessageType]: { typedData: AvowTypedData; from: object } } = {
+      Mandate: { typedData: builders.mandate(), from: mandate },
+      TermsAgreement: { typedData: builders.agreement(), from: agreement },
+      Approval: { typedData: builders.approval(), from: approval },
+      SupplierAuthorization: { typedData: builders.authorization(), from: authorization },
+      HumanApproval: { typedData: builders.human(), from: human },
+      StartReceipt: { typedData: builders.receipt(), from: receipt },
+      ApiRequest: { typedData: builders.request(), from: apiRequest },
+      Acceptance: { typedData: builders.acceptance(), from: acceptance },
+      Report: { typedData: builders.report(), from: chargeReport },
+      ReleaseConsent: { typedData: builders.consent(), from: consent },
+      Evidence: { typedData: builders.evidence(), from: supplierEvidence },
+      BusinessAction: { typedData: builders.contest(), from: contest },
+      SupplierAction: { typedData: builders.withdrawal(), from: withdrawal },
+    }
+    /** The field names one struct of a message's table lists, sorted. */
+    const names = (td: AvowTypedData, struct: string) =>
+      ((td.types as Record<string, readonly { name: string }[]>)[struct] ?? [])
+        .map((f) => f.name)
+        .sort()
+    const keys = (value: object | undefined) => Object.keys(value ?? {}).sort()
+
+    for (const [type, { typedData, from }] of Object.entries(samples)) {
+      it(`${type}: its table lists every field its interface holds, and the message carries each`, () => {
+        expect(typedData.primaryType).toBe(type)
+        const table = names(typedData, type)
+        expect(table.length).toBeGreaterThan(0)
+        // The mandate's approval rule is written as two fields, its kind and an above rule's amount.
+        const fields = Object.keys(from).concat(type === 'Mandate' ? ['approvalAbove'] : [])
+        expect(fields.sort()).toEqual(table)
+        expect(keys(typedData.message)).toEqual(table)
+      })
+    }
+
+    it('lists every field of the structs a message nests', () => {
+      const m = builders.mandate()
+      expect(keys(mandate.paymentLimits[0])).toEqual(names(m, 'PaymentLimit'))
+      expect(keys(m.message.paymentLimits[0])).toEqual(names(m, 'PaymentLimit'))
+      const a = builders.approval()
+      expect(keys(approval.charges[0])).toEqual(names(a, 'Charge'))
+      expect(keys(a.message.charges[0])).toEqual(names(a, 'Charge'))
+    })
+  })
 
   it("fails when any field of the supplier's authorization changes (acceptance test 8)", async () => {
     const td = supplierAuthorizationTypedData(authorization, DOMAIN)

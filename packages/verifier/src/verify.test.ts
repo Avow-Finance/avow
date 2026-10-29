@@ -1,12 +1,16 @@
 import {
   type AnyTerms,
+  AUTHORIZATION_TERMS_FIELDS,
+  type AuthorizationTermsField,
   digestOf,
   type GpuReservationTerms,
+  LOCK_RECORD_FIELDS,
   type Mandate,
   MemoryReplayGuard,
   mandateHash,
   mandateTypedData,
   PRODUCTION_PROFILE,
+  type SupplierAuthorization,
   termsHash,
   toWire,
 } from '@avow-finance/spec'
@@ -34,6 +38,7 @@ import {
   mHash,
   NOW,
   newKey,
+  RECORD_CHANGES,
   reservedChain,
   signedAuthorization,
   signedMandate,
@@ -117,6 +122,13 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
       expect(await verify(), JSON.stringify(toWire(change))).toEqual(
         refused('chain.reserve_mismatch'),
       )
+    }
+  })
+
+  it('refuses a reserve whose lock enforces another value than the terms in any field it stores', async () => {
+    for (const field of LOCK_RECORD_FIELDS) {
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({ [field]: RECORD_CHANGES[field] }))
+      expect(await verify(), field).toEqual(refused('chain.reserve_mismatch'))
     }
   })
 
@@ -449,11 +461,25 @@ describe("the supplier's own rules", () => {
     expect(await verify(realKyb, { deps: deps2 })).toEqual(refused('terms.contest_window_short'))
   })
 
-  it("refuses an authorization whose deadlines don't match the terms", async () => {
-    const auth = await signedAuthorization(
-      authorization({ chargeDeadline: LOCK_TERMS.chargeDeadline - 60n }),
-    )
-    expect(await verify(auth)).toEqual(refused('authorization.terms_mismatch'))
+  it('refuses an authorization that differs from the terms in any lock-enforced field it carries', async () => {
+    // One change to each such field. It's typed over the fields the authorization carries, so a
+    // field added to that list fails the type check here until it has a change of its own. The
+    // lock's record still matches the terms, so only the authorization's own check can refuse.
+    const changes: { readonly [K in AuthorizationTermsField]: SupplierAuthorization[K] } = {
+      amount: LOCK_TERMS.amount - 1n,
+      acceptBy: LOCK_TERMS.acceptBy + 60n,
+      chargeDeadline: LOCK_TERMS.chargeDeadline - 60n,
+      releaseDate: LOCK_TERMS.releaseDate + 60n,
+    }
+    expect(Object.keys(changes).sort()).toEqual([...AUTHORIZATION_TERMS_FIELDS].sort())
+    for (const field of AUTHORIZATION_TERMS_FIELDS) {
+      const auth = await signedAuthorization(authorization({ [field]: changes[field] }))
+      // A replay guard of its own, so no row's outcome rests on another's.
+      const alone = { ...deps, replay: new MemoryReplayGuard() }
+      expect(await verify(auth, { deps: alone }), field).toEqual(
+        refused('authorization.terms_mismatch'),
+      )
+    }
   })
 
   it('refuses once the acceptance deadline has passed', async () => {
