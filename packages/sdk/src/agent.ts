@@ -10,9 +10,8 @@ import {
   checkEnvelope,
   checkMandate,
   digestOf,
-  type GpuReservationInput,
-  gpuReservationTerms,
   isKeySignature,
+  isTermsV1,
   lockTerms,
   type Mandate,
   MESSAGE_VERSIONS,
@@ -94,8 +93,12 @@ export interface AgentConfig {
 /** One booking the agent makes with one supplier. */
 export interface Booking {
   supplier: SupplierConnection
-  /** What the booking states, which the GPU reservation template turns into terms. */
-  booking: GpuReservationInput
+  /**
+   * The commitment's version 2 terms, built with the template the booking falls under, such as
+   * `gpuReservationTerms` for a GPU reservation. The agent checks them against their template's
+   * rules and the profile before anyone sees them.
+   */
+  terms: Terms
   /** The mandate category the booking falls under, such as `compute`. */
   category: string
 }
@@ -375,16 +378,19 @@ export function createAgent(config: AgentConfig) {
     mandateHash: mHash,
 
     /**
-     * Books with a supplier and funds the reserve. Before any money moves it refuses, with a
-     * reason code, terms or a booking the mandate doesn't allow, a reserve the mandate sends to
-     * the administrator, a supplier signature from another key, Avow's refusal, and an approval
-     * that differs from the terms or the mandate or that the lock would refuse as late. Once the
-     * reserve is funded it checks the lock holds it under Avow's approval. When funding fails it
-     * reads the lock after the approval stops working, and returns the commitment if the reserve
-     * landed anyway. Otherwise it throws a `BookingError`.
+     * Books with a supplier under the booking's terms and funds the reserve. Before any money
+     * moves it refuses, with a reason code, terms of another version than 2, terms or a booking
+     * the mandate doesn't allow, a reserve the mandate sends to the administrator, a supplier
+     * signature from another key, Avow's refusal, and an approval that differs from the terms or
+     * the mandate or that the lock would refuse as late. Once the reserve is funded it checks the
+     * lock holds it under Avow's approval. When funding fails it reads the lock after the approval
+     * stops working, and returns the commitment if the reserve landed anyway. Otherwise it throws
+     * a `BookingError`.
      */
     async book(b: Booking): Promise<BookResult> {
-      const terms = gpuReservationTerms(b.booking)
+      const { terms } = b
+      // A new commitment takes version 2 terms, which the mandate check alone wouldn't insist on.
+      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown' }
       const supplier = b.supplier.profile
       const commitmentId = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const request = {

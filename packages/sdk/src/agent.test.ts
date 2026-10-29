@@ -3,11 +3,15 @@ import {
   approvalTypedData,
   digestOf,
   dollars,
+  gpuReservationTerms,
   PRODUCTION_PROFILE,
+  parseTerms,
   type Signed,
   TESTNET_DEMO_PROFILE,
   termsAgreementTypedData,
   termsHash,
+  testnetDemoTermsV1,
+  toWire,
 } from '@avow-finance/spec'
 import { LOCK_ABI } from '@avow-finance/verifier'
 import {
@@ -162,7 +166,12 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
 const book = (
   s: Awaited<ReturnType<typeof setup>>,
   change: Parameters<typeof gpuBooking>[0] = {},
-) => s.agent.book({ supplier: s.connection, booking: gpuBooking(change), category: 'compute' })
+) =>
+  s.agent.book({
+    supplier: s.connection,
+    terms: gpuReservationTerms(gpuBooking(change)),
+    category: 'compute',
+  })
 
 /** Books, and returns the commitment's id, with the lock holding its reserve. */
 async function booked(s: Awaited<ReturnType<typeof setup>>): Promise<Hex> {
@@ -234,8 +243,43 @@ describe('booking with a supplier', () => {
     const production = createAgent({ ...s.config, profile: PRODUCTION_PROFILE })
     // A 10-minute contest window is the testnet profile's, and production refuses it.
     expect(
-      await production.book({ supplier: s.connection, booking: gpuBooking(), category: 'compute' }),
+      await production.book({
+        supplier: s.connection,
+        terms: gpuReservationTerms(gpuBooking()),
+        category: 'compute',
+      }),
     ).toEqual({ ok: false, reason: 'terms.contest_window_short' })
+    expect(s.calls).toEqual([])
+  })
+
+  it('books terms built outside the SDK, such as ones read from JSON, and carries them unchanged', async () => {
+    const s = await setup()
+    // Terms as another service would send them, read with the spec's own parser.
+    const parsed = parseTerms(JSON.parse(JSON.stringify(toWire(gpuReservationTerms(gpuBooking())))))
+    if (!parsed.ok) throw new Error(parsed.reason)
+    const result = await s.agent.book({
+      supplier: s.connection,
+      terms: parsed.value,
+      category: 'compute',
+    })
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.commitment.terms).toBe(parsed.value)
+    expect(s.requests[0]?.request.terms).toBe(parsed.value)
+    expect(result.commitment.termsHash).toBe(termsHash(parsed.value, result.commitment.salt))
+  })
+
+  it("refuses terms built outside the SDK that break their template's rules or aren't version 2, before asking anyone", async () => {
+    const s = await setup()
+    const terms = gpuReservationTerms(gpuBooking())
+    const larger = { ...terms, backing: { ...terms.backing, amount: terms.backing.amount + 1n } }
+    expect(
+      await s.agent.book({ supplier: s.connection, terms: larger, category: 'compute' }),
+    ).toEqual({ ok: false, reason: 'terms.reserve_mismatch' })
+    // Version 1 terms stay readable for commitments made under them, and no new commitment takes them.
+    const older = testnetDemoTermsV1(START, '0x000000000000000000000000000000000000a4b1')
+    expect(
+      await s.agent.book({ supplier: s.connection, terms: older as never, category: 'compute' }),
+    ).toEqual({ ok: false, reason: 'terms.version_unknown' })
     expect(s.calls).toEqual([])
   })
 
@@ -243,14 +287,18 @@ describe('booking with a supplier', () => {
     const other = await setup()
     const elsewhere = await other.agent.book({
       supplier: { ...other.connection, profile: { ...other.supplier, businessId: 'biz_other' } },
-      booking: gpuBooking(),
+      terms: gpuReservationTerms(gpuBooking()),
       category: 'compute',
     })
     expect(elsewhere).toEqual({ ok: false, reason: 'mandate.supplier_not_allowed' })
 
     const s = await setup()
     expect(
-      await s.agent.book({ supplier: s.connection, booking: gpuBooking(), category: 'storage' }),
+      await s.agent.book({
+        supplier: s.connection,
+        terms: gpuReservationTerms(gpuBooking()),
+        category: 'storage',
+      }),
     ).toEqual({ ok: false, reason: 'mandate.category_not_allowed' })
     const short = await setup({ mandate: { expiry: START + 60n } })
     expect(await book(short)).toEqual({ ok: false, reason: 'mandate.ends_before_window' })

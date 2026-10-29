@@ -16,6 +16,7 @@ import {
 } from '@avow-finance/sdk'
 import {
   type AvowDomain,
+  gpuReservationTerms,
   type Mandate,
   mandateJson,
   parseSigned,
@@ -171,18 +172,21 @@ async function book() {
   })
   const supplier = await httpSupplier(settings.supplierUrl)
   const now = (await client.getBlock({ blockTag: 'latest' })).timestamp
-  const booking = quickstartBooking({
-    now,
-    startsIn: settings.startsIn,
-    minutes: settings.minutes,
-    reserve: settings.reserve,
-    arbiter: settings.arbiter,
-    day90SupplierShareBps: settings.day90SupplierShareBps,
-  })
+  // The booking's terms, built with the GPU reservation template the booking falls under.
+  const terms = gpuReservationTerms(
+    quickstartBooking({
+      now,
+      startsIn: settings.startsIn,
+      minutes: settings.minutes,
+      reserve: settings.reserve,
+      arbiter: settings.arbiter,
+      day90SupplierShareBps: settings.day90SupplierShareBps,
+    }),
+  )
   log(`booking with ${supplier.profile.businessId}`)
   let result: Awaited<ReturnType<typeof agent.book>>
   try {
-    result = await agent.book({ supplier, booking, category: 'compute' })
+    result = await agent.book({ supplier, terms, category: 'compute' })
   } catch (e) {
     if (e instanceof BookingError) {
       store.saveBooking(e.commitment.commitmentId, toWire({ ...e.commitment, outcome: e.outcome }))

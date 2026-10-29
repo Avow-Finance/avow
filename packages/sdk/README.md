@@ -6,9 +6,9 @@ The TypeScript SDK an agent uses to make commitments backed by Avow reserves. An
 
 ## Booking
 
-`createAgent` takes the agent's access key on its business account, the mandate the business's administrator signed for it, the token the lock holds, the terms profile, and a connection to Avow. `book` then does the following.
+`createAgent` takes the agent's access key on its business account, the mandate the business's administrator signed for it, the token the lock holds, the terms profile, and a connection to Avow. `book` takes a supplier, a mandate category and the commitment's version 2 terms, which the caller builds with the template the booking falls under, such as `gpuReservationTerms` from `@avow-finance/spec` for a GPU reservation. A later template needs no change to the SDK. `book` then does the following.
 
-1. It turns the booking into version 2 terms under the GPU reservation template, and runs the mandate check that Avow and a supplier's verifier run. It refuses terms that break their rules and a booking the mandate doesn't allow. It also refuses, for now, a reserve the mandate sends to the administrator to approve in person.
+1. It runs the mandate check that Avow and a supplier's verifier run, which checks the terms against their template's rules and the profile too. It refuses terms of any other version, terms that break their rules and a booking the mandate doesn't allow. It also refuses, for now, a reserve the mandate sends to the administrator to approve in person.
 2. It makes the commitment's id and a random salt, and signs the terms agreement with its key. The supplier signs the same agreement once it has checked the terms and salt give the agreement's terms hash. A supplier signature from another key is refused before Avow sees it.
 3. It asks Avow's reserve check to approve, and passes on Avow's refusal with its decision id.
 4. It checks Avow's approval before any money moves. The approval's envelope has to name this chain and lock. The approval has to name this commitment, the supplier's own account, signing key and payout, the lock's token, exactly what the terms map to, and the mandate's hash, caps and the agent's key as the funding key. It also has to be one the lock still takes, before its expiry and the acceptance deadline, and it can't stay valid for more than five minutes. The lock enforces what the approval says, so the agent funds nothing it didn't agree.
@@ -44,12 +44,14 @@ A sponsored transaction is valid for under half a minute. The sender reads the l
 
 ```ts
 import { createAgent } from '@avow-finance/sdk'
-import { TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
+import { gpuReservationTerms, TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
 
-// client, key, mandate, token, avow and supplier come from the business's setup.
+// client, key, mandate, token, avow and supplier come from the business's setup, and booking
+// states the GPUs, the window, the price, the charges and the dispute terms.
 const agent = createAgent({ client, key, mandate, token, profile: TESTNET_DEMO_PROFILE, avow })
 
-const booked = await agent.book({ supplier, booking, category: 'compute' })
+const terms = gpuReservationTerms(booking)
+const booked = await agent.book({ supplier, terms, category: 'compute' })
 if (!booked.ok) throw new Error(booked.reason)
 const { commitmentId } = booked.commitment
 

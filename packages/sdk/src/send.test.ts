@@ -671,7 +671,7 @@ describe('an agent sending through the relay by default', () => {
   it('signs, has Avow co-sign, sends and checks the lock holds its reserve', async () => {
     const { createAgent } = await import('./agent.js')
     const { bookingFixture, gpuBooking, lockRecord } = await import('./test/fixture.js')
-    const { TESTNET_DEMO_PROFILE } = await import('@avow-finance/spec')
+    const { TESTNET_DEMO_PROFILE, gpuReservationTerms } = await import('@avow-finance/spec')
     const f = await bookingFixture()
     const sponsored: Hex[] = []
     node.state.outcomes = ['success']
@@ -702,7 +702,7 @@ describe('an agent sending through the relay by default', () => {
     })
     const result = await agent.book({
       supplier: f.connection,
-      booking: gpuBooking(),
+      terms: gpuReservationTerms(gpuBooking()),
       category: 'compute',
     })
     if (!result.ok) throw new Error(result.reason)
