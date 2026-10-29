@@ -9,6 +9,7 @@ A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, 
 - Both routes and their bodies are the ones `@avow-finance/spec` fixes for every supplier adapter, so an agent that talks to this adapter talks to yours.
 - Every few seconds it asks Avow to authorize each booking it signed, with a request its signing key signs. Once the agent has funded the reserve, Avow answers with its authorization, its approval and the buyer's mandate.
 - The verifier checks all three against the supplier's own terms and the lock before the supplier holds capacity, then builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
+- It grants the capacity only once the acceptance's receipt shows the lock took it, as the verifier's README asks. Until then the reserve can still go back to the business, so a booking stays `held` and nothing is granted.
 - A booking whose reserve never arrives lapses at its acceptance deadline, and Avow returns any reserve then.
 
 Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between.

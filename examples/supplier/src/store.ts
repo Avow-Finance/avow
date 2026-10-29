@@ -20,8 +20,14 @@ export interface SupplierKeys {
   signingKey: Hex
 }
 
-/** Where a booking stands, from the agreement the supplier signed to the lock taking its acceptance. */
-export type BookingStatus = 'agreed' | 'granted' | 'accepting' | 'accepted' | 'lapsed'
+/**
+ * Where a booking stands. `agreed` once the supplier signed the agreement. `held` once Avow
+ * authorized the funded reserve and the verifier passed it, so the supplier holds the capacity
+ * without granting it yet. `accepting` while the acceptance is on its way to the lock. `accepted`
+ * once the lock holds the acceptance, which is when the supplier grants the capacity. `lapsed` when
+ * no reserve came before the acceptance deadline.
+ */
+export type BookingStatus = 'agreed' | 'held' | 'accepting' | 'accepted' | 'lapsed'
 
 /** One booking an agent made, as the supplier keeps it. Amounts and times are decimal strings. */
 export interface Booking {

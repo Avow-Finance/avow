@@ -27,8 +27,10 @@ let logged: string[]
 let sent: Call[]
 /** What the lock shows for the commitment, and what each send does. */
 let lock: { state: string | null; finalized: bigint }
-let sendDoes: 'land' | 'fail' | 'unknown'
+let sendDoes: 'land' | 'fail' | 'unknown' | 'revert'
 let answers: number
+/** The lines saying the supplier granted a booking's capacity. */
+const grants = () => logged.filter((l) => l.startsWith('granting'))
 
 beforeEach(() => {
   ;({ store, remove } = tempStore())
@@ -49,13 +51,16 @@ beforeEach(() => {
       // The record has to name the hash before the bytes go anywhere.
       await onSent(HASH, NOW + 25n)
       expect(store.booking(COMMITMENT)?.sent?.hash).toBe(HASH)
+      // Nothing is granted while the acceptance hasn't landed.
+      expect(grants()).toEqual([])
       if (sendDoes === 'fail')
         throw new SendError('it reverted', 'failed', { hashes: [HASH], signings: 1 })
       if (sendDoes === 'unknown') {
         throw new SendError('no receipt came', 'unknown', { hashes: [HASH], signings: 1 })
       }
+      if (sendDoes === 'revert') return { status: 'reverted' }
       lock.state = 'accepted'
-      return {}
+      return { status: 'success' }
     },
     lockState: async () => lock.state,
     finalizedTime: async () => lock.finalized,
@@ -80,7 +85,7 @@ describe("the supplier's acceptance of a booking", () => {
     expect(sent).toEqual([])
   })
 
-  it("checks Avow's authorization, holds capacity, and sends the acceptance the verifier built to the lock", async () => {
+  it("checks Avow's authorization, holds capacity, sends the acceptance the verifier built, and grants once it lands", async () => {
     expect(await advance(deps, put())).toBe('accepted')
     expect(status()).toBe('accepted')
     expect(sent).toHaveLength(1)
@@ -88,17 +93,33 @@ describe("the supplier's acceptance of a booking", () => {
     expect(call.to.toLowerCase()).toBe(LOCK)
     const { args } = decodeFunctionData({ abi: ACCEPT_ABI, data: call.data })
     expect(args[0].commitmentId).toBe(COMMITMENT)
-    expect(logged.some((l) => l.startsWith('holding capacity'))).toBe(true)
+    // Capacity is held once Avow authorized the booking, and granted only after the receipt.
+    const held = logged.findIndex((l) => l.startsWith('holding capacity'))
+    const granted = logged.findIndex((l) => l.startsWith('granting'))
+    expect(held).toBeGreaterThanOrEqual(0)
+    expect(granted).toBeGreaterThan(held)
+    expect(grants()).toEqual([
+      `granting the capacity held for ${COMMITMENT}, now that the acceptance's receipt shows the lock took it`,
+    ])
   })
 
-  it('sends again after a failed send, without granting capacity twice', async () => {
+  it('holds the capacity after a failed send, grants nothing, and sends again', async () => {
     sendDoes = 'fail'
-    expect(await advance(deps, put())).toBe('granted')
+    expect(await advance(deps, put())).toBe('held')
     expect(store.booking(COMMITMENT)?.sent).toBeUndefined()
+    expect(grants()).toEqual([])
     sendDoes = 'land'
-    // The verifier's replay guard refuses a second grant, so this pass has to skip it.
+    // The verifier's replay guard refuses a second pass, so a held booking skips it.
     expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepted')
     expect(sent).toHaveLength(2)
+    expect(grants()).toHaveLength(1)
+  })
+
+  it("grants nothing when the acceptance's receipt shows it reverted", async () => {
+    sendDoes = 'revert'
+    expect(await advance(deps, put())).toBe('held')
+    expect(grants()).toEqual([])
+    expect(logged.some((l) => l.includes('reverted'))).toBe(true)
   })
 
   it('leaves a send whose outcome is unknown until the lock or the chain settles it', async () => {
@@ -107,17 +128,22 @@ describe("the supplier's acceptance of a booking", () => {
     expect(status()).toBe('accepting')
     lock.state = 'reserved'
     expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepting')
+    expect(grants()).toEqual([])
     lock.finalized = NOW + 26n
     sendDoes = 'land'
     expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepted')
     expect(sent).toHaveLength(2)
+    expect(grants()).toHaveLength(1)
   })
 
-  it('takes an acceptance the lock already holds, whatever sent it', async () => {
+  it('takes an acceptance the lock already holds, whatever sent it, and grants then', async () => {
     put({ status: 'accepting', sent: { hash: HASH, validBefore: String(NOW + 25n) } })
     lock.state = 'accepted'
     expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepted')
     expect(sent).toEqual([])
+    expect(grants()).toEqual([
+      `granting the capacity held for ${COMMITMENT}, now that the lock shows the acceptance`,
+    ])
   })
 
   it('sends again after a restart that recorded no transaction, since nothing went out', async () => {
@@ -134,15 +160,21 @@ describe("the supplier's acceptance of a booking", () => {
 
   it('takes an Avow answer that the reserve is accepted once the lock shows it', async () => {
     deps.authorize = async () => ({ ok: false, reason: 'chain.reserve_accepted' })
+    lock.state = 'reserved'
+    expect(await advance(deps, put({ status: 'held' }))).toBe('held')
+    expect(grants()).toEqual([])
     lock.state = 'accepted'
-    expect(await advance(deps, put({ status: 'granted' }))).toBe('accepted')
+    expect(await advance(deps, store.booking(COMMITMENT) as Booking)).toBe('accepted')
+    expect(grants()).toHaveLength(1)
   })
 
-  it("never accepts when the verifier refuses Avow's authorization", async () => {
+  it("never holds, accepts or grants when the verifier refuses Avow's authorization", async () => {
     deps.config = { ...acceptanceConfig, avowKeys: [supplierKey.address] }
     expect(await advance(deps, put())).toBe('agreed')
     expect(sent).toEqual([])
     expect(logged.some((l) => l.includes('the verifier refused'))).toBe(true)
+    expect(logged.some((l) => l.startsWith('holding capacity'))).toBe(false)
+    expect(grants()).toEqual([])
   })
 
   it('moves every open booking on, past one that fails', async () => {

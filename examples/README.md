@@ -10,7 +10,7 @@ Two quickstarts run Avow's flow on Tempo's Moderato testnet against Avow's hoste
 1. The supplier runs `init` and sends Avow the three addresses it prints, to be registered.
 2. The buyer runs `init` and sends Avow its account and lock, to be registered. On testnet Avow then sends the account test tUSD to reserve with.
 3. The supplier runs `serve`, which stays up.
-4. The buyer runs `enroll`, then `book`. The agent agrees terms with the supplier, Avow approves the reserve, the agent funds it while Avow pays the fee, and the supplier accepts it.
+4. The buyer runs `enroll`, then `book`. The agent agrees terms with the supplier, Avow approves the reserve, the agent funds it while Avow pays the fee, and the supplier accepts it. The supplier grants the capacity once its acceptance lands.
 5. At the booking's release date, with nothing reported, Avow's settlement service returns the reserve to the business.
 
 Starting a job, reporting a charge and disputing one come next, once Avow's records for start requests and charge confirmations are settled.

@@ -32,8 +32,8 @@ export interface AcceptDeps {
     commitmentId: Hex
   }) => Promise<SupplierAuthorizationAnswer>
   signingKey: HashSigner
-  /** Sends a call the signing key pays the fee for, and resolves once it lands. */
-  send: (call: Call, onSent: OnSent) => Promise<unknown>
+  /** Sends a call the signing key pays the fee for, and resolves with its receipt once it lands. */
+  send: (call: Call, onSent: OnSent) => Promise<{ status: 'success' | 'reverted' }>
   /** The lock's state for a commitment now, or null when it holds none. */
   lockState: (lock: Address, commitmentId: Hex) => Promise<string | null>
   /** The latest finalized block's time. */
@@ -49,8 +49,10 @@ const json = (value: unknown): unknown => JSON.parse(JSON.stringify(toWire(value
  * Moves one booking on. Once the agent funds the reserve, Avow authorizes it, and the supplier's
  * verifier checks Avow's authorization, the buyer's mandate and the lock before the supplier holds
  * capacity. Then it checks Avow's approval against the supplier's own terms and the lock, signs
- * the acceptance it builds and sends it to the lock. A booking whose reserve never arrives lapses
- * at its acceptance deadline.
+ * the acceptance it builds and sends it to the lock. Until the acceptance lands the reserve can
+ * still go back to the business, so the supplier grants the capacity only once the acceptance's
+ * receipt, or the lock itself, shows the lock took it. A booking whose reserve never arrives
+ * lapses at its acceptance deadline.
  */
 export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['status']> {
   const { store } = deps
@@ -64,9 +66,18 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
     store.put(b)
     return status
   }
+  /** Grants the capacity the supplier held, which it does only once the lock holds the acceptance. */
+  const grant = (shownBy: string) => {
+    // Here a real supplier grants the capacity it held for the booking.
+    deps.log(`granting the capacity held for ${b.commitmentId}, now that ${shownBy}`)
+    return save('accepted')
+  }
 
   if (b.status === 'accepting') {
-    if ((await deps.lockState(b.lock, b.commitmentId)) === 'accepted') return save('accepted')
+    // The lock's own state shows the acceptance landed as surely as its receipt would.
+    if ((await deps.lockState(b.lock, b.commitmentId)) === 'accepted') {
+      return grant('the lock shows the acceptance')
+    }
     // A send is recorded before its bytes go out, so without one nothing went out.
     if (b.sent) {
       const validBefore = b.sent.validBefore === null ? null : BigInt(b.sent.validBefore)
@@ -74,7 +85,7 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
       if (validBefore === null || (await deps.finalizedTime()) <= validBefore) return 'accepting'
       deps.log(`the acceptance for ${b.commitmentId} never landed, so it goes again`)
     }
-    save('granted', null)
+    save('held', null)
   }
   if (deps.now() >= terms.value.remedies.acceptBy) {
     deps.log(`the reserve for ${b.commitmentId} never came before its acceptance deadline`)
@@ -88,7 +99,9 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
   })
   if (!answer.ok) {
     if (answer.reason === 'chain.reserve_accepted') {
-      if ((await deps.lockState(b.lock, b.commitmentId)) === 'accepted') return save('accepted')
+      if ((await deps.lockState(b.lock, b.commitmentId)) === 'accepted') {
+        return grant('the lock shows the acceptance')
+      }
     }
     // A reserve not funded yet is the usual answer while the agent pays, so only others are noted.
     if (answer.reason !== 'chain.reserve_missing') {
@@ -123,9 +136,11 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
       )
       return b.status
     }
-    // Here a real supplier holds the capacity the booking needs.
-    deps.log(`holding capacity for ${b.commitmentId}, which Avow authorized`)
-    save('granted')
+    // Here a real supplier holds the capacity the booking needs, and grants none of it yet.
+    deps.log(
+      `holding capacity for ${b.commitmentId}, which Avow authorized, until the lock accepts`,
+    )
+    save('held')
   }
 
   const prepared = await prepareAcceptance(
@@ -153,19 +168,23 @@ export async function advance(deps: AcceptDeps, b: Booking): Promise<Booking['st
     disclosureId: prepared.disclosure.id,
   })
   save('accepting', null)
+  let receipt: { status: 'success' | 'reverted' }
   try {
-    await deps.send(acceptCall(acceptance), (hash, validBefore) => {
+    receipt = await deps.send(acceptCall(acceptance), (hash, validBefore) => {
       save('accepting', { hash, validBefore: validBefore?.toString() ?? null })
     })
   } catch (e) {
     if (e instanceof SendError && e.outcome === 'failed') {
       deps.log(`sending the acceptance for ${b.commitmentId} failed: ${e.message}`)
-      return save('granted', null)
+      return save('held', null)
     }
     throw e
   }
-  deps.log(`the lock took the acceptance for ${b.commitmentId}`)
-  return save('accepted')
+  if (receipt.status !== 'success') {
+    deps.log(`the acceptance for ${b.commitmentId} reverted, so the lock didn't take it`)
+    return save('held', null)
+  }
+  return grant("the acceptance's receipt shows the lock took it")
 }
 
 /** Moves every open booking on, each on its own, so one that fails holds up none of the rest. */
