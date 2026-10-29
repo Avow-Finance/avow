@@ -303,12 +303,11 @@ describe('httpAvowApi', () => {
     expect(() => client(fetcher, { requestValidity: 0n })).toThrow(RangeError)
   })
 
-  it('serves only the reserve check and the relay, leaving out the calls Avow does not serve yet', () => {
+  it('serves only the reserve check and the relay, leaving out the records Avow does not serve yet', () => {
     const api = client(fakeApi([]).fetcher)
     expect(Object.keys(api).sort()).toEqual(['approveReserve', 'sponsor'])
-    expect(api.cancel).toBeUndefined()
-    expect(api.requestStart).toBeUndefined()
-    expect(api.recordStart).toBeUndefined()
+    // @ts-expect-error The hosted client's type has no records either.
+    expect(api.records).toBeUndefined()
   })
 
   it('hands each signed request to the caller to keep', async () => {

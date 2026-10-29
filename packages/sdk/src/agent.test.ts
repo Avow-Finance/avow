@@ -30,6 +30,7 @@ import { tempoModerato } from 'viem/chains'
 import { Abis, Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import { type AgentConfig, BookingError, createAgent } from './agent.js'
+import type { AvowApi } from './avow-api.js'
 import { agentRequestKey, httpAvowApi } from './http.js'
 import { type Call, RESERVE_ABI } from './lock.js'
 import { SendError } from './send.js'
@@ -149,7 +150,7 @@ async function setup(options: Parameters<typeof bookingFixture>[0] = {}) {
     chain.state.holds = last ? sending.holds(last.message) : null
     return { transactionHash: id('the reserve transaction'), blockNumber: LANDED_IN }
   }
-  const config: AgentConfig = {
+  const config: AgentConfig<typeof f.avow> = {
     client: chain.client,
     key: f.key,
     mandate: f.signedMandate,
@@ -612,29 +613,36 @@ describe('cancelling and starting', () => {
     expect(s.calls).toEqual([])
   })
 
-  it('says which call is missing when its AvowApi serves no cancellations or starts, and reads nothing', async () => {
+  it('tells a JavaScript caller whose AvowApi lacks its records what is missing, and reads nothing', async () => {
     const s = await setup()
-    const { approveReserve, sponsor, requestStart } = s.avow
-    if (!requestStart) throw new Error('the stand-in serves start requests')
-    const agent = createAgent({ ...s.config, avow: { approveReserve, sponsor } })
-    await expect(agent.cancel(id('commitment'))).rejects.toThrow(
-      "has no cancel, so it can't record a cancellation. Avow's hosted API doesn't serve cancel yet",
+    const { approveReserve, sponsor, records } = s.avow
+    // JavaScript checks no types, so its agent has cancel and start whatever AvowApi it passed.
+    const untyped = (avow: object) => createAgent({ ...s.config, avow: avow as typeof s.avow })
+    const none = untyped({ approveReserve, sponsor })
+    await expect(none.cancel(id('commitment'))).rejects.toThrow(
+      "The AvowApi this agent uses has no records, so it can't record a cancellation. Avow's hosted API doesn't serve its records of cancellations and starts yet.",
     )
-    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow(
-      "has no requestStart, so it can't start the job",
+    await expect(none.start(id('commitment'), s.connection)).rejects.toThrow(
+      "has no records, so it can't start the job",
     )
-    const withoutRecord = createAgent({
-      ...s.config,
-      avow: { approveReserve, sponsor, requestStart },
-    })
-    await expect(withoutRecord.start(id('commitment'), s.connection)).rejects.toThrow(
-      "has no recordStart, so it can't start the job",
+    // The three calls loose beside the others, outside the group they belong to.
+    const loose = untyped({ approveReserve, sponsor, ...records })
+    await expect(loose.cancel(id('commitment'))).rejects.toThrow('has no records')
+    const withoutRecord = { cancel: records.cancel, requestStart: records.requestStart }
+    // @ts-expect-error An AvowApi serves all three records or none, so TypeScript refuses this.
+    const partialApi: AvowApi = { approveReserve, sponsor, records: withoutRecord }
+    const partial = untyped(partialApi)
+    await expect(partial.start(id('commitment'), s.connection)).rejects.toThrow(
+      "has records without recordStart, so it can't start the job",
+    )
+    await expect(partial.cancel(id('commitment'))).rejects.toThrow(
+      "has records without recordStart, so it can't record a cancellation",
     )
     expect(s.calls).toEqual([])
     expect(s.chain.state.readAt).toEqual([])
   })
 
-  it("refuses to cancel or start through Avow's hosted API, before it sends anything", async () => {
+  it("has no cancel or start through Avow's hosted API, and refuses both before it sends anything", async () => {
     const s = await setup()
     const fetched: unknown[] = []
     const avow = httpAvowApi({
@@ -647,8 +655,10 @@ describe('cancelling and starting', () => {
       }) as typeof fetch,
     })
     const agent = createAgent({ ...s.config, avow })
-    await expect(agent.cancel(id('commitment'))).rejects.toThrow('has no cancel')
-    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow('has no requestStart')
+    // @ts-expect-error The hosted API serves no records, so its agent has no cancel to call.
+    await expect(agent.cancel(id('commitment'))).rejects.toThrow('has no records')
+    // @ts-expect-error The hosted API serves no records, so its agent has no start to call.
+    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow('has no records')
     expect(fetched).toEqual([])
     expect(s.chain.state.readAt).toEqual([])
   })
