@@ -85,7 +85,10 @@ export type SupplierAuthorizationAnswer =
   | { ok: true; authorization: Signed<SupplierAuthorization> }
   | { ok: false; reason: ReasonCode }
 
-/** What the API answers when it refuses a request outright, with a status of 400 or more. */
+/**
+ * What the API answers when it refuses a request outright, with a status of 400 or more, as
+ * `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. Readers ignore any other field.
+ */
 export interface ApiError {
   error: { reason: ReasonCode; message: string }
 }
@@ -99,10 +102,13 @@ const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCod
 const decisionId = z.string().min(1).max(128)
 const objectJson = z.record(z.string(), z.unknown())
 
-/** Parses a reserve approval request. Its agreement and any approval have to be for this chain. */
+/**
+ * Parses a reserve approval request. Its agreement and any human approval have to be for this chain
+ * and for the lock the request was signed under.
+ */
 export function parseReserveApprovalRequest(
   json: unknown,
-  expected: { chainId: number; lock?: Address },
+  expected: { chainId: number; lock: Address },
 ): Parsed<ReserveApprovalRequest> {
   const outer = z
     .strictObject({
@@ -162,9 +168,10 @@ export function parseReserveApproval(
   }
 }
 
+/** Parses an enrollment. The mandate has to be for this chain and the lock the request was signed under. */
 export function parseEnrollmentRequest(
   json: unknown,
-  expected: { chainId: number },
+  expected: { chainId: number; lock: Address },
 ): Parsed<EnrollmentRequest> {
   const outer = z.strictObject({ mandate: objectJson, keyAuthorizedIn: bytes32 }).safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
@@ -227,11 +234,17 @@ export function parseSupplierAuthorizationAnswer(
   return { ok: true, value: { ok: true, authorization: authorization.value } }
 }
 
-export function parseApiError(json: unknown): Parsed<ApiError> {
+/**
+ * Reads an error body, or returns null when the body isn't one. Other fields are ignored, and a
+ * reason code this package doesn't know reads as null, so a newer API's refusals still read.
+ */
+export function parseApiError(
+  json: unknown,
+): { reason: ReasonCode | null; message: string } | null {
   const parsed = z
-    .strictObject({ error: z.strictObject({ reason: reasonCode, message: z.string() }) })
+    .object({ error: z.object({ reason: z.string(), message: z.string() }) })
     .safeParse(json)
-  return parsed.success
-    ? { ok: true, value: parsed.data }
-    : { ok: false, reason: 'message.invalid' }
+  if (!parsed.success) return null
+  const { reason, message } = parsed.data.error
+  return { reason: Object.hasOwn(REASON_CODES, reason) ? (reason as ReasonCode) : null, message }
 }

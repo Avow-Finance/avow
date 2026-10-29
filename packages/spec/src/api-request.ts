@@ -1,4 +1,5 @@
 import { type Address, type Hex, keccak256, toHex } from 'viem'
+import { canonicalJson } from './canonical.js'
 import {
   type ApiRequest,
   type AvowDomain,
@@ -6,6 +7,7 @@ import {
   digestOf,
   type Signed,
 } from './eip712.js'
+import { isKeySignature } from './keychain.js'
 import type { ReasonCode } from './reasons.js'
 import { MESSAGE_VERSIONS } from './version.js'
 
@@ -22,14 +24,30 @@ export const API_BODY_MAX_BYTES = 65_536
 export const API_METHODS = ['GET', 'POST'] as const
 
 /**
- * The paths a signed request may name: `/v1` and one or more segments of lower-case letters,
- * digits, `-` and `_`. No query, no trailing slash, no dot segments and no percent-encoding, so the
- * path a client signs is the path a server reads, whatever either side's URL parser does.
+ * The request targets a signed request may name: `/v1` and one or more segments of lower-case
+ * letters, digits, `-` and `_`. No query, fragment, trailing slash, dot segment or
+ * percent-encoding, so the target a client signs is the target a server reads and routes on,
+ * whatever either side's URL parser does.
  */
 export const API_PATH_PATTERN = /^\/v1(\/[a-z0-9_-]+)+$/
 
-/** A deployment's audience: an http or https origin in lower case, with no path or trailing slash. */
-export const API_AUDIENCE_PATTERN = /^https?:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$/
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+const AUDIENCE = new RegExp(`^(https?)://(${LABEL}(?:\\.${LABEL})*)(?::([1-9][0-9]{0,4}))?$`)
+
+/**
+ * Whether a string is a deployment's audience in its one canonical form: an http or https origin
+ * in lower case, with a port only when it isn't the scheme's default, and no path, query or
+ * trailing slash. `https://api.testnet.avow.finance` is one, and `https://api.testnet.avow.finance:443`
+ * isn't, so one deployment never has two audiences.
+ */
+export function isApiAudience(audience: string): boolean {
+  const m = AUDIENCE.exec(audience)
+  if (!m) return false
+  const [, scheme, , port] = m
+  if (port === undefined) return true
+  const n = Number(port)
+  return n <= 65_535 && !(scheme === 'https' && n === 443) && !(scheme === 'http' && n === 80)
+}
 
 /**
  * A key that signs requests to Avow's API with its bare signature, the way the lock reads a
@@ -52,8 +70,40 @@ export function newRequestId(): Hex {
 }
 
 /**
+ * A request body as a client sends it: the value's canonical JSON, with bigints as decimal
+ * strings, in UTF-8. Canonical JSON has one encoding for each value, so the bytes a client signs
+ * are the only bytes Avow accepts for that value.
+ */
+export function encodeApiBody(value: unknown): Uint8Array {
+  return new TextEncoder().encode(canonicalJson(value))
+}
+
+/**
+ * Reads a body Avow received. It has to be well-formed UTF-8 holding canonical JSON, so a body with
+ * a repeated key, extra whitespace or keys out of order is refused rather than read one way here
+ * and another way by whoever reads the stored copy. No bytes read as no body.
+ */
+export function readApiBody(
+  body: Uint8Array,
+): { ok: true; value: unknown } | { ok: false; reason: ReasonCode } {
+  if (body.length === 0) return { ok: true, value: undefined }
+  let text: string
+  let value: unknown
+  try {
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body)
+    value = JSON.parse(text)
+    if (canonicalJson(value) !== text) return { ok: false, reason: 'request.invalid' }
+  } catch {
+    return { ok: false, reason: 'request.invalid' }
+  }
+  return { ok: true, value }
+}
+
+/**
  * Why a request can't be signed or checked as it stands, or null when it can. Both the client and
  * the API run this, so neither signs or verifies a request the other would read differently.
+ * `path` is the request target exactly as sent on the wire, which a server reads before any
+ * routing or decoding. A signed request's target is only ever a path.
  */
 export function apiRequestProblem(r: {
   audience: string
@@ -61,7 +111,7 @@ export function apiRequestProblem(r: {
   path: string
   body: Uint8Array
 }): ReasonCode | null {
-  if (!API_AUDIENCE_PATTERN.test(r.audience)) return 'request.invalid'
+  if (!isApiAudience(r.audience)) return 'request.invalid'
   if (!(API_METHODS as readonly string[]).includes(r.method)) return 'request.invalid'
   if (!API_PATH_PATTERN.test(r.path)) return 'request.invalid'
   if (r.body.length > API_BODY_MAX_BYTES) return 'request.invalid'
@@ -70,8 +120,21 @@ export function apiRequestProblem(r: {
 }
 
 /**
+ * Why Avow won't start a request with this expiry, or null when it will. A request starts only
+ * while its expiry is after Avow's clock and at most `API_REQUEST_MAX_VALIDITY` ahead of it. Avow
+ * checks this after looking up the request id, so an identical repeat of a request it already
+ * answered gets that answer even once the request has expired.
+ */
+export function apiRequestExpiryProblem(expiry: bigint, now: bigint): ReasonCode | null {
+  if (expiry <= now) return 'message.expired'
+  if (expiry > now + API_REQUEST_MAX_VALIDITY) return 'message.validity_too_long'
+  return null
+}
+
+/**
  * What a signed request's Authorization header carries. The API rebuilds the rest of the signed
- * message from the request it received: its own audience, the method, the path and the body's hash.
+ * message from the request it received: its own audience, the method, the path and the body's
+ * hash.
  */
 export interface ApiCredentials {
   signer: Address
@@ -126,22 +189,62 @@ export function parseApiAuthorization(header: string | null | undefined): ApiCre
   }
 }
 
-/** The request as the API rebuilds it from what it received, ready to check against the signature. */
-export function apiRequestOf(args: {
+/** A request whose signature Avow has checked, ready for the request-id lookup. */
+export interface VerifiedApiRequest {
+  request: Signed<ApiRequest>
+  /** The EIP-712 digest, which names this exact request. */
+  digest: Hex
+  credentials: ApiCredentials
+}
+
+/**
+ * The first two steps Avow takes with every request, in order. It checks the request's form and
+ * reads the header, then rebuilds the signed message from its own audience and chain, the header's
+ * lock, and the method, path and body it received, and checks the signature. A refusal here
+ * comes before Avow looks anything up or records anything. What comes next, in order, is the
+ * request-id lookup, the expiry check, the route's own checks, and one transaction that records
+ * the request with what it did.
+ */
+export function verifyApiRequest(r: {
   audience: string
+  chainId: number
   method: string
   path: string
   body: Uint8Array
-  credentials: ApiCredentials
-}): ApiRequest {
+  authorization: string | null | undefined
+}): { ok: true; value: VerifiedApiRequest } | { ok: false; reason: ReasonCode } {
+  const problem = apiRequestProblem(r)
+  if (problem) return { ok: false, reason: problem }
+  const credentials = parseApiAuthorization(r.authorization)
+  if (!credentials) return { ok: false, reason: 'request.unsigned' }
+  const message: ApiRequest = {
+    audience: r.audience,
+    method: r.method,
+    path: r.path,
+    bodyHash: apiBodyHash(r.body),
+    signer: credentials.signer,
+    requestId: credentials.requestId,
+    expiry: credentials.expiry,
+  }
+  const domain = { chainId: r.chainId, verifyingContract: credentials.lock }
+  const digest = digestOf(apiRequestTypedData(message, domain))
+  if (!isKeySignature(digest, credentials.signature, credentials.signer)) {
+    return { ok: false, reason: 'message.signature_invalid' }
+  }
   return {
-    audience: args.audience,
-    method: args.method,
-    path: args.path,
-    bodyHash: apiBodyHash(args.body),
-    signer: args.credentials.signer,
-    requestId: args.credentials.requestId,
-    expiry: args.credentials.expiry,
+    ok: true,
+    value: {
+      digest,
+      credentials,
+      request: {
+        type: 'ApiRequest',
+        schemaVersion: MESSAGE_VERSIONS.ApiRequest,
+        chainId: r.chainId,
+        lock: credentials.lock,
+        message,
+        signature: credentials.signature,
+      },
+    },
   }
 }
 
@@ -159,24 +262,29 @@ export async function signApiRequest(args: {
   body: Uint8Array
   requestId: Hex
   expiry: bigint
-}): Promise<{ authorization: string; request: Signed<ApiRequest> }> {
+}): Promise<{ authorization: string; request: Signed<ApiRequest>; digest: Hex }> {
   const problem = apiRequestProblem(args)
   if (problem) throw new Error(`The request can't be signed as it stands (${problem})`)
   if (!BYTES32.test(args.requestId)) throw new Error('The request id has to be 32 bytes of hex')
+  // Hex goes in lower case, so the client's record of the request is the one Avow rebuilds.
+  const signer = args.key.address.toLowerCase() as Address
+  const lock = args.domain.verifyingContract.toLowerCase() as Address
   const message: ApiRequest = {
     audience: args.audience,
     method: args.method,
     path: args.path,
     bodyHash: apiBodyHash(args.body),
-    signer: args.key.address,
+    signer,
     requestId: args.requestId.toLowerCase() as Hex,
     expiry: args.expiry,
   }
-  const signature = await args.key.signDigest(digestOf(apiRequestTypedData(message, args.domain)))
+  const digest = digestOf(apiRequestTypedData(message, args.domain))
+  const signature = (await args.key.signDigest(digest)).toLowerCase() as Hex
   return {
+    digest,
     authorization: formatApiAuthorization({
-      signer: args.key.address,
-      lock: args.domain.verifyingContract,
+      signer,
+      lock,
       requestId: message.requestId,
       expiry: args.expiry,
       signature,
@@ -185,7 +293,7 @@ export async function signApiRequest(args: {
       type: 'ApiRequest',
       schemaVersion: MESSAGE_VERSIONS.ApiRequest,
       chainId: args.domain.chainId,
-      lock: args.domain.verifyingContract,
+      lock,
       message,
       signature,
     },

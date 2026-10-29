@@ -76,7 +76,7 @@ const request = {
 
 describe('reserve approval requests', () => {
   it('round-trip with and without a human approval', () => {
-    const plain = parseReserveApprovalRequest(roundTrip(request), { chainId: CHAIN_ID })
+    const plain = parseReserveApprovalRequest(roundTrip(request), { chainId: CHAIN_ID, lock: LOCK })
     expect(plain.ok).toBe(true)
     expect(plain.ok && plain.value.humanApproval).toBeUndefined()
     expect(plain.ok && plain.value.agreement.message.nonce).toBe(7n)
@@ -89,25 +89,22 @@ describe('reserve approval requests', () => {
 
   it('refuses another chain or lock, an unknown field, a bad salt or a wrong funder', () => {
     const json = roundTrip(request)
-    const refusals: [unknown, { chainId: number; lock?: `0x${string}` }, string][] = [
-      [json, { chainId: CHAIN_ID + 1 }, 'message.wrong_chain'],
+    const here = { chainId: CHAIN_ID, lock: LOCK }
+    const refusals: [unknown, { chainId: number; lock: `0x${string}` }, string][] = [
+      [json, { chainId: CHAIN_ID + 1, lock: LOCK }, 'message.wrong_chain'],
       [json, { chainId: CHAIN_ID, lock: OTHER_LOCK }, 'message.wrong_contract'],
-      [{ ...json, extra: 1 }, { chainId: CHAIN_ID }, 'message.invalid'],
-      [{ ...json, salt: '0x1234' }, { chainId: CHAIN_ID }, 'message.invalid'],
-      [{ ...json, fundedBy: 'relay' }, { chainId: CHAIN_ID }, 'message.invalid'],
-      [
-        { ...json, request: { ...json.request, terms: {} } },
-        { chainId: CHAIN_ID },
-        'message.invalid',
-      ],
+      [{ ...json, extra: 1 }, here, 'message.invalid'],
+      [{ ...json, salt: '0x1234' }, here, 'message.invalid'],
+      [{ ...json, fundedBy: 'relay' }, here, 'message.invalid'],
+      [{ ...json, request: { ...json.request, terms: {} } }, here, 'message.invalid'],
       [
         { ...json, agreement: { ...json.agreement, type: 'Approval' } },
-        { chainId: CHAIN_ID },
+        here,
         'message.schema_unknown',
       ],
       [
         { ...json, agreement: { ...json.agreement, supplierSignature: undefined } },
-        { chainId: CHAIN_ID },
+        here,
         'message.invalid',
       ],
       [
@@ -198,13 +195,13 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
   it('round-trips an enrollment request and its answer', () => {
     const parsed = parseEnrollmentRequest(
       roundTrip({ mandate: envelope('Mandate', mandate), keyAuthorizedIn: id('key tx') }),
-      { chainId: CHAIN_ID },
+      { chainId: CHAIN_ID, lock: LOCK },
     )
     expect(parsed.ok && parsed.value.mandate.message.agentKey).toBe(agent.address.toLowerCase())
     expect(
       parseEnrollmentRequest(
         roundTrip({ mandate: envelope('Mandate', mandate), keyAuthorizedIn: '0x12' }),
-        { chainId: CHAIN_ID },
+        { chainId: CHAIN_ID, lock: LOCK },
       ),
     ).toEqual({ ok: false, reason: 'message.invalid' })
     const answer = {
@@ -274,10 +271,31 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
     ).toEqual({ ok: false, reason: 'message.wrong_contract' })
   })
 
-  it('reads an error body with a known reason only', () => {
-    const body = { error: { reason: 'request.unsigned', message: 'Sign the request' } }
-    expect(parseApiError(body)).toEqual({ ok: true, value: body })
-    expect(parseApiError({ error: { reason: 'nope', message: 'x' } }).ok).toBe(false)
+  it('reads an error body, ignoring other fields and reading an unknown reason as none', () => {
+    const error = { reason: 'request.in_progress', message: 'Still answering' }
+    expect(parseApiError({ error })).toEqual(error)
+    expect(parseApiError({ error: { ...error, retryAfter: 2 }, requestId: '0x12' })).toEqual(error)
+    expect(parseApiError({ error: { reason: 'newer.code', message: 'x' } })).toEqual({
+      reason: null,
+      message: 'x',
+    })
+    expect(parseApiError({ error: { reason: 'constructor', message: 'x' } })?.reason).toBeNull()
+    for (const body of [null, 'bad gateway', {}, { error: { reason: 1, message: 'x' } }]) {
+      expect(parseApiError(body)).toBeNull()
+    }
+  })
+
+  it('refuses an enrollment whose mandate is for another lock', () => {
+    const mandate = demoMandate(newKey().address, agent.address)
+    expect(
+      parseEnrollmentRequest(
+        roundTrip({
+          mandate: envelope('Mandate', mandate, OTHER_LOCK),
+          keyAuthorizedIn: id('key tx'),
+        }),
+        { chainId: CHAIN_ID, lock: LOCK },
+      ),
+    ).toEqual({ ok: false, reason: 'message.wrong_contract' })
   })
 
   it('names one path for each commitment, in lower case', () => {

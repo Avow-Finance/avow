@@ -1,9 +1,10 @@
 import {
-  API_AUDIENCE_PATTERN,
   API_PATHS,
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  encodeApiBody,
+  isApiAudience,
   newRequestId,
   parseApiError,
   parseReserveApproval,
@@ -12,34 +13,40 @@ import {
   type RequestKey,
   type Signed,
   signApiRequest,
-  toWire,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import type { AgentKey } from './agent.js'
 import type { AvowApi } from './avow-api.js'
 
 /**
- * Avow's API refused a request or couldn't be reached. `status` is the HTTP status, 0 when no
- * answer came, and `reason` the reason code Avow gave, when it gave one.
+ * Avow's API refused a request, or no definite answer came in time. `status` is the HTTP status,
+ * 0 when no answer came, and `reason` the reason code Avow gave, when it gave one. `requestId`
+ * names the operation. Sending the same signed bytes again is always safe, since Avow answers an
+ * identical repeat without acting again.
  */
 export class AvowApiError extends Error {
   readonly status: number
   readonly reason: ReasonCode | null
+  readonly requestId: Hex
 
   constructor(
     message: string,
-    status: number,
-    reason: ReasonCode | null,
+    details: { status: number; reason: ReasonCode | null; requestId: Hex },
     options?: { cause?: unknown },
   ) {
     super(message, options)
     this.name = 'AvowApiError'
-    this.status = status
-    this.reason = reason
+    this.status = details.status
+    this.reason = details.reason
+    this.requestId = details.requestId
   }
 }
 
 export interface HttpAvowApiConfig {
-  /** Avow's API, such as `https://api.testnet.avow.finance`. Each request is signed for its origin. */
+  /**
+   * The deployment's origin, such as `https://api.testnet.avow.finance`. It is the audience every
+   * request is signed for, so it can't carry a path, query or fragment.
+   */
   baseUrl: string
   /** The key that signs every request, the agent's own through `agentRequestKey`. */
   key: RequestKey
@@ -47,10 +54,16 @@ export interface HttpAvowApiConfig {
   domain: AvowDomain
   /** Seconds each signed request stays valid, two minutes by default. Avow refuses more than five. */
   requestValidity?: bigint
-  /** How many times the same signed bytes go again after no answer, a 5xx or `request.in_progress`. */
-  retries?: number
-  /** Milliseconds between those tries. */
+  /**
+   * Seconds the client keeps sending the same bytes while no definite answer comes, ten minutes by
+   * default. It keeps going past the request's expiry, since Avow answers an identical repeat of a
+   * request it has recorded, and says `message.expired` about one it never started.
+   */
+  retryFor?: bigint
+  /** Milliseconds before the first resend, doubling up to 15 seconds. */
   retryWait?: number
+  /** Milliseconds one attempt may take before it's abandoned and sent again, 30 seconds by default. */
+  attemptTimeout?: number
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
   fetch?: typeof fetch
@@ -66,6 +79,7 @@ export function agentRequestKey(key: AgentKey): RequestKey {
   }
 }
 
+const MAX_WAIT = 15_000
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300)
 const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
@@ -74,98 +88,133 @@ function readJson(text: string): unknown {
   try {
     return JSON.parse(text)
   } catch {
-    return null
+    return undefined
   }
+}
+
+/** The audience a base URL names, or a throw when it names more than an origin. */
+function audienceOf(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if ((url.pathname !== '/' && url.pathname !== '') || url.search !== '' || url.hash !== '') {
+    throw new RangeError(`${baseUrl} has to be an origin, with no path, query or fragment`)
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new RangeError(`${baseUrl} can't carry a user name or password`)
+  }
+  if (!isApiAudience(url.origin)) {
+    throw new RangeError(`${url.origin} isn't an http or https origin Avow can serve`)
+  }
+  return url.origin
 }
 
 /**
  * Avow's hosted API as an `AvowApi`. Each call is one operation with a fresh request id, signed with
- * the agent's key for the deployment at `baseUrl`. When no answer comes, or Avow answers with a 5xx
- * or says it's still answering, the client sends the same bytes again while the request is valid.
- * Avow answers an identical repeat with its first answer and repeats nothing, so a lost answer never
- * turns into a second approval or a second co-signature. Cancelling and starting a job come with the
- * start-request and cancellation records, and until then those calls throw.
+ * the agent's key for the deployment at `baseUrl`. The client sends the same bytes again after no
+ * answer, a broken answer, a 5xx or `request.in_progress`, until Avow answers definitely or
+ * `retryFor` runs out. Avow answers an identical repeat with its first answer and does nothing
+ * again, so a lost answer never turns into a second approval or a second co-signature. It never
+ * follows a redirect, so a signed body goes nowhere but the deployment it was signed for.
+ * Cancelling and starting a job come with the start-request and cancellation records, and until
+ * then those calls throw.
  */
 export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
-  // The audience is the origin of the configured URL, which the URL parser writes in lower case.
-  const origin = new URL(config.baseUrl).origin
-  if (!API_AUDIENCE_PATTERN.test(origin)) {
-    throw new RangeError(`${origin} isn't an http or https origin Avow can serve`)
-  }
+  const audience = audienceOf(config.baseUrl)
   const { key, domain } = config
   const validity = config.requestValidity ?? 120n
   if (validity <= 0n || validity > API_REQUEST_MAX_VALIDITY) {
     throw new RangeError(`A request can stay valid for 1 to ${API_REQUEST_MAX_VALIDITY} seconds`)
   }
-  const retries = config.retries ?? 4
-  const retryWait = config.retryWait ?? 1000
+  const retryFor = config.retryFor ?? 600n
+  const firstWait = config.retryWait ?? 1000
+  const attemptTimeout = config.attemptTimeout ?? 30_000
   const now = config.now ?? systemClock
   const send = config.fetch ?? fetch
   const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
 
-  async function post(path: string, body: unknown): Promise<unknown> {
-    const bytes = new TextEncoder().encode(JSON.stringify(toWire(body)))
-    const expiry = now() + validity
+  /**
+   * Sends one operation until Avow answers it definitely, and returns the answer `read` parses.
+   * `read` returns null for a body it can't parse, which counts as no answer.
+   */
+  async function post<T>(
+    path: string,
+    value: unknown,
+    read: (json: unknown) => T | null,
+  ): Promise<T> {
+    const body = encodeApiBody(value)
+    const requestId = newRequestId()
     const { authorization, request } = await signApiRequest({
       key,
       domain,
-      audience: origin,
+      audience,
       method: 'POST',
       path,
-      body: bytes,
-      requestId: newRequestId(),
-      expiry,
+      body,
+      requestId,
+      expiry: now() + validity,
     })
     config.onSigned?.(request)
-    for (let attempt = 0; ; attempt++) {
-      // Decided after each try, since the request may have expired while it was out.
-      const again = () => attempt < retries && now() < expiry
-      let response: Response
+    const giveUpAt = now() + retryFor
+    let wait = firstWait
+    let last = 'no attempt was made'
+    let lastStatus = 0
+    let lastReason: ReasonCode | null = null
+    for (;;) {
       try {
-        response = await send(`${origin}${path}`, {
+        const response = await send(`${audience}${path}`, {
           method: 'POST',
           headers: { authorization, 'content-type': 'application/json' },
-          body: bytes,
+          body,
+          redirect: 'error',
+          signal: AbortSignal.timeout(attemptTimeout),
         })
-      } catch (e) {
-        if (again()) {
-          await sleep(retryWait)
-          continue
+        const json = readJson(await response.text())
+        lastStatus = response.status
+        if (response.ok) {
+          const answer = read(json)
+          if (answer !== null) return answer
+          last = "Avow's answer doesn't parse"
+          lastReason = 'message.invalid'
+        } else {
+          const error = parseApiError(json)
+          lastReason = error?.reason ?? null
+          last = error?.message ?? `Avow's API answered ${response.status}`
+          if (response.status < 500 && lastReason !== 'request.in_progress') {
+            throw new AvowApiError(last, { status: lastStatus, reason: lastReason, requestId })
+          }
         }
-        throw new AvowApiError(`Avow's API didn't answer: ${describe(e)}`, 0, null, { cause: e })
+      } catch (e) {
+        if (e instanceof AvowApiError) throw e
+        last = `Avow's API didn't answer: ${describe(e)}`
+        lastStatus = 0
+        lastReason = null
       }
-      const json = readJson(await response.text())
-      if (response.ok) return json
-      const error = parseApiError(json)
-      const reason = error.ok ? error.value.error.reason : null
-      if (again() && (response.status >= 500 || reason === 'request.in_progress')) {
-        await sleep(retryWait)
-        continue
+      if (now() >= giveUpAt) {
+        throw new AvowApiError(`No definite answer from Avow. ${last}`, {
+          status: lastStatus,
+          reason: lastReason,
+          requestId,
+        })
       }
-      const message = error.ok
-        ? error.value.error.message
-        : `Avow's API answered ${response.status}`
-      throw new AvowApiError(message, response.status, reason)
+      await sleep(wait)
+      wait = Math.min(wait * 2, MAX_WAIT)
     }
   }
 
-  const unreadable = (reason: ReasonCode) =>
-    new AvowApiError(`Avow's answer doesn't parse (${reason})`, 200, reason)
   const notYet = (what: string) => async () => {
     throw new Error(`Avow's hosted API doesn't ${what} yet`)
   }
 
   return {
-    async approveReserve(request) {
-      const parsed = parseReserveApproval(await post(API_PATHS.reserveApprovals, request), expected)
-      if (!parsed.ok) throw unreadable(parsed.reason)
-      return parsed.value
-    },
-    async sponsor(transaction) {
-      const parsed = parseSponsorship(await post(API_PATHS.sponsorships, { transaction }))
-      if (!parsed.ok) throw unreadable(parsed.reason)
-      return parsed.value.transaction
-    },
+    approveReserve: (request) =>
+      post(API_PATHS.reserveApprovals, request, (json) => {
+        const parsed = parseReserveApproval(json, expected)
+        return parsed.ok ? parsed.value : null
+      }),
+    sponsor: (transaction) =>
+      post(API_PATHS.sponsorships, { transaction }, (json) => {
+        const parsed = parseSponsorship(json)
+        return parsed.ok ? parsed.value.transaction : null
+      }),
     cancel: notYet('record cancellations'),
     requestStart: notYet('timestamp start requests'),
     recordStart: notYet('record start receipts'),
