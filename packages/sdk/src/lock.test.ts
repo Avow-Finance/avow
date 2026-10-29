@@ -1,3 +1,4 @@
+import { FACTORY_ABI as VERIFIER_FACTORY_ABI } from '@avow-finance/verifier'
 import { decodeFunctionData, getAbiItem, toFunctionSelector } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
@@ -32,6 +33,17 @@ describe("the administrator's calls", () => {
   const FACTORY = '0x9b518c24f9aa9272e20fa78aedc83b1f00b991a9'
   const ACCOUNT = '0x00000000000000000000000000000000000000b1'
   const SUPPLIER = '0x00000000000000000000000000000000000000c1'
+
+  it("use the verifier's one factory ABI, which has every function either package calls", () => {
+    expect(FACTORY_ABI).toBe(VERIFIER_FACTORY_ABI)
+    expect(FACTORY_ABI.map((f) => toFunctionSelector(f)).sort()).toEqual(
+      [
+        toFunctionSelector('isLock(address)'),
+        toFunctionSelector('createLock(address)'),
+        toFunctionSelector('lockAddress(address)'),
+      ].sort(),
+    )
+  })
 
   it('have the selectors of the compiled testnet lock and factory', () => {
     expect(

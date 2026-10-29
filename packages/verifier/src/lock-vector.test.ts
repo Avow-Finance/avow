@@ -246,9 +246,12 @@ function node(commitment: Hex) {
         const [{ to, data }] = params as [{ to: Address; data: Hex }]
         if (isAddressEqual(to, FACTORY)) {
           const call = decodeFunctionData({ abi: FACTORY_ABI, data })
+          if (call.functionName !== 'isLock') {
+            throw new Error(`The reader called the factory's ${call.functionName}`)
+          }
           return encodeFunctionResult({
             abi: FACTORY_ABI,
-            functionName: call.functionName,
+            functionName: 'isLock',
             result: isAddressEqual(call.args[0], LOCK),
           })
         }

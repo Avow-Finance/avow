@@ -1,4 +1,5 @@
 import { type Approval, type AvowDomain, approvalTypedData, type Signed } from '@avow-finance/spec'
+import { FACTORY_ABI } from '@avow-finance/verifier'
 import { type Address, encodeFunctionData, type Hex, toFunctionSelector } from 'viem'
 import { Abis } from 'viem/tempo'
 
@@ -78,25 +79,10 @@ export const ADMINISTRATOR_ABI = [
 ] as const
 
 /**
- * The lock factory's calls. Anyone can create the lock for an account, at the address `lockAddress`
- * gives before it exists, and an account has one lock.
+ * The lock factory's functions. The verifier defines them once, and the SDK passes the same
+ * definition on, so an agent and a supplier never read the factory through two different ABIs.
  */
-export const FACTORY_ABI = [
-  {
-    type: 'function',
-    name: 'createLock',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: 'lock', type: 'address' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    name: 'lockAddress',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'address' }],
-    stateMutability: 'view',
-  },
-] as const
+export { FACTORY_ABI }
 
 /** One call in a Tempo transaction. */
 export interface Call {

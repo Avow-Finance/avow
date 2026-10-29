@@ -1,6 +1,6 @@
 /**
- * The views of the lock and of the demo factory that the Tempo reader calls, as the contracts
- * declare them. `commitment` returns the lock's stored record for one side of a commitment.
+ * The views of the lock that the Tempo reader calls, as the contract declares them. `commitment`
+ * returns the lock's stored record for one side of a commitment.
  */
 export const LOCK_ABI = [
   {
@@ -284,6 +284,12 @@ export const LOCK_ABI = [
   },
 ] as const
 
+/**
+ * The lock factory's functions, as the testnet factory declares them, defined once for every
+ * package. The Tempo reader calls `isLock` to learn whether the factory created a lock. Anyone can
+ * call `createLock` to create an account's lock, at the address `lockAddress` gives before it
+ * exists, and an account has one lock.
+ */
 export const FACTORY_ABI = [
   {
     type: 'function',
@@ -298,6 +304,40 @@ export const FACTORY_ABI = [
       {
         name: '',
         type: 'bool',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'createLock',
+    inputs: [
+      {
+        name: 'account',
+        type: 'address',
+      },
+    ],
+    outputs: [
+      {
+        name: 'lock',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'lockAddress',
+    inputs: [
+      {
+        name: 'account',
+        type: 'address',
+      },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
       },
     ],
     stateMutability: 'view',
