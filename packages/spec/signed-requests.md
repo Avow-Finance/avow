@@ -63,7 +63,7 @@ Avow takes these steps in this order, and only the last one records anything.
 - **A repeat while the first is running** gets `request.in_progress`. The record of a running request exists only inside the database transaction that's acting on it, so a crash or a failed action rolls it back with everything else. No request id is ever left blocked, and the same bytes start the request again.
 - **No answer before commit.** No answer leaves Avow before its transaction commits. When an action includes a transaction Avow sends to the chain, its signed bytes and hash are part of that commit, and Avow broadcasts only after it, so a restart can always find what it sent.
 
-A client makes a new request id for each operation, including each poll for something that changes, and reuses one only to send the same bytes again. After no answer, an unreadable answer, a 5xx or `request.in_progress`, it sends the same bytes again until Avow answers definitely, and it may keep doing so after the request's expiry.
+A client makes a new request id for each operation, including each poll for something that changes, and reuses one only to send the same bytes again. After no answer, an unreadable answer, a 5xx or `request.in_progress`, it sends the same bytes again until Avow answers definitely, and it may keep doing so after the request's expiry. An unreadable answer is one that isn't JSON, as a cut connection or a proxy's error page gives. An answer that is JSON but that the client can't accept, such as an approval for another lock, is definite, since a repeat gets the same recorded answer, so the client stops and reports why.
 
 ## Answers
 
