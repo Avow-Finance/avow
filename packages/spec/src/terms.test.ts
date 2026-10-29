@@ -653,16 +653,25 @@ describe('the lock-enforced fields every check compares', () => {
     }
   })
 
-  it("compares a lock's record in every field but the side, whatever order it holds charges in", () => {
+  it("compares a lock's record in every field but the side, whatever order either side lists charges in", () => {
     expect(LOCK_RECORD_FIELDS).toEqual(LOCK_TERMS_FIELDS.filter((f) => f !== 'side'))
     for (const f of LOCK_RECORD_FIELDS) {
       expect(lockRecordDifferences(withChange(f), lock), f).toEqual([f])
     }
     // A record names its side by where it's read from, so the side isn't one of its fields.
     expect(lockRecordDifferences(withChange('side'), lock)).toEqual([])
-    // The lock stores charges by kind, so a record's charges have no order of their own.
-    expect(lockRecordDifferences({ ...lock, charges: [noShow, late] }, lock)).toEqual([])
+    // The lock stores charges by kind, so neither side's charges have an order that counts.
+    const reversed = { ...lock, charges: [noShow, late] }
+    expect(lockRecordDifferences(reversed, lock)).toEqual([])
+    expect(lockRecordDifferences(lock, reversed)).toEqual([])
+    expect(lockRecordDifferences(reversed, reversed)).toEqual([])
     expect(lockRecordDifferences({ ...lock, charges: [noShow] }, lock)).toEqual(['charges'])
+    expect(lockRecordDifferences(lock, { ...lock, charges: [noShow] })).toEqual(['charges'])
+    // Out of order, a changed charge is still found.
+    const changedNoShow = { ...noShow, most: noShow.most - 1n }
+    expect(lockRecordDifferences(lock, { ...lock, charges: [changedNoShow, late] })).toEqual([
+      'charges',
+    ])
   })
 
   it('compares a supplier authorization in the four lock-enforced fields it carries', () => {

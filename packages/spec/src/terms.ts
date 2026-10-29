@@ -588,18 +588,24 @@ export function lockTermsDifferences<F extends LockTermsField>(
   })
 }
 
+/** Charges in the order of the lock's codes for their kinds. */
+const inChargeCodeOrder = (charges: readonly Charge[]): Charge[] =>
+  [...charges].sort((x, y) => CHARGE_KINDS[x.kind] - CHARGE_KINDS[y.kind])
+
 /**
  * The fields where a lock's record of one side of a commitment differs from the values expected of
- * it, among `LOCK_RECORD_FIELDS`. The lock stores charges by kind, so a record's charges have no
- * order of their own and are put in the order of the lock's codes, which is the order terms and
- * approvals list them in.
+ * it, among `LOCK_RECORD_FIELDS`. The lock stores charges by kind, so their order means nothing to
+ * it, and both sides' charges are put in the order of the lock's codes before they're compared.
  */
 export function lockRecordDifferences(
   record: LockTermsValues<LockRecordField>,
   expected: LockTermsValues<LockRecordField>,
 ): LockRecordField[] {
-  const charges = [...record.charges].sort((x, y) => CHARGE_KINDS[x.kind] - CHARGE_KINDS[y.kind])
-  return lockTermsDifferences({ ...record, charges }, expected, LOCK_RECORD_FIELDS)
+  return lockTermsDifferences(
+    { ...record, charges: inChargeCodeOrder(record.charges) },
+    { ...expected, charges: inChargeCodeOrder(expected.charges) },
+    LOCK_RECORD_FIELDS,
+  )
 }
 
 /** The fields of Avow's approval that have to match the terms. */
