@@ -10,6 +10,8 @@ export const REASON_CODES = {
   'agent.revoked': "The agent's key is revoked",
   'agent.key_mismatch': "The request didn't come from the mandate's agent key",
   'mandate.invalid': 'The mandate names neither suppliers nor categories, or its caps conflict',
+  'mandate.ap2_mismatch':
+    'An AP2 intent mandate says something the Avow mandate it travels with does not',
   'mandate.signature_invalid':
     "The mandate's signature doesn't match the business's administrator, so it was changed or forged",
   'mandate.missing':

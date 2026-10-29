@@ -25,7 +25,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
-| AP2 mapping | How a mandate maps onto an AP2 intent mandate |
+| Adapters | How a mandate maps onto an AP2 intent mandate and back, and how a commitment reads as an ERC-8183 job. [Adapters](adapters.md) sets out both mappings and what doesn't carry over |
 | Keychain envelope | Tempo's keychain V2 envelope for signatures a business account's root or admin key makes, with an offline check and a check against Tempo's own verifier |
 | Wire forms | JSON schemas that parse amounts and times from decimal strings |
 
