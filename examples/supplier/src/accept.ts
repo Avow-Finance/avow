@@ -186,18 +186,42 @@ export async function advance(deps: AcceptDeps, booking: Booking): Promise<Booki
   return grant("the acceptance's receipt shows the lock took it")
 }
 
+/** Whether a booking is done with, which an accepted or a lapsed one is. */
+const finished = (status: BookingStatus) => status === 'accepted' || status === 'lapsed'
+
 /**
- * Moves every open booking on, each on its own, so one that fails, or whose file the store
- * refuses, holds up none of the rest.
+ * The supplier's poll, which moves every open booking on each time it runs. Each booking moves on
+ * by itself, so one that fails, or whose file the store refuses, holds up none of the rest. The
+ * poll reads a booking it found accepted or lapsed once and never again. A file the store refuses
+ * is logged once and read again only once its text changes, so a damaged file doesn't fill the
+ * log and a mended one moves on at the next poll. A booking whose move fails is tried again at
+ * every poll, and logged each time.
  */
-export async function advanceAll(deps: AcceptDeps): Promise<void> {
-  for (const id of deps.store.commitmentIds()) {
-    try {
-      const b = deps.store.booking(id)
-      if (!b || b.status === 'accepted' || b.status === 'lapsed') continue
-      await advance(deps, b)
-    } catch (e) {
-      deps.log(`booking ${id}: ${e instanceof Error ? e.message : String(e)}`)
+export function bookingPoller(deps: AcceptDeps): () => Promise<void> {
+  const done = new Set<Hex>()
+  /** The text of each file the store refused, as it was when refused. */
+  const refused = new Map<Hex, string>()
+  const note = (id: Hex, e: unknown) =>
+    deps.log(`booking ${id}: ${e instanceof Error ? e.message : String(e)}`)
+  return async () => {
+    for (const id of deps.store.commitmentIds()) {
+      if (done.has(id)) continue
+      let b: Booking
+      try {
+        const text = deps.store.bookingText(id)
+        if (text === null || refused.get(id) === text) continue
+        refused.set(id, text)
+        b = deps.store.parseBooking(id, text)
+        refused.delete(id)
+      } catch (e) {
+        note(id, e)
+        continue
+      }
+      try {
+        if (finished(b.status) || finished(await advance(deps, b))) done.add(id)
+      } catch (e) {
+        note(id, e)
+      }
     }
   }
 }

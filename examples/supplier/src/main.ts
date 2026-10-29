@@ -14,7 +14,7 @@ import {
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
 import { privateKeyToAccount } from 'viem/accounts'
 import { Actions } from 'viem/tempo'
-import { type AcceptDeps, advanceAll } from './accept.js'
+import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
 import { baseSettings, serveSettings } from './settings.js'
 import { SupplierStore } from './store.js'
@@ -113,6 +113,7 @@ async function serve() {
     now: clock,
     log,
   }
+  const poll = bookingPoller(deps)
   let stopping = false
   const stop = () => {
     stopping = true
@@ -121,7 +122,7 @@ async function serve() {
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
   while (!stopping) {
-    await advanceAll(deps)
+    await poll()
     for (let waited = 0; waited < settings.pollSeconds * 1000 && !stopping; waited += 250) {
       await new Promise((resolve) => setTimeout(resolve, 250))
     }

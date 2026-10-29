@@ -154,17 +154,31 @@ export class SupplierStore {
     return keys
   }
 
+  #bookingFile(commitmentId: Hex) {
+    return join(this.#bookings, `${commitmentId.toLowerCase()}.json`)
+  }
+
+  /** The text of a commitment's booking file, unparsed, or null when there's no file. */
+  bookingText(commitmentId: Hex): string | null {
+    const path = this.#bookingFile(commitmentId)
+    return existsSync(path) ? readFileSync(path, 'utf8') : null
+  }
+
   /**
-   * The booking for a commitment, or null when there's none. It refuses a file that doesn't hold
-   * a booking, that holds another commitment's, whose agreement or terms don't parse, or that
-   * records an acceptance transaction under a status that never sends one.
+   * The booking a commitment's file text holds. It refuses text that isn't JSON or doesn't hold a
+   * booking, a booking for another commitment, an agreement or terms that don't parse, and an
+   * acceptance transaction under a status that never sends one.
    */
-  booking(commitmentId: Hex): Booking | null {
+  parseBooking(commitmentId: Hex, text: string): Booking {
     const id = commitmentId.toLowerCase() as Hex
-    const path = join(this.#bookings, `${id}.json`)
-    const json = readJson(path)
-    if (json === null) return null
+    const path = this.#bookingFile(id)
     const refuse = (what: string) => new Error(`${path} ${what}`)
+    let json: unknown
+    try {
+      json = JSON.parse(text)
+    } catch {
+      throw refuse("isn't JSON")
+    }
     const outer = bookingJson.safeParse(json)
     if (!outer.success) throw refuse("doesn't hold a booking")
     const { agreement: agreementJson, terms: termsJson, status, sent, ...rest } = outer.data
@@ -183,9 +197,17 @@ export class SupplierStore {
     return { ...record, status, sent }
   }
 
+  /** The booking for a commitment, or null when there's none. It refuses what `parseBooking` does. */
+  booking(commitmentId: Hex): Booking | null {
+    const text = this.bookingText(commitmentId)
+    return text === null ? null : this.parseBooking(commitmentId, text)
+  }
+
   put(booking: Booking) {
-    const path = join(this.#bookings, `${booking.commitmentId.toLowerCase()}.json`)
-    writeAtomically(path, `${JSON.stringify(toWire(booking), null, 2)}\n`)
+    writeAtomically(
+      this.#bookingFile(booking.commitmentId),
+      `${JSON.stringify(toWire(booking), null, 2)}\n`,
+    )
   }
 
   /** The commitment of every booking file, whether or not the file parses. */

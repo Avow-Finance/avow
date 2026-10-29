@@ -4,8 +4,8 @@ import { type Call, SendError } from '@avow-finance/sdk'
 import { MemoryReplayGuard, toWire } from '@avow-finance/spec'
 import { ACCEPT_ABI } from '@avow-finance/verifier'
 import { decodeFunctionData, type Hex, keccak256, stringToHex } from 'viem'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { type AcceptDeps, advance, advanceAll } from './accept.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { type AcceptDeps, advance, bookingPoller } from './accept.js'
 import type { Booking, SupplierStore } from './store.js'
 import {
   acceptanceConfig,
@@ -180,18 +180,92 @@ describe("the supplier's acceptance of a booking", () => {
     expect(logged.some((l) => l.startsWith('holding capacity'))).toBe(false)
     expect(grants()).toEqual([])
   })
+})
+
+describe("the supplier's poll", () => {
+  const file = (id: Hex) => join(store.dir, 'bookings', `${id}.json`)
+  /** A booking file for another commitment, whose terms don't parse. */
+  const brokenFile = (id: Hex) => {
+    const broken = toWire({ ...agreedBooking(), commitmentId: id }) as Record<string, unknown>
+    broken.agreement = { ...(broken.agreement as object), commitmentId: id }
+    broken.terms = { broken: true }
+    writeFileSync(file(id), JSON.stringify(broken))
+  }
 
   it('moves every open booking on, past one whose file the store refuses', async () => {
     put()
     const other: Hex = `0x${'ee'.repeat(32)}`
-    const broken = toWire({ ...agreedBooking(), commitmentId: other }) as Record<string, unknown>
-    broken.agreement = { ...(broken.agreement as object), commitmentId: other }
-    broken.terms = { broken: true }
-    writeFileSync(join(store.dir, 'bookings', `${other}.json`), JSON.stringify(broken))
-    await advanceAll(deps)
+    brokenFile(other)
+    await bookingPoller(deps)()
     expect(status()).toBe('accepted')
     const refused = logged.filter((l) => l.startsWith(`booking ${other}: `))
     expect(refused).toHaveLength(1)
     expect(refused[0]).toContain("holds terms that don't parse (terms.version_unknown)")
+  })
+
+  it('reads a booking it found accepted or lapsed once, and never again', async () => {
+    put({ status: 'accepted' })
+    const lapsing: Hex = `0x${'ee'.repeat(32)}`
+    store.put({
+      ...agreedBooking(),
+      commitmentId: lapsing,
+      agreement: { ...agreedBooking().agreement, commitmentId: lapsing },
+    })
+    deps.now = () => START
+    const reads = vi.spyOn(store, 'bookingText')
+    const poll = bookingPoller(deps)
+    await poll()
+    await poll()
+    await poll()
+    // The first poll read each once, and the later ones read neither.
+    expect(reads.mock.calls.map(([id]) => id).sort()).toEqual([COMMITMENT, lapsing].sort())
+    reads.mockRestore()
+    expect(store.booking(lapsing)?.status).toBe('lapsed')
+    // Damaged later, a finished booking's file is never read, so it never fills the log.
+    writeFileSync(file(COMMITMENT), '{')
+    const later = vi.spyOn(store, 'bookingText')
+    await poll()
+    expect(later).not.toHaveBeenCalled()
+    expect(logged.filter((l) => l.startsWith('booking '))).toEqual([])
+  })
+
+  it('logs a file the store refuses once until its text changes, and moves it on once mended', async () => {
+    writeFileSync(file(COMMITMENT), '{')
+    const poll = bookingPoller(deps)
+    await poll()
+    await poll()
+    await poll()
+    expect(logged).toEqual([`booking ${COMMITMENT}: ${file(COMMITMENT)} isn't JSON`])
+    // Changed but still damaged, it's logged once more.
+    const broken = toWire(agreedBooking()) as Record<string, unknown>
+    broken.terms = { broken: true }
+    writeFileSync(file(COMMITMENT), JSON.stringify(broken))
+    await poll()
+    await poll()
+    expect(logged).toHaveLength(2)
+    expect(logged[1]).toContain("holds terms that don't parse (terms.version_unknown)")
+    // Mended, it's read again at the next poll and moves on, so the poll hides no booking that
+    // still needs work.
+    store.put(agreedBooking())
+    await poll()
+    expect(status()).toBe('accepted')
+    expect(grants()).toHaveLength(1)
+  })
+
+  it('tries an open booking again at every poll after its move fails, saying why each time', async () => {
+    put()
+    deps.authorize = async () => {
+      throw new Error('Avow is unreachable')
+    }
+    const poll = bookingPoller(deps)
+    await poll()
+    await poll()
+    expect(logged).toEqual([
+      `booking ${COMMITMENT}: Avow is unreachable`,
+      `booking ${COMMITMENT}: Avow is unreachable`,
+    ])
+    deps.authorize = async () => authorized(BigInt(++answers))
+    await poll()
+    expect(status()).toBe('accepted')
   })
 })

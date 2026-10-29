@@ -12,7 +12,7 @@ A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, 
 - It grants the capacity only once the acceptance's receipt shows the lock took it, as the verifier's README asks. Until then the reserve can still go back to the business, so a booking stays `held` and nothing is granted.
 - A booking whose reserve never arrives lapses at its acceptance deadline, and Avow returns any reserve then.
 
-Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between.
+Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between. The adapter reads an accepted or lapsed booking once, then leaves it alone. It logs a booking file it can't read once, and reads that file again once it changes.
 
 ## Settings
 
