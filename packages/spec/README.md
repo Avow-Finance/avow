@@ -20,6 +20,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
 | References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval and the start receipt, each as EIP-712 typed data |
+| Signed requests | How an agent or a supplier signs each request to Avow's API, and the bodies the API takes and answers with. [Signed requests](signed-requests.md) fixes the deployment binding, the encoding, request ids and retries, and what a signature proves |
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
@@ -88,7 +89,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
 | Commitment record | `COMMITMENT_RECORD_VERSION`, 2 | The record's own fields change. Version 2 added the references a record cites, and a version 1 record reads as version 2 with none |
 
-Every signed message names its version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A reader refuses a version it doesn't know for that message type.
+Every signed message names its version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A signed request to Avow's API carries a request id in place of the nonce, which names one operation. A reader refuses a version it doesn't know for that message type.
 
 ## Design rules
 

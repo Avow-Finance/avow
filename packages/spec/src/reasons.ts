@@ -57,6 +57,23 @@ export const REASON_CODES = {
   'message.signature_invalid': "The signature doesn't match the message",
   'message.signer_unknown':
     "The signature doesn't come from one of Avow's published keys, so the message was changed or signed by someone else",
+  'request.unsigned':
+    "The request to Avow's API carries no signature, or its Authorization header doesn't parse",
+  'request.invalid':
+    "The request's audience, method, path or body isn't in the form a signed request takes",
+  'request.signer_unknown':
+    "The key that signed the request isn't one Avow knows for this business, supplier or commitment",
+  'request.id_reused':
+    'The request id was used before for a request with other content, so nothing was done',
+  'request.in_progress':
+    'Avow is still answering the same signed request, so send the same bytes again shortly',
+  'service.unavailable':
+    "Avow couldn't read the records or the chain this request depends on, so it did nothing, and the same request can be sent again",
+  'sponsorship.refused':
+    "Avow's relay pays only for a business account's own calls to its lock and approvals of the reserve token to that lock, within its gas and fee caps",
+  'business.unknown': 'Avow has no record of this business',
+  'supplier.unknown': 'Avow has no profile for this supplier',
+  'commitment.unknown': 'Avow has no record of this commitment',
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",
   'authorization.terms_mismatch': "The authorization's amount or deadlines differ from the terms",
   'authorization.commitment_mismatch':

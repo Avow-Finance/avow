@@ -19,6 +19,7 @@ export {
 export * from './agent.js'
 export * from './agent-key.js'
 export * from './avow-api.js'
+export * from './http.js'
 export * from './lock.js'
 export * from './send.js'
 export * from './sign.js'

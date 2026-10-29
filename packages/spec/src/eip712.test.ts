@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { testnetDemoTerms } from './demo.js'
 import {
   type Acceptance,
+  type ApiRequest,
   type Approval,
   type AvowTypedData,
   acceptanceTypedData,
+  apiRequestTypedData,
   approvalDigest,
   approvalTypedData,
   businessActionTypedData,
@@ -200,6 +202,16 @@ const receipt: StartReceipt = {
   expiry: START + 3600n,
 }
 
+const apiRequest: ApiRequest = {
+  audience: 'https://api.testnet.avow.finance',
+  method: 'POST',
+  path: '/v1/reserve-approvals',
+  bodyHash: id('body'),
+  signer: agent.address,
+  requestId: id('request-1'),
+  expiry: NOW + 120n,
+}
+
 const OTHER_DOMAIN = { chainId: CHAIN_ID, verifyingContract: OTHER_LOCK }
 
 const builders = {
@@ -209,6 +221,7 @@ const builders = {
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
   human: (d = DOMAIN) => humanApprovalTypedData(human, d),
   receipt: (d = DOMAIN) => startReceiptTypedData(receipt, d),
+  request: (d = DOMAIN) => apiRequestTypedData(apiRequest, d),
   acceptance: (d = DOMAIN) => acceptanceTypedData(acceptance, d),
   report: (d = DOMAIN) => reportTypedData(chargeReport, d),
   consent: (d = DOMAIN) => releaseConsentTypedData(consent, d),

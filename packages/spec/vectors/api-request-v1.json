@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "sponsorship",
+      "audience": "https://api.testnet.avow.finance",
+      "chainId": 42431,
+      "lock": "0x00000000000000000000000000000000000010c4",
+      "method": "POST",
+      "path": "/v1/sponsorships",
+      "body": "{\"transaction\":\"0x76f8ab\"}",
+      "bodyHash": "0x2c35219ee147157cb8136347f90ba6c4912ac310385f50e5903d8b9633039c2a",
+      "signer": "0xa868a5e11b62a4573c73777168e74da2f850f289",
+      "requestId": "0x07df3e020b4a368382d7900b3168fb6e1178684a88f20c94463626828d55a3f3",
+      "expiry": "1800000120",
+      "digest": "0xd8f702bcb765a5e947b1ac57985e8370954fa3133a0fcc98d912048b603205f5",
+      "signature": "0x1c8bb7f97461ee8fe1d2648f9d6056d521af331f0be644ce4276cfbc5f093d253af0ebe2fca562d11257452221079e6534fa8cd2c6b74ddb797c6689d0b48a2f1b",
+      "authorization": "Avow signer=0xa868a5e11b62a4573c73777168e74da2f850f289, lock=0x00000000000000000000000000000000000010c4, requestId=0x07df3e020b4a368382d7900b3168fb6e1178684a88f20c94463626828d55a3f3, expiry=1800000120, signature=0x1c8bb7f97461ee8fe1d2648f9d6056d521af331f0be644ce4276cfbc5f093d253af0ebe2fca562d11257452221079e6534fa8cd2c6b74ddb797c6689d0b48a2f1b"
+    },
+    {
+      "name": "nested body",
+      "audience": "https://api.testnet.avow.finance",
+      "chainId": 42431,
+      "lock": "0x00000000000000000000000000000000000010c4",
+      "method": "POST",
+      "path": "/v1/reserve-approvals",
+      "body": "{\"flags\":{\"testData\":true},\"fundedBy\":\"agent\",\"request\":{\"amount\":\"500000000\",\"regions\":[\"us-east\",\"São Paulo\"],\"supplier\":\"biz_supplier\"},\"salt\":\"0x4444444444444444444444444444444444444444444444444444444444444444\"}",
+      "bodyHash": "0xd4354ebe60ab42366a788646e6b595b13c595bb7dc3022e87d1ca11bc1202909",
+      "signer": "0xa868a5e11b62a4573c73777168e74da2f850f289",
+      "requestId": "0x762720631a6e7cd1033dcc5ac3bcde830a29b49d53794d3dd9dcbd15144ba261",
+      "expiry": "1800000120",
+      "digest": "0x3aebc53e874b0375caabcf9d4430934edcab7b87a676c023b7f982fa8b4dc2c0",
+      "signature": "0xa0944ec49b4751a5c1b7a1f7eab754a5239d4f94f8322d70a3be1934090576821b856e09c652c1a4d8115832443d3d7535bf08aa76d05900181c960275f9b3c31b",
+      "authorization": "Avow signer=0xa868a5e11b62a4573c73777168e74da2f850f289, lock=0x00000000000000000000000000000000000010c4, requestId=0x762720631a6e7cd1033dcc5ac3bcde830a29b49d53794d3dd9dcbd15144ba261, expiry=1800000120, signature=0xa0944ec49b4751a5c1b7a1f7eab754a5239d4f94f8322d70a3be1934090576821b856e09c652c1a4d8115832443d3d7535bf08aa76d05900181c960275f9b3c31b"
+    },
+    {
+      "name": "no body",
+      "audience": "https://api.testnet.avow.finance",
+      "chainId": 42431,
+      "lock": "0x00000000000000000000000000000000000010c4",
+      "method": "GET",
+      "path": "/v1/commitments/0xabababababababababababababababababababababababababababababababab/supplier-authorizations",
+      "body": "",
+      "bodyHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "signer": "0xa868a5e11b62a4573c73777168e74da2f850f289",
+      "requestId": "0x5701262a4a147c0b998689847a99abba2838edcfeaff4d27b254e600e64989b6",
+      "expiry": "1800000120",
+      "digest": "0x64c1cc75143d3d2d80162c96abed64d5e4ffe1ad20308357290c0720e9f976b6",
+      "signature": "0xdc71de54568dbc5b7ea88a29256139cbe36b49d50ab4ee7da196b54250c6acb503c05b0a721f02b8c41b365891615f3348f11005fc7d3345387723c3267e18741c",
+      "authorization": "Avow signer=0xa868a5e11b62a4573c73777168e74da2f850f289, lock=0x00000000000000000000000000000000000010c4, requestId=0x5701262a4a147c0b998689847a99abba2838edcfeaff4d27b254e600e64989b6, expiry=1800000120, signature=0xdc71de54568dbc5b7ea88a29256139cbe36b49d50ab4ee7da196b54250c6acb503c05b0a721f02b8c41b365891615f3348f11005fc7d3345387723c3267e18741c"
+    }
+  ]
+}

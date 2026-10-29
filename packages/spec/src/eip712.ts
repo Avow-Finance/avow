@@ -276,6 +276,35 @@ export interface StartReceipt {
   expiry: bigint
 }
 
+/**
+ * One request to Avow's API, signed by the key that sends it: an agent key the business enrolled,
+ * or a supplier's signing key. The signature names the deployment, the method, the path and the
+ * hash of the exact body bytes, so it fits no other request. The domain names the chain and the
+ * lock of the business the request concerns. `requestId` names the operation. An identical repeat
+ * gets the first answer without repeating anything, and the same id with any other content is
+ * refused. A signed request proves who asked for what and when Avow received it, and nothing
+ * about what the lock or the chain did after. `signed-requests.md` sets out every rule.
+ */
+export interface ApiRequest {
+  /**
+   * The deployment the request is for, written as the API's origin in lower case with no trailing
+   * slash, such as `https://api.testnet.avow.finance`. Each deployment has its own, so a request for
+   * one can't run on another, even on the same chain.
+   */
+  audience: string
+  /** `GET` or `POST`. */
+  method: string
+  /** The path as sent, such as `/v1/reserve-approvals`, with no query. */
+  path: string
+  /** keccak256 of the body's exact bytes, or of no bytes for a request with no body. */
+  bodyHash: Hex
+  /** The key's own address. A passkey's signature doesn't name its signer, so the request does. */
+  signer: Address
+  /** 32 random bytes the signer picks for each operation. */
+  requestId: Hex
+  expiry: bigint
+}
+
 export const MANDATE_TYPES = {
   PaymentLimit: [
     { name: 'token', type: 'address' },
@@ -468,6 +497,18 @@ export const START_RECEIPT_TYPES = {
     { name: 'startRequestHash', type: 'bytes32' },
     { name: 'startedAt', type: 'uint64' },
     { name: 'nonce', type: 'uint256' },
+    { name: 'expiry', type: 'uint64' },
+  ],
+} as const
+
+export const API_REQUEST_TYPES = {
+  ApiRequest: [
+    { name: 'audience', type: 'string' },
+    { name: 'method', type: 'string' },
+    { name: 'path', type: 'string' },
+    { name: 'bodyHash', type: 'bytes32' },
+    { name: 'signer', type: 'address' },
+    { name: 'requestId', type: 'bytes32' },
     { name: 'expiry', type: 'uint64' },
   ],
 } as const
@@ -695,6 +736,15 @@ export function startReceiptTypedData(r: StartReceipt, d: AvowDomain) {
   }
 }
 
+export function apiRequestTypedData(r: ApiRequest, d: AvowDomain) {
+  return {
+    domain: domain(d, MESSAGE_VERSIONS.ApiRequest),
+    types: API_REQUEST_TYPES,
+    primaryType: 'ApiRequest' as const,
+    message: { ...r },
+  }
+}
+
 /**
  * The mandate's hash, bound into the agent key's authorization on Tempo as its witness. It
  * includes the domain, so a mandate for one lock or chain can't stand in for another.
@@ -710,6 +760,7 @@ export type AvowTypedData =
   | ReturnType<typeof supplierAuthorizationTypedData>
   | ReturnType<typeof humanApprovalTypedData>
   | ReturnType<typeof startReceiptTypedData>
+  | ReturnType<typeof apiRequestTypedData>
   | ReturnType<typeof acceptanceTypedData>
   | ReturnType<typeof reportTypedData>
   | ReturnType<typeof releaseConsentTypedData>
@@ -741,6 +792,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'HumanApproval':
       return hashTypedData(td)
     case 'StartReceipt':
+      return hashTypedData(td)
+    case 'ApiRequest':
       return hashTypedData(td)
     case 'Acceptance':
       return hashTypedData(td)
