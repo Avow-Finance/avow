@@ -92,16 +92,18 @@ async function prepare(
   client: Client<Transport, Chain>,
   account: Account,
   calls: readonly Call[],
+  fields: Record<string, unknown>,
   limits: SendLimits,
   sent: Sent,
 ) {
   for (let i = 1; ; i++) {
     try {
-      // `calls` and `feePayer` are Tempo's transaction fields, which viem's generic types omit.
+      // `calls`, `feePayer`, `nonceKey` and `keyAuthorization` are Tempo's transaction fields,
+      // which viem's generic types omit.
       return (await prepareTransactionRequest(client, {
         account,
         calls,
-        feePayer: true,
+        ...fields,
       } as never)) as { validBefore?: number }
     } catch (error) {
       // A node a block behind can see a step as not due yet, so a refusal counts once it holds.
@@ -285,6 +287,9 @@ async function outcomeOf(
   }
 }
 
+/** Called with each transaction's hash and `validBefore` before its bytes go to the node. */
+export type OnSent = (hash: Hex, validBefore: bigint | null) => unknown
+
 /**
  * Sends a transaction whose fee Avow's relay pays. The key signs it locally with `feePayer: true`,
  * the relay co-signs it, and the sender checks the relay's bytes are the transaction the key
@@ -295,7 +300,7 @@ async function outcomeOf(
  * up to the limit's number of signings. It throws a `SendError` when the transaction can't be
  * prepared, lands reverted, never lands, or has an outcome the chain didn't show in time.
  */
-export async function sendSponsored(args: {
+export function sendSponsored(args: {
   client: Client<Transport, Chain>
   account: Account
   calls: readonly Call[]
@@ -305,21 +310,11 @@ export async function sendSponsored(args: {
    * expires, and the sender's outcomes assume only the sender sends it.
    */
   sponsor: (transaction: Hex) => Promise<Hex>
-  /** Called with each hash before its bytes go to the node. */
-  onSent?: (hash: Hex) => void
+  /** Called with each hash before its bytes go to the node, and awaited. */
+  onSent?: OnSent
   limits?: SendLimits
 }): Promise<TransactionReceipt> {
-  const limits = checked(args.limits ?? SEND_LIMITS)
-  const sent: Sent = { hashes: [], signings: 0 }
-  for (;;) {
-    const request = await prepare(args.client, args.account, args.calls, limits, sent)
-    // Read before the key signs, so no block that could hold the transaction comes before it.
-    const from = await latestBlock(args.client, limits, sent)
-    const signed = await signTransaction(args.client, {
-      ...request,
-      account: args.account,
-    } as never)
-    sent.signings++
+  return send(args, { feePayer: true }, async (signed, sent) => {
     let bytes: Hex
     try {
       bytes = await args.sponsor(signed)
@@ -336,9 +331,65 @@ export async function sendSponsored(args: {
         sent,
       )
     }
+    return bytes
+  })
+}
+
+/**
+ * Sends a transaction the account pays its own fee for, as a business account's root key does to
+ * create its lock or approve a supplier, or a supplier does to send its acceptance. It's signed
+ * locally on an expiring nonce and tracked by hash from the start, with every outcome
+ * `sendSponsored` gives, and it can carry a key authorization that puts an agent's key on the
+ * account in the same transaction.
+ */
+export function sendOwn(args: {
+  client: Client<Transport, Chain>
+  account: Account
+  calls: readonly Call[]
+  /** A key authorization the account's root key signed, as `Account.signKeyAuthorization` gives. */
+  keyAuthorization?: unknown
+  /** Called with each hash before its bytes go to the node, and awaited. */
+  onSent?: OnSent
+  limits?: SendLimits
+}): Promise<TransactionReceipt> {
+  const fields: Record<string, unknown> = { nonceKey: 'expiring' }
+  if (args.keyAuthorization !== undefined) fields.keyAuthorization = args.keyAuthorization
+  return send(args, fields, async (signed) => signed)
+}
+
+/**
+ * The send both senders share. `finish` turns the bytes the key signed into the bytes that go to
+ * the node, and throws a `SendError` when it can't.
+ */
+async function send(
+  args: {
+    client: Client<Transport, Chain>
+    account: Account
+    calls: readonly Call[]
+    onSent?: OnSent
+    limits?: SendLimits
+  },
+  fields: Record<string, unknown>,
+  finish: (signed: Hex, sent: Sent) => Promise<Hex>,
+): Promise<TransactionReceipt> {
+  const limits = checked(args.limits ?? SEND_LIMITS)
+  const sent: Sent = { hashes: [], signings: 0 }
+  for (;;) {
+    const request = await prepare(args.client, args.account, args.calls, fields, limits, sent)
+    // Read before the key signs, so no block that could hold the transaction comes before it.
+    const from = await latestBlock(args.client, limits, sent)
+    const signed = await signTransaction(args.client, {
+      ...request,
+      account: args.account,
+    } as never)
+    sent.signings++
+    const bytes = await finish(signed, sent)
     const hash = keccak256(bytes)
     sent.hashes.push(hash)
-    args.onSent?.(hash)
+    await args.onSent?.(
+      hash,
+      request.validBefore === undefined ? null : BigInt(request.validBefore),
+    )
     const refused = await submit(args.client, bytes, hash, limits, sent)
     const outcome = await outcomeOf(args.client, hash, from, request.validBefore, limits, sent)
     if (outcome !== 'expired') {

@@ -25,6 +25,7 @@ import {
 } from '@avow-finance/spec'
 import {
   type Address,
+  encodeFunctionData,
   type Hex,
   hexToBigInt,
   isAddressEqual,
@@ -324,5 +325,53 @@ export async function signAcceptance(
     lock: prepared.domain.verifyingContract,
     message: prepared.acceptance,
     signature,
+  }
+}
+
+/**
+ * The lock's `accept`, as the testnet lock declares it. Anyone can send it, since the lock checks
+ * the supplier's signing key signed the acceptance, so a supplier can send it from any account
+ * that pays the fee.
+ */
+export const ACCEPT_ABI = [
+  {
+    type: 'function',
+    name: 'accept',
+    inputs: [
+      {
+        name: 'm',
+        type: 'tuple',
+        components: [
+          { name: 'commitmentId', type: 'bytes32' },
+          { name: 'side', type: 'uint8' },
+          { name: 'approvalHash', type: 'bytes32' },
+          { name: 'termsHash', type: 'bytes32' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'token', type: 'address' },
+          { name: 'acceptBy', type: 'uint64' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'expiry', type: 'uint64' },
+        ],
+      },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+/**
+ * The call that hands a signed acceptance to its lock, with the fields exactly as they were signed,
+ * so the lock checks the same digest the supplier's key signed.
+ */
+export function acceptCall(acceptance: Signed<Acceptance>): { to: Address; data: Hex } {
+  const d: AvowDomain = { chainId: acceptance.chainId, verifyingContract: acceptance.lock }
+  return {
+    to: acceptance.lock,
+    data: encodeFunctionData({
+      abi: ACCEPT_ABI,
+      functionName: 'accept',
+      args: [acceptanceTypedData(acceptance.message, d).message, acceptance.signature],
+    }),
   }
 }

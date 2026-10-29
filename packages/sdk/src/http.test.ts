@@ -9,7 +9,13 @@ import type { Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { AvowApiError, agentRequestKey, httpAvowApi } from './http.js'
+import {
+  AvowApiError,
+  agentRequestKey,
+  enrollAgent,
+  httpAvowApi,
+  requestSupplierAuthorization,
+} from './http.js'
 
 // Every key is generated for the run and held only in memory.
 const account = privateKeyToAccount(generatePrivateKey())
@@ -207,5 +213,66 @@ describe('httpAvowApi', () => {
     await client(fetcher, { onSigned: (r: unknown) => kept.push(r) }).sponsor('0x1234')
     expect(kept).toHaveLength(1)
     expect(kept[0]).toMatchObject({ type: 'ApiRequest', lock: domain.verifyingContract })
+  })
+})
+
+describe('enrolling an agent and asking for a supplier authorization', () => {
+  const settings = (fetcher: typeof fetch) => ({
+    baseUrl: AUDIENCE,
+    key,
+    fetch: fetcher,
+    now: () => NOW,
+    retryWait: 0,
+  })
+  const keyTx: Hex = `0x${'ab'.repeat(32)}`
+  const mHash: Hex = `0x${'cd'.repeat(32)}`
+
+  it("enrolls under the mandate's own lock, and reads what Avow recorded", async () => {
+    const mandate = {
+      type: 'Mandate',
+      schemaVersion: '1',
+      chainId: domain.chainId,
+      lock: domain.verifyingContract,
+      message: { agentId: 'agt_1' },
+      signature: '0x00',
+    }
+    const enrolled = {
+      businessId: 'biz_buyer',
+      agentId: 'agt_1',
+      agentKey: account.address.toLowerCase(),
+      mandateHash: mHash,
+    }
+    const { seen, fetcher } = fakeApi([
+      () => json(200, { surprise: true }),
+      () => json(200, enrolled),
+    ])
+    const answer = await enrollAgent(settings(fetcher), {
+      mandate: mandate as never,
+      keyAuthorizedIn: keyTx,
+    })
+    expect(answer).toEqual(enrolled)
+    // An answer it can't read counts as none, so the same bytes went again.
+    expect(seen).toHaveLength(2)
+    expect(seen[1]?.body).toEqual(seen[0]?.body)
+    const v = await verified(seen[0] as Seen, '/v1/enrollments')
+    expect(v.ok).toBe(true)
+    expect(seen[0]?.body).toEqual(encodeApiBody({ mandate, keyAuthorizedIn: keyTx }))
+  })
+
+  it("asks as the supplier under the buyer's lock, and reads a refusal as Avow's answer", async () => {
+    const commitmentId: Hex = `0x${'1f'.repeat(32)}`
+    const { seen, fetcher } = fakeApi([
+      () => json(200, { ok: false, reason: 'chain.reserve_missing' }),
+    ])
+    const answer = await requestSupplierAuthorization(settings(fetcher), {
+      chainId: domain.chainId,
+      lock: domain.verifyingContract,
+      commitmentId,
+    })
+    expect(answer).toEqual({ ok: false, reason: 'chain.reserve_missing' })
+    const path = `/v1/commitments/${commitmentId}/supplier-authorizations`
+    expect(seen[0]?.url).toBe(`${AUDIENCE}${path}`)
+    expect(seen[0]?.body).toEqual(encodeApiBody({}))
+    expect((await verified(seen[0] as Seen, path)).ok).toBe(true)
   })
 })

@@ -3,18 +3,23 @@ import {
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  type Enrollment,
+  type EnrollmentRequest,
   encodeApiBody,
   isApiAudience,
   newRequestId,
   parseApiError,
+  parseEnrollment,
   parseReserveApproval,
   parseSponsorship,
+  parseSupplierAuthorizationAnswer,
   type ReasonCode,
   type RequestKey,
   type Signed,
+  type SupplierAuthorizationAnswer,
   signApiRequest,
 } from '@avow-finance/spec'
-import type { Hex } from 'viem'
+import type { Address, Hex } from 'viem'
 import type { AgentKey } from './agent.js'
 import type { AvowApi } from './avow-api.js'
 
@@ -42,16 +47,14 @@ export class AvowApiError extends Error {
   }
 }
 
-export interface HttpAvowApiConfig {
+export interface AvowRequestConfig {
   /**
    * The deployment's origin, such as `https://api.testnet.avow.finance`. It is the audience every
    * request is signed for, so it can't carry a path, query or fragment.
    */
   baseUrl: string
-  /** The key that signs every request, the agent's own through `agentRequestKey`. */
+  /** The key that signs every request: an agent's through `agentRequestKey`, or a supplier's. */
   key: RequestKey
-  /** The chain and lock the agent's mandate names. Every request is signed under this domain. */
-  domain: AvowDomain
   /** Seconds each signed request stays valid, two minutes by default. Avow refuses more than five. */
   requestValidity?: bigint
   /**
@@ -67,8 +70,23 @@ export interface HttpAvowApiConfig {
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
   fetch?: typeof fetch
-  /** Receives each signed request, so the agent can keep the record of what it asked Avow. */
+  /** Receives each signed request, so the signer can keep the record of what it asked Avow. */
   onSigned?: (request: Signed<ApiRequest>) => void
+}
+
+export interface HttpAvowApiConfig extends AvowRequestConfig {
+  /** The chain and lock the agent's mandate names. Every request is signed under this domain. */
+  domain: AvowDomain
+}
+
+/** One operation for Avow's API. */
+export interface AvowRequest<T> {
+  /** The chain and lock the request is signed under. */
+  domain: AvowDomain
+  path: string
+  body: unknown
+  /** Parses the body of a 2xx answer, and returns null for one it can't, which counts as no answer. */
+  read: (json: unknown) => T | null
 }
 
 /** The agent's access key as a request signer: its own address and its bare signature. */
@@ -108,18 +126,16 @@ function audienceOf(baseUrl: string): string {
 }
 
 /**
- * Avow's hosted API as an `AvowApi`. Each call is one operation with a fresh request id, signed with
- * the agent's key for the deployment at `baseUrl`. The client sends the same bytes again after no
- * answer, a broken answer, a 5xx or `request.in_progress`, until Avow answers definitely or
- * `retryFor` runs out. Avow answers an identical repeat with its first answer and does nothing
- * again, so a lost answer never turns into a second approval or a second co-signature. It never
- * follows a redirect, so a signed body goes nowhere but the deployment it was signed for.
- * Cancelling and starting a job come with the start-request and cancellation records, and until
- * then those calls throw.
+ * Sends operations to Avow's hosted API, each with a fresh request id and signed with `key` for the
+ * deployment at `baseUrl`. It sends the same bytes again after no answer, a broken answer, a 5xx
+ * or `request.in_progress`, until Avow answers definitely or `retryFor` runs out. Avow answers an
+ * identical repeat with its first answer and does nothing again, so a lost answer never turns into
+ * a second action. It never follows a redirect, so a signed body goes nowhere but the deployment it
+ * was signed for. A refusal, or no definite answer in time, throws an `AvowApiError`.
  */
-export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
+export function avowRequests(config: AvowRequestConfig) {
   const audience = audienceOf(config.baseUrl)
-  const { key, domain } = config
+  const { key } = config
   const validity = config.requestValidity ?? 120n
   if (validity <= 0n || validity > API_REQUEST_MAX_VALIDITY) {
     throw new RangeError(`A request can stay valid for 1 to ${API_REQUEST_MAX_VALIDITY} seconds`)
@@ -128,18 +144,9 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
   const firstWait = config.retryWait ?? 1000
   const attemptTimeout = config.attemptTimeout ?? 30_000
   const now = config.now ?? systemClock
-  const send = config.fetch ?? fetch
-  const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
+  const fetchOnce = config.fetch ?? fetch
 
-  /**
-   * Sends one operation until Avow answers it definitely, and returns the answer `read` parses.
-   * `read` returns null for a body it can't parse, which counts as no answer.
-   */
-  async function post<T>(
-    path: string,
-    value: unknown,
-    read: (json: unknown) => T | null,
-  ): Promise<T> {
+  return async function send<T>({ domain, path, body: value, read }: AvowRequest<T>): Promise<T> {
     const body = encodeApiBody(value)
     const requestId = newRequestId()
     const { authorization, request } = await signApiRequest({
@@ -160,7 +167,7 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
     let lastReason: ReasonCode | null = null
     for (;;) {
       try {
-        const response = await send(`${audience}${path}`, {
+        const response = await fetchOnce(`${audience}${path}`, {
           method: 'POST',
           headers: { authorization, 'content-type': 'application/json' },
           body,
@@ -199,24 +206,87 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
       wait = Math.min(wait * 2, MAX_WAIT)
     }
   }
+}
+
+/**
+ * Avow's hosted API as an `AvowApi`, for an agent whose mandate names `domain`. Each call is one
+ * operation sent through `avowRequests`, so a lost answer never turns into a second approval or a
+ * second co-signature. Cancelling and starting a job come with the start-request and cancellation
+ * records, and until then those calls throw.
+ */
+export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
+  const send = avowRequests(config)
+  const { domain } = config
+  const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
 
   const notYet = (what: string) => async () => {
     throw new Error(`Avow's hosted API doesn't ${what} yet`)
   }
 
   return {
-    approveReserve: (request) =>
-      post(API_PATHS.reserveApprovals, request, (json) => {
-        const parsed = parseReserveApproval(json, expected)
-        return parsed.ok ? parsed.value : null
+    approveReserve: (body) =>
+      send({
+        domain,
+        path: API_PATHS.reserveApprovals,
+        body,
+        read: (json) => {
+          const parsed = parseReserveApproval(json, expected)
+          return parsed.ok ? parsed.value : null
+        },
       }),
     sponsor: (transaction) =>
-      post(API_PATHS.sponsorships, { transaction }, (json) => {
-        const parsed = parseSponsorship(json)
-        return parsed.ok ? parsed.value.transaction : null
+      send({
+        domain,
+        path: API_PATHS.sponsorships,
+        body: { transaction },
+        read: (json) => {
+          const parsed = parseSponsorship(json)
+          return parsed.ok ? parsed.value.transaction : null
+        },
       }),
     cancel: notYet('record cancellations'),
     requestStart: notYet('timestamp start requests'),
     recordStart: notYet('record start receipts'),
   }
+}
+
+/**
+ * Enrolls an agent with Avow once its key is on the chain with the mandate's hash. The agent signs
+ * the request with that key, under the mandate's chain and lock, and gets back what Avow recorded.
+ */
+export function enrollAgent(
+  config: AvowRequestConfig,
+  enrollment: EnrollmentRequest,
+): Promise<Enrollment> {
+  return avowRequests(config)({
+    domain: { chainId: enrollment.mandate.chainId, verifyingContract: enrollment.mandate.lock },
+    path: API_PATHS.enrollments,
+    body: enrollment,
+    read: (json) => {
+      const parsed = parseEnrollment(json)
+      return parsed.ok ? parsed.value : null
+    },
+  })
+}
+
+/**
+ * Asks Avow for a fresh authorization for a commitment's reserve, signed with the supplier's
+ * signing key under the buyer's lock. Avow answers with its authorization, the approval the reserve
+ * was funded under and the buyer's mandate, which the supplier's verifier checks before it accepts,
+ * or with the reason it signed none, such as a reserve not funded yet.
+ */
+export function requestSupplierAuthorization(
+  config: AvowRequestConfig,
+  commitment: { chainId: number; lock: Address; commitmentId: Hex },
+): Promise<SupplierAuthorizationAnswer> {
+  const expected = { chainId: commitment.chainId, lock: commitment.lock }
+  return avowRequests(config)({
+    domain: { chainId: commitment.chainId, verifyingContract: commitment.lock },
+    path: API_PATHS.supplierAuthorizations(commitment.commitmentId),
+    body: {},
+    read: (json) => {
+      const parsed = parseSupplierAuthorizationAnswer(json, expected)
+      return parsed.ok ? parsed.value : null
+    },
+  })
 }

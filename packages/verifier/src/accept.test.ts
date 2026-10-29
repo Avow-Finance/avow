@@ -13,11 +13,20 @@ import {
   testnetDemoTermsV1,
   toWire,
 } from '@avow-finance/spec'
-import { type Address, zeroAddress } from 'viem'
+import {
+  type Address,
+  decodeFunctionData,
+  getAbiItem,
+  getAddress,
+  toFunctionSelector,
+  zeroAddress,
+} from 'viem'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  ACCEPT_ABI,
   ACCEPTANCE_VALIDITY,
   type AcceptanceDeps,
+  acceptCall,
   prepareAcceptance,
   signAcceptance,
 } from './accept.js'
@@ -132,6 +141,33 @@ describe('the supported acceptance path', () => {
   it('records nothing, so the same reserve can be prepared again', async () => {
     expect((await prepare()).ok).toBe(true)
     expect((await prepare()).ok).toBe(true)
+  })
+})
+
+describe('the call that hands an acceptance to the lock', () => {
+  it("has the selector of the compiled testnet lock's accept", () => {
+    expect(toFunctionSelector(getAbiItem({ abi: ACCEPT_ABI, name: 'accept' }))).toBe(
+      toFunctionSelector(
+        'accept((bytes32,uint8,bytes32,bytes32,uint256,address,uint64,uint256,uint64),bytes)',
+      ),
+    )
+  })
+
+  it('carries the acceptance to its lock exactly as it was signed', async () => {
+    const prepared = await ready()
+    const signed = await signAcceptance(prepared, supplierKey, {
+      disclosureId: prepared.disclosure.id,
+    })
+    const call = acceptCall(signed)
+    expect(call.to).toBe(LOCK)
+    const { args } = decodeFunctionData({ abi: ACCEPT_ABI, data: call.data })
+    const [message, signature] = args
+    expect(signature).toBe(signed.signature)
+    expect(message).toEqual({
+      ...prepared.acceptance,
+      side: 0,
+      token: getAddress(prepared.acceptance.token),
+    })
   })
 })
 
