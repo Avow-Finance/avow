@@ -73,7 +73,7 @@ export interface AgentConfig<A extends AvowApi = AvowApi> {
   profile: TermsProfile
   /**
    * Avow's side of the commitments. The agent has `cancel` and `start` only when it has `records`,
-   * which Avow's hosted API doesn't serve yet.
+   * which `httpAvowApi` serves.
    */
   avow: A
   /** How long, in seconds, an offer stays open for the supplier and Avow. Ten minutes by default. */
@@ -228,8 +228,8 @@ export interface AgentRecordCalls {
 /**
  * An agent that makes commitments under its mandate, as `createAgent` returns it for an `AvowApi`
  * of type `A`. It has `cancel` and `start` only when `A` has `records`, Avow's records of
- * cancellations and job starts. An agent made with `httpAvowApi` has neither, since Avow's hosted
- * API doesn't serve those records yet, so code that calls one doesn't compile.
+ * cancellations and job starts, so code that calls one on an `AvowApi` without them doesn't
+ * compile. An agent made with `httpAvowApi` has both.
  */
 export type Agent<A extends AvowApi = AvowApi> = AgentCalls &
   (A extends { records: AvowRecords } ? AgentRecordCalls : unknown)
@@ -293,7 +293,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
   const records = (what: string): AvowRecords => {
     if (!served) {
       throw new Error(
-        `The AvowApi this agent uses has no records, so it can't ${what}. Avow's hosted API doesn't serve its records of cancellations and starts yet.`,
+        `The AvowApi this agent uses has no records, so it can't ${what}. httpAvowApi serves them.`,
       )
     }
     return served as AvowRecords

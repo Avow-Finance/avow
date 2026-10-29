@@ -11,9 +11,12 @@ import {
   newRequestId,
   type Parsed,
   parseApiError,
+  parseCancellationAnswer,
   parseEnrollment,
   parseReserveApproval,
   parseSponsorship,
+  parseStartReceiptAnswer,
+  parseStartRequestAnswer,
   parseSupplierAuthorizationAnswer,
   type ReasonCode,
   type RequestKey,
@@ -23,7 +26,7 @@ import {
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 import type { AgentKey } from './agent.js'
-import type { AvowApi } from './avow-api.js'
+import type { AvowApi, AvowRecords } from './avow-api.js'
 
 /**
  * Avow's API refused a request, answered with something the client can't use, or gave no definite
@@ -113,9 +116,10 @@ export interface AvowRequest<T> {
   /**
    * Parses the JSON body of a 2xx answer, or gives the reason it can't. Avow answers a repeat with
    * the answer it recorded, so an answer this refuses would come back the same, and it's thrown at
-   * once with that reason.
+   * once with that reason. It gets the digest of the request it answers, which Avow's timestamps
+   * name.
    */
-  read: (json: unknown) => Parsed<T>
+  read: (json: unknown, sent: { digest: Hex }) => Parsed<T>
 }
 
 /** The agent's access key as a request signer: its own address and its bare signature. */
@@ -181,7 +185,7 @@ export function avowRequests(config: AvowRequestConfig) {
   return async function send<T>({ domain, path, body: value, read }: AvowRequest<T>): Promise<T> {
     const body = encodeApiBody(value)
     const requestId = newRequestId()
-    const { authorization, request } = await signApiRequest({
+    const { authorization, request, digest } = await signApiRequest({
       key,
       domain,
       audience,
@@ -214,7 +218,7 @@ export function avowRequests(config: AvowRequestConfig) {
           last = `The last answer was unreadable, a ${response.status} whose body isn't JSON.`
           lastReason = null
         } else if (response.ok) {
-          const answer = read(json)
+          const answer = read(json, { digest })
           if (answer.ok) return answer.value
           throw new AvowApiError(`Avow's answer can't be used: ${describeReason(answer.reason)}`, {
             status: lastStatus,
@@ -262,19 +266,53 @@ export function avowRequests(config: AvowRequestConfig) {
   }
 }
 
+/** Keeps a parsed answer's value as `pick` shapes it, or its refusal as it is. */
+const shaped = <T, U>(parsed: Parsed<T>, pick: (value: T) => U): Parsed<U> =>
+  parsed.ok ? { ok: true, value: pick(parsed.value) } : parsed
+
 /**
  * Avow's hosted API as an `AvowApi`, for an agent whose mandate names `domain`. Each call is one
- * operation sent through `avowRequests`, so a lost answer never turns into a second approval or a
- * second co-signature. It serves the reserve check and the relay, and has no `records` until Avow
- * serves its records of cancellations and job starts, so an agent made with it has no `cancel` or
- * `start` to call by accident.
+ * operation sent through `avowRequests`, so a lost answer never turns into a second approval, a
+ * second co-signature or a second record. It serves the reserve check, the relay and Avow's records
+ * of cancellations and job starts. Each record's answer carries Avow's timestamp, which has to name
+ * the digest of the request the agent signed and the time the answer gives.
  */
-export function httpAvowApi(config: HttpAvowApiConfig): Omit<AvowApi, 'records'> {
+export function httpAvowApi(config: HttpAvowApiConfig): AvowApi & { records: AvowRecords } {
   const send = avowRequests(config)
   const { domain } = config
   const expected = { chainId: domain.chainId, lock: domain.verifyingContract }
 
   return {
+    records: {
+      cancel: ({ commitmentId }) =>
+        send({
+          domain,
+          path: API_PATHS.cancellations(commitmentId),
+          body: {},
+          read: (json, { digest }) =>
+            shaped(parseCancellationAnswer(json, { ...expected, requestHash: digest }), (a) => ({
+              cancelledAt: a.cancelledAt,
+            })),
+        }),
+      requestStart: ({ commitmentId }) =>
+        send({
+          domain,
+          path: API_PATHS.startRequests(commitmentId),
+          body: {},
+          read: (json, { digest }) =>
+            shaped(parseStartRequestAnswer(json, { ...expected, requestHash: digest }), (a) => ({
+              startRequestHash: a.startRequestHash,
+              requestedAt: a.requestedAt,
+            })),
+        }),
+      recordStart: ({ commitmentId, receipt }) =>
+        send({
+          domain,
+          path: API_PATHS.startReceipts(commitmentId),
+          body: { receipt },
+          read: parseStartReceiptAnswer,
+        }),
+    },
     approveReserve: (body) =>
       send({
         domain,

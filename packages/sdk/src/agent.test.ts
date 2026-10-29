@@ -12,6 +12,7 @@ import {
   termsHash,
   testnetDemoTermsV1,
   toWire,
+  verifyApiRequest,
 } from '@avow-finance/spec'
 import { LOCK_ABI } from '@avow-finance/verifier'
 import {
@@ -620,7 +621,7 @@ describe('cancelling and starting', () => {
     const untyped = (avow: object) => createAgent({ ...s.config, avow: avow as typeof s.avow })
     const none = untyped({ approveReserve, sponsor })
     await expect(none.cancel(id('commitment'))).rejects.toThrow(
-      "The AvowApi this agent uses has no records, so it can't record a cancellation. Avow's hosted API doesn't serve its records of cancellations and starts yet.",
+      "The AvowApi this agent uses has no records, so it can't record a cancellation. httpAvowApi serves them.",
     )
     await expect(none.start(id('commitment'), s.connection)).rejects.toThrow(
       "has no records, so it can't start the job",
@@ -639,25 +640,48 @@ describe('cancelling and starting', () => {
     expect(s.chain.state.readAt).toEqual([])
   })
 
-  it("has no cancel or start through Avow's hosted API, and refuses both before it sends anything", async () => {
+  it("cancels through Avow's hosted API, signed by the agent's own key", async () => {
     const s = await setup()
-    const fetched: unknown[] = []
+    const sent: { url: string; authorization: string; body: Uint8Array }[] = []
     const avow = httpAvowApi({
       baseUrl: 'https://api.testnet.avow.finance',
       key: agentRequestKey(s.key),
       domain: D,
-      fetch: (async (url: unknown) => {
-        fetched.push(url)
-        throw new Error('no request should go out')
+      fetch: (async (url: unknown, init: RequestInit = {}) => {
+        const request = {
+          url: String(url),
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: init.body as Uint8Array,
+        }
+        sent.push(request)
+        const read = verifyApiRequest({
+          audience: 'https://api.testnet.avow.finance',
+          chainId: D.chainId,
+          method: 'POST',
+          path: new URL(request.url).pathname,
+          body: request.body,
+          authorization: request.authorization,
+        })
+        if (!read.ok) throw new Error(`the request doesn't verify: ${read.reason}`)
+        const timestamp = {
+          type: 'Timestamp',
+          schemaVersion: '1',
+          chainId: D.chainId,
+          lock: D.verifyingContract,
+          message: { requestHash: read.value.digest, receivedAt: '1800000000' },
+          signature: `0x${'ab'.repeat(65)}`,
+        }
+        return new Response(JSON.stringify({ cancelledAt: '1800000000', timestamp }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
       }) as typeof fetch,
     })
     const agent = createAgent({ ...s.config, avow })
-    // @ts-expect-error The hosted API serves no records, so its agent has no cancel to call.
-    await expect(agent.cancel(id('commitment'))).rejects.toThrow('has no records')
-    // @ts-expect-error The hosted API serves no records, so its agent has no start to call.
-    await expect(agent.start(id('commitment'), s.connection)).rejects.toThrow('has no records')
-    expect(fetched).toEqual([])
-    expect(s.chain.state.readAt).toEqual([])
+    expect(await agent.cancel(id('commitment'))).toEqual({ ok: true, cancelledAt: 1_800_000_000n })
+    expect(sent.map((r) => new URL(r.url).pathname)).toEqual([
+      `/v1/commitments/${id('commitment')}/cancellations`,
+    ])
   })
 })
 

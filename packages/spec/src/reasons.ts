@@ -76,6 +76,10 @@ export const REASON_CODES = {
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
   'commitment.unknown': 'Avow has no record of this commitment',
+  'commitment.cancel_on_lock':
+    "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",
+  'commitment.ended':
+    "The commitment's charge deadline has passed, so it can no longer be cancelled or started",
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",
   'authorization.terms_mismatch': "The authorization's amount or deadlines differ from the terms",
   'authorization.commitment_mismatch':
