@@ -1,0 +1,24 @@
+{
+  "name": "@avow-examples/buyer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A business and its agent: from an empty account to a reserve the supplier accepts, through Avow's hosted API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "avow-buyer": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@avow-finance/spec": "workspace:*",
+    "@avow-finance/verifier": "workspace:*",
+    "viem": "2.57.11",
+    "zod": "4.6.7"
+  }
+}
