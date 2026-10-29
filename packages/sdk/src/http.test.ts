@@ -11,6 +11,7 @@ import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import {
   AvowApiError,
+  type AvowResend,
   agentRequestKey,
   enrollAgent,
   httpAvowApi,
@@ -158,7 +159,12 @@ describe('httpAvowApi', () => {
       .sponsor('0x1234')
       .catch((x: unknown) => x)
     expect(e).toBeInstanceOf(AvowApiError)
-    expect(e).toMatchObject({ status: 429, reason: null, message: "Avow's API answered 429" })
+    expect(e).toMatchObject({
+      status: 429,
+      reason: null,
+      definite: true,
+      message: "Avow's API answered 429",
+    })
     expect(seen).toHaveLength(1)
   })
 
@@ -172,18 +178,30 @@ describe('httpAvowApi', () => {
       })
     }
     const { seen, fetcher } = fakeApi([plainText, plainText, plainText, plainText])
-    const e = await client(fetcher, { now: () => clock })
+    const resends: AvowResend[] = []
+    const e = await client(fetcher, {
+      now: () => clock,
+      onResend: (r: AvowResend) => resends.push(r),
+    })
       .sponsor('0x1234')
       .catch((x: unknown) => x)
     expect(e).toBeInstanceOf(AvowApiError)
+    // No reason and not definite, so it can't be read as Avow's own refusal of the request.
     expect(e).toMatchObject({
       status: 408,
-      reason: 'message.invalid',
+      reason: null,
+      definite: false,
       message:
         "No definite answer from Avow. The last answer was unreadable, a 408 whose body isn't JSON.",
     })
     // Ten minutes by default, and each answer came 200 seconds after the one before.
     expect(seen).toHaveLength(3)
+    // Each resend was heard before it went, with what the attempt before it saw.
+    expect(resends.map((r) => [r.status, r.reason, r.message])).toEqual([
+      [408, null, "The last answer was unreadable, a 408 whose body isn't JSON."],
+      [408, null, "The last answer was unreadable, a 408 whose body isn't JSON."],
+    ])
+    expect(resends.every((r) => r.requestId === (e as AvowApiError).requestId)).toBe(true)
     for (const s of seen) {
       expect(s.authorization).toBe(seen[0]?.authorization)
       expect(s.body).toEqual(seen[0]?.body)
@@ -202,7 +220,7 @@ describe('httpAvowApi', () => {
         .sponsor('0x1234')
         .catch((x: unknown) => x)
       expect(e).toBeInstanceOf(AvowApiError)
-      expect(e).toMatchObject({ status, reason, message: `refused: ${reason}` })
+      expect(e).toMatchObject({ status, reason, definite: true, message: `refused: ${reason}` })
       const v = verified(seen[0] as Seen)
       expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
       expect(seen).toHaveLength(1)

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  type AvowResend,
   accountSigner,
   agentKeyTerms,
   agentRequestKey,
@@ -26,6 +27,7 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import { Account, Actions } from 'viem/tempo'
+import { initBusiness } from './init.js'
 import { quickstartBooking, quickstartMandate } from './plan.js'
 import { baseSettings, bookSettings, enrollSettings, initSettings } from './settings.js'
 import { type BuyerSetup, BuyerStore } from './store.js'
@@ -41,6 +43,10 @@ function keysOf(store: BuyerStore) {
   const agentKey = Account.fromSecp256k1(keys.agentKey, { access: root.address })
   return { root, agentKey }
 }
+
+/** Says when Avow's API gives no definite answer, so a run that keeps trying is never silent. */
+const logResend = (r: AvowResend) =>
+  log(`no definite answer from Avow yet (${r.message}), sending again in ${r.waitMs} ms`)
 
 function lockOf(store: BuyerStore) {
   const { lock } = store.setup()
@@ -59,25 +65,29 @@ async function init() {
   if (!store.keys()) store.makeKeys()
   const { root } = keysOf(store)
   const client = moderatoClient(settings.rpcUrl)
-  const lock = await client.readContract({
-    address: settings.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [root.address],
+  const lock = await initBusiness({
+    store,
+    account: root.address,
+    lockAddress: () =>
+      client.readContract({
+        address: settings.factory,
+        abi: FACTORY_ABI,
+        functionName: 'lockAddress',
+        args: [root.address],
+      }),
+    fundFees: async () => {
+      await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
+    },
+    lockExists: async (address) => (await client.getCode({ address })) !== undefined,
+    createLock: async () => {
+      await sendOwn({
+        client,
+        account: root,
+        calls: [createLockCall(settings.factory, root.address)],
+      })
+    },
+    log,
   })
-  // A saved mandate is signed for the saved lock, so another factory's lock is refused up front.
-  store.checkLock(lock)
-  log(`funding the business account ${root.address} from Moderato's faucet, for fees`)
-  await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
-  if ((await client.getCode({ address: lock })) === undefined) {
-    log('creating the business lock')
-    await sendOwn({
-      client,
-      account: root,
-      calls: [createLockCall(settings.factory, root.address)],
-    })
-  }
-  store.saveSetup({ lock })
   log(`keys are in ${settings.stateDir}/keys.json. Keep that file safe and out of version control.`)
   console.log(JSON.stringify({ account: root.address, lock }, null, 2))
   log('Send Avow the account and the lock, with the business name and country, to be registered.')
@@ -127,7 +137,7 @@ async function enroll() {
   const { keyAuthorizedIn } = setup
   if (!keyAuthorizedIn) throw new Error("The agent's key isn't on the account yet")
   const enrollment = await enrollAgent(
-    { baseUrl: settings.apiUrl, key: agentRequestKey(agentKey) },
+    { baseUrl: settings.apiUrl, key: agentRequestKey(agentKey), onResend: logResend },
     { mandate: mandateOf(setup), keyAuthorizedIn },
   )
   store.saveSetup({ enrollment })
@@ -155,7 +165,12 @@ async function book() {
     mandate: mandateOf(store.setup()),
     token: moderatoUsdToken(settings.token),
     profile: TESTNET_DEMO_PROFILE,
-    avow: httpAvowApi({ baseUrl: settings.apiUrl, key: agentRequestKey(agentKey), domain: d }),
+    avow: httpAvowApi({
+      baseUrl: settings.apiUrl,
+      key: agentRequestKey(agentKey),
+      domain: d,
+      onResend: logResend,
+    }),
   })
   const supplier = await httpSupplier(settings.supplierUrl)
   const now = (await client.getBlock({ blockTag: 'latest' })).timestamp

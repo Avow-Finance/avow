@@ -631,12 +631,9 @@ describe('cancelling and starting', () => {
     const withoutRecord = { cancel: records.cancel, requestStart: records.requestStart }
     // @ts-expect-error An AvowApi serves all three records or none, so TypeScript refuses this.
     const partialApi: AvowApi = { approveReserve, sponsor, records: withoutRecord }
-    const partial = untyped(partialApi)
-    await expect(partial.start(id('commitment'), s.connection)).rejects.toThrow(
-      "has records without recordStart, so it can't start the job",
-    )
-    await expect(partial.cancel(id('commitment'))).rejects.toThrow(
-      "has records without recordStart, so it can't record a cancellation",
+    // A partial group is refused when the agent is made, before any call could need it.
+    expect(() => untyped(partialApi)).toThrow(
+      "The AvowApi's records lack recordStart. An AvowApi serves all of Avow's record calls or none.",
     )
     expect(s.calls).toEqual([])
     expect(s.chain.state.readAt).toEqual([])

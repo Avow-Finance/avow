@@ -4,7 +4,7 @@ A business and its agent on Moderato, from an empty account to a reserve the sup
 
 ## What it does
 
-- `init` makes the business's root key and the agent's key, has Moderato's faucet fund the account's fees, and creates the business's lock from Avow's factory. Once `enroll` has signed a mandate for that lock, `init` keeps it and refuses an `AVOW_FACTORY` that gives another. To start over with another lock, use a new `STATE_DIR`.
+- `init` makes the business's root key and the agent's key, has Moderato's faucet fund the account's fees, and creates the business's lock from Avow's factory. Once `enroll` has saved a mandate for that lock, `init` keeps it and refuses an `AVOW_FACTORY` that gives another. To start over with another lock, use a new `STATE_DIR`.
 - `enroll` signs the agent's mandate with the root key, which stands in for the administrator's passkey. The mandate lets the agent reserve with one supplier, for compute, up to the reserve you set per booking, for a week. One transaction from the root key puts the agent's key on the account with the mandate's hash and approves the supplier on the lock. Then the agent enrolls with Avow.
 - `book` has the agent book 8 H100s with the supplier. It builds the booking's terms with the GPU reservation template, then the SDK agrees them with the supplier, asks Avow to approve the reserve, checks Avow's approval against the terms and the mandate, and funds the reserve from the account while Avow's relay pays the fee. It then follows the lock until the supplier accepts. With `--until-released` it waits on until Avow returns the reserve at its release date.
 

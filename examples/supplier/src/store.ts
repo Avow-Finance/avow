@@ -167,7 +167,9 @@ export class SupplierStore {
   /**
    * The booking a commitment's file text holds. It refuses text that isn't JSON or doesn't hold a
    * booking, a booking for another commitment, an agreement or terms that don't parse, and an
-   * acceptance transaction under a status that never sends one.
+   * acceptance transaction under a status that never sends one. It reads nothing but the id and the
+   * text, so the same text always gives the same answer, which the poll relies on to skip a file it
+   * refused until the file changes.
    */
   parseBooking(commitmentId: Hex, text: string): Booking {
     const id = commitmentId.toLowerCase() as Hex

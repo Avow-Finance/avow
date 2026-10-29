@@ -173,7 +173,7 @@ export class BookingError extends Error {
 }
 
 /** What every agent does, whatever its `AvowApi` serves. */
-interface AgentCalls {
+export interface AgentCalls {
   /** The business account the agent acts for. */
   account: Address
   /** The business's lock, where its reserves sit. */
@@ -204,7 +204,7 @@ interface AgentCalls {
 }
 
 /** What an agent does once its `AvowApi` serves Avow's records of cancellations and job starts. */
-interface AgentRecordCalls {
+export interface AgentRecordCalls {
   /**
    * Tells Avow the business cancels a commitment, which Avow timestamps. Before free
    * cancellation ends the reserve can go back in full, and after it a late cancellation charge
@@ -274,22 +274,26 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
   const offerValidity = config.offerValidity ?? 600n
   const maxApprovalValidity = config.maxApprovalValidity ?? 300n
   const permits = (action: Mandate['actions'][number]) => mandate.actions.includes(action)
+  // An AvowApi serves all of Avow's record calls or none. TypeScript refuses a partial group, and
+  // this refuses one from a JavaScript caller when the agent is made, before any call needs it.
+  const served: Partial<AvowRecords> | null | undefined = avow.records
+  if (served) {
+    const missing = RECORD_CALLS.filter((call) => typeof served[call] !== 'function')
+    if (missing.length > 0) {
+      throw new Error(
+        `The AvowApi's records lack ${missing.join(' and ')}. An AvowApi serves all of Avow's record calls or none.`,
+      )
+    }
+  }
   /**
    * Avow's records of cancellations and starts. TypeScript gives an agent `cancel` and `start` only
    * when its `AvowApi` has them, so this refusal is for a JavaScript caller, before anything is
    * read or sent.
    */
   const records = (what: string): AvowRecords => {
-    const served: Partial<AvowRecords> | null | undefined = avow.records
     if (!served) {
       throw new Error(
         `The AvowApi this agent uses has no records, so it can't ${what}. Avow's hosted API doesn't serve its records of cancellations and starts yet.`,
-      )
-    }
-    const missing = RECORD_CALLS.filter((call) => typeof served[call] !== 'function')
-    if (missing.length > 0) {
-      throw new Error(
-        `The AvowApi this agent uses has records without ${missing.join(' or ')}, so it can't ${what}.`,
       )
     }
     return served as AvowRecords

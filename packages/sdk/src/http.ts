@@ -36,10 +36,16 @@ export class AvowApiError extends Error {
   readonly status: number
   readonly reason: ReasonCode | null
   readonly requestId: Hex
+  /**
+   * Whether Avow answered definitely, with a refusal or an answer the client can't use. When it's
+   * false the client gave up with no definite answer, so Avow may still have recorded the request,
+   * and a caller shouldn't treat it as refused.
+   */
+  readonly definite: boolean
 
   constructor(
     message: string,
-    details: { status: number; reason: ReasonCode | null; requestId: Hex },
+    details: { status: number; reason: ReasonCode | null; requestId: Hex; definite: boolean },
     options?: { cause?: unknown },
   ) {
     super(message, options)
@@ -47,7 +53,21 @@ export class AvowApiError extends Error {
     this.status = details.status
     this.reason = details.reason
     this.requestId = details.requestId
+    this.definite = details.definite
   }
+}
+
+/** One resend of the same bytes after no definite answer, as `onResend` receives it. */
+export interface AvowResend {
+  requestId: Hex
+  /** The last answer's status, or 0 when none came. */
+  status: number
+  /** The last answer's reason, when Avow gave one. */
+  reason: ReasonCode | null
+  /** What happened to the last attempt. */
+  message: string
+  /** Milliseconds until the bytes go again. */
+  waitMs: number
 }
 
 export interface AvowRequestConfig {
@@ -75,6 +95,8 @@ export interface AvowRequestConfig {
   fetch?: typeof fetch
   /** Receives each signed request, so the signer can keep the record of what it asked Avow. */
   onSigned?: (request: Signed<ApiRequest>) => void
+  /** Hears about each resend before it waits, so a long run of them never goes unseen. */
+  onResend?: (resend: AvowResend) => void
 }
 
 export interface HttpAvowApiConfig extends AvowRequestConfig {
@@ -190,7 +212,7 @@ export function avowRequests(config: AvowRequestConfig) {
           // Avow answers with JSON whatever the status, its refusals included, so bytes that aren't
           // JSON were cut off or replaced on their way, as by a proxy's error page, and go again.
           last = `The last answer was unreadable, a ${response.status} whose body isn't JSON.`
-          lastReason = 'message.invalid'
+          lastReason = null
         } else if (response.ok) {
           const answer = read(json)
           if (answer.ok) return answer.value
@@ -198,13 +220,19 @@ export function avowRequests(config: AvowRequestConfig) {
             status: lastStatus,
             reason: answer.reason,
             requestId,
+            definite: true,
           })
         } else {
           const error = parseApiError(json)
           lastReason = error?.reason ?? null
           last = error?.message ?? `Avow's API answered ${response.status}`
           if (response.status < 500 && lastReason !== 'request.in_progress') {
-            throw new AvowApiError(last, { status: lastStatus, reason: lastReason, requestId })
+            throw new AvowApiError(last, {
+              status: lastStatus,
+              reason: lastReason,
+              requestId,
+              definite: true,
+            })
           }
         }
       } catch (e) {
@@ -218,8 +246,16 @@ export function avowRequests(config: AvowRequestConfig) {
           status: lastStatus,
           reason: lastReason,
           requestId,
+          definite: false,
         })
       }
+      config.onResend?.({
+        requestId,
+        status: lastStatus,
+        reason: lastReason,
+        message: last,
+        waitMs: wait,
+      })
       await sleep(wait)
       wait = Math.min(wait * 2, MAX_WAIT)
     }

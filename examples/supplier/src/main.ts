@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {
+  type AvowResend,
   moderatoClient,
   moderatoUsdToken,
   requestSupplierAuthorization,
@@ -88,6 +89,10 @@ async function serve() {
       address: signingKey.address,
       signDigest: (hash: `0x${string}`) => signingKey.sign({ hash }),
     },
+    // The poll asks again on its next pass, so one booking's request never holds it up for long.
+    retryFor: 60n,
+    onResend: (r: AvowResend) =>
+      log(`no definite answer from Avow yet (${r.message}), asking again in ${r.waitMs} ms`),
   }
   const deps: AcceptDeps = {
     store,
