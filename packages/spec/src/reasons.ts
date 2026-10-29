@@ -69,6 +69,8 @@ export const REASON_CODES = {
     'Avow is still answering the same signed request, so send the same bytes again shortly',
   'service.unavailable':
     "Avow couldn't read the records or the chain this request depends on, so it did nothing, and the same request can be sent again",
+  'sponsorship.refused':
+    "Avow's relay pays only for a business account's own calls to its lock and approvals of the reserve token to that lock, within its gas and fee caps",
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
   'commitment.unknown': 'Avow has no record of this commitment',
