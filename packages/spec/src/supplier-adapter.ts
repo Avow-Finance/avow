@@ -1,7 +1,7 @@
-import { SignatureEnvelope } from 'ox/tempo'
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import type { AvowDomain, TermsAgreement } from './eip712.js'
+import { isKeySignatureForm } from './keychain.js'
 import type { SupplierProfile, Terms } from './types.js'
 import { type Parsed, parseTerms, termsAgreementJson } from './wire.js'
 
@@ -91,19 +91,6 @@ export function parseAgreementOffer(json: unknown): Parsed<AgreementOffer> {
       salt: outer.data.salt,
       domain: outer.data.domain,
     },
-  }
-}
-
-/**
- * Whether a signature has the form of one key's own signature that Tempo's verifier reads for a
- * single key, secp256k1, P-256 or WebAuthn, outside any keychain envelope. `isKeySignature` reads
- * a signature the same way before it checks who signed, so every signature it accepts passes.
- */
-function isKeySignatureForm(signature: Hex): boolean {
-  try {
-    return SignatureEnvelope.deserialize(signature).type !== 'keychain'
-  } catch {
-    return false
   }
 }
 

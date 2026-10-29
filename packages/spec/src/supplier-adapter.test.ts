@@ -4,7 +4,7 @@ import { Account, P256 } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import { testnetDemoTerms } from './demo.js'
 import { digestOf, type TermsAgreement, termsAgreementTypedData } from './eip712.js'
-import { isKeySignature, wrapKeychainV2 } from './keychain.js'
+import { isKeySignature, isKeySignatureForm, wrapKeychainV2 } from './keychain.js'
 import {
   type AgreementOffer,
   parseAgreementOffer,
@@ -76,6 +76,7 @@ describe("a supplier adapter's routes and bodies", () => {
       const key = make()
       const signature = await key.sign({ hash: digest })
       expect(isKeySignature(digest, signature, key.address as Address)).toBe(true)
+      expect(isKeySignatureForm(signature)).toBe(true)
       expect(parseAgreementSignature(wire({ signature }))).toEqual({
         ok: true,
         value: { signature: signature.toLowerCase() },
@@ -89,6 +90,8 @@ describe("a supplier adapter's routes and bodies", () => {
     // A keychain envelope is an account's signature, which isKeySignature refuses too.
     const wrapped = wrapKeychainV2(key.address, signature)
     expect(isKeySignature(digest, wrapped, key.address)).toBe(false)
+    expect(isKeySignatureForm(wrapped)).toBe(false)
+    expect(isKeySignatureForm('0x1234')).toBe(false)
     expect(parseAgreementSignature({ signature: wrapped })).toEqual({
       ok: false,
       reason: 'message.signature_invalid',
