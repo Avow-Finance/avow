@@ -58,6 +58,9 @@ const json = (status: number, body: unknown) =>
     status,
     headers: { 'content-type': 'application/json' },
   })
+/** An answer whose bytes aren't JSON, such as a proxy's page or a body cut off on its way. */
+const notJson = (status: number, text: string) => () =>
+  new Response(text, { status, headers: { 'content-type': 'text/html' } })
 const ok = () => json(200, { transaction: '0xabcd' })
 const error =
   (status: number, reason: string, extra: object = {}) =>
@@ -121,11 +124,12 @@ describe('httpAvowApi', () => {
       () => json(502, 'bad gateway'),
       error(503, 'service.unavailable'),
       error(409, 'request.in_progress', { retryAfter: 1 }),
-      () => json(200, '<html>maintenance</html>'),
+      notJson(200, '<html>maintenance</html>'),
+      notJson(200, '{"transaction":"0xab'),
       ok,
     ])
     expect(await client(fetcher).sponsor('0x1234')).toBe('0xabcd')
-    expect(seen).toHaveLength(7)
+    expect(seen).toHaveLength(8)
     for (const s of seen) {
       expect(s.authorization).toBe(seen[0]?.authorization)
       expect(s.body).toEqual(seen[0]?.body)
@@ -148,6 +152,48 @@ describe('httpAvowApi', () => {
       const v = verified(seen[0] as Seen)
       expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
       expect(seen).toHaveLength(1)
+    }
+  })
+
+  it("throws an answer that is JSON but not the call's answer at once, with the parser's reason", async () => {
+    const approval = (change: object) => ({
+      ok: true,
+      decisionId: 'dec_1',
+      approval: {
+        type: 'Approval',
+        schemaVersion: '1',
+        chainId: domain.chainId,
+        lock: domain.verifyingContract,
+        message: {},
+        signature: '0x00',
+        ...change,
+      },
+    })
+    const cases: [(api: ReturnType<typeof client>) => Promise<unknown>, unknown, string][] = [
+      [
+        (api) => api.approveReserve({} as never),
+        approval({ lock: '0x00000000000000000000000000000000000010c5' }),
+        'message.wrong_contract',
+      ],
+      [(api) => api.approveReserve({} as never), approval({ chainId: 1 }), 'message.wrong_chain'],
+      [
+        (api) => api.approveReserve({} as never),
+        approval({ schemaVersion: '9' }),
+        'message.schema_unknown',
+      ],
+      [(api) => api.approveReserve({} as never), approval({}), 'message.invalid'],
+      [(api) => api.sponsor('0x1234'), { surprise: true }, 'message.invalid'],
+    ]
+    for (const [call, answer, reason] of cases) {
+      // Were the answer sent again, the refusal that follows would end the call instead.
+      const { seen, fetcher } = fakeApi([() => json(200, answer), error(400, 'request.invalid')])
+      const e = await call(client(fetcher)).catch((x: unknown) => x)
+      expect(e, reason).toBeInstanceOf(AvowApiError)
+      expect(e, reason).toMatchObject({ status: 200, reason })
+      const v = verified(seen[0] as Seen, (seen[0]?.url ?? '').slice(AUDIENCE.length))
+      expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
+      // A repeat would get the same recorded answer, so nothing went again.
+      expect(seen, reason).toHaveLength(1)
     }
   })
 
@@ -247,7 +293,7 @@ describe('enrolling an agent and asking for a supplier authorization', () => {
       mandateHash: mHash,
     }
     const { seen, fetcher } = fakeApi([
-      () => json(200, { surprise: true }),
+      notJson(200, '{"businessId":"biz_'),
       () => json(200, enrolled),
     ])
     const answer = await enrollAgent(settings(fetcher), {
@@ -255,9 +301,10 @@ describe('enrolling an agent and asking for a supplier authorization', () => {
       keyAuthorizedIn: keyTx,
     })
     expect(answer).toEqual(enrolled)
-    // An answer it can't read counts as none, so the same bytes went again.
+    // An answer whose bytes aren't JSON counts as none, so the same bytes went again.
     expect(seen).toHaveLength(2)
     expect(seen[1]?.body).toEqual(seen[0]?.body)
+    expect(seen[1]?.authorization).toBe(seen[0]?.authorization)
     const v = await verified(seen[0] as Seen, '/v1/enrollments')
     expect(v.ok).toBe(true)
     expect(seen[0]?.body).toEqual(encodeApiBody({ mandate, keyAuthorizedIn: keyTx }))

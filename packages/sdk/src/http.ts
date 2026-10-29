@@ -3,11 +3,13 @@ import {
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  describeReason,
   type Enrollment,
   type EnrollmentRequest,
   encodeApiBody,
   isApiAudience,
   newRequestId,
+  type Parsed,
   parseApiError,
   parseEnrollment,
   parseReserveApproval,
@@ -24,10 +26,11 @@ import type { AgentKey } from './agent.js'
 import type { AvowApi } from './avow-api.js'
 
 /**
- * Avow's API refused a request, or no definite answer came in time. `status` is the HTTP status,
- * 0 when no answer came, and `reason` the reason code Avow gave, when it gave one. `requestId`
- * names the operation. Sending the same signed bytes again is always safe, since Avow answers an
- * identical repeat without acting again.
+ * Avow's API refused a request, answered with something the client can't use, or gave no definite
+ * answer in time. `status` is the HTTP status, 0 when no answer came, and `reason` the reason code
+ * Avow gave, or the parser's reason for an answer that doesn't parse. `requestId` names the
+ * operation. Sending the same signed bytes again is always safe, since Avow answers an identical
+ * repeat without acting again.
  */
 export class AvowApiError extends Error {
   readonly status: number
@@ -85,8 +88,12 @@ export interface AvowRequest<T> {
   domain: AvowDomain
   path: string
   body: unknown
-  /** Parses the body of a 2xx answer, and returns null for one it can't, which counts as no answer. */
-  read: (json: unknown) => T | null
+  /**
+   * Parses the JSON body of a 2xx answer, or gives the reason it can't. Avow answers a repeat with
+   * the answer it recorded, so an answer this refuses would come back the same, and it's thrown at
+   * once with that reason.
+   */
+  read: (json: unknown) => Parsed<T>
 }
 
 /** The agent's access key as a request signer: its own address and its bare signature. */
@@ -127,11 +134,12 @@ function audienceOf(baseUrl: string): string {
 
 /**
  * Sends operations to Avow's hosted API, each with a fresh request id and signed with `key` for the
- * deployment at `baseUrl`. It sends the same bytes again after no answer, a broken answer, a 5xx
- * or `request.in_progress`, until Avow answers definitely or `retryFor` runs out. Avow answers an
- * identical repeat with its first answer and does nothing again, so a lost answer never turns into
- * a second action. It never follows a redirect, so a signed body goes nowhere but the deployment it
- * was signed for. A refusal, or no definite answer in time, throws an `AvowApiError`.
+ * deployment at `baseUrl`. It sends the same bytes again after no answer, an answer that isn't
+ * JSON, a 5xx or `request.in_progress`, until Avow answers definitely or `retryFor` runs out. Avow
+ * answers an identical repeat with its first answer and does nothing again, so a lost answer never
+ * turns into a second action. It never follows a redirect, so a signed body goes nowhere but the
+ * deployment it was signed for. A refusal, a 2xx answer `read` refuses, or no definite answer in
+ * time, throws an `AvowApiError` with the reason.
  */
 export function avowRequests(config: AvowRequestConfig) {
   const audience = audienceOf(config.baseUrl)
@@ -177,10 +185,18 @@ export function avowRequests(config: AvowRequestConfig) {
         const json = readJson(await response.text())
         lastStatus = response.status
         if (response.ok) {
-          const answer = read(json)
-          if (answer !== null) return answer
-          last = "Avow's answer doesn't parse"
-          lastReason = 'message.invalid'
+          // Bytes that aren't JSON may be an answer cut off or replaced on its way, so they go again.
+          if (json === undefined) {
+            last = "Avow's answer isn't JSON"
+            lastReason = 'message.invalid'
+          } else {
+            const answer = read(json)
+            if (answer.ok) return answer.value
+            throw new AvowApiError(
+              `Avow's answer can't be used: ${describeReason(answer.reason)}`,
+              { status: lastStatus, reason: answer.reason, requestId },
+            )
+          }
         } else {
           const error = parseApiError(json)
           lastReason = error?.reason ?? null
@@ -226,10 +242,7 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
         domain,
         path: API_PATHS.reserveApprovals,
         body,
-        read: (json) => {
-          const parsed = parseReserveApproval(json, expected)
-          return parsed.ok ? parsed.value : null
-        },
+        read: (json) => parseReserveApproval(json, expected),
       }),
     sponsor: (transaction) =>
       send({
@@ -238,7 +251,7 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi {
         body: { transaction },
         read: (json) => {
           const parsed = parseSponsorship(json)
-          return parsed.ok ? parsed.value.transaction : null
+          return parsed.ok ? { ok: true, value: parsed.value.transaction } : parsed
         },
       }),
   }
@@ -256,10 +269,7 @@ export function enrollAgent(
     domain: { chainId: enrollment.mandate.chainId, verifyingContract: enrollment.mandate.lock },
     path: API_PATHS.enrollments,
     body: enrollment,
-    read: (json) => {
-      const parsed = parseEnrollment(json)
-      return parsed.ok ? parsed.value : null
-    },
+    read: parseEnrollment,
   })
 }
 
@@ -278,9 +288,6 @@ export function requestSupplierAuthorization(
     domain: { chainId: commitment.chainId, verifyingContract: commitment.lock },
     path: API_PATHS.supplierAuthorizations(commitment.commitmentId),
     body: {},
-    read: (json) => {
-      const parsed = parseSupplierAuthorizationAnswer(json, expected)
-      return parsed.ok ? parsed.value : null
-    },
+    read: (json) => parseSupplierAuthorizationAnswer(json, expected),
   })
 }
