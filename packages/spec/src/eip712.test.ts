@@ -36,7 +36,9 @@ import {
   supplierActionTypedData,
   supplierAuthorizationTypedData,
   type TermsAgreement,
+  type Timestamp,
   termsAgreementTypedData,
+  timestampTypedData,
 } from './eip712.js'
 import { lockTerms, termsHash } from './terms.js'
 import {
@@ -213,6 +215,11 @@ const apiRequest: ApiRequest = {
   expiry: NOW + 120n,
 }
 
+const stamp: Timestamp = {
+  requestHash: id('start-request'),
+  receivedAt: START + 12n,
+}
+
 const OTHER_DOMAIN = { chainId: CHAIN_ID, verifyingContract: OTHER_LOCK }
 
 const builders = {
@@ -223,6 +230,7 @@ const builders = {
   human: (d = DOMAIN) => humanApprovalTypedData(human, d),
   receipt: (d = DOMAIN) => startReceiptTypedData(receipt, d),
   request: (d = DOMAIN) => apiRequestTypedData(apiRequest, d),
+  timestamp: (d = DOMAIN) => timestampTypedData(stamp, d),
   acceptance: (d = DOMAIN) => acceptanceTypedData(acceptance, d),
   report: (d = DOMAIN) => reportTypedData(chargeReport, d),
   consent: (d = DOMAIN) => releaseConsentTypedData(consent, d),
@@ -278,6 +286,7 @@ describe('signed messages', () => {
       HumanApproval: { typedData: builders.human(), from: human },
       StartReceipt: { typedData: builders.receipt(), from: receipt },
       ApiRequest: { typedData: builders.request(), from: apiRequest },
+      Timestamp: { typedData: builders.timestamp(), from: stamp },
       Acceptance: { typedData: builders.acceptance(), from: acceptance },
       Report: { typedData: builders.report(), from: chargeReport },
       ReleaseConsent: { typedData: builders.consent(), from: consent },

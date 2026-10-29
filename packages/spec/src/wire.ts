@@ -16,6 +16,7 @@ import {
   type SignedAgreement,
 } from './eip712.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
+import { address, bytes32, hexBytes, side, u64, u256 } from './json-fields.js'
 import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
 import type { Attribution, Reference } from './references.js'
@@ -36,35 +37,7 @@ import {
 } from './types.js'
 import { COMMITMENT_RECORD_VERSION, isSupportedMessageVersion } from './version.js'
 
-/**
- * JSON forms of the records and signed messages, for the API, the SDK and the verifier. JSON has
- * no bigint, so amounts and times travel as decimal strings and parse into bigints here.
- */
-const uint = (bits: number) =>
-  z
-    .string()
-    .regex(/^(0|[1-9][0-9]*)$/, 'a whole number as a decimal string')
-    .transform((s) => BigInt(s))
-    .refine((v) => v < 2n ** BigInt(bits), `a whole number below 2^${bits}`)
-/** Times, durations and expiries, which signed messages carry as uint64. */
-const u64 = uint(64)
-/** Amounts and nonces. */
-const u256 = uint(256)
-// Hex parses to lower case, so a relay that changes letter case can't make two equal values
-// compare as different, and a mixed-case address with a bad checksum can't make a check throw.
-const address = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/)
-  .transform((s) => s.toLowerCase() as Address)
-const bytes32 = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{64}$/)
-  .transform((s) => s.toLowerCase() as Hex)
-const hexBytes = z
-  .string()
-  .regex(/^0x([0-9a-fA-F]{2})*$/)
-  .transform((s) => s.toLowerCase() as Hex)
-const side = z.enum(['buyer', 'supplier'])
+/** JSON forms of the records and signed messages, for the API, the SDK and the verifier. */
 
 /** Version 1 terms, flat and with no version field. Frozen, so commitments made under it stay readable. */
 export const computeTermsV1Json = z.strictObject({
@@ -292,6 +265,11 @@ export const startReceiptJson = z.strictObject({
   startedAt: u64,
   nonce: u256,
   expiry: u64,
+})
+
+export const timestampJson = z.strictObject({
+  requestHash: bytes32,
+  receivedAt: u64,
 })
 
 const backingRefJson = z.strictObject({

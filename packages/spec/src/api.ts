@@ -5,8 +5,11 @@ import type {
   HumanApproval,
   Signed,
   SignedAgreement,
+  StartReceipt,
   SupplierAuthorization,
+  Timestamp,
 } from './eip712.js'
+import { bytes32, hexBytes, u64 } from './json-fields.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
 import type { Mandate, ReserveRequest } from './types.js'
 import {
@@ -17,7 +20,9 @@ import {
   parseSigned,
   parseSignedAgreement,
   reserveRequestJson,
+  startReceiptJson,
   supplierAuthorizationJson,
+  timestampJson,
 } from './wire.js'
 
 /**
@@ -31,6 +36,12 @@ export const API_PATHS = {
   sponsorships: '/v1/sponsorships',
   supplierAuthorizations: (commitmentId: Hex) =>
     `/v1/commitments/${commitmentId.toLowerCase()}/supplier-authorizations`,
+  cancellations: (commitmentId: Hex) =>
+    `/v1/commitments/${commitmentId.toLowerCase()}/cancellations`,
+  startRequests: (commitmentId: Hex) =>
+    `/v1/commitments/${commitmentId.toLowerCase()}/start-requests`,
+  startReceipts: (commitmentId: Hex) =>
+    `/v1/commitments/${commitmentId.toLowerCase()}/start-receipts`,
 } as const
 
 /**
@@ -97,6 +108,37 @@ export type SupplierAuthorizationAnswer =
   | { ok: false; reason: ReasonCode }
 
 /**
+ * Avow's answer to a business cancelling a commitment once free cancellation has ended: when Avow
+ * received the cancellation, and Avow's timestamp on the signed request that carried it. A late
+ * cancellation charge rests on this record. Before free cancellation ends the business cancels on
+ * the lock, and Avow refuses with `commitment.cancel_on_lock`. A second cancellation of the same
+ * commitment gets the first one's answer.
+ */
+export interface CancellationAnswer {
+  cancelledAt: bigint
+  timestamp: Signed<Timestamp>
+}
+
+/**
+ * Avow's answer to a business asking to start a job: the digest of the signed request, which the
+ * supplier's start receipt names, and Avow's timestamp on it. The job can't have started before
+ * the timestamp.
+ */
+export interface StartRequestAnswer {
+  startRequestHash: Hex
+  requestedAt: bigint
+  timestamp: Signed<Timestamp>
+}
+
+/** The supplier's start receipt, which the business's agent passes on for Avow to record. */
+export interface StartReceiptRequest {
+  receipt: Signed<StartReceipt>
+}
+
+/** Avow's answer to a start receipt: recorded, or refused with the reason. */
+export type StartReceiptAnswer = { ok: true } | { ok: false; reason: ReasonCode }
+
+/**
  * What the API answers when it refuses a request outright, with a status of 400 or more, as
  * `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. Readers ignore any other field.
  */
@@ -104,11 +146,6 @@ export interface ApiError {
   error: { reason: ReasonCode; message: string }
 }
 
-const hex = z.string().regex(/^0x([0-9a-fA-F]{2})*$/)
-const bytes32 = z
-  .string()
-  .regex(/^0x[0-9a-fA-F]{64}$/)
-  .transform((s) => s.toLowerCase() as Hex)
 const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const decisionId = z.string().min(1).max(128)
 const objectJson = z.record(z.string(), z.unknown())
@@ -211,9 +248,7 @@ export function parseEnrollment(json: unknown): Parsed<Enrollment> {
     : { ok: false, reason: 'message.invalid' }
 }
 
-const transactionJson = z.strictObject({
-  transaction: hex.min(4).transform((s) => s.toLowerCase() as Hex),
-})
+const transactionJson = z.strictObject({ transaction: hexBytes.refine((s) => s.length >= 4) })
 
 export function parseSponsorshipRequest(json: unknown): Parsed<SponsorshipRequest> {
   const parsed = transactionJson.safeParse(json)
@@ -262,6 +297,93 @@ export function parseSupplierAuthorizationAnswer(
       mandate: mandate.value,
     },
   }
+}
+
+/**
+ * Parses a Timestamp Avow signed, which has to be for this chain and lock and name `requestHash`
+ * and `receivedAt`.
+ */
+function parseTimestamp(
+  json: unknown,
+  expected: { chainId: number; lock: Address },
+  names: { requestHash: Hex; receivedAt: bigint },
+): Parsed<Signed<Timestamp>> {
+  const parsed = parseSigned(json, 'Timestamp', timestampJson, expected)
+  if (!parsed.ok) return parsed
+  const t = parsed.value.message
+  if (t.requestHash !== names.requestHash.toLowerCase() || t.receivedAt !== names.receivedAt) {
+    return { ok: false, reason: 'message.invalid' }
+  }
+  return parsed
+}
+
+/**
+ * Parses Avow's answer to a cancellation. Its timestamp has to be for this chain and lock, name
+ * `requestHash`, the digest of the request the caller signed, and give the same time as the
+ * answer.
+ */
+export function parseCancellationAnswer(
+  json: unknown,
+  expected: { chainId: number; lock: Address; requestHash: Hex },
+): Parsed<CancellationAnswer> {
+  const outer = z.strictObject({ cancelledAt: u64, timestamp: objectJson }).safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const timestamp = parseTimestamp(outer.data.timestamp, expected, {
+    requestHash: expected.requestHash,
+    receivedAt: outer.data.cancelledAt,
+  })
+  if (!timestamp.ok) return timestamp
+  return { ok: true, value: { cancelledAt: outer.data.cancelledAt, timestamp: timestamp.value } }
+}
+
+/**
+ * Parses Avow's answer to a start request. Its hash has to be `requestHash`, the digest of the
+ * request the caller signed, and its timestamp has to be for this chain and lock and name that
+ * hash and the answer's time.
+ */
+export function parseStartRequestAnswer(
+  json: unknown,
+  expected: { chainId: number; lock: Address; requestHash: Hex },
+): Parsed<StartRequestAnswer> {
+  const outer = z
+    .strictObject({ startRequestHash: bytes32, requestedAt: u64, timestamp: objectJson })
+    .safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const { startRequestHash, requestedAt } = outer.data
+  if (startRequestHash !== expected.requestHash.toLowerCase()) {
+    return { ok: false, reason: 'message.invalid' }
+  }
+  const timestamp = parseTimestamp(outer.data.timestamp, expected, {
+    requestHash: startRequestHash,
+    receivedAt: requestedAt,
+  })
+  if (!timestamp.ok) return timestamp
+  return { ok: true, value: { startRequestHash, requestedAt, timestamp: timestamp.value } }
+}
+
+/** Parses a start receipt the agent passes on. It has to be for this chain and lock. */
+export function parseStartReceiptRequest(
+  json: unknown,
+  expected: { chainId: number; lock: Address },
+): Parsed<StartReceiptRequest> {
+  const outer = z.strictObject({ receipt: objectJson }).safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const receipt = parseSigned(outer.data.receipt, 'StartReceipt', startReceiptJson, expected)
+  if (!receipt.ok) return receipt
+  return { ok: true, value: { receipt: receipt.value } }
+}
+
+/** Parses Avow's answer to a start receipt. */
+export function parseStartReceiptAnswer(json: unknown): Parsed<StartReceiptAnswer> {
+  const parsed = z
+    .union([
+      z.strictObject({ ok: z.literal(true) }),
+      z.strictObject({ ok: z.literal(false), reason: reasonCode }),
+    ])
+    .safeParse(json)
+  return parsed.success
+    ? { ok: true, value: parsed.data }
+    : { ok: false, reason: 'message.invalid' }
 }
 
 /**

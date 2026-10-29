@@ -35,7 +35,7 @@ interface Seen {
   body: Uint8Array
 }
 
-type Answer = () => Response | Promise<Response>
+type Answer = (seen: Seen) => Response | Promise<Response>
 
 /** A stand-in for Avow's API that records each request and answers from a script. */
 function fakeApi(answers: Answer[]) {
@@ -49,7 +49,7 @@ function fakeApi(answers: Answer[]) {
     })
     const next = answers.shift()
     if (!next) throw new Error('no more answers')
-    return next()
+    return next(seen.at(-1) as Seen)
   }) as typeof fetch
   return { seen, fetcher }
 }
@@ -321,11 +321,10 @@ describe('httpAvowApi', () => {
     expect(() => client(fetcher, { requestValidity: 0n })).toThrow(RangeError)
   })
 
-  it('serves only the reserve check and the relay, leaving out the records Avow does not serve yet', () => {
+  it("serves the reserve check, the relay and all three of Avow's records", () => {
     const api = client(fakeApi([]).fetcher)
-    expect(Object.keys(api).sort()).toEqual(['approveReserve', 'sponsor'])
-    // @ts-expect-error The hosted client's type has no records either.
-    expect(api.records).toBeUndefined()
+    expect(Object.keys(api).sort()).toEqual(['approveReserve', 'records', 'sponsor'])
+    expect(Object.keys(api.records).sort()).toEqual(['cancel', 'recordStart', 'requestStart'])
   })
 
   it('hands each signed request to the caller to keep', async () => {
@@ -334,6 +333,105 @@ describe('httpAvowApi', () => {
     await client(fetcher, { onSigned: (r: unknown) => kept.push(r) }).sponsor('0x1234')
     expect(kept).toHaveLength(1)
     expect(kept[0]).toMatchObject({ type: 'ApiRequest', lock: domain.verifyingContract })
+  })
+})
+
+describe("Avow's records over the hosted API", () => {
+  const commitmentId: Hex = `0x${'c0'.repeat(32)}`
+  const stamp = (requestHash: Hex, receivedAt: bigint) => ({
+    type: 'Timestamp',
+    schemaVersion: '1',
+    chainId: domain.chainId,
+    lock: domain.verifyingContract,
+    message: { requestHash, receivedAt },
+    signature: `0x${'ab'.repeat(65)}`,
+  })
+  /** The digest of the request Avow's stand-in received, as the API reads it. */
+  const digestOf = (s: Seen, path: string) => {
+    const v = verified(s, path)
+    if (!v.ok) throw new Error(`the request doesn't verify: ${v.reason}`)
+    return v.value.digest
+  }
+
+  it("cancels with an empty body on the commitment's path, and reads the time Avow stamped", async () => {
+    const path = `/v1/commitments/${commitmentId}/cancellations`
+    const { seen, fetcher } = fakeApi([
+      (s) => json(200, { cancelledAt: NOW, timestamp: stamp(digestOf(s, path), NOW) }),
+    ])
+    expect(await client(fetcher).records.cancel({ commitmentId })).toEqual({ cancelledAt: NOW })
+    expect((seen[0] as Seen).url).toBe(`${AUDIENCE}${path}`)
+    expect(new TextDecoder().decode((seen[0] as Seen).body)).toBe('{}')
+  })
+
+  it('throws an answer whose timestamp names another request, without sending again', async () => {
+    const other: Hex = `0x${'0e'.repeat(32)}`
+    const { seen, fetcher } = fakeApi([
+      () => json(200, { cancelledAt: NOW, timestamp: stamp(other, NOW) }),
+    ])
+    const thrown = await client(fetcher)
+      .records.cancel({ commitmentId })
+      .catch((e: unknown) => e)
+    expect(thrown).toBeInstanceOf(AvowApiError)
+    expect(thrown).toMatchObject({ reason: 'message.invalid', definite: true })
+    expect(seen).toHaveLength(1)
+  })
+
+  it('passes on a refusal to cancel before free cancellation ends', async () => {
+    const { fetcher } = fakeApi([error(409, 'commitment.cancel_on_lock')])
+    await expect(client(fetcher).records.cancel({ commitmentId })).rejects.toMatchObject({
+      status: 409,
+      reason: 'commitment.cancel_on_lock',
+    })
+  })
+
+  it('asks for a start and gets the hash of the very request it signed, stamped', async () => {
+    const path = `/v1/commitments/${commitmentId}/start-requests`
+    let expected: Hex = '0x'
+    const { fetcher } = fakeApi([
+      (s) => {
+        expected = digestOf(s, path)
+        return json(200, {
+          startRequestHash: expected,
+          requestedAt: NOW,
+          timestamp: stamp(expected, NOW),
+        })
+      },
+    ])
+    expect(await client(fetcher).records.requestStart({ commitmentId })).toEqual({
+      startRequestHash: expected,
+      requestedAt: NOW,
+    })
+  })
+
+  it("passes the supplier's start receipt on, and reads Avow recording or refusing it", async () => {
+    const receipt = {
+      type: 'StartReceipt',
+      schemaVersion: '1',
+      chainId: domain.chainId,
+      lock: domain.verifyingContract,
+      message: {
+        commitmentId,
+        side: 'buyer',
+        startRequestHash: `0x${'0d'.repeat(32)}`,
+        startedAt: NOW,
+        nonce: 1n,
+        expiry: NOW + 600n,
+      },
+      signature: `0x${'ab'.repeat(65)}`,
+    } as const
+    const { seen, fetcher } = fakeApi([
+      () => json(200, { ok: true }),
+      () => json(200, { ok: false, reason: 'commitment.ended' }),
+    ])
+    const api = client(fetcher)
+    expect(await api.records.recordStart({ commitmentId, receipt })).toEqual({ ok: true })
+    expect(await api.records.recordStart({ commitmentId, receipt })).toEqual({
+      ok: false,
+      reason: 'commitment.ended',
+    })
+    expect(new TextDecoder().decode((seen[0] as Seen).body)).toBe(
+      new TextDecoder().decode(encodeApiBody({ receipt })),
+    )
   })
 })
 

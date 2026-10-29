@@ -305,6 +305,19 @@ export interface ApiRequest {
   expiry: bigint
 }
 
+/**
+ * Avow's timestamp on a signed request it received, such as a business asking to start a job or
+ * cancelling one. It's signed with a key Avow uses for nothing else, and names the request by its
+ * EIP-712 digest, so it proves when Avow received exactly that request, whoever later holds it. It
+ * carries no nonce or expiry, since it states a fact and authorizes nothing.
+ */
+export interface Timestamp {
+  /** The digest of the signed `ApiRequest` Avow received. */
+  requestHash: Hex
+  /** When Avow received it, in unix seconds by Avow's clock. */
+  receivedAt: bigint
+}
+
 export const MANDATE_TYPES = {
   PaymentLimit: [
     { name: 'token', type: 'address' },
@@ -510,6 +523,13 @@ export const API_REQUEST_TYPES = {
     { name: 'signer', type: 'address' },
     { name: 'requestId', type: 'bytes32' },
     { name: 'expiry', type: 'uint64' },
+  ],
+} as const
+
+export const TIMESTAMP_TYPES = {
+  Timestamp: [
+    { name: 'requestHash', type: 'bytes32' },
+    { name: 'receivedAt', type: 'uint64' },
   ],
 } as const
 
@@ -745,6 +765,15 @@ export function apiRequestTypedData(r: ApiRequest, d: AvowDomain) {
   }
 }
 
+export function timestampTypedData(t: Timestamp, d: AvowDomain) {
+  return {
+    domain: domain(d, MESSAGE_VERSIONS.Timestamp),
+    types: TIMESTAMP_TYPES,
+    primaryType: 'Timestamp' as const,
+    message: { ...t },
+  }
+}
+
 /**
  * The mandate's hash, bound into the agent key's authorization on Tempo as its witness. It
  * includes the domain, so a mandate for one lock or chain can't stand in for another.
@@ -761,6 +790,7 @@ export type AvowTypedData =
   | ReturnType<typeof humanApprovalTypedData>
   | ReturnType<typeof startReceiptTypedData>
   | ReturnType<typeof apiRequestTypedData>
+  | ReturnType<typeof timestampTypedData>
   | ReturnType<typeof acceptanceTypedData>
   | ReturnType<typeof reportTypedData>
   | ReturnType<typeof releaseConsentTypedData>
@@ -818,6 +848,7 @@ interface InterfacesMatchTables {
   >
   StartReceipt: SameFields<keyof StartReceipt, FieldNames<typeof START_RECEIPT_TYPES.StartReceipt>>
   ApiRequest: SameFields<keyof ApiRequest, FieldNames<typeof API_REQUEST_TYPES.ApiRequest>>
+  Timestamp: SameFields<keyof Timestamp, FieldNames<typeof TIMESTAMP_TYPES.Timestamp>>
   Acceptance: SameFields<keyof Acceptance, FieldNames<typeof ACCEPTANCE_TYPES.Acceptance>>
   Report: SameFields<keyof ChargeReport, FieldNames<typeof REPORT_TYPES.Report>>
   ReleaseConsent: SameFields<
@@ -844,6 +875,7 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   HumanApproval: true,
   StartReceipt: true,
   ApiRequest: true,
+  Timestamp: true,
   Acceptance: true,
   Report: true,
   ReleaseConsent: true,
@@ -874,6 +906,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'StartReceipt':
       return hashTypedData(td)
     case 'ApiRequest':
+      return hashTypedData(td)
+    case 'Timestamp':
       return hashTypedData(td)
     case 'Acceptance':
       return hashTypedData(td)

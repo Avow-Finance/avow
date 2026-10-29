@@ -225,7 +225,7 @@ export async function bookingFixture(options: { mandate?: Partial<Mandate> } = {
     }
   }
 
-  // A stand-in that serves Avow's records of cancellations and starts, which the hosted API doesn't.
+  // A stand-in that serves Avow's records of cancellations and starts, as the hosted API does.
   const avow = {
     async approveReserve(r: ReserveApprovalRequest) {
       calls.push('approveReserve')

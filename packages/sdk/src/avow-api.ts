@@ -11,10 +11,15 @@ export type { ReserveApproval, ReserveApprovalRequest } from '@avow-finance/spec
 
 /**
  * Avow's records of cancellations and job starts. An `AvowApi` serves all three calls together, as
- * its `records`, or none of them. Avow's hosted API doesn't serve them yet.
+ * its `records`, or none of them. Avow's hosted API serves all three, each answer carrying Avow's
+ * timestamp on the request.
  */
 export interface AvowRecords {
-  /** Records the business cancelling a commitment, timestamped by Avow. */
+  /**
+   * Records the business cancelling a commitment, timestamped by Avow, once free cancellation has
+   * ended. Before then the business cancels on the lock, and Avow refuses with
+   * `commitment.cancel_on_lock`.
+   */
   cancel(request: { commitmentId: Hex }): Promise<{ cancelledAt: bigint }>
   /**
    * Timestamps the business's request to start a job. The supplier's start receipt names the
@@ -35,9 +40,9 @@ export interface AvowRecords {
  * `httpAvowApi`, which signs each request with the agent's key, and a local stand-in implements it
  * for a demo or a test. Pre-release, so it may change before 1.0.
  *
- * Avow's records of cancellations and job starts are one optional group, `records`, because the
- * hosted API doesn't serve them yet and `httpAvowApi` leaves them out. `createAgent` gives an agent
- * `cancel` and `start` only when its `AvowApi` has `records`.
+ * Avow's records of cancellations and job starts are one optional group, `records`, which a
+ * stand-in for a demo or a test may leave out. `createAgent` gives an agent `cancel` and `start`
+ * only when its `AvowApi` has `records`.
  */
 export interface AvowApi {
   /** Avow's reserve check. It signs an approval the lock takes, or refuses with a reason code. */

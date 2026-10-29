@@ -26,6 +26,7 @@ export const MESSAGE_VERSIONS = {
   HumanApproval: '1',
   StartReceipt: '1',
   ApiRequest: '1',
+  Timestamp: '1',
 } as const
 
 type VersionedType = keyof typeof MESSAGE_VERSIONS
@@ -45,6 +46,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   HumanApproval: [MESSAGE_VERSIONS.HumanApproval],
   StartReceipt: [MESSAGE_VERSIONS.StartReceipt],
   ApiRequest: [MESSAGE_VERSIONS.ApiRequest],
+  Timestamp: [MESSAGE_VERSIONS.Timestamp],
 }
 
 /**

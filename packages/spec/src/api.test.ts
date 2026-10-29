@@ -2,15 +2,26 @@ import { describe, expect, it } from 'vitest'
 import {
   API_PATHS,
   parseApiError,
+  parseCancellationAnswer,
   parseEnrollment,
   parseEnrollmentRequest,
   parseReserveApproval,
   parseReserveApprovalRequest,
   parseSponsorshipRequest,
+  parseStartReceiptAnswer,
+  parseStartReceiptRequest,
+  parseStartRequestAnswer,
   parseSupplierAuthorizationAnswer,
 } from './api.js'
 import { testnetDemoTerms } from './demo.js'
-import type { Approval, HumanApproval, SupplierAuthorization, TermsAgreement } from './eip712.js'
+import type {
+  Approval,
+  HumanApproval,
+  StartReceipt,
+  SupplierAuthorization,
+  TermsAgreement,
+  Timestamp,
+} from './eip712.js'
 import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
@@ -325,5 +336,92 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
     expect(API_PATHS.supplierAuthorizations('0xABCDEF')).toBe(
       '/v1/commitments/0xabcdef/supplier-authorizations',
     )
+    expect(API_PATHS.cancellations('0xABCDEF')).toBe('/v1/commitments/0xabcdef/cancellations')
+    expect(API_PATHS.startRequests('0xABCDEF')).toBe('/v1/commitments/0xabcdef/start-requests')
+    expect(API_PATHS.startReceipts('0xABCDEF')).toBe('/v1/commitments/0xabcdef/start-receipts')
+  })
+})
+
+describe("Avow's records of cancellations and job starts", () => {
+  const requestHash = id('signed request')
+  const expected = { chainId: CHAIN_ID, lock: LOCK, requestHash }
+  const stamp = (t: Partial<Timestamp> = {}, lock = LOCK) =>
+    envelope('Timestamp', { requestHash, receivedAt: START + 12n, ...t }, lock)
+
+  it('reads a cancellation whose timestamp names the request the caller signed, at the same time', () => {
+    const answer = roundTrip({ cancelledAt: START + 12n, timestamp: stamp() })
+    expect(parseCancellationAnswer(answer, expected)).toEqual({
+      ok: true,
+      value: {
+        cancelledAt: START + 12n,
+        timestamp: { ...stamp(), message: { requestHash, receivedAt: START + 12n } },
+      },
+    })
+  })
+
+  it('refuses a cancellation timestamped for another request, another time or another lock', () => {
+    const other = [
+      { cancelledAt: START + 12n, timestamp: stamp({ requestHash: id('another request') }) },
+      { cancelledAt: START + 13n, timestamp: stamp() },
+      { cancelledAt: START + 12n },
+    ]
+    for (const body of other) {
+      expect(parseCancellationAnswer(roundTrip(body), expected)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    const elsewhere = roundTrip({ cancelledAt: START + 12n, timestamp: stamp({}, OTHER_LOCK) })
+    expect(parseCancellationAnswer(elsewhere, expected)).toEqual({
+      ok: false,
+      reason: 'message.wrong_contract',
+    })
+  })
+
+  it('reads a start request answer only for the request the caller signed', () => {
+    const answer = { startRequestHash: requestHash, requestedAt: START + 12n, timestamp: stamp() }
+    const read = parseStartRequestAnswer(roundTrip(answer), expected)
+    expect(read).toMatchObject({ ok: true, value: { startRequestHash: requestHash } })
+    const mismatched = [
+      { ...answer, startRequestHash: id('another request') },
+      { ...answer, requestedAt: START + 11n },
+      { ...answer, timestamp: stamp({ receivedAt: START + 11n }) },
+    ]
+    for (const body of mismatched) {
+      expect(parseStartRequestAnswer(roundTrip(body), expected)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+  })
+
+  it('reads a start receipt for its lock only, and a recorded or refused answer', () => {
+    const receipt: StartReceipt = {
+      commitmentId: id('commitment-1'),
+      side: 'buyer',
+      startRequestHash: requestHash,
+      startedAt: START + 30n,
+      nonce: 11n,
+      expiry: START + 3600n,
+    }
+    const body = roundTrip({ receipt: envelope('StartReceipt', receipt) })
+    expect(parseStartReceiptRequest(body, { chainId: CHAIN_ID, lock: LOCK })).toMatchObject({
+      ok: true,
+      value: { receipt: { message: { startedAt: START + 30n } } },
+    })
+    const elsewhere = roundTrip({ receipt: envelope('StartReceipt', receipt, OTHER_LOCK) })
+    expect(parseStartReceiptRequest(elsewhere, { chainId: CHAIN_ID, lock: LOCK })).toEqual({
+      ok: false,
+      reason: 'message.wrong_contract',
+    })
+    expect(parseStartReceiptAnswer({ ok: true })).toEqual({ ok: true, value: { ok: true } })
+    expect(parseStartReceiptAnswer({ ok: false, reason: 'start.too_late' })).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+    expect(parseStartReceiptAnswer({ ok: false, reason: 'commitment.ended' })).toEqual({
+      ok: true,
+      value: { ok: false, reason: 'commitment.ended' },
+    })
   })
 })
