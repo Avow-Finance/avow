@@ -80,9 +80,20 @@ export interface Sponsorship {
   transaction: Hex
 }
 
-/** Avow's answer to a supplier asking for a fresh authorization for a commitment's reserve. */
+/**
+ * Avow's answer to a supplier asking for a fresh authorization for a commitment's reserve. With it
+ * come Avow's approval the reserve was funded under and the buyer's signed mandate, which the
+ * supplier's verifier checks against its own terms and the lock before it accepts. Avow's word on
+ * either is never taken, since the verifier checks the approval against the digest the lock
+ * stored and the mandate against the business account's signature.
+ */
 export type SupplierAuthorizationAnswer =
-  | { ok: true; authorization: Signed<SupplierAuthorization> }
+  | {
+      ok: true
+      authorization: Signed<SupplierAuthorization>
+      approval: Signed<Approval>
+      mandate: Signed<Mandate>
+    }
   | { ok: false; reason: ReasonCode }
 
 /**
@@ -222,7 +233,14 @@ export function parseSupplierAuthorizationAnswer(
 ): Parsed<SupplierAuthorizationAnswer> {
   const refused = z.strictObject({ ok: z.literal(false), reason: reasonCode }).safeParse(json)
   if (refused.success) return { ok: true, value: refused.data }
-  const issued = z.strictObject({ ok: z.literal(true), authorization: objectJson }).safeParse(json)
+  const issued = z
+    .strictObject({
+      ok: z.literal(true),
+      authorization: objectJson,
+      approval: objectJson,
+      mandate: objectJson,
+    })
+    .safeParse(json)
   if (!issued.success) return { ok: false, reason: 'message.invalid' }
   const authorization = parseSigned(
     issued.data.authorization,
@@ -231,7 +249,19 @@ export function parseSupplierAuthorizationAnswer(
     expected,
   )
   if (!authorization.ok) return authorization
-  return { ok: true, value: { ok: true, authorization: authorization.value } }
+  const approval = parseSigned(issued.data.approval, 'Approval', approvalJson, expected)
+  if (!approval.ok) return approval
+  const mandate = parseSigned(issued.data.mandate, 'Mandate', mandateJson, expected)
+  if (!mandate.ok) return mandate
+  return {
+    ok: true,
+    value: {
+      ok: true,
+      authorization: authorization.value,
+      approval: approval.value,
+      mandate: mandate.value,
+    },
+  }
 }
 
 /**

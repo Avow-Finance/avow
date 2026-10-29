@@ -247,10 +247,33 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
       expiry: NOW + 300n,
     }
     const expected = { chainId: CHAIN_ID, lock: LOCK }
-    const issued = parseSupplierAuthorizationAnswer(
-      roundTrip({ ok: true, authorization: envelope('SupplierAuthorization', authorization) }),
-      expected,
-    )
+    const approvalMessage: Approval = {
+      commitmentId: id('commitment-1'),
+      token: TOKEN.token,
+      ...lockTerms(terms, TOKEN.decimals),
+      supplier: newKey().address,
+      supplierSigner: newKey().address,
+      payee: PAYEE,
+      termsHash: tHash,
+      mandateHash: id('mandate hash'),
+      capPerCommitment: 1_000_000_000n,
+      capOpenReserves: 2_000_000_000n,
+      fundingKey: agent.address,
+      nonce: 7n,
+      expiry: NOW + 120n,
+    }
+    const mandate = demoMandate(newKey().address, agent.address)
+    const full = {
+      ok: true,
+      authorization: envelope('SupplierAuthorization', authorization),
+      approval: envelope('Approval', approvalMessage),
+      mandate: envelope('Mandate', mandate),
+    }
+    const issued = parseSupplierAuthorizationAnswer(roundTrip(full), expected)
+    expect(issued.ok && issued.value.ok && issued.value.mandate.message.agentId).toBe('agt_1')
+    expect(
+      parseSupplierAuthorizationAnswer(roundTrip({ ...full, mandate: undefined }), expected),
+    ).toEqual({ ok: false, reason: 'message.invalid' })
     expect(issued.ok && issued.value.ok && issued.value.authorization.message.amount).toBe(
       500_000_000n,
     )
@@ -263,7 +286,7 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
     expect(
       parseSupplierAuthorizationAnswer(
         roundTrip({
-          ok: true,
+          ...full,
           authorization: envelope('SupplierAuthorization', authorization, OTHER_LOCK),
         }),
         expected,
