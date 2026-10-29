@@ -343,3 +343,85 @@ export const FACTORY_ABI = [
     stateMutability: 'view',
   },
 ] as const
+
+/**
+ * The event the factory logs for each lock it creates, as the testnet factory declares it. Its
+ * logs from the block the factory was created in name every lock the factory made.
+ */
+export const FACTORY_EVENTS_ABI = [
+  {
+    type: 'event',
+    name: 'LockCreated',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'lock', type: 'address', indexed: false },
+    ],
+    anonymous: false,
+  },
+] as const
+
+/**
+ * The lock's events that open and end one side of a commitment, as the testnet lock declares
+ * them. `Reserved` opens a side, and `Released`, `Charged` and `Resolved` each end one. Every other
+ * step a side takes, such as an acceptance or a report, comes between the two. Each indexes only
+ * the commitment id, so a reader can follow one commitment by its topic.
+ */
+export const LOCK_EVENTS_ABI = [
+  {
+    type: 'event',
+    name: 'Reserved',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'termsHash', type: 'bytes32', indexed: false },
+      { name: 'mandateHash', type: 'bytes32', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+      { name: 'supplier', type: 'address', indexed: false },
+      { name: 'payout', type: 'address', indexed: false },
+      { name: 'fundedBy', type: 'address', indexed: false },
+      { name: 'approvalNonce', type: 'uint256', indexed: false },
+      { name: 'approvalHash', type: 'bytes32', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Released',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'termsHash', type: 'bytes32', indexed: false },
+      { name: 'cause', type: 'uint8', indexed: false },
+      { name: 'reason', type: 'uint8', indexed: false },
+      { name: 'evidenceHash', type: 'bytes32', indexed: false },
+      { name: 'returned', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Charged',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'termsHash', type: 'bytes32', indexed: false },
+      { name: 'amount', type: 'uint256', indexed: false },
+      { name: 'evidenceHash', type: 'bytes32', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'Resolved',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'termsHash', type: 'bytes32', indexed: false },
+      { name: 'byRuling', type: 'bool', indexed: false },
+      { name: 'toSupplier', type: 'uint256', indexed: false },
+      { name: 'toBusiness', type: 'uint256', indexed: false },
+      { name: 'evidenceHash', type: 'bytes32', indexed: false },
+    ],
+    anonymous: false,
+  },
+] as const

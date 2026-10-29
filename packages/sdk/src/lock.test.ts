@@ -8,7 +8,35 @@ import {
   FACTORY_ABI,
   RESERVE_ABI,
   RESERVE_SELECTOR,
+  TRIGGER_ABI,
+  triggerCall,
 } from './lock.js'
+
+describe("the lock's trigger", () => {
+  const LOCK = '0x00000000000000000000000000000000000010c4'
+  const COMMITMENT = `0x${'7a'.repeat(32)}` as const
+
+  it('has the selector the compiled testnet lock dispatches trigger on', () => {
+    const selector = toFunctionSelector(getAbiItem({ abi: TRIGGER_ABI, name: 'trigger' }))
+    expect(selector).toBe(toFunctionSelector('trigger(bytes32,uint8)'))
+    // The deployed locks' dispatchers carry it, so a change to the copy can't slip by.
+    expect(selector).toBe('0x1604f9c9')
+  })
+
+  it('sends each side to its lock with the code the lock stores for it', () => {
+    for (const [side, code] of [
+      ['buyer', 0],
+      ['supplier', 1],
+    ] as const) {
+      const call = triggerCall(LOCK, COMMITMENT, side)
+      expect(call.to).toBe(LOCK)
+      expect(decodeFunctionData({ abi: TRIGGER_ABI, data: call.data }).args).toEqual([
+        COMMITMENT,
+        code,
+      ])
+    }
+  })
+})
 
 describe("the lock's reserve function", () => {
   it('has the selector the compiled testnet lock dispatches reserve on', () => {

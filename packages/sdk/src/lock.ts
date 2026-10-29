@@ -1,4 +1,11 @@
-import { type Approval, type AvowDomain, approvalTypedData, type Signed } from '@avow-finance/spec'
+import {
+  type Approval,
+  type AvowDomain,
+  approvalTypedData,
+  SIDE_CODES,
+  type Side,
+  type Signed,
+} from '@avow-finance/spec'
 import { FACTORY_ABI } from '@avow-finance/verifier'
 import { type Address, encodeFunctionData, type Hex, toFunctionSelector } from 'viem'
 import { Abis } from 'viem/tempo'
@@ -133,6 +140,38 @@ export function approveSupplierCall(lock: Address, supplier: Address): Call {
       abi: ADMINISTRATOR_ABI,
       functionName: 'approveSupplier',
       args: [supplier],
+    }),
+  }
+}
+
+/**
+ * The lock's `trigger`, as the testnet lock declares it. It takes whichever step is due for one
+ * side of a commitment once its deadline has passed, such as returning a reserve the supplier
+ * never accepted, releasing a kept reserve at its release date, paying a confirmed charge once its
+ * contest window closes or splitting a contested charge nobody ruled on at day 90, and it reverts
+ * when no step is due. Anyone can send it, since the lock pays only the parties it recorded.
+ */
+export const TRIGGER_ABI = [
+  {
+    type: 'function',
+    name: 'trigger',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32' },
+      { name: 'side', type: 'uint8' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+/** The call that takes the step due for one side of a commitment, from any account. */
+export function triggerCall(lock: Address, commitmentId: Hex, side: Side): Call {
+  return {
+    to: lock,
+    data: encodeFunctionData({
+      abi: TRIGGER_ABI,
+      functionName: 'trigger',
+      args: [commitmentId, SIDE_CODES[side]],
     }),
   }
 }

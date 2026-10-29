@@ -30,7 +30,9 @@ export function domain(d: AvowDomain, version: string): TypedDataDomain {
   }
 }
 
-const sideCode = { buyer: 0, supplier: 1 } as const satisfies Record<Side, number>
+/** Each side of a commitment by the code the lock stores, takes in calls and logs in its events. */
+export const SIDE_CODES = { buyer: 0, supplier: 1 } as const satisfies Record<Side, number>
+
 const ruleCode = { never: 0, above: 1, always: 2 } as const satisfies Record<
   ApprovalRule['kind'],
   number
@@ -579,7 +581,7 @@ export function approvalTypedData(a: Approval, d: AvowDomain) {
     primaryType: 'Approval' as const,
     message: {
       ...a,
-      side: sideCode[a.side],
+      side: SIDE_CODES[a.side],
       charges: a.charges.map((c) => ({
         kind: CHARGE_KINDS[c.kind],
         most: c.most,
@@ -608,7 +610,7 @@ export function acceptanceTypedData(a: Acceptance, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.Acceptance),
     types: ACCEPTANCE_TYPES,
     primaryType: 'Acceptance' as const,
-    message: { ...a, side: sideCode[a.side] },
+    message: { ...a, side: SIDE_CODES[a.side] },
   }
 }
 
@@ -617,7 +619,7 @@ export function reportTypedData(r: ChargeReport, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.Report),
     types: REPORT_TYPES,
     primaryType: 'Report' as const,
-    message: { ...r, side: sideCode[r.side], kind: CHARGE_KINDS[r.kind] },
+    message: { ...r, side: SIDE_CODES[r.side], kind: CHARGE_KINDS[r.kind] },
   }
 }
 
@@ -626,7 +628,7 @@ export function releaseConsentTypedData(c: ReleaseConsent, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.ReleaseConsent),
     types: RELEASE_CONSENT_TYPES,
     primaryType: 'ReleaseConsent' as const,
-    message: { ...c, side: sideCode[c.side], reason: RELEASE_REASONS[c.reason] },
+    message: { ...c, side: SIDE_CODES[c.side], reason: RELEASE_REASONS[c.reason] },
   }
 }
 
@@ -635,7 +637,7 @@ export function evidenceTypedData(e: SupplierEvidence, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.Evidence),
     types: EVIDENCE_TYPES,
     primaryType: 'Evidence' as const,
-    message: { ...e, side: sideCode[e.side] },
+    message: { ...e, side: SIDE_CODES[e.side] },
   }
 }
 
@@ -644,7 +646,7 @@ export function businessActionTypedData(a: BusinessAction, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.BusinessAction),
     types: BUSINESS_ACTION_TYPES,
     primaryType: 'BusinessAction' as const,
-    message: { ...a, action: BUSINESS_ACTIONS[a.action], side: sideCode[a.side] },
+    message: { ...a, action: BUSINESS_ACTIONS[a.action], side: SIDE_CODES[a.side] },
   }
 }
 
@@ -653,7 +655,7 @@ export function supplierActionTypedData(a: SupplierAction, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.SupplierAction),
     types: SUPPLIER_ACTION_TYPES,
     primaryType: 'SupplierAction' as const,
-    message: { ...a, action: SUPPLIER_ACTIONS[a.action], side: sideCode[a.side] },
+    message: { ...a, action: SUPPLIER_ACTIONS[a.action], side: SIDE_CODES[a.side] },
   }
 }
 
@@ -752,7 +754,7 @@ export function startReceiptTypedData(r: StartReceipt, d: AvowDomain) {
     domain: domain(d, MESSAGE_VERSIONS.StartReceipt),
     types: START_RECEIPT_TYPES,
     primaryType: 'StartReceipt' as const,
-    message: { ...r, side: sideCode[r.side] },
+    message: { ...r, side: SIDE_CODES[r.side] },
   }
 }
 

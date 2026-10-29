@@ -38,6 +38,8 @@ A sponsored transaction is valid for under half a minute. The sender reads the l
 
 `RESERVE_ABI` is the interface of the one lock function an agent's key calls, matched to the lock deployed on Moderato. It's testnet code, unaudited, and a new factory can change it. Knowing it grants nothing. On every call the lock checks Avow's signature over the whole approval, that the account calling is the business and the key signing is the approval's funding key, that the business approved the supplier, and the approval's caps and expiry. Those checks protect a reserve. The lock's source stays private until its audit, and no reserve's safety rests on that.
 
+`triggerCall` builds the lock's `trigger`, which sends the step due for one side of a commitment once its deadline has passed, such as returning a reserve the supplier never accepted or releasing a kept one at its release date. Anyone may send it. The lock reverts when nothing is due and pays only the parties it recorded. The [keeper](../../examples/keeper) sends it from a key made for each run.
+
 ## The administrator's side
 
 `signMandate` and `signHumanApproval` sign for the business account with its root or an admin key, in Tempo's keychain V2 envelope, which the lock and Avow's API need. A browser passkey signs bare, and the envelope is added for it. `agentKeyTerms` turns a mandate into the key authorization Tempo enforces. Pass `[RESERVE_SELECTOR]` as the lock functions, so `reserve` is the one lock function the key can call.

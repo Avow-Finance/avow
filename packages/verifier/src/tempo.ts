@@ -4,6 +4,7 @@ import {
   type ChargeKind,
   type ObservedTransfer,
   RAIL_STATES,
+  SIDE_CODES,
   tempoKeychainCheck,
 } from '@avow-finance/spec'
 import {
@@ -159,7 +160,7 @@ export async function readBacking(
       address: lock,
       abi: LOCK_ABI,
       functionName: 'commitment',
-      args: [commitmentId, side === 'buyer' ? 0 : 1],
+      args: [commitmentId, SIDE_CODES[side]],
       ...at,
     }),
     readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token', ...at }),
