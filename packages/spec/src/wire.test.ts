@@ -17,6 +17,7 @@ import {
   type OutcomeKind,
   type UncheckedCommitment,
 } from './commitment.js'
+import { CONTEST_REASON_NAMES } from './contest.js'
 import { testnetDemoTerms } from './demo.js'
 import type { Approval, SupplierAuthorization } from './eip712.js'
 import type { PaymentReference } from './references.js'
@@ -366,7 +367,7 @@ describe('parseCommitment', () => {
 
   const reserve = terms.backing.amount
   const contest: ContestRecord = {
-    reasonCode: 'supplier_did_not_deliver',
+    reasonCode: 'supplier_did_not_provide',
     statementHash: id('contest statement'),
     evidenceHashes: [id('job log')],
     contestedAt: START + 900n,
@@ -470,6 +471,21 @@ describe('parseCommitment', () => {
       ok: false,
       reason: 'message.invalid',
     })
+  })
+
+  it("refuses a contest whose reason isn't one of the six by name", () => {
+    const paused = roundTrip(records.paused) as { contest: Record<string, unknown> }
+    for (const reasonCode of ['supplier_did_not_deliver', 'Job_started', '', 3, null]) {
+      const record = { ...paused, contest: { ...paused.contest, reasonCode } }
+      expect(parseCommitment(record), String(reasonCode)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    for (const reasonCode of CONTEST_REASON_NAMES) {
+      const record = { ...paused, contest: { ...paused.contest, reasonCode } }
+      expect(parseCommitment(record).ok, reasonCode).toBe(true)
+    }
   })
 
   it("reads a release by the supplier's consent that keeps the contest it came after", () => {

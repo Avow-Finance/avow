@@ -48,8 +48,8 @@ export interface LockedBacking {
   hasRuling: boolean
 }
 
-/** The most reports a lock takes for one commitment. */
-export const MAX_REPORTS = 2
+/** The most reports a lock takes for one commitment, which the spec defines for every package. */
+export { MAX_REPORTS } from '@avow-finance/spec'
 
 export interface LockInfo {
   /** True when Avow's factory, as the reader was set up with it, created the lock. */
