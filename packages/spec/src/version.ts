@@ -60,10 +60,12 @@ export function isSupportedMessageVersion(type: string, version: string): boolea
 }
 
 /**
- * The version of a stored commitment record. Version 2 added the references a record cites, and a
- * version 1 record reads as version 2 with none. The record's terms carry their own version.
+ * The version of a stored commitment record. Version 2 added the references a record cites.
+ * Version 3 gave a reserve that went back at its release date its own kind of outcome, which
+ * version 2 recorded as kept. A version 1 record reads as version 3 with no references, and a
+ * version 2 record reads as version 3 unchanged. The record's terms carry their own version.
  */
-export const COMMITMENT_RECORD_VERSION = '2'
+export const COMMITMENT_RECORD_VERSION = '3'
 
 /** The version of the mandate check in `checkMandate`, recorded on every decision. */
 export const POLICY_VERSION = 'mandate-check/1'

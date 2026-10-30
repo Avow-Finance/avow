@@ -467,22 +467,95 @@ describe('parseCommitment', () => {
     ])
   })
 
+  it('refuses an outcome whose amounts do not fit its ending', () => {
+    const ended = (state: CommitmentState, kind: OutcomeKind, charged: bigint, released: bigint) =>
+      anyRecord(state, isContested(state) ? contest : null, { kind, charged, released })
+    // The amounts each ending can hold.
+    for (const record of [
+      ended('expired', 'expired', 0n, 0n),
+      ended('released', 'kept', 0n, reserve),
+      ended('released', 'reached_release_date', 0n, reserve),
+      ended('charged', 'no_show', reserve, 0n),
+      ended('charged', 'cancelled_late', reserve / 2n, reserve - reserve / 2n),
+      ended('resolved', 'ruled', 0n, reserve),
+      ended('resolved', 'day_90_default', reserve / 2n, reserve - reserve / 2n),
+    ]) {
+      expect(parseCommitment(roundTrip(record)).ok, record.outcome?.kind).toBe(true)
+    }
+    for (const record of [
+      // An expired commitment never locked anything.
+      ended('expired', 'expired', 0n, reserve),
+      // A release that charged something, or gave back less than the reserve.
+      ended('released', 'kept', reserve, 0n),
+      ended('released', 'supplier_failed', 1n, reserve - 1n),
+      ended('released', 'reached_release_date', 0n, reserve - 1n),
+      // A charge that paid nothing, or amounts that add up to more or less than the reserve.
+      ended('charged', 'no_show', 0n, reserve),
+      ended('charged', 'no_show', reserve, 1n),
+      ended('resolved', 'ruled', reserve / 2n, reserve / 2n - 1n),
+    ]) {
+      const label = `${record.state} ${record.outcome?.kind} ${record.outcome?.charged}`
+      expect(commitmentFitsState(record), label).toBe(false)
+      expect(parseCommitment(roundTrip(record)), label).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+  })
+
   it('round-trips a commitment', () => {
-    expect(COMMITMENT_RECORD_VERSION).toBe('2')
+    expect(COMMITMENT_RECORD_VERSION).toBe('3')
     expect(parseCommitment(roundTrip(commitment))).toEqual({
       ok: true,
       value: lowerHex(commitment),
     })
   })
 
-  it('reads a version 2 record made under version 1 terms', () => {
+  it('reads a current record made under version 1 terms', () => {
     expect(parseCommitment(roundTrip(underV1))).toEqual({ ok: true, value: lowerHex(underV1) })
   })
 
-  it('reads a version 1 record as version 2, citing nothing, so it is written back as version 2', () => {
+  it('reads a version 1 record as version 3, citing nothing, so it is written back as version 3', () => {
     // A record as version 1 wrote it, with version 1 terms and no references.
     const { references: _, ...older } = { ...underV1, schemaVersion: '1' }
     expect(parseCommitment(roundTrip(older))).toEqual({ ok: true, value: lowerHex(underV1) })
+  })
+
+  it('reads a version 2 record as version 3 unchanged, with a kept outcome staying kept', () => {
+    for (const record of [commitment, underV1, records.released]) {
+      expect(parseCommitment(roundTrip({ ...record, schemaVersion: '2' }))).toEqual({
+        ok: true,
+        value: lowerHex(record),
+      })
+    }
+  })
+
+  it('refuses a version 1 or 2 record with the outcome version 3 added', () => {
+    const releasedAs = (kind: 'kept' | 'reached_release_date'): Commitment => ({
+      ...records.released,
+      terms: v1,
+      termsHash: termsHash(v1, SALT),
+      outcome: { kind, charged: 0n, released: v1.reserve },
+    })
+    /** The record as version 1 or 2 wrote it. Version 1 cited no references. */
+    const asVersion = (record: Commitment, schemaVersion: string) => {
+      const { references, ...rest } = { ...record, schemaVersion }
+      return roundTrip(schemaVersion === '1' ? rest : { ...rest, references })
+    }
+    for (const version of ['1', '2']) {
+      expect(parseCommitment(asVersion(releasedAs('kept'), version))).toEqual({
+        ok: true,
+        value: lowerHex(releasedAs('kept')),
+      })
+      expect(parseCommitment(asVersion(releasedAs('reached_release_date'), version))).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    expect(parseCommitment(asVersion(releasedAs('reached_release_date'), '3'))).toEqual({
+      ok: true,
+      value: lowerHex(releasedAs('reached_release_date')),
+    })
   })
 
   it('refuses a version 1 record with version 2 terms or references, and a version 2 record without references', () => {
@@ -498,14 +571,16 @@ describe('parseCommitment', () => {
   })
 
   it('refuses a schema version it can read nothing of', () => {
-    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '3' })).toEqual({
+    expect(parseCommitment({ ...roundTrip(commitment), schemaVersion: '4' })).toEqual({
       ok: false,
       reason: 'message.schema_unknown',
     })
-    expect(parseCommitment({ schemaVersion: '2' })).toEqual({
-      ok: false,
-      reason: 'message.invalid',
-    })
+    for (const schemaVersion of ['1', '2', '3']) {
+      expect(parseCommitment({ schemaVersion })).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
   })
 })
 

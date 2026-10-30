@@ -5,6 +5,7 @@ import {
   type Commitment,
   commitmentFitsState,
   OUTCOME_ENDINGS,
+  type OutcomeKind,
   type UncheckedCommitment,
 } from './commitment.js'
 import {
@@ -288,14 +289,19 @@ const backingRefJson = z.strictObject({
   termsHash: bytes32,
 })
 
-const outcomeKinds = Object.keys(OUTCOME_ENDINGS) as [
-  keyof typeof OUTCOME_ENDINGS,
-  ...(keyof typeof OUTCOME_ENDINGS)[],
-]
+type OutcomeKinds = [OutcomeKind, ...OutcomeKind[]]
+const outcomeKinds = Object.keys(OUTCOME_ENDINGS) as OutcomeKinds
+/** The kinds a version 1 or 2 record holds, which recorded a return at the release date as kept. */
+const outcomeKindsBeforeV3 = outcomeKinds.filter(
+  (k) => k !== 'reached_release_date',
+) as OutcomeKinds
+
+const outcomeJson = (kinds: OutcomeKinds) =>
+  z.strictObject({ kind: z.enum(kinds), charged: u256, released: u256 }).nullable()
 
 /**
- * The fields every version of a commitment record holds. Their schemas read each field on its own,
- * and `parseCommitment` then checks that the contest and outcome fit the state.
+ * The fields every version of a commitment record holds but its outcome. Their schemas read each
+ * field on its own, and `parseCommitment` then checks that the contest and outcome fit the state.
  */
 const recordFields = {
   schemaVersion: z.string().min(1),
@@ -333,18 +339,32 @@ const recordFields = {
       contestedAt: u64,
     })
     .nullable(),
-  outcome: z.strictObject({ kind: z.enum(outcomeKinds), charged: u256, released: u256 }).nullable(),
 }
 
 /** A version 1 record, written before records cited references and while all terms were version 1. */
-export const commitmentJsonV1 = z.strictObject({ ...recordFields, terms: computeTermsV1Json })
+export const commitmentJsonV1 = z.strictObject({
+  ...recordFields,
+  outcome: outcomeJson(outcomeKindsBeforeV3),
+  terms: computeTermsV1Json,
+})
 
-/** A version 2 record, the version this code writes. */
-export const commitmentJson = z.strictObject({
+const referencedRecordFields = {
   ...recordFields,
   // Version 1 terms carry no version field and version 2 terms do, so the two never overlap.
   terms: z.union([computeTermsV1Json, termsJson]),
   references: z.array(z.lazy(() => referenceJson)),
+}
+
+/** A version 2 record, written before a return at the release date had its own kind of outcome. */
+export const commitmentJsonV2 = z.strictObject({
+  ...referencedRecordFields,
+  outcome: outcomeJson(outcomeKindsBeforeV3),
+})
+
+/** A version 3 record, the version this code writes. */
+export const commitmentJson = z.strictObject({
+  ...referencedRecordFields,
+  outcome: outcomeJson(outcomeKinds),
 })
 
 export const commitmentReferenceJson = z.strictObject({
@@ -481,10 +501,11 @@ export function parseReserveRequest(json: unknown): ReserveRequest {
 }
 
 /**
- * Parses a stored or sent commitment record. A version 1 record reads as a version 2 record that
- * cites nothing, so writing it back writes version 2. A record version this code doesn't read is
- * refused as unknown, and a record whose contest or outcome its state can't hold, such as a draft
- * with an outcome, is refused as invalid.
+ * Parses a stored or sent commitment record. A version 1 record reads as a version 3 record that
+ * cites nothing, and a version 2 record reads as version 3 unchanged, so writing either back
+ * writes version 3. A record version this code doesn't read is refused as unknown. A record whose
+ * contest or outcome its state can't hold, such as a draft with an outcome or a release that
+ * charged something, is refused as invalid.
  */
 export function parseCommitment(json: unknown): Parsed<Commitment> {
   const header = versionHeader.safeParse(json)
@@ -494,6 +515,10 @@ export function parseCommitment(json: unknown): Parsed<Commitment> {
     const older = commitmentJsonV1.safeParse(json)
     if (!older.success) return { ok: false, reason: 'message.invalid' }
     record = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION, references: [] }
+  } else if (header.data.schemaVersion === '2') {
+    const older = commitmentJsonV2.safeParse(json)
+    if (!older.success) return { ok: false, reason: 'message.invalid' }
+    record = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION }
   } else if (header.data.schemaVersion === COMMITMENT_RECORD_VERSION) {
     const parsed = commitmentJson.safeParse(json)
     if (!parsed.success) return { ok: false, reason: 'message.invalid' }

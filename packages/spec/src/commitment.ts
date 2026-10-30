@@ -1,7 +1,7 @@
 import type { Hex } from 'viem'
 import type { BackingRef, RailState } from './rail.js'
 import type { Reference } from './references.js'
-import type { AnyTerms } from './terms.js'
+import { type AnyTerms, enforceableTerms } from './terms.js'
 import type { Side } from './types.js'
 
 /**
@@ -73,10 +73,16 @@ export function isContested(state: CommitmentState): state is ContestedState {
   return (CONTESTED_STATES as readonly string[]).includes(state)
 }
 
-/** How a commitment ended, with the ending each kind belongs to. */
+/**
+ * How a commitment ended, with the ending each kind belongs to. `kept` is the supplier's consent to
+ * give the reserve back because the commitment was kept, which the lock takes at any time.
+ * `reached_release_date` is a reserve that went back at its release date with no report. A record
+ * before version 3 used `kept` for both.
+ */
 export const OUTCOME_ENDINGS = {
   expired: 'expired',
   kept: 'released',
+  reached_release_date: 'released',
   cancelled_in_time: 'released',
   supplier_failed: 'released',
   not_accepted: 'released',
@@ -95,7 +101,8 @@ export type OutcomeKindIn<E extends Ending> = {
 
 /**
  * How a commitment ended, as one of the kinds `K`, or as any kind when `K` is left out. Amounts
- * are micros. Charged plus released equals the reserve, or zero when nothing was locked.
+ * are micros. Charged plus released equals the reserve, or zero when nothing was locked, and
+ * `commitmentFitsState` checks that against the ending.
  */
 export interface Outcome<K extends OutcomeKind = OutcomeKind> {
   kind: K
@@ -181,10 +188,30 @@ export type UncheckedCommitment = CommitmentFields & {
 /**
  * Whether a record holds the contest and outcome its state calls for. A contest belongs to the
  * contested states and to no other, and an outcome to the endings and to no other, with a kind
- * that belongs to the record's own ending.
+ * that belongs to the record's own ending and amounts that fit it.
  */
 export function commitmentFitsState(record: UncheckedCommitment): record is Commitment {
   if ((record.contest !== null) !== isContested(record.state)) return false
   if (!isEnding(record.state)) return record.outcome === null
-  return record.outcome !== null && OUTCOME_ENDINGS[record.outcome.kind] === record.state
+  const outcome = record.outcome
+  if (outcome === null || OUTCOME_ENDINGS[outcome.kind] !== record.state) return false
+  return amountsFit(record.state, outcome, enforceableTerms(record.terms).reserve)
+}
+
+/**
+ * Whether an outcome's amounts fit its ending. An expired commitment never locked anything, a
+ * release gives the whole reserve back, a charge pays the supplier part or all of it, and every
+ * ending after the reserve was locked accounts for all of it.
+ */
+function amountsFit(ending: Ending, o: Outcome, reserve: bigint): boolean {
+  switch (ending) {
+    case 'expired':
+      return o.charged === 0n && o.released === 0n
+    case 'released':
+      return o.charged === 0n && o.released === reserve
+    case 'charged':
+      return o.charged > 0n && o.charged + o.released === reserve
+    case 'resolved':
+      return o.charged + o.released === reserve
+  }
 }
