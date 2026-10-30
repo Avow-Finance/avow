@@ -1,6 +1,6 @@
 import { canonicalJson } from './canonical.js'
-import type { CommitmentReference } from './references.js'
-import { commitmentReferenceJson, type Parsed, toWire } from './wire.js'
+import { type CommitmentReference, commitmentReferenceJson } from './references.js'
+import { type Parsed, toWire } from './wire.js'
 
 /** The longest token `decodeCommitmentReference` reads, well above any reference's. */
 const MAX_TOKEN = 1024
