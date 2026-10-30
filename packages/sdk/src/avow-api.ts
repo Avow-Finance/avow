@@ -1,4 +1,6 @@
 import type {
+  ContestStatementAnswer,
+  ContestStatementRequest,
   ReasonCode,
   ReserveApproval,
   ReserveApprovalRequest,
@@ -59,4 +61,17 @@ export interface AvowApi {
   sponsor(transaction: Hex): Promise<Hex>
   /** Avow's records of cancellations and job starts, all three calls or none. */
   records?: AvowRecords
+}
+
+/**
+ * Avow's records the business account's own root key writes to, which Avow's hosted API serves
+ * through `httpBusinessRecords`. Pre-release, so it may change before 1.0.
+ */
+export interface BusinessRecords {
+  /**
+   * Gives Avow the statement for a contest the lock already took, naming the transaction that
+   * carried it, so Avow holds the text it rules on. A commitment has one statement, so posting the
+   * same one again gets the first answer, and posting again is always safe.
+   */
+  postContestStatement(request: ContestStatementRequest): Promise<ContestStatementAnswer>
 }

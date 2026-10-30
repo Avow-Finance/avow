@@ -2,6 +2,9 @@ import {
   type Approval,
   type AvowDomain,
   approvalTypedData,
+  CONTEST_REASONS,
+  type ContestStatement,
+  contestStatementHash,
   SIDE_CODES,
   type Side,
   type Signed,
@@ -73,7 +76,8 @@ export const RESERVE_SELECTOR: Hex = toFunctionSelector(RESERVE_ABI[0])
 /**
  * The calls a business account's root key makes on its own lock and on the factory, as the testnet
  * contracts declare them. Approving a supplier lets an agent reserve for it, and only the account's
- * root key can do it. Cancelling before free cancellation ends takes a reserve back in full.
+ * root key can do it. Cancelling before free cancellation ends takes a reserve back in full, and
+ * contesting a charge pauses it until someone rules.
  */
 export const ADMINISTRATOR_ABI = [
   {
@@ -89,6 +93,19 @@ export const ADMINISTRATOR_ABI = [
     inputs: [
       { name: 'commitmentId', type: 'bytes32' },
       { name: 'side', type: 'uint8' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'contest',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32' },
+      { name: 'side', type: 'uint8' },
+      { name: 'reportNumber', type: 'uint8' },
+      { name: 'reasonCode', type: 'uint16' },
+      { name: 'statementHash', type: 'bytes32' },
     ],
     outputs: [],
     stateMutability: 'nonpayable',
@@ -168,6 +185,28 @@ export function cancelFreeCall(lock: Address, commitmentId: Hex): Call {
       abi: ADMINISTRATOR_ABI,
       functionName: 'cancelFree',
       args: [commitmentId, SIDE_CODES.buyer],
+    }),
+  }
+}
+
+/**
+ * The call, from the business account's root key, that contests the charge or report a statement
+ * names. It carries the statement's reason code and its hash, which the lock logs in its `Paused`
+ * event, and throws on a statement the spec's format refuses.
+ */
+export function contestCall(lock: Address, statement: ContestStatement): Call {
+  return {
+    to: lock,
+    data: encodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      functionName: 'contest',
+      args: [
+        statement.commitmentId,
+        SIDE_CODES[statement.side],
+        statement.reportNumber,
+        CONTEST_REASONS[statement.reason].code,
+        contestStatementHash(statement),
+      ],
     }),
   }
 }

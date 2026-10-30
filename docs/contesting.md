@@ -1,6 +1,6 @@
 # Contesting a charge
 
-A business that disagrees with a charge its supplier reported contests it on its own lock. The contest pauses the charge, so nothing is paid until someone rules, and the ruling rests on the records, the business's reason and its statement. This page fixes the six reasons and what each answers, the statement and its hash, and how the statement reaches Avow. `@avow-finance/spec` implements every rule here.
+A business that disagrees with a charge its supplier reported contests it on its own lock. The contest pauses the charge, so nothing is paid until someone rules, and the ruling rests on the records, the business's reason and its statement. This page fixes the six reasons and what each answers, the statement and its hash, and how the statement reaches Avow. `@avow-finance/spec` implements every rule here, and the SDK's `contest` follows them.
 
 ## When the lock takes a contest
 
@@ -10,6 +10,17 @@ The lock takes one contest per commitment from the business account, in two case
 - **A report Avow hasn't confirmed or referred**, at any time. A contest before the report's deadline leaves the supplier free to withdraw the report. A contest after it makes the report final, and the pause dates from the deadline.
 
 Anything else the lock refuses. It refuses a contest that names a report other than the latest with `WrongReport`, a second contest with `AlreadyContested`, a closed window with `TooLate`, and a commitment with no pending charge and no standing report with `WrongState`. A contest stays on record when the supplier withdraws the report, and a later report on the same commitment pauses at once.
+
+The SDK's `contest` reads the lock and the chain's clock before it sends anything, and refuses with a reason code where the lock would revert.
+
+| Code | When |
+| --- | --- |
+| `chain.reserve_missing` | The lock holds nothing for the commitment |
+| `contest.already_contested` | The business has already contested a charge on the commitment |
+| `contest.not_contestable` | No charge is pending and no report stands, the charge is already paused for a ruling, or the commitment has ended |
+| `contest.window_closed` | The pending charge's contest window has closed by the chain's clock |
+| `contest.reason_not_for_charge` | The reason doesn't answer the kind of charge reported |
+| `contest.statement_invalid` | The statement's text breaks the rules below |
 
 ## The six reasons
 
@@ -24,7 +35,7 @@ Every contest names one reason by its code. The lock takes the code and logs it,
 | `wrong_charge` | 5 | Any charge | The charge is the wrong kind or the wrong amount |
 | `other` | 6 | Any charge | Another reason, which the statement sets out |
 
-A contest can't be taken back, and its reason stays on the chain, so a reason should answer the kind of charge the supplier reported. A no-show can't have been a late cancellation, so `never_cancelled` never answers one. When none of the four specific reasons fits, `wrong_charge` and `other` answer any charge. The lock itself takes any code.
+A contest can't be taken back, and its reason stays on the chain, so the SDK refuses a reason that doesn't answer the kind of charge the supplier reported. A no-show can't have been a late cancellation, so `never_cancelled` never answers one. When none of the four specific reasons fits, `wrong_charge` and `other` answer any charge. The lock itself takes any code, so a business that sends its own transaction gets no such check.
 
 `CONTEST_REASONS` holds the table, `answersCharge` says whether a reason answers a kind, and `contestReasonOf` reads a code back as a reason.
 
@@ -60,7 +71,7 @@ which `contestStatementHash` computes. The label names the format's version, and
 
 The contest carries the reason's code and the statement hash to the lock in one of two ways.
 
-- **From the root key.** The business account calls `contest(commitmentId, side, reportNumber, reasonCode, statementHash)` on its lock with its root key, and pays its own fee.
+- **From the root key.** The business account calls `contest(commitmentId, side, reportNumber, reasonCode, statementHash)` on its lock with its root key, and pays its own fee. The SDK's `contest` sends it this way, signed locally and tracked by its hash.
 - **As a signed action.** The root key or an admin key signs a `BusinessAction` with the action `contest`, as `contestAction` builds it, and any account can send it to the lock's `businessAction`.
 
 Either way the lock logs `Paused(commitmentId, side, termsHash, cause, pausedAt, reasonCode, evidenceHash, returned)` with the cause 3, a contest, and the statement hash as `evidenceHash`. The verifier's `contestInLogs` finds that event among a transaction's logs, counting only a log the lock itself wrote, and `ChainReader.contest` reads it from the transaction's receipt.
@@ -106,8 +117,8 @@ A commitment has one contest, so it has one statement. Posting the same statemen
 | 409 | `contest.statement_mismatch` | The contest on the chain names another reason or statement hash |
 | 503 | `service.unavailable` | Avow couldn't read its records or the chain, so it recorded nothing |
 
-When posting fails, the contest still stands and the charge stays paused, and the business posts the same statement again later.
+The SDK posts the statement once the contest's receipt shows it landed, and asks again for a short while when Avow answers `contest.not_on_chain`, since Avow's node can be a block behind the one that gave the receipt. When posting fails, the contest still stands and the charge stays paused, and the business posts the same statement again later with `postContestStatement`.
 
 ## After the contest
 
-The charge stays paused until a ruling. Avow's ruling key can rule from the pause until the pause plus the lock's `rulingKeyEnd`, which is 30 minutes on testnet and 30 days in production. Then the commitment's arbiter can rule until the pause plus the lock's `day90`. A ruling takes effect after the lock's `rulingDelay`, and a charge nobody rules on resolves at day 90, paying the supplier the day-90 share of a charge Avow confirmed and nothing of one it didn't.
+The charge stays paused until a ruling. Avow's ruling key can rule from the pause until the pause plus the lock's `rulingKeyEnd`, which is 30 minutes on testnet and 30 days in production. Then the commitment's arbiter can rule until the pause plus the lock's `day90`. A ruling takes effect after the lock's `rulingDelay`, and a charge nobody rules on resolves at day 90, paying the supplier the day-90 share of a charge Avow confirmed and nothing of one it didn't. The SDK's `contest` returns the pause time and `ruleBy`, the end of Avow's ruling time, with the contest.
