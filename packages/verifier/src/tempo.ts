@@ -196,6 +196,7 @@ export async function readBacking(
     approvalHash: c.approvalHash,
     fundingKey: c.fundedBy,
     reportCount: c.reportCount,
+    hasReport: c.hasReport,
     hasRuling: c.hasRuling,
   }
 }

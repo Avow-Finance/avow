@@ -1,6 +1,6 @@
 # @avow-finance/verifier
 
-Lets a supplier check an Avow commitment before it grants capacity, and accept it, without calling Avow. It reads the signed authorization, the buyer's signed mandate, the supplier's own record of what it agreed to and the chain, and nothing else.
+Lets a supplier check an Avow commitment before it grants capacity, accept it and report a charge on it, without calling Avow. It reads the signed authorization, the buyer's signed mandate, the supplier's own record of what it agreed to and the chain, and nothing else.
 
 > **Status:** pre-release and testnet only. `tempoChainReader` reads the lock and the keychain on Tempo, and `MemoryChain` stands in for the chain in tests.
 
@@ -34,6 +34,17 @@ Then it builds the acceptance, which names the lock's digest of the approval and
 
 A release consent gives the reserve back to the business, and the lock takes it only while the commitment's report count equals the count it names. It gives up the supplier's charge, a reported or confirmed one included. Nothing caps how long a consent lasts, so its disclosure states the exact expiry and how long that is from when it was prepared. `prepareReleaseConsent` reads the commitment from the lock and refuses another supplier's commitment, one the lock wouldn't release on consent, a consent that has expired, and a count the commitment has passed or can never reach. A consent for a later count than the commitment has becomes valid once reports reach it. That's preauthorization, so its disclosure says so, and `signReleaseConsent` refuses to sign it without `preauthorize: true` as well as the disclosure's id. Like `signAcceptance`, it signs only the frozen object its prepare call returned. The consent is signed by the supplier account's root key or an admin key, in Tempo's keychain envelope, and the signature is checked against the chain before it's returned.
 
+## Reports
+
+A report asks the lock to charge the business's reserve, so a supplier gets one to sign only from `prepareReport`, and signs it only with `signReport`. `prepareReport` refuses a kind, commitment id, evidence hash or amount it can't read with `message.invalid`. Then it reads the commitment from the lock and refuses with the first reason that applies.
+
+1. The lock comes from Avow's factory (`chain.lock_unknown`) and holds the commitment (`chain.reserve_missing`) with this supplier's signing key (`chain.supplier_mismatch`).
+2. The commitment is accepted (`report.not_reportable`), no report on it is open (`report.open`), and it has fewer than two reports (`report.limit_reached`).
+3. Its terms carry a charge of the reported kind (`report.kind_not_allowed`), and the amount is above zero and within that charge's most, which is the amount when the supplier names none (`report.amount_invalid`).
+4. The time is at or after that charge's earliest (`report.too_early`) and before the charge deadline (`commitment.ended`). The lock judges both by the chain's clock, so a supplier passes the latest block's time.
+
+Then it builds the report, which expires within ten minutes and never past the charge deadline, and a disclosure for the person who approves the signature. The disclosure states the charge and who it pays, how long Avow has to confirm or refer it, that the rest of the reserve goes back to the business once Avow answers, the contest window, the day-90 share and which of the commitment's two reports this is. The prepared report carries that number as `reportNumber`, and a supplier that keeps it can tell from the lock's report count whether the report landed, even once it's withdrawn. `signReport` takes the disclosure's id back, signs only the frozen object `prepareReport` returned, and refuses a key other than the signing key the lock holds. `reportCall` hands the signed report to the lock with exactly the fields the signature covers, which it takes from the spec's `REPORT_TYPES`. Anyone can send it, so a supplier pays the fee from whichever account it likes.
+
 ## References and payments
 
 `verifyCommitmentReference` checks that a commitment reference names a lock Avow's factory created and that the lock holds that commitment under the reference's terms hash. `verifyCommitmentTerms` goes further for anyone holding the terms and salt. The terms have to give that hash, the reference has to name the side the terms' backing secures, and the lock's token has to be one the caller accepts for the terms' currency. The lock then has to enforce exactly what the terms map to, in that token's units. It reads version 1 and version 2 terms, so a commitment made under version 1 stays checkable without Avow.
@@ -42,7 +53,7 @@ A release consent gives the reserve back to the business, and the lock takes it 
 
 ## What this doesn't protect
 
-These checks are an application-level gate. They protect a supplier that signs only what `prepareAcceptance` and `prepareReleaseConsent` return. The lock checks a signature and a digest, so it takes a correctly signed acceptance or consent however it was built, and a supplier whose signing tool skips this library gets none of these checks.
+These checks are an application-level gate. They protect a supplier that signs only what `prepareAcceptance`, `prepareReleaseConsent` and `prepareReport` return. The lock checks a signature and a digest, so it takes a correctly signed acceptance, consent or report however it was built, and a supplier whose signing tool skips this library gets none of these checks.
 
 The checks also rest on things the verifier doesn't prove.
 

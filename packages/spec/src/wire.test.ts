@@ -48,6 +48,7 @@ import {
   parseSectionDisclosure,
   parseSigned,
   parseTerms,
+  readCommitmentId,
   supplierAuthorizationJson,
   toWire,
 } from './wire.js'
@@ -251,6 +252,17 @@ describe('references and attributions over JSON', () => {
       value: lowerHex(attributions),
     })
     expect(parseAttributions(roundTrip([{ ...attributions[0], use: 'backing' }])).ok).toBe(false)
+  })
+})
+
+describe('a commitment id as text', () => {
+  it('reads 32 bytes of hex in lower case, and nothing else', () => {
+    const lower = `0x${'ab'.repeat(32)}`
+    expect(readCommitmentId(lower)).toBe(lower)
+    expect(readCommitmentId(`0x${'AB'.repeat(32)}`)).toBe(lower)
+    for (const text of ['', '0x1234', 'ab'.repeat(32), `${lower}0`, `${lower}00`, ` ${lower}`]) {
+      expect(readCommitmentId(text), text).toBeNull()
+    }
   })
 })
 

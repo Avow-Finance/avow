@@ -27,7 +27,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Reason codes | One stable code for every decision and every refusal |
 | Adapters | How a mandate maps onto an AP2 0.1 intent mandate and back, and how a commitment reads as an ERC-8183 job. [Adapters](adapters.md) sets out both mappings and what doesn't carry over, and points a new AP2 adapter at AP2 0.2 |
 | Keychain envelope | Tempo's keychain V2 envelope for signatures a business account's root or admin key makes, with an offline check and a check against Tempo's own verifier |
-| Wire forms | JSON schemas that parse amounts and times from decimal strings |
+| Wire forms | JSON schemas that parse amounts and times from decimal strings. `readCommitmentId` reads a commitment id from text, such as a command's argument, in the lower-case hex every message carries |
 
 ## The terms, version 2
 

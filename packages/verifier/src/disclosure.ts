@@ -2,13 +2,22 @@ import {
   type Approval,
   CHARGE_KINDS,
   type ChargeKind,
+  type ChargeReport,
   canonicalJson,
   type LockTiming,
   type RailToken,
   type ReleaseConsent,
   type ReleaseReason,
 } from '@avow-finance/spec'
-import { type Address, formatUnits, getAddress, type Hex, keccak256, stringToHex } from 'viem'
+import {
+  type Address,
+  formatUnits,
+  getAddress,
+  type Hex,
+  isAddressEqual,
+  keccak256,
+  stringToHex,
+} from 'viem'
 
 export interface DisclosureSection {
   heading: string
@@ -95,12 +104,27 @@ export function formatAmount(units: bigint, token: RailToken): string {
   return `${token.currency} ${formatUnits(units, token.decimals)} (${units} base units of ${getAddress(token.token)})`
 }
 
+/** The token a supplier lists that a lock on its chain holds reserves in, or null when it lists none. */
+export function listedToken(
+  tokens: readonly RailToken[],
+  chainId: number,
+  token: Address,
+): RailToken | null {
+  return tokens.find((t) => t.chainId === chainId && isAddressEqual(t.token, token)) ?? null
+}
+
+/** Base units of a lock's token as an amount of its currency, or as base units when it isn't listed. */
+export function formatLockAmount(units: bigint, token: RailToken | null): string {
+  return token ? formatAmount(units, token) : `${units} base units of the lock's token`
+}
+
 /** Basis points as a percentage. */
 export function formatShare(bps: number): string {
   return `${Number((bps / 100).toFixed(2))}%`
 }
 
-const CHARGE_NAMES: Record<ChargeKind, string> = {
+/** How each kind of charge reads to a person, at the start of a sentence. */
+export const CHARGE_NAMES: Record<ChargeKind, string> = {
   lateCancellation: 'A late cancellation',
   noShow: 'A no-show',
 }
@@ -172,6 +196,66 @@ export function acceptanceDisclosure(args: {
   })
 }
 
+/** The disclosure for a report of a charge, built from what the lock holds for the commitment. */
+export function reportDisclosure(args: {
+  digest: Hex
+  report: ChargeReport
+  lock: Address
+  chainId: number
+  /** The business account the lock holds the reserve for. */
+  account: Address
+  /** Where a charge pays, as the lock stores it. */
+  payee: Address
+  /** The lock's token, or null when the supplier doesn't list it. */
+  token: RailToken | null
+  chargeDeadline: bigint
+  contestWindow: bigint
+  day90SupplierShareBps: number
+  timing: LockTiming
+  /** The reports filed on the commitment before this one. */
+  reportCount: number
+}): Disclosure {
+  const { report: r, timing } = args
+  const amount = formatLockAmount(r.amount, args.token)
+  return seal({
+    title: 'Report a charge',
+    digest: args.digest,
+    preauthorization: null,
+    sections: [
+      {
+        heading: "What you're reporting",
+        lines: [
+          `You report ${CHARGE_NAMES[r.kind].toLowerCase()} on commitment ${r.commitmentId} on lock ${getAddress(args.lock)}, chain ${args.chainId}, held for business account ${getAddress(args.account)}.`,
+          `It charges ${amount}, paid to ${getAddress(args.payee)}.`,
+          `It names the evidence with hash ${r.evidenceHash}, so keep what that hash covers for a ruling.`,
+        ],
+      },
+      {
+        heading: 'What happens next',
+        lines: [
+          `Avow confirms or refers the report within ${formatDuration(timing.confirmWindow)} of the first report of its kind on this commitment, and a report it doesn't answer by then goes to a ruling.`,
+          'Once Avow answers the report, or it goes to a ruling unanswered, the lock keeps only the charge and gives the rest of the reserve back to the business.',
+          `A confirmed charge pays once its contest window of ${formatDuration(args.contestWindow)} closes, unless the business contests it or Avow pauses it first.`,
+          `The business can contest a report Avow hasn't confirmed at any time. A contested, paused or referred charge waits for a ruling, and one still unruled ${formatDuration(timing.day90)} after its pause pays you ${formatShare(args.day90SupplierShareBps)} of it if Avow confirmed it and nothing if Avow didn't.`,
+        ],
+      },
+      {
+        heading: 'Reports',
+        lines: [
+          `This is report ${args.reportCount + 1} of the two the commitment takes, and the lock takes no other report while it stands.`,
+          "Your supplier account's root key can withdraw it before Avow answers it and before its deadline.",
+        ],
+      },
+      {
+        heading: 'Expiry',
+        lines: [
+          `It stops working at ${formatTime(r.expiry)}, and the lock takes no report from ${formatTime(args.chargeDeadline)}.`,
+        ],
+      },
+    ],
+  })
+}
+
 /** The disclosure for a release consent. */
 export function releaseConsentDisclosure(args: {
   digest: Hex
@@ -186,9 +270,7 @@ export function releaseConsentDisclosure(args: {
   now: bigint
 }): Disclosure {
   const { consent: c } = args
-  const held = args.token
-    ? formatAmount(args.held, args.token)
-    : `${args.held} base units of the lock's token`
+  const held = formatLockAmount(args.held, args.token)
   const later = c.reportCount > args.currentCount
   const until = formatTime(c.expiry)
   return seal({

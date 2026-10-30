@@ -11,8 +11,9 @@ const DAY = 86_400n
 
 /**
  * The mandate the quickstart's administrator signs. The agent may reserve with one supplier, for
- * compute, up to `reserve` per booking and `open` bookings at once, for a week. Every booking
- * goes ahead without a person's approval, which a real business would set to fit its own rules.
+ * compute, up to `reserve` per booking and `open` bookings at once, for a week, and may cancel or
+ * start its bookings through Avow. Every booking goes ahead without a person's approval, which a
+ * real business would set to fit its own rules.
  */
 export function quickstartMandate(m: {
   businessId: string
@@ -31,7 +32,7 @@ export function quickstartMandate(m: {
     agentId: m.agentId,
     account: m.account,
     agentKey: m.agentKey,
-    actions: ['reserve'],
+    actions: ['reserve', 'cancel', 'start'],
     currency: 'USD',
     capPerCommitment: m.reserve,
     capOpenReserves: m.reserve * m.open,

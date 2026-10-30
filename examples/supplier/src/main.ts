@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import {
   type AvowResend,
+  type Call,
   moderatoClient,
   moderatoUsdToken,
+  type OnSent,
   requestSupplierAuthorization,
   sendOwn,
 } from '@avow-finance/sdk'
@@ -13,15 +15,26 @@ import {
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
-import { privateKeyToAccount } from 'viem/accounts'
+import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
-import { baseSettings, serveSettings } from './settings.js'
+import { reportArgs, reportCharge } from './report.js'
+import { baseSettings, reportSettings, serveSettings } from './settings.js'
 import { SupplierStore } from './store.js'
+
+type Client = ReturnType<typeof moderatoClient>
 
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
 const clock = () => BigInt(Math.floor(Date.now() / 1000))
+
+/** Sends a call from the signing key, which pays its own fee, as acceptances and reports go. */
+const sendFrom = (client: Client, signingKey: PrivateKeyAccount) => (call: Call, onSent: OnSent) =>
+  sendOwn({ client, account: signingKey, calls: [call], onSent })
+
+/** The latest finalized block's time, after which a transaction that expired can't land. */
+const finalizedTimeOf = (client: Client) => async () =>
+  (await client.getBlock({ blockTag: 'finalized' })).timestamp
 
 function keysOf(store: SupplierStore) {
   const keys = store.keys()
@@ -111,10 +124,10 @@ async function serve() {
     replay: new MemoryReplayGuard(),
     authorize: (c) => requestSupplierAuthorization(requests, c),
     signingKey,
-    send: (call, onSent) => sendOwn({ client, account: signingKey, calls: [call], onSent }),
+    send: sendFrom(client, signingKey),
     lockState: async (lock, commitmentId) =>
       (await readBacking(client, lock, commitmentId, 'buyer'))?.state ?? null,
-    finalizedTime: async () => (await client.getBlock({ blockTag: 'finalized' })).timestamp,
+    finalizedTime: finalizedTimeOf(client),
     now: clock,
     log,
   }
@@ -134,6 +147,36 @@ async function serve() {
   }
 }
 
+/**
+ * Reports a late cancellation, or a no-show with `--no-show`, on an accepted booking, then follows
+ * the lock until Avow confirms the charge or refers it to a ruling.
+ */
+async function report() {
+  const args = reportArgs(process.argv.slice(3))
+  const settings = reportSettings(process.env)
+  const store = new SupplierStore(settings.stateDir)
+  const { signingKey } = keysOf(store)
+  const client = moderatoClient(settings.rpcUrl)
+  await reportCharge(
+    {
+      store,
+      config: {
+        chainId: TEMPO_MODERATO,
+        signingKey: signingKey.address,
+        acceptedTokens: [moderatoUsdToken(settings.token)],
+      },
+      chain: tempoChainReader(client, { factory: settings.factory, chainId: TEMPO_MODERATO }),
+      signingKey,
+      send: sendFrom(client, signingKey),
+      chainTime: async () => (await client.getBlock({ blockTag: 'latest' })).timestamp,
+      finalizedTime: finalizedTimeOf(client),
+      wait: () => new Promise((resolve) => setTimeout(resolve, 5000)),
+      log,
+    },
+    args,
+  )
+}
+
 function profile() {
   const { stateDir } = baseSettings(process.env)
   const { account, signingKey } = keysOf(new SupplierStore(stateDir))
@@ -146,10 +189,10 @@ function profile() {
   )
 }
 
-const commands: Record<string, () => Promise<void> | void> = { init, serve, profile }
+const commands: Record<string, () => Promise<void> | void> = { init, serve, report, profile }
 const command = commands[process.argv[2] ?? '']
 if (!command) {
-  console.error('Usage: avow-supplier init | profile | serve')
+  console.error('Usage: avow-supplier init | profile | serve | report [commitmentId] [--no-show]')
   process.exit(2)
 }
 Promise.resolve(command()).catch((e: unknown) => {

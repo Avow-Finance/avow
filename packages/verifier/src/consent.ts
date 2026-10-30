@@ -2,7 +2,6 @@ import {
   type AvowDomain,
   digestOf,
   type HashSigner,
-  MESSAGE_VERSIONS,
   type RailToken,
   RELEASE_REASONS,
   type ReasonCode,
@@ -13,14 +12,12 @@ import {
   signForAccount,
   takesConsent,
 } from '@avow-finance/spec'
-import { type Address, type Hex, hexToBigInt, isAddressEqual, isHex, size, toHex } from 'viem'
-import { same } from './authorization.js'
-import type { ChainReader } from './chain.js'
-import { type Disclosure, disclosureId, releaseConsentDisclosure } from './disclosure.js'
-import { issue, wasIssued } from './issued.js'
-
-/** The most reports a lock takes for one commitment. */
-export const MAX_REPORTS = 2
+import { type Address, type Hex, isAddressEqual, isHex, size } from 'viem'
+import { type ChainReader, MAX_REPORTS } from './chain.js'
+import { type Disclosure, listedToken, releaseConsentDisclosure } from './disclosure.js'
+import { issue } from './issued.js'
+import { randomNonce } from './nonce.js'
+import { checkPrepared, signedMessage } from './signing.js'
 
 export interface ConsentConfig {
   chainId: number
@@ -65,8 +62,6 @@ export interface ReadyReleaseConsent {
 }
 
 export type PreparedReleaseConsent = ReadyReleaseConsent | { ok: false; reason: ReasonCode }
-
-const randomNonce = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(32))))
 
 /**
  * The supported way for a supplier account to get a release consent to sign. It reads the
@@ -118,9 +113,6 @@ export async function prepareReleaseConsent(
   }
   const d = { chainId: config.chainId, verifyingContract: request.lock }
   const digest = digestOf(releaseConsentTypedData(consent, d))
-  const token = config.acceptedTokens.find(
-    (a) => a.chainId === config.chainId && isAddressEqual(a.token, lockInfo.token),
-  )
   return issue({
     ok: true,
     consent,
@@ -134,7 +126,7 @@ export async function prepareReleaseConsent(
       chainId: config.chainId,
       account: lockInfo.account,
       held: b.held,
-      token: token ?? null,
+      token: listedToken(config.acceptedTokens, config.chainId, lockInfo.token),
       currentCount: b.reportCount,
       now: request.now,
     }),
@@ -154,24 +146,12 @@ export async function signReleaseConsent(
   confirmation: { disclosureId: Hex; preauthorize?: boolean },
   deps: { chain: ChainReader },
 ): Promise<Signed<ReleaseConsent>> {
-  if (!wasIssued(prepared)) {
-    throw new Error('Sign only the consent prepareReleaseConsent returned, as it returned it')
-  }
-  const digest = digestOf(releaseConsentTypedData(prepared.consent, prepared.domain))
-  const { disclosure } = prepared
-  if (
-    !same(digest, prepared.digest) ||
-    !same(disclosure.digest, digest) ||
-    !same(disclosureId(disclosure), disclosure.id)
-  ) {
-    throw new Error('The consent or its disclosure changed after prepareReleaseConsent built them')
-  }
-  if (!same(confirmation?.disclosureId, disclosure.id)) {
-    throw new Error(
-      "Show the person this consent's disclosure, and pass its id back once they confirm it",
-    )
-  }
-  if (disclosure.preauthorization && confirmation?.preauthorize !== true) {
+  const typedData = releaseConsentTypedData(prepared.consent, prepared.domain)
+  const digest = checkPrepared(prepared, typedData, confirmation, {
+    message: 'consent',
+    prepare: 'prepareReleaseConsent',
+  })
+  if (prepared.disclosure.preauthorization && confirmation?.preauthorize !== true) {
     throw new Error(
       'This consent names a later report count than the commitment has, so it releases the reserve after a report not yet filed. Pass preauthorize: true only if the person means that',
     )
@@ -180,12 +160,5 @@ export async function signReleaseConsent(
   if (!(await deps.chain.isAccountSignature(prepared.supplierAccount, digest, signature))) {
     throw new Error("The key that signed isn't the supplier account's root key or an admin key")
   }
-  return {
-    type: 'ReleaseConsent',
-    schemaVersion: MESSAGE_VERSIONS.ReleaseConsent,
-    chainId: prepared.domain.chainId,
-    lock: prepared.domain.verifyingContract,
-    message: prepared.consent,
-    signature,
-  }
+  return signedMessage(typedData, prepared.domain, prepared.consent, signature)
 }

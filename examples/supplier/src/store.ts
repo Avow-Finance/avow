@@ -8,13 +8,16 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import {
+  CHARGE_KINDS,
+  type ChargeKind,
   parseTerms,
   type Terms,
   type TermsAgreement,
   termsAgreementJson,
   toWire,
 } from '@avow-finance/spec'
-import type { Address, Hex } from 'viem'
+import { MAX_REPORTS } from '@avow-finance/verifier'
+import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { z } from 'zod'
 
@@ -38,10 +41,31 @@ export interface SupplierKeys {
 export const BOOKING_STATUSES = ['agreed', 'held', 'accepting', 'accepted', 'lapsed'] as const
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]
 
-/** The acceptance transaction last sent, recorded before its bytes went to the chain. */
-export interface SentAcceptance {
+/** The transaction last sent for a step, recorded before its bytes went to the chain. */
+export interface SentTransaction {
   hash: Hex
   validBefore: bigint | null
+}
+
+/**
+ * The report of a charge the supplier filed on a booking. The note says which booking and kind it
+ * reports and when, and the report names the note's keccak256 as its evidence, so the supplier
+ * keeps the note to show a ruling.
+ */
+export interface FiledReport {
+  commitmentId: Hex
+  /**
+   * Which of the commitment's reports it is, 1 or 2. The lock's report count reaches it once the
+   * report lands, which tells a landed report from one that never did, even after a withdrawal.
+   */
+  reportNumber: number
+  kind: ChargeKind
+  /** Base units of the lock's token. */
+  amount: bigint
+  note: string
+  evidenceHash: Hex
+  /** The report transaction last sent, once one has been. */
+  sent?: SentTransaction
 }
 
 /** What a booking holds whatever its status. */
@@ -65,7 +89,7 @@ interface BookingRecord {
  */
 export type Booking =
   | (BookingRecord & { status: 'agreed' | 'held' | 'lapsed'; sent?: never })
-  | (BookingRecord & { status: 'accepting' | 'accepted'; sent?: SentAcceptance })
+  | (BookingRecord & { status: 'accepting' | 'accepted'; sent?: SentTransaction })
 
 const lower = <T extends string>(s: string) => s.toLowerCase() as T
 const bytes32 = z
@@ -73,6 +97,20 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .transform(lower<Hex>)
 const keysJson = z.strictObject({ accountKey: bytes32, signingKey: bytes32 })
+const decimal = z
+  .string()
+  .regex(/^(0|[1-9][0-9]*)$/)
+  .transform((s) => BigInt(s))
+const sentJson = z.strictObject({ hash: bytes32, validBefore: decimal.nullable() })
+const reportJson = z.strictObject({
+  commitmentId: bytes32,
+  reportNumber: z.number().int().min(1).max(MAX_REPORTS),
+  kind: z.enum(Object.keys(CHARGE_KINDS) as [ChargeKind, ...ChargeKind[]]),
+  amount: decimal,
+  note: z.string().min(1).max(1000),
+  evidenceHash: bytes32,
+  sent: sentJson.optional(),
+})
 const bookingJson = z.strictObject({
   commitmentId: bytes32,
   chainId: z.number().int().positive(),
@@ -88,16 +126,7 @@ const bookingJson = z.strictObject({
     .regex(/^0x([0-9a-fA-F]{2})+$/)
     .transform(lower<Hex>),
   status: z.enum(BOOKING_STATUSES),
-  sent: z
-    .strictObject({
-      hash: bytes32,
-      validBefore: z
-        .string()
-        .regex(/^(0|[1-9][0-9]*)$/)
-        .transform((s) => BigInt(s))
-        .nullable(),
-    })
-    .optional(),
+  sent: sentJson.optional(),
 })
 
 /** Writes a file whole or not at all, so a crash never leaves half a record. */
@@ -118,16 +147,19 @@ function readJson(path: string): unknown {
 }
 
 /**
- * The supplier's state directory: its keys and one file per booking. The keys file is readable
- * only by the user who made it. Keep the directory out of version control and back it up, since
- * the keys can't be made again. Each file is parsed once as it's read, terms included, and one
- * that doesn't hold what it should is refused, so nothing unchecked from disk reaches the verifier.
+ * The supplier's state directory: its keys, one file per booking and one per report it files. The
+ * keys file is readable only by the user who made it. Keep the directory out of version control
+ * and back it up, since the keys can't be made again. Each file is parsed once as it's read, terms
+ * included, and one that doesn't hold what it should is refused, so nothing unchecked from disk
+ * reaches the verifier.
  */
 export class SupplierStore {
   readonly #bookings: string
+  readonly #reports: string
 
   constructor(readonly dir: string) {
     this.#bookings = join(dir, 'bookings')
+    this.#reports = join(dir, 'reports')
     mkdirSync(this.#bookings, { recursive: true, mode: 0o700 })
   }
 
@@ -223,4 +255,72 @@ export class SupplierStore {
   bookings(): Booking[] {
     return this.commitmentIds().flatMap((id) => this.booking(id) ?? [])
   }
+
+  /**
+   * The accepted booking agreed last, or null when none is accepted. Each agreement expires the
+   * same time after the agent offers it, so the one that expires last was agreed last. It refuses
+   * the first booking file that doesn't parse.
+   */
+  latestAccepted(): Booking | null {
+    let latest: Booking | null = null
+    for (const b of this.bookings()) {
+      if (b.status === 'accepted' && (!latest || agreedAfter(b, latest))) latest = b
+    }
+    return latest
+  }
+
+  #reportFile(commitmentId: Hex) {
+    return join(this.#reports, `${commitmentId.toLowerCase()}.json`)
+  }
+
+  /** The report filed on a commitment, or null when there's none. It refuses what `parseReport` does. */
+  report(commitmentId: Hex): FiledReport | null {
+    const path = this.#reportFile(commitmentId)
+    const json = readJson(path)
+    if (json === null) return null
+    return parseReport(json, commitmentId, (what) => new Error(`${path} ${what}`))
+  }
+
+  /**
+   * Saves the report filed on a commitment, in place of any saved for it before. What it would
+   * write gets every check a read makes first, so a save never leaves a file a later read refuses.
+   */
+  putReport(report: FiledReport) {
+    const path = this.#reportFile(report.commitmentId)
+    const text = `${JSON.stringify(toWire(report), null, 2)}\n`
+    parseReport(
+      JSON.parse(text),
+      report.commitmentId,
+      (what) => new Error(`${path} wasn't written, since it ${what}`),
+    )
+    mkdirSync(this.#reports, { recursive: true, mode: 0o700 })
+    writeAtomically(path, text)
+  }
+}
+
+/** Whether booking `a` was agreed after booking `b`, by when their agreements expire. */
+function agreedAfter(a: Booking, b: Booking): boolean {
+  const [x, y] = [a.agreement.expiry, b.agreement.expiry]
+  return x > y || (x === y && a.commitmentId > b.commitmentId)
+}
+
+/**
+ * The report some JSON holds for one commitment. It refuses JSON that doesn't hold a report, a
+ * report on another commitment, and an evidence hash that isn't its note's keccak256.
+ */
+function parseReport(
+  json: unknown,
+  commitmentId: Hex,
+  refuse: (what: string) => Error,
+): FiledReport {
+  const parsed = reportJson.safeParse(json)
+  if (!parsed.success) throw refuse("doesn't hold a report")
+  const { sent, ...report } = parsed.data
+  if (report.commitmentId !== commitmentId.toLowerCase()) {
+    throw refuse(`holds the report on ${report.commitmentId}`)
+  }
+  if (report.evidenceHash !== keccak256(stringToHex(report.note))) {
+    throw refuse("holds an evidence hash its note doesn't give")
+  }
+  return sent ? { ...report, sent } : report
 }

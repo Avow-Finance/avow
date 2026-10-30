@@ -492,6 +492,15 @@ export function parseAttributions(json: unknown): Parsed<Attribution[]> {
     : { ok: false, reason: 'message.invalid' }
 }
 
+/**
+ * Reads a commitment id from text, such as a command's argument, as 32 bytes of hex. It gives the
+ * id in lower case, the form every message and record carries, or null for text that isn't one.
+ */
+export function readCommitmentId(text: string): Hex | null {
+  const parsed = bytes32.safeParse(text)
+  return parsed.success ? parsed.data : null
+}
+
 export function parseMandate(json: unknown): Mandate {
   return mandateJson.parse(json)
 }
