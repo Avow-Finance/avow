@@ -10,6 +10,10 @@ navigation:
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+  - section: Reference
+    contents:
+      - page: Relay refusals
+        path: ./docs/pages/relay-refusals.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

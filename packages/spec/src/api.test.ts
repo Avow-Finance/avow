@@ -7,6 +7,7 @@ import {
   parseEnrollmentRequest,
   parseReserveApproval,
   parseReserveApprovalRequest,
+  parseSponsorshipRefusal,
   parseSponsorshipRequest,
   parseStartReceiptAnswer,
   parseStartReceiptRequest,
@@ -318,6 +319,41 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
     expect(parseApiError({ error: { reason: 'constructor', message: 'x' } })?.reason).toBeNull()
     for (const body of [null, 'bad gateway', {}, { error: { reason: 1, message: 'x' } }]) {
       expect(parseApiError(body)).toBeNull()
+    }
+  })
+
+  it('reads what a relay refusal adds to its error, whatever else the body holds', () => {
+    const read = (error: object) =>
+      parseSponsorshipRefusal(JSON.parse(JSON.stringify({ error: { message: 'x', ...error } })))
+    expect(read({ reason: 'sponsorship.over_cap', cap: 'fee', limit: '7200' })).toEqual({
+      reason: 'sponsorship.over_cap',
+      cap: 'fee',
+      limit: 7200n,
+    })
+    expect(read({ reason: 'sponsorship.rate_limited', retryAt: '1800000060', extra: 1 })).toEqual({
+      reason: 'sponsorship.rate_limited',
+      retryAt: 1_800_000_060n,
+    })
+    expect(read({ reason: 'sponsorship.simulation_failed', revert: '0xABCD' })).toEqual({
+      reason: 'sponsorship.simulation_failed',
+      revert: '0xabcd',
+    })
+    expect(
+      read({ reason: 'sponsorship.budget_spent', budget: 'business', retryAt: '1800086400' }),
+    ).toEqual({ reason: 'sponsorship.budget_spent', budget: 'business', retryAt: 1_800_086_400n })
+  })
+
+  it('reads no relay refusal from another error, or from one whose fields are missing or wrong', () => {
+    const read = (error: object) => parseSponsorshipRefusal({ error: { message: 'x', ...error } })
+    expect(read({ reason: 'sponsorship.refused' })).toBeNull()
+    expect(read({ reason: 'request.in_progress', retryAt: '1' })).toBeNull()
+    expect(read({ reason: 'sponsorship.over_cap', cap: 'tip', limit: '1' })).toBeNull()
+    expect(read({ reason: 'sponsorship.over_cap', cap: 'gas' })).toBeNull()
+    expect(read({ reason: 'sponsorship.rate_limited', retryAt: 60 })).toBeNull()
+    expect(read({ reason: 'sponsorship.simulation_failed', revert: '0x1' })).toBeNull()
+    expect(read({ reason: 'sponsorship.budget_spent', budget: 'team', retryAt: '1' })).toBeNull()
+    for (const body of [null, 'bad gateway', {}, { error: null }]) {
+      expect(parseSponsorshipRefusal(body)).toBeNull()
     }
   })
 
