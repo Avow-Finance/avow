@@ -3,13 +3,7 @@ import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
 import { type Hex, keccak256, stringToHex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  type Booking,
-  type FiledReport,
-  readCommitmentId,
-  type SentTransaction,
-  type SupplierStore,
-} from './store.js'
+import type { Booking, FiledReport, SentTransaction, SupplierStore } from './store.js'
 import { agreedBooking, COMMITMENT, NOW, tempStore } from './test/fixtures.js'
 
 let store: SupplierStore
@@ -95,14 +89,6 @@ describe("the supplier's state directory", () => {
     }
     writeFileSync(bookingFile(COMMITMENT), '{')
     expect(() => store.booking(COMMITMENT)).toThrow("isn't JSON")
-  })
-
-  it('reads a commitment id as the store writes one, and nothing else', () => {
-    expect(readCommitmentId(COMMITMENT.toUpperCase().replace('0X', '0x'))).toBe(COMMITMENT)
-    expect(readCommitmentId(COMMITMENT)).toBe(COMMITMENT)
-    for (const text of ['0x1234', `${COMMITMENT}00`, COMMITMENT.slice(2), ` ${COMMITMENT}`]) {
-      expect(readCommitmentId(text), text).toBeNull()
-    }
   })
 })
 

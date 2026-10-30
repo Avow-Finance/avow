@@ -96,11 +96,6 @@ const decimal = z
   .transform((s) => BigInt(s))
 const keysJson = z.strictObject({ rootKey: bytes32, agentKey: bytes32 })
 
-/** A commitment id as the store writes one, 32 bytes of hex in lower case, or null for anything else. */
-export function readCommitmentId(text: string): Hex | null {
-  const parsed = bytes32.safeParse(text)
-  return parsed.success ? parsed.data : null
-}
 const bookingJson = z.strictObject({
   commitmentId: bytes32,
   supplier: z.unknown(),

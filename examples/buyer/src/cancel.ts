@@ -8,14 +8,13 @@ import {
   type OnSent,
   SendError,
 } from '@avow-finance/sdk'
-import { describeReason, type ReasonCode } from '@avow-finance/spec'
+import { describeReason, type ReasonCode, readCommitmentId } from '@avow-finance/spec'
 import { formatTime, type LockedBacking } from '@avow-finance/verifier'
 import type { Hex } from 'viem'
 import {
   type BuyerStore,
   isSettled,
   neverFunded,
-  readCommitmentId,
   type SentCancellation,
   type SettledCancellation,
 } from './store.js'
@@ -212,7 +211,9 @@ function avowRefusal(e: unknown, id: Hex): unknown {
       { cause: e },
     )
   }
-  if (e.reason === 'message.invalid') {
+  // Only an answer that came with a 2xx is a cancellation Avow recorded. A refusal with the same
+  // reason, such as for a value in the body Avow can't store, recorded nothing.
+  if (e.reason === 'message.invalid' && e.status >= 200 && e.status < 300) {
     return new Error(
       `Avow answered the cancellation of ${id} with one this run didn't ask for. Avow keeps one cancellation per commitment and answers every later request with it, so an earlier run most likely got Avow's answer and stopped before saving it, and the booking is already cancelled at Avow. This quickstart can't read the time Avow recorded from an answer to another request.`,
       { cause: e },

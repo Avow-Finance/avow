@@ -1,5 +1,10 @@
 import { type Call, type OnSent, SendError } from '@avow-finance/sdk'
-import { type ChargeKind, describeReason, type HashSigner } from '@avow-finance/spec'
+import {
+  type ChargeKind,
+  describeReason,
+  type HashSigner,
+  readCommitmentId,
+} from '@avow-finance/spec'
 import {
   CHARGE_NAMES,
   type ChainReader,
@@ -15,7 +20,7 @@ import {
 } from '@avow-finance/verifier'
 import { type Hex, keccak256, stringToHex } from 'viem'
 import { showDisclosure } from './disclosure.js'
-import { type Booking, type FiledReport, readCommitmentId, type SupplierStore } from './store.js'
+import type { Booking, FiledReport, SupplierStore } from './store.js'
 
 export interface ReportChargeDeps {
   store: SupplierStore

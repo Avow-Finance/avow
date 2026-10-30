@@ -39,13 +39,9 @@ let receipts: Map<Hex, 'success' | 'reverted'>
 /** What happens to a cancellation sent to the lock. */
 let sendDoes: 'land' | 'fail' | 'land unseen'
 
-const refusal = (reason: ReasonCode) =>
-  new AvowApiError(describeReason(reason), {
-    status: reason === 'agent.revoked' ? 403 : 409,
-    reason,
-    requestId: id('the request'),
-    definite: true,
-  })
+/** A refusal Avow answers with this status, as the SDK throws it. */
+const refusal = (reason: ReasonCode, status = 409, message = describeReason(reason)) =>
+  new AvowApiError(message, { status, reason, requestId: id('the request'), definite: true })
 
 function deps(): CancelDeps {
   return {
@@ -359,11 +355,18 @@ describe('which booking it cancels', () => {
 
 describe("Avow's other answers", () => {
   it('says where a mandate that permits cancelling comes from, once the lock path has closed', async () => {
-    avowSays = { ok: false, reason: 'mandate.action_not_permitted' }
-    await expect(cancelBooking(deps(), null)).rejects.toThrow(
-      'Enrolling again keeps this mandate. A mandate that permits cancel and start comes from running init with a new STATE_DIR, having Avow register the new account and lock, and then running enroll.',
-    )
+    const cases: [string, typeof avowSays][] = [
+      ['the SDK, from the mandate it holds', { ok: false, reason: 'mandate.action_not_permitted' }],
+      ['Avow, from the mandate it holds', refusal('mandate.action_not_permitted', 403)],
+    ]
+    for (const [from, says] of cases) {
+      avowSays = says
+      await expect(cancelBooking(deps(), null), from).rejects.toThrow(
+        'Enrolling again keeps this mandate. A mandate that permits cancel and start comes from running init with a new STATE_DIR, having Avow register the new account and lock, and then running enroll.',
+      )
+    }
     expect(sent).toEqual([])
+    expect(store.cancellation(booking.commitmentId)).toBeNull()
   })
 
   it('names the answer Avow gives a cancellation it recorded for an earlier run', async () => {
@@ -382,6 +385,13 @@ describe("Avow's other answers", () => {
     )
   })
 
+  it('passes on a message.invalid refusal as Avow gave it, since Avow recorded nothing', async () => {
+    // What Avow answers when a value in the body can't be stored.
+    avowSays = refusal('message.invalid', 400, "A value in the body can't be stored")
+    await expect(cancelBooking(deps(), null)).rejects.toBe(avowSays)
+    expect(store.cancellation(booking.commitmentId)).toBeNull()
+  })
+
   it('says Avow may have recorded a cancellation it gave no definite answer to', async () => {
     avowSays = new AvowApiError('No definite answer from Avow.', {
       status: 0,
@@ -396,7 +406,7 @@ describe("Avow's other answers", () => {
   })
 
   it('passes on any other refusal as Avow gave it', async () => {
-    avowSays = refusal('agent.revoked')
+    avowSays = refusal('agent.revoked', 403)
     await expect(cancelBooking(deps(), null)).rejects.toBe(avowSays)
     expect(store.cancellation(booking.commitmentId)).toBeNull()
   })

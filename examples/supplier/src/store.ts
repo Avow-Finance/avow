@@ -97,13 +97,6 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .transform(lower<Hex>)
 const keysJson = z.strictObject({ accountKey: bytes32, signingKey: bytes32 })
-
-/** A commitment id as the store writes one, 32 bytes of hex in lower case, or null for anything else. */
-export function readCommitmentId(text: string): Hex | null {
-  const parsed = bytes32.safeParse(text)
-  return parsed.success ? parsed.data : null
-}
-
 const decimal = z
   .string()
   .regex(/^(0|[1-9][0-9]*)$/)

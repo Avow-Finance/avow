@@ -13,7 +13,7 @@ import { type Address, getAddress, type Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { quickstartMandate } from './plan.js'
-import { type BuyerSetup, BuyerStore, readCommitmentId } from './store.js'
+import { type BuyerSetup, BuyerStore } from './store.js'
 import { fundedBooking } from './test/bookings.js'
 
 // Every key is generated for the run, and every state directory is removed after its test.
@@ -285,13 +285,6 @@ describe("the business's bookings and cancellations", () => {
     // A settled cancellation is final.
     expect(() => store.saveCancellation(id, later)).toThrow('already shows the booking')
     expect(() => store.forgetSentCancellation(id)).toThrow(`holds no sent cancellation for ${id}`)
-  })
-
-  it('reads a commitment id as the store writes one, and nothing else', () => {
-    expect(readCommitmentId(`0x${'AB'.repeat(32)}`)).toBe(`0x${'ab'.repeat(32)}`)
-    for (const text of ['0x1234', `${'ab'.repeat(32)}`, `0x${'ab'.repeat(32)}0`, '']) {
-      expect(readCommitmentId(text), text).toBeNull()
-    }
   })
 
   it("refuses a cancellation file that doesn't hold one", async () => {
