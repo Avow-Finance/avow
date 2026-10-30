@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
   COMMITMENT_STATES,
+  CONSENT_OUTCOMES,
+  CONSENT_STATES,
   CONTESTED_STATES,
   type CommitmentState,
   canMove,
   ENDINGS,
   isContested,
   isEnding,
+  isOffChain,
+  OFF_CHAIN_STATES,
   OUTCOME_ENDINGS,
   TRANSITIONS,
+  takesConsent,
 } from './commitment.js'
+import { RELEASE_REASONS } from './eip712.js'
+import { RAIL_STATES } from './rail.js'
 
 /** Every state reachable from `start`, itself included, without passing through `avoid`. */
 function reachable(start: CommitmentState, avoid?: CommitmentState): Set<CommitmentState> {
@@ -49,7 +56,9 @@ describe('commitment states', () => {
     expect(canMove('accepted', 'charge_pending')).toBe(true)
     expect(canMove('charge_pending', 'charged')).toBe(true)
     expect(canMove('charge_pending', 'paused')).toBe(true)
+    expect(canMove('charge_pending', 'released')).toBe(true)
     expect(canMove('paused', 'resolved')).toBe(true)
+    expect(canMove('paused', 'released')).toBe(true)
   })
 
   it('refuses shortcuts the diagram leaves out', () => {
@@ -76,14 +85,32 @@ describe('commitment states', () => {
   it('carries a contest in exactly the states a commitment reaches only through one', () => {
     // A contest moves a pending charge to paused, and every state after paused keeps it.
     expect(TRANSITIONS.charge_pending).toContain('paused')
-    const contested = reachable('paused')
-    expect([...contested].sort()).toEqual([...CONTESTED_STATES].sort())
-    // No contested state can be reached without the contest, so none can lack one.
-    for (const state of reachable('draft', 'paused')) {
-      expect(contested.has(state), state).toBe(false)
-    }
+    const throughContest = reachable('paused')
+    const withoutContest = reachable('draft', 'paused')
+    const onlyThrough = [...throughContest].filter((s) => !withoutContest.has(s))
+    expect(onlyThrough.sort()).toEqual([...CONTESTED_STATES].sort())
     for (const state of COMMITMENT_STATES) {
-      expect(isContested(state), state).toBe(contested.has(state))
+      expect(isContested(state), state).toBe(onlyThrough.includes(state))
+    }
+    // A release comes either way, after a contest only through the supplier's consent.
+    expect([...throughContest].filter((s) => withoutContest.has(s))).toEqual(['released'])
+  })
+
+  it("moves each state the lock takes the supplier's consent in to a release", () => {
+    expect(COMMITMENT_STATES.filter(takesConsent)).toEqual(['accepted', 'charge_pending', 'paused'])
+    for (const state of CONSENT_STATES) expect(canMove(state, 'released'), state).toBe(true)
+    expect(takesConsent('none')).toBe(false)
+    // One kind of outcome for each reason a consent can give, each of them a release.
+    expect(CONSENT_OUTCOMES).toHaveLength(Object.keys(RELEASE_REASONS).length)
+    for (const kind of CONSENT_OUTCOMES) expect(OUTCOME_ENDINGS[kind], kind).toBe('released')
+  })
+
+  it('keeps a commitment off the chain until its reserve is locked', () => {
+    // Money reaches the lock when a commitment moves to reserved.
+    expect([...reachable('draft', 'reserved')].sort()).toEqual([...OFF_CHAIN_STATES].sort())
+    // The lock reports every other state for a backing.
+    for (const state of COMMITMENT_STATES) {
+      expect((RAIL_STATES as readonly string[]).includes(state), state).toBe(!isOffChain(state))
     }
   })
 })

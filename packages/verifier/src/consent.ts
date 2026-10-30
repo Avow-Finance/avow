@@ -11,6 +11,7 @@ import {
   releaseConsentTypedData,
   type Signed,
   signForAccount,
+  takesConsent,
 } from '@avow-finance/spec'
 import { type Address, type Hex, hexToBigInt, isAddressEqual, isHex, size, toHex } from 'viem'
 import { same } from './authorization.js'
@@ -97,8 +98,7 @@ export async function prepareReleaseConsent(
   const b = await chain.backing(request.lock, request.commitmentId, 'buyer')
   if (!b || b.state === 'none') return refuse('chain.reserve_missing')
   if (!isAddressEqual(b.supplier, config.account)) return refuse('chain.supplier_mismatch')
-  const releasable =
-    b.state === 'accepted' || b.state === 'charge_pending' || (b.state === 'paused' && !b.hasRuling)
+  const releasable = takesConsent(b.state) && !(b.state === 'paused' && b.hasRuling)
   if (!releasable) return refuse('consent.not_releasable')
   if (request.expiry <= request.now) return refuse('message.expired')
   const count = request.reportCount ?? b.reportCount

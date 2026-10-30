@@ -15,7 +15,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 
 | Part | What it does |
 | --- | --- |
-| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states, the moves between them, the contest and outcome a record holds in each, and the references a record cites. `parseCommitment` refuses a record whose state can't hold its contest or outcome |
+| Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states, the moves between them, the contest and outcome a record holds in each, and the references a record cites. `parseCommitment` refuses a record whose state can't hold its contest or outcome, or whose outcome's amounts don't fit its ending |
 | Terms | Version 2 terms: a header and five sections, each hashed apart, with templates for what each kind of commitment promises. GPU reservation is the first template |
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
 | References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
@@ -25,7 +25,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | Lock messages | The messages the lock checks: Avow's approval, the supplier's acceptance, report, evidence and release consent, and the actions a business or supplier account signs with its root or an admin key. The acceptance names the approval's digest (`approvalDigest`), so it covers every term the approval sets for the commitment, and the lock takes the consent only while the commitment's report count equals the one it names. Fixed digests in the tests match the lock contract's, and the signatures the SDK makes for one whole commitment are pinned, so a change to how the SDK signs one fails a pin |
 | Mandate check | The pure check Avow runs before it signs an approval, which the SDK can run before it asks |
 | Reason codes | One stable code for every decision and every refusal |
-| Adapters | How a mandate maps onto an AP2 intent mandate and back, and how a commitment reads as an ERC-8183 job. [Adapters](adapters.md) sets out both mappings and what doesn't carry over |
+| Adapters | How a mandate maps onto an AP2 0.1 intent mandate and back, and how a commitment reads as an ERC-8183 job. [Adapters](adapters.md) sets out both mappings and what doesn't carry over, and points a new AP2 adapter at AP2 0.2 |
 | Keychain envelope | Tempo's keychain V2 envelope for signatures a business account's root or admin key makes, with an offline check and a check against Tempo's own verifier |
 | Wire forms | JSON schemas that parse amounts and times from decimal strings |
 
@@ -90,7 +90,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1 | That message changes |
 | Terms | `version` inside the terms hash, 2 | The header, a section's schema, canonical JSON or the hashing changes |
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
-| Commitment record | `COMMITMENT_RECORD_VERSION`, 2 | The record's own fields change. Version 2 added the references a record cites, and a version 1 record reads as version 2 with none |
+| Commitment record | `COMMITMENT_RECORD_VERSION`, 3 | The record's own fields change. Version 2 added the references a record cites. Version 3 gave a reserve that went back at its release date its own kind of outcome, `reached_release_date`, which versions 1 and 2 recorded as `kept`, as they did the supplier's consent. A version 1 or 2 record reads as version 3, citing nothing when it's version 1. One that ended as `kept` stays version 2, so writing it back keeps its meaning |
 
 Every signed message names its version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A signed request to Avow's API carries a request id in place of the nonce, which names one operation. A reader refuses a version it doesn't know for that message type.
 
