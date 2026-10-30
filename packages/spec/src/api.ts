@@ -160,11 +160,53 @@ export type StartReceiptAnswer = { ok: true } | { ok: false; reason: ReasonCode 
 
 /**
  * What the API answers when it refuses a request outright, with a status of 400 or more, as
- * `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. Readers ignore any other field.
+ * `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. A refusal by Avow's relay adds
+ * the fields `SponsorshipRefusal` gives for its code. Readers ignore any other field.
  */
 export interface ApiError {
   error: { reason: ReasonCode; message: string }
 }
+
+/** The caps Avow's relay holds a transaction to: its gas, its fee per gas, and the most it could pay in fees. */
+export const SPONSORSHIP_CAPS = ['gas', 'fee_per_gas', 'fee'] as const
+export type SponsorshipCap = (typeof SPONSORSHIP_CAPS)[number]
+
+/** The budgets of Avow's relay, each counting gas over the last 24 hours. */
+export const SPONSORSHIP_BUDGETS = ['agent_key', 'business', 'supplier', 'relay'] as const
+export type SponsorshipBudget = (typeof SPONSORSHIP_BUDGETS)[number]
+
+/**
+ * What a refusal by Avow's relay adds to its error, so an agent can act on it without reading the
+ * message. Times are unix seconds by Avow's clock.
+ *
+ * - `sponsorship.over_cap` names the cap and its limit, in gas for `gas`, in attodollars a gas for
+ *   `fee_per_gas`, and in base units of the fee token for `fee`.
+ * - `sponsorship.rate_limited` gives the time the signing key can ask again.
+ * - `sponsorship.simulation_failed` carries the revert data the simulation returned, which is `0x`
+ *   when the transaction ran out of gas.
+ * - `sponsorship.budget_spent` names the budget and the time enough of it frees up for the
+ *   transaction at the latest. Gas held for a transaction that never lands frees up sooner.
+ */
+export type SponsorshipRefusal =
+  | { reason: 'sponsorship.over_cap'; cap: SponsorshipCap; limit: bigint }
+  | { reason: 'sponsorship.rate_limited'; retryAt: bigint }
+  | { reason: 'sponsorship.simulation_failed'; revert: Hex }
+  | { reason: 'sponsorship.budget_spent'; budget: SponsorshipBudget; retryAt: bigint }
+
+const sponsorshipRefusalJson = z.discriminatedUnion('reason', [
+  z.object({
+    reason: z.literal('sponsorship.over_cap'),
+    cap: z.enum(SPONSORSHIP_CAPS),
+    limit: u64,
+  }),
+  z.object({ reason: z.literal('sponsorship.rate_limited'), retryAt: u64 }),
+  z.object({ reason: z.literal('sponsorship.simulation_failed'), revert: hexBytes }),
+  z.object({
+    reason: z.literal('sponsorship.budget_spent'),
+    budget: z.enum(SPONSORSHIP_BUDGETS),
+    retryAt: u64,
+  }),
+])
 
 const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const decisionId = z.string().min(1).max(128)
@@ -458,4 +500,15 @@ export function parseApiError(
   if (!parsed.success) return null
   const { reason, message } = parsed.data.error
   return { reason: Object.hasOwn(REASON_CODES, reason) ? (reason as ReasonCode) : null, message }
+}
+
+/**
+ * Reads what a refusal by Avow's relay adds to an error body, or returns null for any other body,
+ * including a relay refusal whose fields don't parse. Other fields are ignored.
+ */
+export function parseSponsorshipRefusal(json: unknown): SponsorshipRefusal | null {
+  const outer = z.object({ error: z.unknown() }).safeParse(json)
+  if (!outer.success) return null
+  const parsed = sponsorshipRefusalJson.safeParse(outer.data.error)
+  return parsed.success ? parsed.data : null
 }

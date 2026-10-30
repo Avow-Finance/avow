@@ -221,8 +221,27 @@ describe('httpAvowApi', () => {
         .catch((x: unknown) => x)
       expect(e).toBeInstanceOf(AvowApiError)
       expect(e).toMatchObject({ status, reason, definite: true, message: `refused: ${reason}` })
+      expect((e as AvowApiError).sponsorship).toBeNull()
       const v = verified(seen[0] as Seen)
       expect(v.ok && v.value.credentials.requestId).toBe((e as AvowApiError).requestId)
+      expect(seen).toHaveLength(1)
+    }
+  })
+
+  it("stops at the relay's refusal with what it adds, such as when the key can ask again", async () => {
+    const cases = [
+      [429, 'sponsorship.rate_limited', { retryAt: 1_800_000_060n }],
+      [429, 'sponsorship.budget_spent', { budget: 'agent_key', retryAt: 1_800_086_400n }],
+      [422, 'sponsorship.over_cap', { cap: 'fee_per_gas', limit: 1_200_000_000n }],
+      [422, 'sponsorship.simulation_failed', { revert: '0x832f98b5' }],
+    ] as const
+    for (const [status, reason, details] of cases) {
+      const { seen, fetcher } = fakeApi([error(status, reason, details)])
+      const e = await client(fetcher)
+        .sponsor('0x1234')
+        .catch((x: unknown) => x)
+      expect(e).toMatchObject({ status, reason, definite: true })
+      expect((e as AvowApiError).sponsorship).toEqual({ reason, ...details })
       expect(seen).toHaveLength(1)
     }
   })

@@ -72,7 +72,15 @@ export const REASON_CODES = {
   'service.unavailable':
     "Avow couldn't read the records or the chain this request depends on, so it did nothing, and the same request can be sent again",
   'sponsorship.refused':
-    "Avow's relay pays only for a business account's own calls to its lock and approvals of the reserve token to that lock, within its gas and fee caps",
+    "Avow's relay pays only for a reserve the agent's own key signs for its business account, which approves the reserve token to the business's lock and reserves on it",
+  'sponsorship.over_cap':
+    "The transaction asks for more gas, or could cost more in fees, than Avow's relay pays for a transaction of its kind",
+  'sponsorship.rate_limited':
+    "The signing key has asked Avow's relay to pay more times in the last minute than the relay allows",
+  'sponsorship.simulation_failed':
+    "The transaction reverts when it runs on the latest block, so Avow's relay won't pay for it",
+  'sponsorship.budget_spent':
+    "Paying for the transaction would take one of Avow's relay budgets past the gas it allows in 24 hours",
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
   'commitment.unknown': 'Avow has no record of this commitment',

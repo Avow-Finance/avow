@@ -75,10 +75,11 @@ A client makes a new request id for each operation, including each poll for some
 | 403 | The signer is known but may not do this now, such as `agent.revoked` or `mandate.expired` | An error |
 | 404 | `business.unknown`, `supplier.unknown` or `commitment.unknown` | An error |
 | 409 | `request.id_reused` or `request.in_progress` | An error |
-| 422 | `sponsorship.refused` | An error |
+| 422 | `sponsorship.refused`, `sponsorship.over_cap` or `sponsorship.simulation_failed`, when Avow's relay won't pay for a transaction | An error |
+| 429 | `sponsorship.rate_limited` or `sponsorship.budget_spent`, when Avow's relay can pay again from the time the error gives | An error |
 | 503 | `service.unavailable`, when Avow couldn't read what the request depends on | An error |
 
-An error body is `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. A reader ignores any other field, and treats a reason code it doesn't know as no code.
+An error body is `{ "error": { "reason": "<code>", "message": "<sentence>" } }`. A reader ignores any other field, and treats a reason code it doesn't know as no code. A refusal by Avow's relay adds the fields an agent needs to act on it, such as the time it can ask again, and [relay refusals](../../docs/relay-refusals.md) sets out each one.
 
 ## Who signed, and what they may do
 
@@ -88,7 +89,7 @@ A valid signature tells Avow which key sent the request. It grants nothing on it
 | --- | --- |
 | Enrollment | The mandate is signed for the header's lock and names the signing key. The business owns that lock and is verified, its administrator signed the mandate as the business account, the mandate hasn't expired, and the key is on the chain bound to the mandate's hash. While an agent already enrolled has commitments whose charge deadline hasn't passed, it takes a new mandate only when that mandate lasts until each one's window ends and still permits each of `start` and `cancel` that its current mandate permits, so a new mandate can't strand a booking. A mandate that ends too soon is refused with `mandate.ends_before_window`, and one that drops `start` or `cancel` with `mandate.action_not_permitted` |
 | Reserve approval | The key is an enrolled agent of the business that owns the header's lock, and isn't revoked. The request names the signing key as its agent key, and the agreement's buyer signature is that key's. Then the full reserve check runs, including the mandate, its scope and the key on the chain |
-| Sponsorship | The key is an enrolled agent of the business that owns the header's lock, isn't revoked, and its mandate is current. The transaction's sender is that business's account, and every call is one the relay pays for and the mandate permits |
+| Sponsorship | The key is an enrolled agent of the business that owns the header's lock, isn't revoked, and its mandate is current. The transaction is signed by that same key for the business's account, and every call is one the relay pays for and the mandate permits |
 | Supplier authorization | The key is the signing key of the supplier the commitment names, the commitment's agent isn't revoked, and the commitment's reserve is on the chain and not yet accepted |
 | Cancellation, start request and start receipt | The key is the enrolled agent that made the commitment, and Avow hasn't revoked the agent or its mandate. On the chain the key is active, unexpired at the request's time and bound to the agent's current mandate, so a business that deactivates a key stops it from the next request for which Avow reads the chain. Recording a cancellation or a start request also needs a current mandate that permits it |
 
