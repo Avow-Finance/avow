@@ -15,13 +15,19 @@ import {
 } from 'viem'
 import { canonicalJson } from './canonical.js'
 import {
+  DEPENDENCY_CHECKS,
+  type DependencyCheck,
+  dependenciesProblem,
+  isChainedTerms,
+} from './dependencies.js'
+import {
   APPROVAL_TYPES,
   type Approval,
   CHARGE_KINDS,
   type Charge,
   type SupplierAuthorization,
 } from './eip712.js'
-import { type GpuReservationTerms, validateGpuReservation } from './gpu-reservation.js'
+import { validateGpuReservation } from './gpu-reservation.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -34,6 +40,8 @@ import {
 } from './terms-v1.js'
 import {
   AMOUNT_DECIMALS,
+  CHAINED_TERMS_VERSION,
+  type ChainedTerms,
   type Currency,
   type Mandate,
   type RemedyCharge,
@@ -45,7 +53,10 @@ import {
   type Terms,
 } from './types.js'
 
-/** Terms of any version this code reads: version 2, and version 1 for commitments made under it. */
+/**
+ * Terms of any version a plain booking takes: version 2, and version 1 for commitments made under
+ * it. Every check and mapping that takes these refuses version 3, which goes through its own.
+ */
 export type AnyTerms = Terms | ComputeTermsV1
 
 /** The five sections of version 2 terms, in the order the terms hash takes their hashes. */
@@ -58,17 +69,37 @@ export const TERMS_SECTIONS = [
 ] as const
 export type TermsSection = (typeof TERMS_SECTIONS)[number]
 
+/** The six sections of version 3 terms, version 2's five and then `dependencies`, in hash order. */
+export const CHAINED_TERMS_SECTIONS = [...TERMS_SECTIONS, 'dependencies'] as const
+export type ChainedTermsSection = (typeof CHAINED_TERMS_SECTIONS)[number]
+
 /** The label a version 2 terms hash starts from. No other Avow hash uses it. */
 export const TERMS_LABEL = 'avow:terms:v2'
 
-/** The label a section's hash starts from, such as `avow:terms:v2:remedies`. */
-export function sectionLabel(section: TermsSection): string {
-  return `${TERMS_LABEL}:${section}`
+/** The label a version 3 terms hash starts from. No other Avow hash uses it. */
+export const CHAINED_TERMS_LABEL = 'avow:terms:v3'
+
+/**
+ * The label of the version that brought in a section. Version 3 hashes version 2's five sections
+ * exactly as version 2 does, and only `dependencies` starts from its own label.
+ */
+const introducedBy = (section: ChainedTermsSection) =>
+  section === 'dependencies' ? CHAINED_TERMS_LABEL : TERMS_LABEL
+
+/**
+ * The label a section's hash starts from, such as `avow:terms:v2:remedies`, or
+ * `avow:terms:v3:dependencies` for the section version 3 adds.
+ */
+export function sectionLabel(section: ChainedTermsSection): string {
+  return `${introducedBy(section)}:${section}`
 }
 
-/** The HKDF info that derives a section's salt, such as `avow:terms:v2:salt:remedies`. */
-export function sectionSaltLabel(section: TermsSection): string {
-  return `${TERMS_LABEL}:salt:${section}`
+/**
+ * The HKDF info that derives a section's salt, such as `avow:terms:v2:salt:remedies`, or
+ * `avow:terms:v3:salt:dependencies` for the section version 3 adds.
+ */
+export function sectionSaltLabel(section: ChainedTermsSection): string {
+  return `${introducedBy(section)}:salt:${section}`
 }
 
 /** The part of version 2 terms hashed in the clear. It says how to read the five sections. */
@@ -79,24 +110,51 @@ export interface TermsHeader {
   amountDecimals: typeof AMOUNT_DECIMALS
 }
 
-export function termsHeader(t: Terms): TermsHeader {
-  return {
-    version: t.version,
-    template: t.template,
-    currency: t.currency,
-    amountDecimals: t.amountDecimals,
-  }
+/**
+ * The part of version 3 terms hashed in the clear. It says how to read the six sections and who
+ * checks the bookings the dependencies section names, so a buyer shown that section only as its
+ * digest still reads the setting and checks it against the terms hash.
+ */
+export interface ChainedTermsHeader extends Omit<TermsHeader, 'version'> {
+  version: typeof CHAINED_TERMS_VERSION
+  dependencyCheck: DependencyCheck
 }
 
-/** The five sections of version 2 terms by name. */
-export function termsSections(t: Terms): Record<TermsSection, unknown> {
-  return {
+/** Anything that carries a version 3 header's fields, such as the terms or the buyer's view. */
+type ChainedHeaderFields = Pick<ChainedTerms, keyof ChainedTermsHeader>
+
+export function termsHeader(t: Terms): TermsHeader
+export function termsHeader(t: ChainedHeaderFields): ChainedTermsHeader
+export function termsHeader(t: Terms | ChainedHeaderFields): TermsHeader | ChainedTermsHeader
+export function termsHeader(t: Terms | ChainedHeaderFields): TermsHeader | ChainedTermsHeader {
+  const header = { template: t.template, currency: t.currency, amountDecimals: t.amountDecimals }
+  return t.version === CHAINED_TERMS_VERSION
+    ? { version: t.version, ...header, dependencyCheck: t.dependencyCheck }
+    : { version: t.version, ...header }
+}
+
+/** The names of the sections terms of this version hold, in hash order. */
+function sectionNames(t: Terms | ChainedTerms): readonly ChainedTermsSection[] {
+  return isChainedTerms(t) ? CHAINED_TERMS_SECTIONS : TERMS_SECTIONS
+}
+
+/** The five sections of version 2 terms by name, or version 3's six. */
+export function termsSections(t: Terms): Record<TermsSection, unknown>
+export function termsSections(t: ChainedTerms): Record<ChainedTermsSection, unknown>
+export function termsSections(
+  t: Terms | ChainedTerms,
+): Partial<Record<ChainedTermsSection, unknown>>
+export function termsSections(
+  t: Terms | ChainedTerms,
+): Partial<Record<ChainedTermsSection, unknown>> {
+  const five = {
     subject: t.subject,
     consideration: t.consideration,
     remedies: t.remedies,
     resolution: t.resolution,
     backing: t.backing,
   }
+  return isChainedTerms(t) ? { ...five, dependencies: t.dependencies } : five
 }
 
 /** The fields version 2 terms hold at the top level, the header's four and the five sections. */
@@ -108,8 +166,74 @@ const TERMS_FIELDS: readonly string[] = [
   ...TERMS_SECTIONS,
 ]
 
+/**
+ * The fields version 3 terms hold at the top level, version 2's, the header's setting for who
+ * checks the bookings relied on, and the dependencies section.
+ */
+const CHAINED_TERMS_FIELDS: readonly string[] = [...TERMS_FIELDS, 'dependencyCheck', 'dependencies']
+
+/** The top-level fields of each version this code hashes in sections. */
+const FIELDS_BY_VERSION = new Map<unknown, readonly string[]>([
+  [TERMS_VERSION, TERMS_FIELDS],
+  [CHAINED_TERMS_VERSION, CHAINED_TERMS_FIELDS],
+])
+
+/** The versions that hash their terms in sections, so a section of them can be shown on its own. */
+export const SECTIONED_TERMS_VERSIONS: readonly unknown[] = [...FIELDS_BY_VERSION.keys()]
+
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * A section given only as its hash, under its label, in place of its content. Version 3 terms the
+ * buyer is shown when Avow checks the bookings relied on carry their dependencies section this way.
+ */
+export interface ElidedSection {
+  /** The section's label, such as `avow:terms:v3:dependencies`. */
+  label: string
+  /** The section's hash, as `sectionHash` gives it. */
+  digest: Hex
+}
+
+/**
+ * Whether a value stands in for a section by its digest. A reader that needs the section in clear
+ * refuses one with `dependency.elided`, and never reads it as a section with nothing in it.
+ */
+export function isElidedSection(value: unknown): value is ElidedSection {
+  return isPlainObject(value) && 'digest' in value
+}
+
+/**
+ * What keeps sectioned terms of one of these versions from being hashed, or null when nothing
+ * does. Version 1 terms, which have no `version` key, pass when `withV1` says they may.
+ */
+function shapeProblem(
+  terms: unknown,
+  versions: readonly unknown[],
+  withV1: boolean,
+): ReasonCode | null {
+  if (!isPlainObject(terms)) return 'terms.invalid'
+  if (isTermsV1(terms)) return withV1 ? null : 'terms.version_unknown'
+  const expected = versions.includes(terms.version) ? FIELDS_BY_VERSION.get(terms.version) : null
+  if (!expected) return 'terms.version_unknown'
+  const chained = terms.version === CHAINED_TERMS_VERSION
+  // Before the fields are counted, so the buyer's whole view gets this reason too.
+  if (chained && isElidedSection(terms.dependencies)) return 'dependency.elided'
+  const fields = Object.keys(terms).filter((k) => terms[k] !== undefined)
+  if (expected.some((f) => !fields.includes(f))) return 'terms.incomplete'
+  if (fields.length !== expected.length) return 'terms.invalid'
+  if (!TERMS_SECTIONS.every((section) => isPlainObject(terms[section]))) return 'terms.invalid'
+  if (chained && !Array.isArray(terms.dependencies)) return 'terms.invalid'
+  if (chained && !(DEPENDENCY_CHECKS as readonly unknown[]).includes(terms.dependencyCheck)) {
+    return 'terms.invalid'
+  }
+  try {
+    canonicalJson(terms)
+  } catch {
+    return 'terms.invalid'
+  }
+  return null
+}
 
 /**
  * What keeps terms from being hashed, or null when nothing does. Version 2 terms hold exactly
@@ -120,25 +244,28 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * anything else is `terms.invalid`. Terms with no `version` key are version 1, and any other field
  * set to undefined counts as left out, as JSON leaves it out. Version 1 terms hash every field they
  * hold, so `validateTerms` checks them on its own.
+ *
+ * Version 3 terms are refused as a version this reads, as are their checks, since a booking that
+ * relies on others is sound only once those bookings are read. `chainedTermsShapeProblem` reads
+ * version 3 alone, for a path that also runs that check.
  */
 export function termsShapeProblem(terms: unknown): ReasonCode | null {
-  if (!isPlainObject(terms)) return 'terms.invalid'
-  if (isTermsV1(terms)) return null
-  if (terms.version !== TERMS_VERSION) return 'terms.version_unknown'
-  const fields = Object.keys(terms).filter((k) => terms[k] !== undefined)
-  if (TERMS_FIELDS.some((f) => !fields.includes(f))) return 'terms.incomplete'
-  if (fields.length !== TERMS_FIELDS.length) return 'terms.invalid'
-  if (!TERMS_SECTIONS.every((section) => isPlainObject(terms[section]))) return 'terms.invalid'
-  try {
-    canonicalJson(terms)
-  } catch {
-    return 'terms.invalid'
-  }
-  return null
+  return shapeProblem(terms, [TERMS_VERSION], true)
 }
 
+/**
+ * What keeps version 3 terms from being hashed, or null when nothing does. They hold version 2's
+ * fields, a `dependencyCheck` of `buyer` or `avow`, and the dependencies section, which is a list.
+ * Terms carrying that section only as its digest are `dependency.elided`, since these are the
+ * terms in full, and every other version is `terms.version_unknown`.
+ */
+export function chainedTermsShapeProblem(terms: unknown): ReasonCode | null {
+  return shapeProblem(terms, [CHAINED_TERMS_VERSION], false)
+}
+
+/** Throws on terms that can't be hashed, of version 1, 2 or 3. */
 function assertShape(terms: unknown): void {
-  const problem = termsShapeProblem(terms)
+  const problem = shapeProblem(terms, SECTIONED_TERMS_VERSIONS, true)
   if (problem) throw new TypeError(`These terms can't be hashed (${problem})`)
 }
 
@@ -149,28 +276,47 @@ function checkSalt(salt: Hex): void {
 
 /**
  * A section's salt. It's HKDF-SHA256 (RFC 5869) with the commitment's 32-byte salt as the input
- * keying material, no HKDF salt, the UTF-8 bytes of `avow:terms:v2:salt:<section>` as the info,
- * and 32 bytes of output. Showing one section's salt reveals no other section's salt and not the
- * commitment's.
+ * keying material, no HKDF salt, the UTF-8 bytes of the section's salt label as the info, and 32
+ * bytes of output. The label is `avow:terms:v2:salt:<section>`, or
+ * `avow:terms:v3:salt:dependencies` for the section version 3 adds. Showing one section's salt
+ * reveals no other section's salt and not the commitment's.
  */
-export function sectionSalt(salt: Hex, section: TermsSection): Hex {
+export function sectionSalt(salt: Hex, section: ChainedTermsSection): Hex {
   checkSalt(salt)
   const info = stringToBytes(sectionSaltLabel(section))
   return bytesToHex(hkdf(sha256, hexToBytes(salt), undefined, info, 32))
 }
 
-/** A section as it's hashed. The arbiter's address is lower case, so letter case can't change it. */
-function hashedForm(section: TermsSection, content: unknown): unknown {
-  if (section !== 'resolution' || content === null || typeof content !== 'object') return content
-  const arbiter = (content as { arbiter?: unknown }).arbiter
-  return typeof arbiter === 'string' ? { ...content, arbiter: arbiter.toLowerCase() } : content
+/** An object with these string fields in lower case, and anything else as it is. */
+function lowerFields(content: unknown, fields: readonly string[]): unknown {
+  if (content === null || typeof content !== 'object' || Array.isArray(content)) return content
+  const lowered: Record<string, unknown> = { ...content }
+  for (const f of fields) {
+    const value = lowered[f]
+    if (typeof value === 'string') lowered[f] = value.toLowerCase()
+  }
+  return lowered
 }
 
 /**
- * A section's hash: keccak256 of the ABI encoding of the string `avow:terms:v2:<section>`, the
- * section's own salt as bytes32, and the section's canonical JSON as a string.
+ * A section as it's hashed. The arbiter's address is lower case, and so are each dependency's
+ * lock, commitment id and terms hash, so letter case can't change the hash.
  */
-export function sectionHash(section: TermsSection, content: unknown, ownSalt: Hex): Hex {
+function hashedForm(section: ChainedTermsSection, content: unknown): unknown {
+  if (section === 'resolution') return lowerFields(content, ['arbiter'])
+  if (section !== 'dependencies' || !Array.isArray(content)) return content
+  return content.map((entry: unknown) => {
+    if (entry === null || typeof entry !== 'object' || !('on' in entry)) return entry
+    return { ...entry, on: lowerFields(entry.on, ['lock', 'commitmentId', 'termsHash']) }
+  })
+}
+
+/**
+ * A section's hash: keccak256 of the ABI encoding of the section's label, such as
+ * `avow:terms:v2:<section>` or `avow:terms:v3:dependencies`, the section's own salt as bytes32,
+ * and the section's canonical JSON as a string.
+ */
+export function sectionHash(section: ChainedTermsSection, content: unknown, ownSalt: Hex): Hex {
   if (!isHex(ownSalt) || size(ownSalt) !== 32)
     throw new TypeError('A section salt must be 32 bytes')
   return keccak256(
@@ -211,49 +357,98 @@ export function termsHashFromSections(header: TermsHeader, hashes: Record<TermsS
   )
 }
 
-/** Each section's hash under the commitment's salt. */
-export function sectionHashes(t: Terms, salt: Hex): Record<TermsSection, Hex> {
+/**
+ * The version 3 terms hash from the header and the section hashes: keccak256 of the ABI encoding
+ * of the string `avow:terms:v3`, the header's canonical JSON as a string, and the hashes of
+ * subject, consideration, remedies, resolution, backing and dependencies as six bytes32, in that
+ * order.
+ */
+export function chainedTermsHashFromSections(
+  header: ChainedTermsHeader,
+  hashes: Record<ChainedTermsSection, Hex>,
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: 'string' },
+        { type: 'string' },
+        ...CHAINED_TERMS_SECTIONS.map(() => ({ type: 'bytes32' }) as const),
+      ],
+      [CHAINED_TERMS_LABEL, canonicalJson(header), ...CHAINED_TERMS_SECTIONS.map((s) => hashes[s])],
+    ),
+  )
+}
+
+/** Each section's hash under the commitment's salt, five for version 2 terms and six for version 3. */
+export function sectionHashes(t: Terms, salt: Hex): Record<TermsSection, Hex>
+export function sectionHashes(t: ChainedTerms, salt: Hex): Record<ChainedTermsSection, Hex>
+export function sectionHashes(
+  t: Terms | ChainedTerms,
+  salt: Hex,
+): Partial<Record<ChainedTermsSection, Hex>>
+export function sectionHashes(
+  t: Terms | ChainedTerms,
+  salt: Hex,
+): Partial<Record<ChainedTermsSection, Hex>> {
   const sections = termsSections(t)
-  const hash = (s: TermsSection) => sectionHash(s, sections[s], sectionSalt(salt, s))
-  return {
-    subject: hash('subject'),
-    consideration: hash('consideration'),
-    remedies: hash('remedies'),
-    resolution: hash('resolution'),
-    backing: hash('backing'),
-  }
+  const hashes: Partial<Record<ChainedTermsSection, Hex>> = {}
+  for (const s of sectionNames(t)) hashes[s] = sectionHash(s, sections[s], sectionSalt(salt, s))
+  return hashes
 }
 
 /**
- * The salted terms hash the lock stores and every signed message names. Version 2 terms hash
- * their header and sections as above. Version 1 terms keep the hash they were signed under.
- * Throws on terms `termsShapeProblem` refuses, so no field ever sits outside the hash.
+ * The salted terms hash the lock stores and every signed message names. Version 2 and version 3
+ * terms hash their header and sections as above. Version 1 terms keep the hash they were signed
+ * under. Throws on version 1 or 2 terms `termsShapeProblem` refuses and on version 3 terms
+ * `chainedTermsShapeProblem` refuses, so no field ever sits outside the hash.
  */
-export function termsHash(terms: AnyTerms, salt: Hex): Hex {
+export function termsHash(terms: AnyTerms | ChainedTerms, salt: Hex): Hex {
   assertShape(terms)
   if (isTermsV1(terms)) return termsHashV1(terms, salt)
+  if (isChainedTerms(terms)) {
+    return chainedTermsHashFromSections(termsHeader(terms), sectionHashes(terms, salt))
+  }
   return termsHashFromSections(termsHeader(terms), sectionHashes(terms, salt))
 }
 
 /** One section shown on its own, with what proves it belongs to a terms hash. */
 export interface SectionDisclosure {
-  header: TermsHeader
-  section: TermsSection
+  header: TermsHeader | ChainedTermsHeader
+  /** One of the five sections of version 2 terms, or one of the six of version 3. */
+  section: ChainedTermsSection
   /** The section as the terms hold it. */
   content: unknown
   /** This section's own salt. The commitment's salt never leaves the parties. */
   salt: Hex
-  /** The hashes of the four sections not shown. */
-  others: Partial<Record<TermsSection, Hex>>
+  /** The hashes of every other section the header's version holds. */
+  others: Partial<Record<ChainedTermsSection, Hex>>
 }
 
-/** Shows one section of the terms, with its own salt and the other four sections' hashes. */
-export function discloseSection(terms: Terms, salt: Hex, section: TermsSection): SectionDisclosure {
+/**
+ * Shows one section of the terms, with its own salt and the hashes of every other section, four
+ * for version 2 terms and five for version 3.
+ */
+export function discloseSection(terms: Terms, salt: Hex, section: TermsSection): SectionDisclosure
+export function discloseSection(
+  terms: ChainedTerms,
+  salt: Hex,
+  section: ChainedTermsSection,
+): SectionDisclosure
+export function discloseSection(
+  terms: Terms | ChainedTerms,
+  salt: Hex,
+  section: ChainedTermsSection,
+): SectionDisclosure {
   assertShape(terms)
   if (isTermsV1(terms)) throw new TypeError('Version 1 terms have no sections to show')
+  const names = sectionNames(terms)
+  if (!names.includes(section)) throw new TypeError(`These terms have no ${section} section`)
   const hashes = sectionHashes(terms, salt)
-  const others: Partial<Record<TermsSection, Hex>> = {}
-  for (const s of TERMS_SECTIONS) if (s !== section) others[s] = hashes[s]
+  const others: Partial<Record<ChainedTermsSection, Hex>> = {}
+  for (const s of names) {
+    const hash = hashes[s]
+    if (s !== section && hash !== undefined) others[s] = hash
+  }
   return {
     header: termsHeader(terms),
     section,
@@ -265,30 +460,34 @@ export function discloseSection(terms: Terms, salt: Hex, section: TermsSection):
 
 /**
  * Checks a shown section against the terms hash a lock or a signed message holds. It needs only
- * the section, its own salt and the other four hashes. `parseSectionDisclosure` checks the
- * section's shape before a reader relies on what it says.
+ * the section, its own salt and the hashes of the other sections its header's version holds.
+ * `parseSectionDisclosure` checks the section's shape before a reader relies on what it says.
  */
 export function checkSectionDisclosure(d: SectionDisclosure, expected: Hex): ReasonCode | null {
-  if (d.header.version !== TERMS_VERSION) return 'terms.version_unknown'
+  const chained = d.header.version === CHAINED_TERMS_VERSION
+  if (!chained && d.header.version !== TERMS_VERSION) return 'terms.version_unknown'
   if (!(TEMPLATE_IDS as readonly string[]).includes(d.header.template)) {
     return 'terms.template_unknown'
   }
-  if (!(TERMS_SECTIONS as readonly string[]).includes(d.section)) return 'terms.invalid'
-  for (const s of TERMS_SECTIONS) {
+  const names: readonly ChainedTermsSection[] = chained ? CHAINED_TERMS_SECTIONS : TERMS_SECTIONS
+  if (!names.includes(d.section)) return 'terms.invalid'
+  for (const s of names) {
     const present = d.others[s] !== undefined
     if (present === (s === d.section)) return 'terms.invalid'
   }
   const hashes = {
     ...d.others,
     [d.section]: sectionHash(d.section, d.content, d.salt),
-  } as Record<TermsSection, Hex>
-  const actual = termsHashFromSections(d.header, hashes)
+  } as Record<ChainedTermsSection, Hex>
+  const actual = chained
+    ? chainedTermsHashFromSections(d.header as ChainedTermsHeader, hashes)
+    : termsHashFromSections(d.header as TermsHeader, hashes)
   return actual.toLowerCase() === expected.toLowerCase() ? null : 'terms.hash_mismatch'
 }
 
 /** Each template's own rules, which run after the core's. */
 const TEMPLATE_RULES: { readonly [T in TemplateId]: (t: Terms) => ReasonCode | null } = {
-  'gpu-reservation/1': (t) => validateGpuReservation(t as GpuReservationTerms),
+  'gpu-reservation/1': (t) => validateGpuReservation(t),
 }
 
 /** Charges come in the order of the lock's codes, at most one of each kind, each with an amount. */
@@ -309,12 +508,45 @@ function checkCharges(charges: readonly RemedyCharge[]): ReasonCode | null {
  * Checks terms on their own, before any mandate, and returns null when they're sound. Version 1
  * terms keep the checks they were made under. Version 2 terms pass the core's checks of what a
  * lock enforces, then their template's rules. The core refuses a backing, side or charge a lock
- * can't enforce, and a template it doesn't know.
+ * can't enforce, and a template it doesn't know. Version 3 terms are refused as a version this
+ * reads, and `validateChainedTerms` checks them.
  */
 export function validateTerms(terms: AnyTerms, profile: TermsProfile): ReasonCode | null {
   const shape = termsShapeProblem(terms)
   if (shape) return shape
   if (isTermsV1(terms)) return validateTermsV1(terms, profile)
+  return sectionRulesProblem(terms, profile)
+}
+
+/**
+ * Checks version 3 terms on their own and returns null when they're sound. They pass every check
+ * the version 2 terms they make pass, and their dependencies section passes
+ * `dependenciesProblem`. Whether each booking relied on stands is for a check that reads its lock,
+ * so a caller that commits to these terms runs that check too.
+ */
+export function validateChainedTerms(
+  terms: ChainedTerms,
+  profile: TermsProfile,
+): ReasonCode | null {
+  const shape = chainedTermsShapeProblem(terms)
+  if (shape) return shape
+  return (
+    sectionRulesProblem(plainTermsOf(terms), profile) ?? dependenciesProblem(terms.dependencies)
+  )
+}
+
+/**
+ * The version 2 terms that say what these version 3 terms say, without the bookings they rely on
+ * or who checks them. They pass the same checks and make the lock enforce the same values, and
+ * their terms hash differs, so they never stand for the version 3 terms in a signed message.
+ */
+export function plainTermsOf(terms: ChainedTerms): Terms {
+  const { dependencies: _, dependencyCheck: __, ...plain } = terms
+  return { ...plain, version: TERMS_VERSION }
+}
+
+/** The core's checks of version 2 terms, then their template's rules. */
+function sectionRulesProblem(terms: Terms, profile: TermsProfile): ReasonCode | null {
   if (!Object.hasOwn(TEMPLATE_RULES, terms.template)) return 'terms.template_unknown'
   const rules = TEMPLATE_RULES[terms.template]
   if (terms.amountDecimals !== AMOUNT_DECIMALS) return 'terms.invalid'
@@ -355,7 +587,8 @@ export function validateTerms(terms: AnyTerms, profile: TermsProfile): ReasonCod
  * a verifier checks it against this. Each version's mapping is fixed. Version 2 takes the reserve
  * and release date from the backing, the deadlines and charges from the remedies, and the contest
  * window, arbiter and day-90 share from the resolution. Version 1 maps its flat fields as it always
- * has, with a no-show chargeable from the window's start plus the grace period.
+ * has, with a no-show chargeable from the window's start plus the grace period. Version 3 terms map
+ * as `plainTermsOf` gives them, since the lock enforces nothing in their dependencies section.
  */
 export interface EnforceableTerms {
   currency: Currency

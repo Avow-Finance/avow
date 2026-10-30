@@ -1,0 +1,2103 @@
+{
+  "description": "Version 3 terms under the gpu-reservation/1 template, for a booking that relies on other bookings. They are version 2 terms with the header's version set to 3 and one more section, dependencies, a list of one to four entries, each naming a different booking relied on (a commitment reference with kind, chainId, lock, commitmentId, side and termsHash, on the buyer side), the condition it has to meet (\"accepted\") and the section of it the seller shows (\"subject\"). The five version 2 sections are hashed exactly as version 2 hashes them, with salt info \"avow:terms:v2:salt:<section>\" and label \"avow:terms:v2:<section>\". The dependencies section has salt info \"avow:terms:v3:salt:dependencies\" and label \"avow:terms:v3:dependencies\", and each entry's lock, commitmentId and termsHash are written in lower case before it is hashed. The terms hash is keccak256(abi.encode(string \"avow:terms:v3\", string headerJson, bytes32 subject, bytes32 consideration, bytes32 remedies, bytes32 resolution, bytes32 backing, bytes32 dependencies)). lockTerms is what Avow's approval carries for a 6-decimal token, the same mapping as version 2, since the lock enforces nothing in the dependencies section. subjectShownAlone shows the subject with its own salt and the other five section hashes. The header holds dependencyCheck, \"buyer\" when the buyer reads each booking relied on from the chain itself and \"avow\" when Avow checks them for it. In the last vector Avow checks the booking relied on, and its elided field is the buyer's view of the terms, every section in clear with its own salt under salts except dependencies, which is its label \"avow:terms:v3:dependencies\" and its digest, the section hash. The buyer's view gives the same terms hash, from the header, each shown section hashed with its salt, and the digest. invalid lists version 3 terms that differ from the first vector only in their dependencies section or their dependencyCheck, each with the reason a version 3 reader refuses them, and invalidElided lists views of the last vector a buyer refuses, each with its reason.",
+  "vectors": [
+    {
+      "name": "testnet demo terms relying on one booking",
+      "salt": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "header": "{\"amountDecimals\":6,\"currency\":\"USD\",\"dependencyCheck\":\"buyer\",\"template\":\"gpu-reservation/1\",\"version\":3}",
+      "sections": {
+        "subject": {
+          "canonicalJson": "{\"resource\":{\"count\":8,\"gpu\":\"H100\",\"region\":\"demo\",\"sku\":\"demo-h100x8\"},\"windowDuration\":\"1800\",\"windowStart\":\"1800000000\"}",
+          "salt": "0xe661259bbf7aa266644142e3d791bbca777485829958649bbb37010f815771bc",
+          "hash": "0xf4e8bc6b67921437b8d87dcbe42f5f854b4dd1fb7f552120b8f81e25e33278d9"
+        },
+        "consideration": {
+          "canonicalJson": "{\"amount\":\"3000000\",\"kind\":\"rate\",\"unit\":\"gpu-hour\"}",
+          "salt": "0xe5e7f01222dbe949c16e7e27649cef22fae835ac57d076f60c469d468410dcae",
+          "hash": "0xf406f6ec8d72dd3b54637ed8d1ba724c5dafd2b266613903d76cdf4edd1f9cbe"
+        },
+        "remedies": {
+          "canonicalJson": "{\"acceptBy\":\"1800000000\",\"chargeDeadline\":\"1800001800\",\"charges\":[{\"amount\":\"250000000\",\"earliest\":\"1799999400\",\"kind\":\"lateCancellation\"},{\"amount\":\"500000000\",\"earliest\":\"1800000120\",\"kind\":\"noShow\"}],\"freeCancelBy\":\"1799999400\"}",
+          "salt": "0x0b5b2be5c31010e3616750f373bfff5fbcbc9a8fbaf73050e14ff7c01e0e41a4",
+          "hash": "0x312691a6f201403b8ac40e8aafe1b6017a583b7b3d09109e8f52480379cce828"
+        },
+        "resolution": {
+          "canonicalJson": "{\"arbiter\":\"0x000000000000000000000000000000000000a4b1\",\"contestWindow\":\"600\",\"day90SupplierShareBps\":5000}",
+          "salt": "0xfc1e9310953d44d4b9ab3e8158a7bebfff583aa0127aa929cdcaacc5f56479be",
+          "hash": "0xf4d55a3fe4b7520a07346f78a15d1f5d05bfac8a43bb1751bbbc322796213a73"
+        },
+        "backing": {
+          "canonicalJson": "{\"amount\":\"500000000\",\"kind\":\"reserve\",\"releaseDate\":\"1800001800\",\"side\":\"buyer\"}",
+          "salt": "0xecd4f049d146594589ae2802179d2609643dc4357811fe10ef23fd429fdf733b",
+          "hash": "0x904ee9cb53f2ca95995cf004551c04118a6ee58f5bcc999b7e3d1010b6bdb709"
+        },
+        "dependencies": {
+          "canonicalJson": "[{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"kind\":\"commitment\",\"lock\":\"0x00000000000000000000000000000000000010c6\",\"side\":\"buyer\",\"termsHash\":\"0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d\"}}]",
+          "salt": "0xfbbb103494d9bb6f9817f24dcb2412e19ae3b6fa321eb0c4b26c24e14ecc2ab6",
+          "hash": "0x1f2093941c2aa76280fc5ec17e2337d4a9efa71a55c0d4db695c2a2732319d96"
+        }
+      },
+      "termsHash": "0xdfdaafb624692900be89cfc23344ce61e7ccee1bebfdd132dc96aecad9a2ad07",
+      "lockTerms": {
+        "side": "buyer",
+        "amount": "500000000",
+        "freeCancelBy": "1799999400",
+        "acceptBy": "1800000000",
+        "chargeDeadline": "1800001800",
+        "releaseDate": "1800001800",
+        "contestWindow": "600",
+        "charges": [
+          {
+            "kind": "lateCancellation",
+            "most": "250000000",
+            "earliest": "1799999400"
+          },
+          {
+            "kind": "noShow",
+            "most": "500000000",
+            "earliest": "1800000120"
+          }
+        ],
+        "day90SupplierShareBps": 5000,
+        "arbiter": "0x000000000000000000000000000000000000a4b1"
+      },
+      "subjectShownAlone": {
+        "header": {
+          "version": 3,
+          "template": "gpu-reservation/1",
+          "currency": "USD",
+          "amountDecimals": 6,
+          "dependencyCheck": "buyer"
+        },
+        "section": "subject",
+        "content": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "salt": "0xe661259bbf7aa266644142e3d791bbca777485829958649bbb37010f815771bc",
+        "others": {
+          "consideration": "0xf406f6ec8d72dd3b54637ed8d1ba724c5dafd2b266613903d76cdf4edd1f9cbe",
+          "remedies": "0x312691a6f201403b8ac40e8aafe1b6017a583b7b3d09109e8f52480379cce828",
+          "resolution": "0xf4d55a3fe4b7520a07346f78a15d1f5d05bfac8a43bb1751bbbc322796213a73",
+          "backing": "0x904ee9cb53f2ca95995cf004551c04118a6ee58f5bcc999b7e3d1010b6bdb709",
+          "dependencies": "0x1f2093941c2aa76280fc5ec17e2337d4a9efa71a55c0d4db695c2a2732319d96"
+        }
+      }
+    },
+    {
+      "name": "demo terms relying on four bookings named in mixed case",
+      "salt": "0x6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799913600",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799913600"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800001800"
+            }
+          ],
+          "chargeDeadline": "1800086400"
+        },
+        "resolution": {
+          "contestWindow": "259200",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800086400"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+              "commitmentId": "0xB1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1B1",
+              "side": "buyer",
+              "termsHash": "0x505D3305E8108851CBB8F531389C0BC2F3BF752A8B2E6B31BFFC240B15AC541D"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+              "commitmentId": "0xB2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2",
+              "side": "buyer",
+              "termsHash": "0x8CDD9B07C2EA760C2F3EE818D229D7E3182A1DDDC336F14161710B180422296A"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+              "commitmentId": "0xB3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3B3",
+              "side": "buyer",
+              "termsHash": "0x9C8558DC94F1B37D938FC488EA2B24AE2E7C9C13F4B6C40807A7E1A8AAA421B3"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+              "commitmentId": "0xB4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4B4",
+              "side": "buyer",
+              "termsHash": "0xB5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5B5"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "header": "{\"amountDecimals\":6,\"currency\":\"USD\",\"dependencyCheck\":\"buyer\",\"template\":\"gpu-reservation/1\",\"version\":3}",
+      "sections": {
+        "subject": {
+          "canonicalJson": "{\"resource\":{\"count\":8,\"gpu\":\"H100\",\"region\":\"demo\",\"sku\":\"demo-h100x8\"},\"windowDuration\":\"86400\",\"windowStart\":\"1800000000\"}",
+          "salt": "0x39596878f84046f5d3ecadb07ff7f96daaec8e5af98fcf8c6b2177207f253f45",
+          "hash": "0xdaf5c501ec7c4baed289d5ff4eff1a8c9bc635d1b63d088c3f6b341eb156150a"
+        },
+        "consideration": {
+          "canonicalJson": "{\"amount\":\"3000000\",\"kind\":\"rate\",\"unit\":\"gpu-hour\"}",
+          "salt": "0x7e60fd6095f99e0561bad674a392ca0547893a86ca164f32b006291719d273bc",
+          "hash": "0x4086f0e9e7a4c6c50b8945da2658df0b3c6ce8a5b8536b074165b3ecbcd06388"
+        },
+        "remedies": {
+          "canonicalJson": "{\"acceptBy\":\"1800000000\",\"chargeDeadline\":\"1800086400\",\"charges\":[{\"amount\":\"250000000\",\"earliest\":\"1799913600\",\"kind\":\"lateCancellation\"},{\"amount\":\"500000000\",\"earliest\":\"1800001800\",\"kind\":\"noShow\"}],\"freeCancelBy\":\"1799913600\"}",
+          "salt": "0xdccce9625575712ba0f98bb249ccd2db966a0a319a7fe19ec61e3c08d1bca471",
+          "hash": "0xa8716ffab7ae213f3bfffe07628e45e3eedd86f385553c5b61be7aefdeb74926"
+        },
+        "resolution": {
+          "canonicalJson": "{\"arbiter\":\"0x000000000000000000000000000000000000a4b1\",\"contestWindow\":\"259200\",\"day90SupplierShareBps\":5000}",
+          "salt": "0xbdff4d51cba042e297b8fc6dddbf9e929832a536ddbb95b0fa6835b773261d91",
+          "hash": "0x25ea076f352036a334fa2eee03366a19d2f6432fe835e8755c2de4b76c6789d4"
+        },
+        "backing": {
+          "canonicalJson": "{\"amount\":\"500000000\",\"kind\":\"reserve\",\"releaseDate\":\"1800086400\",\"side\":\"buyer\"}",
+          "salt": "0x1d4bee02c451d363ef5939ee5014b80837a67843ee89183b249ffa118f9791c8",
+          "hash": "0xd61c0efdfa150cd6ff632c16387755e368aa33d0244dff9afc7c2fde23342f19"
+        },
+        "dependencies": {
+          "canonicalJson": "[{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1\",\"kind\":\"commitment\",\"lock\":\"0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed\",\"side\":\"buyer\",\"termsHash\":\"0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d\"}},{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"kind\":\"commitment\",\"lock\":\"0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359\",\"side\":\"buyer\",\"termsHash\":\"0x8cdd9b07c2ea760c2f3ee818d229d7e3182a1dddc336f14161710b180422296a\"}},{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xb3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3\",\"kind\":\"commitment\",\"lock\":\"0xdbf03b407c01e7cd3cbea99509d93f8dddc8c6fb\",\"side\":\"buyer\",\"termsHash\":\"0x9c8558dc94f1b37d938fc488ea2b24ae2e7c9c13f4b6c40807a7e1a8aaa421b3\"}},{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xb4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4\",\"kind\":\"commitment\",\"lock\":\"0xd1220a0cf47c7b9be7a2e6ba89f429762e7b9adb\",\"side\":\"buyer\",\"termsHash\":\"0xb5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5\"}}]",
+          "salt": "0x411390fb64d75befe4d798f83b18925879857cdfe3752d3144a8a1173ae80cd2",
+          "hash": "0xe1daa0a6491553f85e012cb8a16909efcd9c43a27a9b411600c5f685a4521944"
+        }
+      },
+      "termsHash": "0x31517881388a2e884e66cf591a376fd5cacddacb846a0e1a298ba13b41ff5c61",
+      "lockTerms": {
+        "side": "buyer",
+        "amount": "500000000",
+        "freeCancelBy": "1799913600",
+        "acceptBy": "1800000000",
+        "chargeDeadline": "1800086400",
+        "releaseDate": "1800086400",
+        "contestWindow": "259200",
+        "charges": [
+          {
+            "kind": "lateCancellation",
+            "most": "250000000",
+            "earliest": "1799913600"
+          },
+          {
+            "kind": "noShow",
+            "most": "500000000",
+            "earliest": "1800001800"
+          }
+        ],
+        "day90SupplierShareBps": 5000,
+        "arbiter": "0x000000000000000000000000000000000000a4b1"
+      },
+      "subjectShownAlone": {
+        "header": {
+          "version": 3,
+          "template": "gpu-reservation/1",
+          "currency": "USD",
+          "amountDecimals": 6,
+          "dependencyCheck": "buyer"
+        },
+        "section": "subject",
+        "content": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "salt": "0x39596878f84046f5d3ecadb07ff7f96daaec8e5af98fcf8c6b2177207f253f45",
+        "others": {
+          "consideration": "0x4086f0e9e7a4c6c50b8945da2658df0b3c6ce8a5b8536b074165b3ecbcd06388",
+          "remedies": "0xa8716ffab7ae213f3bfffe07628e45e3eedd86f385553c5b61be7aefdeb74926",
+          "resolution": "0x25ea076f352036a334fa2eee03366a19d2f6432fe835e8755c2de4b76c6789d4",
+          "backing": "0xd61c0efdfa150cd6ff632c16387755e368aa33d0244dff9afc7c2fde23342f19",
+          "dependencies": "0xe1daa0a6491553f85e012cb8a16909efcd9c43a27a9b411600c5f685a4521944"
+        }
+      }
+    },
+    {
+      "name": "checksummed arbiter and a non-ASCII region relying on one booking",
+      "salt": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "Zürich \"east\"",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799913600",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799913600"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800001800"
+            }
+          ],
+          "chargeDeadline": "1800086400"
+        },
+        "resolution": {
+          "contestWindow": "259200",
+          "arbiter": "0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800086400"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "header": "{\"amountDecimals\":6,\"currency\":\"USD\",\"dependencyCheck\":\"buyer\",\"template\":\"gpu-reservation/1\",\"version\":3}",
+      "sections": {
+        "subject": {
+          "canonicalJson": "{\"resource\":{\"count\":8,\"gpu\":\"H100\",\"region\":\"Zürich \\\"east\\\"\",\"sku\":\"demo-h100x8\"},\"windowDuration\":\"86400\",\"windowStart\":\"1800000000\"}",
+          "salt": "0x246189d9ef069ba627385a4a72243baa91917b549e3aceb16b7a3e9262fc72db",
+          "hash": "0xb0320711e62535bbbb187b13c49b88c55ca3dd478216601fd6e6660f0ff90fd8"
+        },
+        "consideration": {
+          "canonicalJson": "{\"amount\":\"3000000\",\"kind\":\"rate\",\"unit\":\"gpu-hour\"}",
+          "salt": "0xc46811c1d95ee90152756367ec9db2c79d742f3c361575ffb44920796191db6e",
+          "hash": "0x83fb15b5320201c05e3d04f44d3863e4c8627a588667adf81cd76bdd3de0ea19"
+        },
+        "remedies": {
+          "canonicalJson": "{\"acceptBy\":\"1800000000\",\"chargeDeadline\":\"1800086400\",\"charges\":[{\"amount\":\"250000000\",\"earliest\":\"1799913600\",\"kind\":\"lateCancellation\"},{\"amount\":\"500000000\",\"earliest\":\"1800001800\",\"kind\":\"noShow\"}],\"freeCancelBy\":\"1799913600\"}",
+          "salt": "0x3bc6d0b47299b36558ac351429bf60d618e8244aca2e5f8312fd8f6ad11d0ea3",
+          "hash": "0x6d47962b72b2de6a900ca2d94c435bdcbfebd10ec7f4fc5c08d9b9382daf5f86"
+        },
+        "resolution": {
+          "canonicalJson": "{\"arbiter\":\"0x7b7b7e93b9de1b9cba5123f0570b56eb66c53173\",\"contestWindow\":\"259200\",\"day90SupplierShareBps\":5000}",
+          "salt": "0x171ce96fd772d9de1ef6ce438a6cc5904b865e055ad3d8f555c883587b2210f1",
+          "hash": "0x2129cfd298093b4478c5dcd210092035d6904af3ff3ac0a5d68ac16badf54541"
+        },
+        "backing": {
+          "canonicalJson": "{\"amount\":\"500000000\",\"kind\":\"reserve\",\"releaseDate\":\"1800086400\",\"side\":\"buyer\"}",
+          "salt": "0x3de3a09a440cf5cd269ce15be21e69aa7e1fcec25e180eee2ec4cb80101f07c1",
+          "hash": "0x0edce6483740d53540400e6752359ca8fd0549f81f5f7fc63a5801104a0108eb"
+        },
+        "dependencies": {
+          "canonicalJson": "[{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"kind\":\"commitment\",\"lock\":\"0x00000000000000000000000000000000000010c6\",\"side\":\"buyer\",\"termsHash\":\"0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d\"}}]",
+          "salt": "0x43b43b911554b29d95c26ab6a3297028ee6b7ad41d2a4d13705c51d960c1f898",
+          "hash": "0xd679a4b8d1947ad3518e0f0f56e5b1e662893110b68f3c2ab6b3fa5e4faa5257"
+        }
+      },
+      "termsHash": "0xad21a15d1b93d7e103b6800d5b8921ecff223cedf1d50d3af85e0b8b38df53cb",
+      "lockTerms": {
+        "side": "buyer",
+        "amount": "500000000",
+        "freeCancelBy": "1799913600",
+        "acceptBy": "1800000000",
+        "chargeDeadline": "1800086400",
+        "releaseDate": "1800086400",
+        "contestWindow": "259200",
+        "charges": [
+          {
+            "kind": "lateCancellation",
+            "most": "250000000",
+            "earliest": "1799913600"
+          },
+          {
+            "kind": "noShow",
+            "most": "500000000",
+            "earliest": "1800001800"
+          }
+        ],
+        "day90SupplierShareBps": 5000,
+        "arbiter": "0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173"
+      },
+      "subjectShownAlone": {
+        "header": {
+          "version": 3,
+          "template": "gpu-reservation/1",
+          "currency": "USD",
+          "amountDecimals": 6,
+          "dependencyCheck": "buyer"
+        },
+        "section": "subject",
+        "content": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "Zürich \"east\"",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "86400"
+        },
+        "salt": "0x246189d9ef069ba627385a4a72243baa91917b549e3aceb16b7a3e9262fc72db",
+        "others": {
+          "consideration": "0x83fb15b5320201c05e3d04f44d3863e4c8627a588667adf81cd76bdd3de0ea19",
+          "remedies": "0x6d47962b72b2de6a900ca2d94c435bdcbfebd10ec7f4fc5c08d9b9382daf5f86",
+          "resolution": "0x2129cfd298093b4478c5dcd210092035d6904af3ff3ac0a5d68ac16badf54541",
+          "backing": "0x0edce6483740d53540400e6752359ca8fd0549f81f5f7fc63a5801104a0108eb",
+          "dependencies": "0xd679a4b8d1947ad3518e0f0f56e5b1e662893110b68f3c2ab6b3fa5e4faa5257"
+        }
+      }
+    },
+    {
+      "name": "testnet demo terms relying on one booking, which Avow checks for the buyer",
+      "salt": "0xe5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "header": "{\"amountDecimals\":6,\"currency\":\"USD\",\"dependencyCheck\":\"avow\",\"template\":\"gpu-reservation/1\",\"version\":3}",
+      "sections": {
+        "subject": {
+          "canonicalJson": "{\"resource\":{\"count\":8,\"gpu\":\"H100\",\"region\":\"demo\",\"sku\":\"demo-h100x8\"},\"windowDuration\":\"1800\",\"windowStart\":\"1800000000\"}",
+          "salt": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "hash": "0xc0f747a6c9f10b8522dc5685e07127241303bd916782d533e4c5578d7aa637d1"
+        },
+        "consideration": {
+          "canonicalJson": "{\"amount\":\"3000000\",\"kind\":\"rate\",\"unit\":\"gpu-hour\"}",
+          "salt": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "hash": "0xa40f7881fac641e5fc26b71773f5c2ece31cdb2aab8d35b969ecfd0b1ad3e9ae"
+        },
+        "remedies": {
+          "canonicalJson": "{\"acceptBy\":\"1800000000\",\"chargeDeadline\":\"1800001800\",\"charges\":[{\"amount\":\"250000000\",\"earliest\":\"1799999400\",\"kind\":\"lateCancellation\"},{\"amount\":\"500000000\",\"earliest\":\"1800000120\",\"kind\":\"noShow\"}],\"freeCancelBy\":\"1799999400\"}",
+          "salt": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "hash": "0x54582c9319359452f9818b6cbfd1661a7ac0df7693416acd04addc37701c798f"
+        },
+        "resolution": {
+          "canonicalJson": "{\"arbiter\":\"0x000000000000000000000000000000000000a4b1\",\"contestWindow\":\"600\",\"day90SupplierShareBps\":5000}",
+          "salt": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "hash": "0x959429ab034e3c7a29ab6a2b1eaacb5d81d5037349a2b067ad4f211ae7d8320d"
+        },
+        "backing": {
+          "canonicalJson": "{\"amount\":\"500000000\",\"kind\":\"reserve\",\"releaseDate\":\"1800001800\",\"side\":\"buyer\"}",
+          "salt": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc",
+          "hash": "0x9831cc261ebeee3602189dbc4228eb1fd3b8cd76da9cfc08e7ef3f0aa401de87"
+        },
+        "dependencies": {
+          "canonicalJson": "[{\"condition\":\"accepted\",\"disclosed\":\"subject\",\"on\":{\"chainId\":42431,\"commitmentId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"kind\":\"commitment\",\"lock\":\"0x00000000000000000000000000000000000010c6\",\"side\":\"buyer\",\"termsHash\":\"0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d\"}}]",
+          "salt": "0xa0deb3444ff1cf65a24c252ed88027afc180e0274c6409fd084ae06fc912e73a",
+          "hash": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        }
+      },
+      "termsHash": "0xda9ccdefc4199613f406a10de5c600b8a2f9b28e27516757b8231be21f2b25a8",
+      "lockTerms": {
+        "side": "buyer",
+        "amount": "500000000",
+        "freeCancelBy": "1799999400",
+        "acceptBy": "1800000000",
+        "chargeDeadline": "1800001800",
+        "releaseDate": "1800001800",
+        "contestWindow": "600",
+        "charges": [
+          {
+            "kind": "lateCancellation",
+            "most": "250000000",
+            "earliest": "1799999400"
+          },
+          {
+            "kind": "noShow",
+            "most": "500000000",
+            "earliest": "1800000120"
+          }
+        ],
+        "day90SupplierShareBps": 5000,
+        "arbiter": "0x000000000000000000000000000000000000a4b1"
+      },
+      "subjectShownAlone": {
+        "header": {
+          "version": 3,
+          "template": "gpu-reservation/1",
+          "currency": "USD",
+          "amountDecimals": 6,
+          "dependencyCheck": "avow"
+        },
+        "section": "subject",
+        "content": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "salt": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+        "others": {
+          "consideration": "0xa40f7881fac641e5fc26b71773f5c2ece31cdb2aab8d35b969ecfd0b1ad3e9ae",
+          "remedies": "0x54582c9319359452f9818b6cbfd1661a7ac0df7693416acd04addc37701c798f",
+          "resolution": "0x959429ab034e3c7a29ab6a2b1eaacb5d81d5037349a2b067ad4f211ae7d8320d",
+          "backing": "0x9831cc261ebeee3602189dbc4228eb1fd3b8cd76da9cfc08e7ef3f0aa401de87",
+          "dependencies": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        }
+      },
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "no entries",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": []
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "five entries",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xc1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xc2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xc4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xc5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "two entries naming one booking, differing only in letter case",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          },
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010C6",
+              "commitmentId": "0xA1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1",
+              "side": "buyer",
+              "termsHash": "0x505D3305E8108851CBB8F531389C0BC2F3BF752A8B2E6B31BFFC240B15AC541D"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a condition version 3 does not know",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "reserved",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a disclosed section version 3 does not allow",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "consideration"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a booking on the supplier side",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "supplier",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "an entry with a key beside its three",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject",
+            "note": "resold"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a reference with a key beside its six",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d",
+              "note": "resold"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a setting version 3 does not know",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "seller",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "no setting",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ]
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "the dependencies section only as its digest",
+      "terms": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        }
+      },
+      "reason": "dependency.elided"
+    }
+  ],
+  "invalidElided": [
+    {
+      "name": "a view of terms the buyer checks",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "buyer",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a view that hides the consideration too",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "label": "avow:terms:v2:consideration",
+          "digest": "0xabababababababababababababababababababababababababababababababab"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a view that hides the subject and shows the dependencies",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "label": "avow:terms:v2:subject",
+          "digest": "0xabababababababababababababababababababababababababababababababab"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ],
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "the dependencies in clear",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": [
+          {
+            "on": {
+              "kind": "commitment",
+              "chainId": 42431,
+              "lock": "0x00000000000000000000000000000000000010c6",
+              "commitmentId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "side": "buyer",
+              "termsHash": "0x505d3305e8108851cbb8f531389c0bc2f3bf752a8b2e6b31bffc240b15ac541d"
+            },
+            "condition": "accepted",
+            "disclosed": "subject"
+          }
+        ],
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a digest under another label",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v2:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a digest that is not 32 bytes",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0x1234"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "an elided section with a key beside its label and digest",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487",
+          "entries": 1
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "the dependencies section salt beside the digest",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33",
+          "backing": "0x0177ef4ecab12e1058e4f551b3debcd38e5978be363c448392142a5d2404ecdc",
+          "dependencies": "0xa0deb3444ff1cf65a24c252ed88027afc180e0274c6409fd084ae06fc912e73a"
+        }
+      },
+      "reason": "terms.invalid"
+    },
+    {
+      "name": "a section shown without its salt",
+      "elided": {
+        "version": 3,
+        "template": "gpu-reservation/1",
+        "currency": "USD",
+        "amountDecimals": 6,
+        "subject": {
+          "resource": {
+            "gpu": "H100",
+            "count": 8,
+            "region": "demo",
+            "sku": "demo-h100x8"
+          },
+          "windowStart": "1800000000",
+          "windowDuration": "1800"
+        },
+        "consideration": {
+          "kind": "rate",
+          "amount": "3000000",
+          "unit": "gpu-hour"
+        },
+        "remedies": {
+          "acceptBy": "1800000000",
+          "freeCancelBy": "1799999400",
+          "charges": [
+            {
+              "kind": "lateCancellation",
+              "amount": "250000000",
+              "earliest": "1799999400"
+            },
+            {
+              "kind": "noShow",
+              "amount": "500000000",
+              "earliest": "1800000120"
+            }
+          ],
+          "chargeDeadline": "1800001800"
+        },
+        "resolution": {
+          "contestWindow": "600",
+          "arbiter": "0x000000000000000000000000000000000000a4b1",
+          "day90SupplierShareBps": 5000
+        },
+        "backing": {
+          "kind": "reserve",
+          "side": "buyer",
+          "amount": "500000000",
+          "releaseDate": "1800001800"
+        },
+        "dependencyCheck": "avow",
+        "dependencies": {
+          "label": "avow:terms:v3:dependencies",
+          "digest": "0xcf44709f8c7bf19d7eeb4316ddcc7329e6d416dd28b596cde5efd7c9f291c487"
+        },
+        "salts": {
+          "subject": "0xef6389641b6f2bd75a43ae349ddc26acea39a79597a1981eb312c3ffdc553073",
+          "consideration": "0x24a92e351e22809366a8f3836d18bd0d2da71f701976a9691f93da3a91747519",
+          "remedies": "0x11298fbd00a1b8c51504ecac91292f7771e420fb2362d68ccb4c85bc9dd635e0",
+          "resolution": "0xf70c4775fa56f0845ea5a5439d478b10d6f52581c419459ff86f71635e0fda33"
+        }
+      },
+      "reason": "terms.invalid"
+    }
+  ]
+}

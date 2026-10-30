@@ -146,6 +146,28 @@ export const REASON_CODES = {
   'payment.memo_mismatch': "The transfer's memo differs from the reference's",
   'payment.attributed_twice':
     "The payment's value is attributed more than once in this set, and this release lets it count once",
+  'dependency.lock_unknown':
+    'The booking relied on sits in a lock that no supported factory on a supported chain created',
+  'dependency.not_owned':
+    "The lock holding the booking relied on belongs to another account than this booking's supplier",
+  'dependency.not_found': 'The lock holds no commitment with the id and side the dependency names',
+  'dependency.self_supplied':
+    'The booking relied on was supplied by the seller itself, so it shows no one else accepted it',
+  'dependency.not_accepted':
+    "The booking relied on is reserved, and its supplier hasn't accepted it",
+  'dependency.charge_pending':
+    'The booking relied on has a report filed, a charge pending or a charge paused for a dispute',
+  'dependency.ended': 'The booking relied on has been released, charged or resolved',
+  'dependency.terms_mismatch':
+    'The lock holds the booking relied on under another terms hash than the dependency names',
+  'dependency.disclosure_invalid':
+    "The section shown of the booking relied on is missing, isn't the one the dependency names, or doesn't hash to its terms hash",
+  'dependency.does_not_fit':
+    'This booking asks for more GPUs, another GPU or region, or a window outside the booking it relies on',
+  'dependency.unreadable':
+    "A read of the booking relied on failed, timed out or couldn't be pinned to one block, so nothing was decided",
+  'dependency.elided':
+    'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES

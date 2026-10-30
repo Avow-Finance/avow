@@ -9,6 +9,7 @@ import {
   type OutcomeKind,
   type UncheckedCommitment,
 } from './commitment.js'
+import { DEPENDENCY_CHECKS, dependenciesJson } from './dependencies.js'
 import {
   CHARGE_KINDS,
   type ChargeKind,
@@ -17,21 +18,25 @@ import {
   type Signed,
   type SignedAgreement,
 } from './eip712.js'
+import { DEPENDENCIES_LABEL, type ElidedTerms } from './elided-terms.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
 import { address, bytes32, hexBytes, side, u64, u256 } from './json-fields.js'
 import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
-import type { Attribution, Reference } from './references.js'
+import { type Attribution, commitmentReferenceJson, type Reference } from './references.js'
 import {
   type AnyTerms,
+  CHAINED_TERMS_SECTIONS,
+  type ChainedTermsSection,
+  isElidedSection,
+  SECTIONED_TERMS_VERSIONS,
   type SectionDisclosure,
-  TERMS_SECTIONS,
-  type TermsSection,
 } from './terms.js'
 import type { ComputeTermsV1 } from './terms-v1.js'
-import type { Mandate, ReserveRequest, Terms } from './types.js'
+import type { ChainedTerms, Mandate, ReserveRequest, Terms } from './types.js'
 import {
   AMOUNT_DECIMALS,
+  CHAINED_TERMS_VERSION,
   CURRENCIES,
   MANDATE_ACTIONS,
   TEMPLATE_IDS,
@@ -134,10 +139,46 @@ export const gpuReservationTermsJson = z.strictObject({
 /** Version 2 terms under any template this code knows. */
 export const termsJson = z.discriminatedUnion('template', [gpuReservationTermsJson])
 
+/**
+ * Version 3 terms under the GPU reservation template, version 2's with the setting for who checks
+ * the bookings relied on and the dependencies section.
+ */
+export const chainedGpuReservationTermsJson = z.strictObject({
+  ...gpuReservationTermsJson.shape,
+  version: z.literal(CHAINED_TERMS_VERSION),
+  dependencyCheck: z.enum(DEPENDENCY_CHECKS),
+  dependencies: dependenciesJson,
+})
+
+/** Version 3 terms under any template this code knows. */
+export const chainedTermsJson = z.discriminatedUnion('template', [chainedGpuReservationTermsJson])
+
+/**
+ * The buyer's view of version 3 GPU reservation terms Avow checks. The header says Avow checks,
+ * every section but dependencies is in clear with its own salt, and dependencies is exactly its
+ * label and digest.
+ */
+export const elidedGpuReservationTermsJson = z.strictObject({
+  ...gpuReservationTermsJson.shape,
+  version: z.literal(CHAINED_TERMS_VERSION),
+  dependencyCheck: z.literal('avow'),
+  dependencies: z.strictObject({ label: z.literal(DEPENDENCIES_LABEL), digest: bytes32 }),
+  salts: z.strictObject({
+    subject: bytes32,
+    consideration: bytes32,
+    remedies: bytes32,
+    resolution: bytes32,
+    backing: bytes32,
+  }),
+})
+
+/** The buyer's view of version 3 terms under any template this code knows. */
+export const elidedTermsJson = z.discriminatedUnion('template', [elidedGpuReservationTermsJson])
+
 /** Each template's subject, for reading a section shown on its own. */
 const SUBJECTS: Record<string, z.ZodType> = { [GPU_RESERVATION]: gpuSubjectJson }
 
-function sectionSchema(section: TermsSection, template: string): z.ZodType | undefined {
+function sectionSchema(section: ChainedTermsSection, template: string): z.ZodType | undefined {
   switch (section) {
     case 'subject':
       return SUBJECTS[template]
@@ -149,6 +190,8 @@ function sectionSchema(section: TermsSection, template: string): z.ZodType | und
       return resolutionJson
     case 'backing':
       return backingJson
+    case 'dependencies':
+      return dependenciesJson
   }
 }
 
@@ -368,15 +411,6 @@ export const commitmentJson = z.strictObject({
   outcome: outcomeJson(outcomeKinds),
 })
 
-export const commitmentReferenceJson = z.strictObject({
-  kind: z.literal('commitment'),
-  chainId: z.number().int().positive(),
-  lock: address,
-  commitmentId: bytes32,
-  side,
-  termsHash: bytes32,
-})
-
 export const paymentReferenceJson = z.strictObject({
   kind: z.literal('payment'),
   chainId: z.number().int().positive(),
@@ -406,14 +440,18 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; reason: ReasonCode
 const objectJson = z.record(z.string(), z.unknown())
 
 /**
- * Parses version 2 terms, the only version a new commitment takes. It reads the version, the
- * template and the backing before the rest, so terms of another version, an unknown template or a
- * backing a lock can't enforce are refused as such rather than as malformed.
+ * Parses terms of one version with that version's schema. It reads the version, the template and
+ * the backing before the rest, so terms of another version, an unknown template or a backing a
+ * lock can't enforce are refused as such rather than as malformed.
  */
-export function parseTerms(json: unknown): Parsed<Terms> {
+function parseVersion<S extends z.ZodType>(
+  json: unknown,
+  version: number,
+  schema: S,
+): Parsed<z.output<S>> {
   const raw = objectJson.safeParse(json)
   if (!raw.success) return { ok: false, reason: 'terms.invalid' }
-  if (raw.data.version !== TERMS_VERSION) return { ok: false, reason: 'terms.version_unknown' }
+  if (raw.data.version !== version) return { ok: false, reason: 'terms.version_unknown' }
   if (!(TEMPLATE_IDS as readonly unknown[]).includes(raw.data.template)) {
     return { ok: false, reason: 'terms.template_unknown' }
   }
@@ -421,13 +459,47 @@ export function parseTerms(json: unknown): Parsed<Terms> {
   if (backing.success && (backing.data.kind !== 'reserve' || backing.data.side !== 'buyer')) {
     return { ok: false, reason: 'terms.backing_unsupported' }
   }
-  const parsed = termsJson.safeParse(json)
+  const parsed = schema.safeParse(json)
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'terms.invalid' }
 }
 
 /**
- * Parses terms of any version this code reads, for checking a commitment already made. Terms with
- * no version field are version 1 and parse under its frozen schema.
+ * Parses version 2 terms, the version a plain booking takes. It refuses every other version,
+ * version 3 included, so a reader that takes only plain bookings never reads one that relies on
+ * another booking.
+ */
+export function parseTerms(json: unknown): Parsed<Terms> {
+  return parseVersion(json, TERMS_VERSION, termsJson)
+}
+
+/**
+ * Parses version 3 terms, the version a booking takes when it relies on other bookings. It refuses
+ * every other version, and terms carrying the dependencies section only as its digest are
+ * `dependency.elided`, since these are the terms in full and `parseElidedTerms` reads the buyer's
+ * view.
+ */
+export function parseChainedTerms(json: unknown): Parsed<ChainedTerms> {
+  const raw = objectJson.safeParse(json)
+  if (raw.data?.version === CHAINED_TERMS_VERSION && isElidedSection(raw.data.dependencies)) {
+    return { ok: false, reason: 'dependency.elided' }
+  }
+  return parseVersion(json, CHAINED_TERMS_VERSION, chainedTermsJson)
+}
+
+/**
+ * Parses the buyer's view of version 3 terms Avow checks, which `elideDependencies` makes. It
+ * refuses a view whose header says the buyer checks, which would hide entries the buyer has to
+ * read, a view that hides any other section, and a dependencies section that isn't exactly its
+ * label and digest. `elidedTermsHash` gives the terms hash the view stands for.
+ */
+export function parseElidedTerms(json: unknown): Parsed<ElidedTerms> {
+  return parseVersion(json, CHAINED_TERMS_VERSION, elidedTermsJson)
+}
+
+/**
+ * Parses terms of any version a plain booking takes, for checking a commitment already made. Terms
+ * with no version field are version 1 and parse under its frozen schema. Version 3 terms are
+ * refused as a version this reads, and `parseChainedTerms` reads them.
  */
 export function parseAnyTerms(json: unknown): Parsed<AnyTerms> {
   const raw = objectJson.safeParse(json)
@@ -441,25 +513,43 @@ export function parseAnyTerms(json: unknown): Parsed<AnyTerms> {
   return parseTerms(json)
 }
 
-/** Parses one section shown on its own, checking the section's shape for its template. */
+/**
+ * Parses one section shown on its own, checking the section's shape for its template. A section
+ * of version 2 terms is one of its five, and of version 3 terms one of its six.
+ */
 export function parseSectionDisclosure(json: unknown): Parsed<SectionDisclosure> {
   const outer = z
     .strictObject({
-      header: z.strictObject({ ...termsHeaderShape, template: z.string() }),
-      section: z.enum(TERMS_SECTIONS),
+      header: z.union([
+        z.strictObject({ ...termsHeaderShape, template: z.string() }),
+        z.strictObject({
+          ...termsHeaderShape,
+          version: z.literal(CHAINED_TERMS_VERSION),
+          template: z.string(),
+          dependencyCheck: z.enum(DEPENDENCY_CHECKS),
+        }),
+      ]),
+      section: z.enum(CHAINED_TERMS_SECTIONS),
       content: z.unknown(),
       salt: bytes32,
-      others: z.partialRecord(z.enum(TERMS_SECTIONS), bytes32),
+      others: z.partialRecord(z.enum(CHAINED_TERMS_SECTIONS), bytes32),
     })
     .safeParse(json)
   if (!outer.success) {
     const version = objectJson.safeParse(objectJson.safeParse(json).data?.header)
-    if (version.success && version.data.version !== TERMS_VERSION) {
+    if (version.success && !SECTIONED_TERMS_VERSIONS.includes(version.data.version)) {
       return { ok: false, reason: 'terms.version_unknown' }
     }
     return { ok: false, reason: 'terms.invalid' }
   }
   const d = outer.data
+  // Version 2 terms have no dependencies section to show or to hash.
+  if (
+    d.header.version === TERMS_VERSION &&
+    (d.section === 'dependencies' || d.others.dependencies !== undefined)
+  ) {
+    return { ok: false, reason: 'terms.invalid' }
+  }
   if (!(TEMPLATE_IDS as readonly string[]).includes(d.header.template)) {
     return { ok: false, reason: 'terms.template_unknown' }
   }

@@ -120,7 +120,7 @@ describe('termsHash', () => {
 
   it('refuses a version it does not read', () => {
     expect(() =>
-      termsHash({ ...base, version: 3 } as unknown as GpuReservationTerms, SALT),
+      termsHash({ ...base, version: 4 } as unknown as GpuReservationTerms, SALT),
     ).toThrow('terms.version_unknown')
   })
 })
@@ -502,6 +502,13 @@ describe('validateTerms', () => {
       [
         change(base, 'remedies', {
           charges: [{ ...late, earliest: late.earliest - 1n }, ...base.remedies.charges.slice(1)],
+        }),
+        'terms.template_invalid',
+      ],
+      [
+        // A wrong consideration is reported before a window with no length.
+        change({ ...base, consideration: { kind: 'fixed', amount: dollars(3) } }, 'subject', {
+          windowDuration: 0n,
         }),
         'terms.template_invalid',
       ],

@@ -2,6 +2,7 @@ import type { Address } from 'viem'
 import type { ReasonCode } from './reasons.js'
 import {
   AMOUNT_DECIMALS,
+  type ChainedTermsOf,
   type Currency,
   type RemedyCharge,
   TERMS_VERSION,
@@ -27,6 +28,9 @@ export interface GpuSubject {
 
 /** GPU reservation terms. Usage is charged per GPU-hour and paid like any other purchase. */
 export type GpuReservationTerms = TermsOf<GpuSubject, typeof GPU_RESERVATION>
+
+/** Version 3 GPU reservation terms, for a reservation that relies on other bookings. */
+export type ChainedGpuReservationTerms = ChainedTermsOf<GpuSubject, typeof GPU_RESERVATION>
 
 /** What a booking states, in micros and unix seconds, before the template builds its terms. */
 export interface GpuReservationInput {
@@ -104,14 +108,15 @@ export function gpuReservationTerms(input: GpuReservationInput): GpuReservationT
  * deadline. A late cancellation is chargeable from the free-cancellation deadline, and a no-show
  * from the window's start or later.
  */
-export function validateGpuReservation(t: GpuReservationTerms): ReasonCode | null {
+export function validateGpuReservation(
+  t: Pick<GpuReservationTerms, 'subject' | 'consideration' | 'remedies'>,
+): ReasonCode | null {
   const { subject: s, remedies: r, consideration: c } = t
-  const { gpu, count, region, sku } = s.resource
-  if (!gpu || !region || !sku || !Number.isSafeInteger(count) || count <= 0) {
-    return 'terms.template_invalid'
-  }
+  const subject = gpuSubjectProblem(s)
+  // A wrong resource or consideration is reported before a window with no length.
+  if (subject === 'terms.template_invalid') return subject
   if (c.kind !== 'rate' || c.unit !== GPU_HOUR) return 'terms.template_invalid'
-  if (s.windowDuration <= 0n) return 'terms.deadlines_out_of_order'
+  if (subject) return subject
   const windowEnd = s.windowStart + s.windowDuration
   if (r.freeCancelBy > s.windowStart || r.acceptBy > s.windowStart) {
     return 'terms.deadlines_out_of_order'
@@ -126,6 +131,40 @@ export function validateGpuReservation(t: GpuReservationTerms): ReasonCode | nul
     }
   }
   return null
+}
+
+/**
+ * What's wrong with a GPU reservation's subject on its own, or null when nothing is. The resource
+ * names a GPU, a positive count, a region and a SKU (`terms.template_invalid`), and the window has
+ * a length (`terms.deadlines_out_of_order`).
+ */
+export function gpuSubjectProblem(s: GpuSubject): ReasonCode | null {
+  const { gpu, count, region, sku } = s.resource
+  if (!gpu || !region || !sku || !Number.isSafeInteger(count) || count <= 0) {
+    return 'terms.template_invalid'
+  }
+  return s.windowDuration > 0n ? null : 'terms.deadlines_out_of_order'
+}
+
+/**
+ * Whether a reservation fits inside a reservation it relies on. It asks for no more GPUs, of the
+ * same GPU and in the same region, and its window starts no earlier and ends no later. The SKU
+ * isn't compared, since a reseller can sell part of what it booked under its own SKU. Each pair is
+ * judged on its own, so two reservations that each fit inside the same one both pass. A subject
+ * `gpuSubjectProblem` refuses fits nowhere and holds nothing, so asking for no GPUs or for a window
+ * with no length never fits.
+ */
+export function gpuSubjectFits(inner: GpuSubject, outer: GpuSubject): boolean {
+  if (gpuSubjectProblem(inner) || gpuSubjectProblem(outer)) return false
+  const a = inner.resource
+  const b = outer.resource
+  return (
+    a.gpu === b.gpu &&
+    a.region === b.region &&
+    a.count <= b.count &&
+    inner.windowStart >= outer.windowStart &&
+    inner.windowStart + inner.windowDuration <= outer.windowStart + outer.windowDuration
+  )
 }
 
 /** How long after the window starts a no-show becomes chargeable, or null with no such charge. */

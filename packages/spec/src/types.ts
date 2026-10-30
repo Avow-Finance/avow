@@ -1,6 +1,7 @@
 import type { Address, Hex } from 'viem'
+import type { Dependencies, DependencyCheck } from './dependencies.js'
 import type { ChargeKind } from './eip712.js'
-import type { GpuReservationTerms } from './gpu-reservation.js'
+import type { ChainedGpuReservationTerms, GpuReservationTerms } from './gpu-reservation.js'
 import type { ReasonCode } from './reasons.js'
 
 /**
@@ -133,8 +134,14 @@ export interface DisputeTerms {
   day90SupplierShareBps: number
 }
 
-/** The version of the terms this code writes. A reader refuses any version it doesn't know. */
+/** The version of the terms a plain booking uses. A reader refuses any version it doesn't know. */
 export const TERMS_VERSION = 2
+
+/**
+ * The version of the terms a booking uses when it relies on another business's booking. It's
+ * version 2 with one more section, `dependencies`, so a plain booking stays on version 2.
+ */
+export const CHAINED_TERMS_VERSION = 3
 
 /** Every amount in version 2 terms is an integer count of millionths of the terms' currency. */
 export const AMOUNT_DECIMALS = 6
@@ -222,6 +229,22 @@ export interface TermsOf<Subject, Template extends TemplateId> {
 
 /** Version 2 terms under any template this code knows. */
 export type Terms = GpuReservationTerms
+
+/**
+ * The terms of a commitment that relies on other bookings, version 3. They hold version 2's header
+ * and five sections and one more section, `dependencies`, which names each booking this one relies
+ * on. The header gains `dependencyCheck`, which says who checks those bookings for the buyer. The
+ * lock enforces nothing in either.
+ */
+export interface ChainedTermsOf<Subject, Template extends TemplateId>
+  extends Omit<TermsOf<Subject, Template>, 'version'> {
+  version: typeof CHAINED_TERMS_VERSION
+  dependencyCheck: DependencyCheck
+  dependencies: Dependencies
+}
+
+/** Version 3 terms under any template this code knows. */
+export type ChainedTerms = ChainedGpuReservationTerms
 
 /** An agent's request to reserve money for a supplier under terms. */
 export interface ReserveRequest {
