@@ -63,7 +63,7 @@ The contest carries the reason's code and the statement hash to the lock in one 
 - **From the root key.** The business account calls `contest(commitmentId, side, reportNumber, reasonCode, statementHash)` on its lock with its root key, and pays its own fee.
 - **As a signed action.** The root key or an admin key signs a `BusinessAction` with the action `contest`, as `contestAction` builds it, and any account can send it to the lock's `businessAction`.
 
-Either way the lock logs `Paused(commitmentId, side, termsHash, cause, pausedAt, reasonCode, evidenceHash, returned)` with the cause 3, a contest, and the statement hash as `evidenceHash`.
+Either way the lock logs `Paused(commitmentId, side, termsHash, cause, pausedAt, reasonCode, evidenceHash, returned)` with the cause 3, a contest, and the statement hash as `evidenceHash`. The verifier's `contestInLogs` finds that event among a transaction's logs, counting only a log the lock itself wrote, and `ChainReader.contest` reads it from the transaction's receipt.
 
 ## Giving Avow the statement
 

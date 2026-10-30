@@ -1,5 +1,6 @@
 import {
   type Charge,
+  type ChargeKind,
   keychainSignatureCheck,
   type LockTiming,
   type ObservedTransfer,
@@ -39,13 +40,55 @@ export interface LockedBacking {
   fundingKey: Address
   /** Every report ever filed on the commitment, which a release consent names. */
   reportCount: number
+  /** The kind of charge the latest report names, or null before any report is filed. */
+  reportKind: ChargeKind | null
+  /** The latest report's amount in base units of the token, or zero before any report is filed. */
+  reportAmount: bigint
   /**
    * Whether a report stands on the commitment, filed and not withdrawn. The lock takes no other
    * report while one does, and on an accepted commitment it's open, waiting for Avow's answer.
    */
   hasReport: boolean
+  /**
+   * Whether the business has contested a charge on the commitment. The contest stays on record
+   * when the supplier withdraws the report, so the lock takes no second one, and a later report
+   * pauses at once.
+   */
+  contested: boolean
+  /** When a confirmed charge became pending and its contest window opened, or zero if one never did. */
+  chargeStart: bigint
+  /** When the charge paused, which days 30 and 90 count from, or zero if it never paused. */
+  pausedAt: bigint
   /** Whether a ruling has been posted on the commitment. */
   hasRuling: boolean
+}
+
+/** A contest a lock logged, as the `Paused` event its contest wrote shows it. */
+export interface ObservedContest {
+  commitmentId: Hex
+  side: Side
+  /** The reason's code, which `contestReasonOf` reads as one of the six reasons or as none. */
+  reasonCode: number
+  /** The hash of the business's statement, which the event logs as its `evidenceHash`. */
+  statementHash: Hex
+  /** When the lock paused the charge, which days 30 and 90 count from. */
+  pausedAt: bigint
+}
+
+/** A contest read from the chain, with where it landed and the report it named. */
+export interface ContestOnChain extends ObservedContest {
+  /** The block the contest landed in. */
+  blockNumber: bigint
+  /**
+   * Whether that block is at or below the chain's finalized block and is the chain's block at its
+   * height, so no reorganization can drop the contest.
+   */
+  finalized: boolean
+  /**
+   * The report the contest named, as the lock held it at the end of the contest's block: its
+   * number, which the lock checked the contest against, its kind and its amount in base units.
+   */
+  report: { number: number; kind: ChargeKind; amount: bigint }
 }
 
 /** The most reports a lock takes for one commitment, which the spec defines for every package. */
@@ -96,6 +139,18 @@ export interface ChainReader {
    * null when the chain has no such transaction or log. Nothing is read from calldata.
    */
   transfer(transactionHash: Hex, logIndex: number): Promise<ObservedTransfer | null>
+  /**
+   * The contest of one side of a commitment that one transaction carried, from the `Paused` event
+   * the lock logged with a contest as its cause, with whether its block is final and the report it
+   * named. Returns null when the chain has no such transaction, when it failed, or when it holds no
+   * contest of that side from that lock.
+   */
+  contest(
+    lock: Address,
+    commitmentId: Hex,
+    side: Side,
+    transactionHash: Hex,
+  ): Promise<ContestOnChain | null>
 }
 
 /** A chain reader held in memory, for tests and dry runs. */
@@ -105,6 +160,7 @@ export class MemoryChain implements ChainReader {
   readonly #keys = new Map<string, AgentKeyInfo & { authorizedIn: Hex | null }>()
   readonly #admins = new Set<string>()
   readonly #transfers = new Map<string, ObservedTransfer>()
+  readonly #contests = new Map<string, ContestOnChain>()
   readonly #check = keychainSignatureCheck((account, key) =>
     this.#admins.has(`${account.toLowerCase()}:${key.toLowerCase()}`),
   )
@@ -134,6 +190,12 @@ export class MemoryChain implements ChainReader {
     this.#transfers.set(`${seen.transactionHash.toLowerCase()}:${seen.logIndex}`, seen)
   }
 
+  /** Records a contest a successful transaction carried to a lock. */
+  setContest(lock: Address, transactionHash: Hex, contest: ContestOnChain): void {
+    const { commitmentId, side } = contest
+    this.#contests.set(contestKey(lock, commitmentId, side, transactionHash), contest)
+  }
+
   addAdminKey(account: Address, key: Address): void {
     this.#admins.add(`${account.toLowerCase()}:${key.toLowerCase()}`)
   }
@@ -161,4 +223,17 @@ export class MemoryChain implements ChainReader {
   async transfer(transactionHash: Hex, logIndex: number): Promise<ObservedTransfer | null> {
     return this.#transfers.get(`${transactionHash.toLowerCase()}:${logIndex}`) ?? null
   }
+
+  async contest(
+    lock: Address,
+    commitmentId: Hex,
+    side: Side,
+    transactionHash: Hex,
+  ): Promise<ContestOnChain | null> {
+    return this.#contests.get(contestKey(lock, commitmentId, side, transactionHash)) ?? null
+  }
 }
+
+/** One side of one commitment's contest in one transaction to one lock, as a map's key. */
+const contestKey = (lock: Address, commitmentId: Hex, side: Side, transactionHash: Hex) =>
+  `${lock.toLowerCase()}:${commitmentId.toLowerCase()}:${side}:${transactionHash.toLowerCase()}`
