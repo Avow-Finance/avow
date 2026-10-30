@@ -198,7 +198,7 @@ describe('a section shown on its own over JSON', () => {
     expect(
       parseSectionDisclosure({ ...shown, header: { ...shown.header, template: 'freight/1' } }),
     ).toEqual({ ok: false, reason: 'terms.template_unknown' })
-    expect(parseSectionDisclosure({ ...shown, header: { ...shown.header, version: 3 } })).toEqual({
+    expect(parseSectionDisclosure({ ...shown, header: { ...shown.header, version: 4 } })).toEqual({
       ok: false,
       reason: 'terms.version_unknown',
     })

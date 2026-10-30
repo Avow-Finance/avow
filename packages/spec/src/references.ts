@@ -1,5 +1,7 @@
 import { type Address, encodeAbiParameters, type Hex, isAddressEqual, keccak256 } from 'viem'
+import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
+import { address, bytes32, side } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import type { Side } from './types.js'
 
@@ -15,6 +17,16 @@ export interface CommitmentReference {
   side: Side
   termsHash: Hex
 }
+
+/** A commitment reference's JSON form, with hex in lower case. */
+export const commitmentReferenceJson = z.strictObject({
+  kind: z.literal('commitment'),
+  chainId: z.number().int().positive(),
+  lock: address,
+  commitmentId: bytes32,
+  side,
+  termsHash: bytes32,
+})
 
 /**
  * A settled token transfer. The chain, transaction hash and log index identify it, and the token,
