@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
-import { checkMandate, type MandateCheckInput, validateMandate } from './mandate.js'
+import {
+  checkMandate,
+  type MandateCheckInput,
+  mandateEndsBeforeWindow,
+  validateMandate,
+} from './mandate.js'
 import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
+import { enforceableTerms } from './terms.js'
 import { demoMandate, demoRequest, NOW, newKey, START, TOKEN } from './test-helpers.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
@@ -117,6 +123,16 @@ describe('checkMandate', () => {
 
   it('denies a mandate that expires before the window ends', () => {
     expect(checkMandate(input({ expiry: START + 60n }))).toEqual(
+      denied('mandate.ends_before_window'),
+    )
+  })
+
+  it('takes a mandate that expires the moment the window ends, and refuses one a second earlier', () => {
+    const { releaseDate } = enforceableTerms(demoRequest(agent.address).terms)
+    expect(mandateEndsBeforeWindow({ expiry: releaseDate }, { releaseDate })).toBe(false)
+    expect(checkMandate(input({ expiry: releaseDate })).result).toBe('approved')
+    expect(mandateEndsBeforeWindow({ expiry: releaseDate - 1n }, { releaseDate })).toBe(true)
+    expect(checkMandate(input({ expiry: releaseDate - 1n }))).toEqual(
       denied('mandate.ends_before_window'),
     )
   })

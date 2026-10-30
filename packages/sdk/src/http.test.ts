@@ -384,6 +384,70 @@ describe("Avow's records over the hosted API", () => {
     })
   })
 
+  it('passes on a refusal to cancel once the no-show charge can be reported', async () => {
+    const { fetcher } = fakeApi([error(409, 'commitment.cancel_closed')])
+    await expect(client(fetcher).records.cancel({ commitmentId })).rejects.toMatchObject({
+      status: 409,
+      reason: 'commitment.cancel_closed',
+      definite: true,
+    })
+  })
+
+  describe('a commitment cancelled by an earlier request', () => {
+    const path = `/v1/commitments/${commitmentId}/cancellations`
+    /** What Avow keeps of a request it recorded, and answers a later cancellation with. */
+    const recorded = (s: Seen) => {
+      const v = verified(s, path)
+      if (!v.ok) throw new Error(`the request doesn't verify: ${v.reason}`)
+      const { signer, requestId, expiry, bodyHash } = v.value.request.message
+      return { digest: v.value.digest, cancelledBy: { signer, requestId, expiry, bodyHash } }
+    }
+
+    it('gives a later cancel the first time, after the first call got no definite answer', async () => {
+      let first: ReturnType<typeof recorded> | undefined
+      const { seen, fetcher } = fakeApi([
+        (s) => {
+          // Avow records the cancellation, and its answer is lost on the way back.
+          first = recorded(s)
+          throw new TypeError('socket hang up')
+        },
+        () => {
+          if (!first) throw new Error('the first request never arrived')
+          return json(200, {
+            cancelledAt: NOW,
+            timestamp: stamp(first.digest, NOW),
+            cancelledBy: first.cancelledBy,
+          })
+        },
+      ])
+      const api = client(fetcher, { retryFor: 0n })
+      await expect(api.records.cancel({ commitmentId })).rejects.toMatchObject({
+        definite: false,
+      })
+      expect(await api.records.cancel({ commitmentId })).toEqual({ cancelledAt: NOW })
+      expect(recorded(seen[1] as Seen).digest).not.toBe(first?.digest)
+    })
+
+    it("throws a cancelledBy that doesn't rebuild the digest the timestamp names, without sending again", async () => {
+      const { seen, fetcher } = fakeApi([
+        (s) => {
+          const first = recorded(s)
+          return json(200, {
+            cancelledAt: NOW,
+            timestamp: stamp(`0x${'0e'.repeat(32)}`, NOW),
+            cancelledBy: first.cancelledBy,
+          })
+        },
+      ])
+      const thrown = await client(fetcher)
+        .records.cancel({ commitmentId })
+        .catch((e: unknown) => e)
+      expect(thrown).toBeInstanceOf(AvowApiError)
+      expect(thrown).toMatchObject({ reason: 'message.invalid', definite: true })
+      expect(seen).toHaveLength(1)
+    })
+  })
+
   it('asks for a start and gets the hash of the very request it signed, stamped', async () => {
     const path = `/v1/commitments/${commitmentId}/start-requests`
     let expected: Hex = '0x'

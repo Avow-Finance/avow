@@ -1,15 +1,18 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
-import type {
-  Approval,
-  HumanApproval,
-  Signed,
-  SignedAgreement,
-  StartReceipt,
-  SupplierAuthorization,
-  Timestamp,
+import {
+  type ApiRequest,
+  type Approval,
+  apiRequestTypedData,
+  digestOf,
+  type HumanApproval,
+  type Signed,
+  type SignedAgreement,
+  type StartReceipt,
+  type SupplierAuthorization,
+  type Timestamp,
 } from './eip712.js'
-import { bytes32, hexBytes, u64 } from './json-fields.js'
+import { address, bytes32, hexBytes, u64 } from './json-fields.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
 import type { Mandate, ReserveRequest } from './types.js'
 import {
@@ -110,14 +113,31 @@ export type SupplierAuthorizationAnswer =
 /**
  * Avow's answer to a business cancelling a commitment once free cancellation has ended: when Avow
  * received the cancellation, and Avow's timestamp on the signed request that carried it. A late
- * cancellation charge rests on this record. Before free cancellation ends the business cancels on
- * the lock, and Avow refuses with `commitment.cancel_on_lock`. A second cancellation of the same
- * commitment gets the first one's answer.
+ * cancellation charge rests on this record. Avow records a cancellation from the end of free
+ * cancellation until the no-show charge can be reported, or until the charge deadline when the
+ * terms carry no no-show charge. Before free cancellation ends the business cancels on the lock,
+ * and Avow refuses with `commitment.cancel_on_lock`. Once the no-show charge can be reported, a
+ * cancellation can no longer change the charge, and Avow refuses with `commitment.cancel_closed`.
+ * From the charge deadline on it refuses with `commitment.ended`.
+ *
+ * A commitment has one cancellation, so a later request to cancel it gets the first one's answer,
+ * whatever the time. That answer's timestamp names the first request, and `cancelledBy` carries
+ * what the later caller needs to rebuild that request's digest.
  */
 export interface CancellationAnswer {
   cancelledAt: bigint
   timestamp: Signed<Timestamp>
+  /** The request that cancelled the commitment, present when it isn't the one this answers. */
+  cancelledBy?: CancelledBy
 }
+
+/**
+ * What a later caller can't know about the signed request that cancelled a commitment: the key
+ * that signed it, its request id, its expiry and its body's hash. With the caller's own audience,
+ * `POST` and the commitment's cancellations path, they rebuild that request's digest, which Avow's
+ * timestamp names.
+ */
+export type CancelledBy = Pick<ApiRequest, 'signer' | 'requestId' | 'expiry' | 'bodyHash'>
 
 /**
  * Avow's answer to a business asking to start a job: the digest of the signed request, which the
@@ -317,23 +337,62 @@ function parseTimestamp(
   return parsed
 }
 
+const cancelledByJson = z.strictObject({
+  signer: address,
+  requestId: bytes32,
+  expiry: u64,
+  bodyHash: bytes32,
+})
+
 /**
- * Parses Avow's answer to a cancellation. Its timestamp has to be for this chain and lock, name
- * `requestHash`, the digest of the request the caller signed, and give the same time as the
- * answer.
+ * Parses Avow's answer to a cancellation. Its timestamp has to be for this chain and lock and give
+ * the same time as the answer. Without `cancelledBy`, the timestamp has to name `requestHash`, the
+ * digest of the request the caller signed. With it, an earlier request cancelled the commitment,
+ * and the timestamp has to name that request's digest, rebuilt from the caller's `audience`,
+ * `POST`, the commitment's cancellations path and what `cancelledBy` carries. Either way the
+ * timestamp names a request to cancel this commitment on this deployment, chain and lock.
  */
 export function parseCancellationAnswer(
   json: unknown,
-  expected: { chainId: number; lock: Address; requestHash: Hex },
+  expected: {
+    chainId: number
+    lock: Address
+    audience: string
+    commitmentId: Hex
+    requestHash: Hex
+  },
 ): Parsed<CancellationAnswer> {
-  const outer = z.strictObject({ cancelledAt: u64, timestamp: objectJson }).safeParse(json)
+  const outer = z
+    .strictObject({
+      cancelledAt: u64,
+      timestamp: objectJson,
+      cancelledBy: cancelledByJson.optional(),
+    })
+    .safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const { cancelledAt, cancelledBy } = outer.data
+  const requestHash = cancelledBy
+    ? digestOf(
+        apiRequestTypedData(
+          {
+            audience: expected.audience,
+            method: 'POST',
+            path: API_PATHS.cancellations(expected.commitmentId),
+            ...cancelledBy,
+          },
+          { chainId: expected.chainId, verifyingContract: expected.lock },
+        ),
+      )
+    : expected.requestHash
   const timestamp = parseTimestamp(outer.data.timestamp, expected, {
-    requestHash: expected.requestHash,
-    receivedAt: outer.data.cancelledAt,
+    requestHash,
+    receivedAt: cancelledAt,
   })
   if (!timestamp.ok) return timestamp
-  return { ok: true, value: { cancelledAt: outer.data.cancelledAt, timestamp: timestamp.value } }
+  return {
+    ok: true,
+    value: { cancelledAt, timestamp: timestamp.value, ...(cancelledBy ? { cancelledBy } : {}) },
+  }
 }
 
 /**

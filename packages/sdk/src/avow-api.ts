@@ -17,8 +17,10 @@ export type { ReserveApproval, ReserveApprovalRequest } from '@avow-finance/spec
 export interface AvowRecords {
   /**
    * Records the business cancelling a commitment, timestamped by Avow, once free cancellation has
-   * ended. Before then the business cancels on the lock, and Avow refuses with
-   * `commitment.cancel_on_lock`.
+   * ended and until the no-show charge can be reported. Before then the business cancels on the
+   * lock, and Avow refuses with `commitment.cancel_on_lock`. After it a cancellation no longer
+   * changes the charge, and Avow refuses with `commitment.cancel_closed`. A commitment has one
+   * cancellation, so every later call gives the first one's time.
    */
   cancel(request: { commitmentId: Hex }): Promise<{ cancelledAt: bigint }>
   /**

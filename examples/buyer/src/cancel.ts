@@ -62,8 +62,9 @@ const said = (c: SettledCancellation) =>
  * late-cancellation charge rests on. A commitment the lock has already ended is never sent to Avow.
  *
  * A cancellation sent to the lock is saved just before its bytes go out, and a later run settles it
- * from the transaction's receipt. A booking the store shows cancelled is never sent again, since
- * Avow answers a second cancellation with the first one's record, which the SDK can't read.
+ * from the transaction's receipt. A booking the store shows cancelled isn't sent again, since the
+ * store holds its answer. One Avow recorded for a run that stopped before saving it is asked again,
+ * and Avow answers with the first cancellation's time.
  */
 export async function cancelBooking(
   deps: CancelDeps,
@@ -198,6 +199,7 @@ async function cancelWithAvow(deps: CancelDeps, id: Hex): Promise<SettledCancell
 /** The reasons for not recording a cancellation that this command explains. */
 const EXPLAINED: readonly ReasonCode[] = [
   'commitment.ended',
+  'commitment.cancel_closed',
   'commitment.cancel_on_lock',
   'mandate.action_not_permitted',
 ]
@@ -207,7 +209,7 @@ function avowRefusal(e: unknown, id: Hex): unknown {
   if (!(e instanceof AvowApiError)) return e
   if (!e.definite) {
     return new Error(
-      `Avow gave no definite answer, so it may have recorded the cancellation of ${id}. If it did, it answers another cancellation with the first one's record, which this quickstart can't read.`,
+      `Avow gave no definite answer, so it may have recorded the cancellation of ${id}. Run cancel again, and if Avow recorded it, it answers with the time it recorded.`,
       { cause: e },
     )
   }
@@ -215,7 +217,7 @@ function avowRefusal(e: unknown, id: Hex): unknown {
   // reason, such as for a value in the body Avow can't store, recorded nothing.
   if (e.reason === 'message.invalid' && e.status >= 200 && e.status < 300) {
     return new Error(
-      `Avow answered the cancellation of ${id} with one this run didn't ask for. Avow keeps one cancellation per commitment and answers every later request with it, so an earlier run most likely got Avow's answer and stopped before saving it, and the booking is already cancelled at Avow. This quickstart can't read the time Avow recorded from an answer to another request.`,
+      `Avow answered the cancellation of ${id}, but its record doesn't check out against the request this run signed, so nothing was saved. Avow may hold the cancellation. Run cancel again, which asks Avow for its record.`,
       { cause: e },
     )
   }
@@ -230,6 +232,11 @@ function refused(reason: ReasonCode, id: Hex, cause?: unknown): Error {
     case 'commitment.ended':
       return new Error(
         `${id} can no longer be cancelled, since its charge deadline has passed`,
+        options,
+      )
+    case 'commitment.cancel_closed':
+      return new Error(
+        `The supplier can already report the no-show charge for ${id}, so cancelling now wouldn't change what the business pays, and Avow recorded nothing`,
         options,
       )
     case 'commitment.cancel_on_lock':

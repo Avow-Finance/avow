@@ -13,6 +13,7 @@ import {
   parseStartRequestAnswer,
   parseSupplierAuthorizationAnswer,
 } from './api.js'
+import { encodeApiBody, newRequestId, signApiRequest } from './api-request.js'
 import { testnetDemoTerms } from './demo.js'
 import type {
   Approval,
@@ -26,6 +27,7 @@ import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
   CHAIN_ID,
+  DOMAIN,
   demoMandate,
   demoRequest,
   id,
@@ -344,9 +346,27 @@ describe('enrollment, sponsorship, supplier authorizations and errors', () => {
 
 describe("Avow's records of cancellations and job starts", () => {
   const requestHash = id('signed request')
-  const expected = { chainId: CHAIN_ID, lock: LOCK, requestHash }
+  const commitmentId = id('commitment-1')
+  const audience = 'https://api.testnet.avow.finance'
+  const expected = { chainId: CHAIN_ID, lock: LOCK, audience, commitmentId, requestHash }
   const stamp = (t: Partial<Timestamp> = {}, lock = LOCK) =>
     envelope('Timestamp', { requestHash, receivedAt: START + 12n, ...t }, lock)
+
+  /** An earlier request that cancelled the commitment, signed by another request id. */
+  async function firstCancellation(path = API_PATHS.cancellations(commitmentId)) {
+    const signed = await signApiRequest({
+      key: { address: agent.address, signDigest: (hash) => agent.sign({ hash }) },
+      domain: DOMAIN,
+      audience,
+      method: 'POST',
+      path,
+      body: encodeApiBody({}),
+      requestId: newRequestId(),
+      expiry: START + 100n,
+    })
+    const { signer, requestId, expiry, bodyHash } = signed.request.message
+    return { digest: signed.digest, cancelledBy: { signer, requestId, expiry, bodyHash } }
+  }
 
   it('reads a cancellation whose timestamp names the request the caller signed, at the same time', () => {
     const answer = roundTrip({ cancelledAt: START + 12n, timestamp: stamp() })
@@ -375,6 +395,77 @@ describe("Avow's records of cancellations and job starts", () => {
     expect(parseCancellationAnswer(elsewhere, expected)).toEqual({
       ok: false,
       reason: 'message.wrong_contract',
+    })
+  })
+
+  it('reads the first cancellation answered to a later request, through the request cancelledBy rebuilds', async () => {
+    const first = await firstCancellation()
+    const timestamp = stamp({ requestHash: first.digest })
+    const answer = roundTrip({
+      cancelledAt: START + 12n,
+      timestamp,
+      cancelledBy: first.cancelledBy,
+    })
+    expect(parseCancellationAnswer(answer, expected)).toEqual({
+      ok: true,
+      value: {
+        cancelledAt: START + 12n,
+        timestamp: {
+          ...timestamp,
+          message: { requestHash: first.digest, receivedAt: START + 12n },
+        },
+        cancelledBy: first.cancelledBy,
+      },
+    })
+    // Without cancelledBy the timestamp has to name the caller's own request.
+    const bare = roundTrip({ cancelledAt: START + 12n, timestamp })
+    expect(parseCancellationAnswer(bare, expected)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+  })
+
+  it("refuses a cancelledBy that doesn't rebuild the digest the timestamp names", async () => {
+    const first = await firstCancellation()
+    const timestamp = stamp({ requestHash: first.digest })
+    const answer = (cancelledBy: unknown, cancelledAt = START + 12n) =>
+      roundTrip({ cancelledAt, timestamp, cancelledBy })
+    const { cancelledBy } = first
+    const refused = [
+      answer({ ...cancelledBy, requestId: newRequestId() }),
+      answer({ ...cancelledBy, expiry: cancelledBy.expiry + 1n }),
+      answer({ ...cancelledBy, signer: newKey().address }),
+      answer({ ...cancelledBy, bodyHash: id('another body') }),
+      answer(cancelledBy, START + 13n),
+      answer({ ...cancelledBy, extra: 1 }),
+      answer({ signer: cancelledBy.signer, requestId: cancelledBy.requestId }),
+    ]
+    for (const body of refused) {
+      expect(parseCancellationAnswer(body, expected)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    // The same request rebuilt for another commitment, deployment or lock names another digest.
+    const elsewhere = [
+      { ...expected, commitmentId: id('commitment-2') },
+      { ...expected, audience: 'https://api.staging.avow.finance' },
+    ]
+    for (const other of elsewhere) {
+      expect(parseCancellationAnswer(answer(cancelledBy), other)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    const startRequest = await firstCancellation(API_PATHS.startRequests(commitmentId))
+    const notACancellation = roundTrip({
+      cancelledAt: START + 12n,
+      timestamp: stamp({ requestHash: startRequest.digest }),
+      cancelledBy: startRequest.cancelledBy,
+    })
+    expect(parseCancellationAnswer(notACancellation, expected)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
     })
   })
 
