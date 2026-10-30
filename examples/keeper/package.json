@@ -1,0 +1,23 @@
+{
+  "name": "@avow-examples/keeper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sends each step that comes due on an Avow factory's locks, from a key made for the run and with no Avow credentials",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "avow-keeper": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@avow-finance/spec": "workspace:*",
+    "@avow-finance/verifier": "workspace:*",
+    "viem": "2.57.11"
+  }
+}
