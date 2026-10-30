@@ -78,6 +78,8 @@ export const REASON_CODES = {
   'commitment.unknown': 'Avow has no record of this commitment',
   'commitment.cancel_on_lock':
     "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",
+  'commitment.cancel_closed':
+    'The no-show charge can already be reported, so a cancellation no longer changes the charge',
   'commitment.ended':
     "The commitment's charge deadline has passed, so it can no longer be cancelled, started or reported on",
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",

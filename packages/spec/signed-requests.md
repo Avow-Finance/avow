@@ -86,10 +86,11 @@ A valid signature tells Avow which key sent the request. It grants nothing on it
 
 | Route | What Avow checks after the signature |
 | --- | --- |
-| Enrollment | The mandate is signed for the header's lock and names the signing key. The business owns that lock and is verified, its administrator signed the mandate as the business account, the mandate hasn't expired, and the key is on the chain bound to the mandate's hash |
+| Enrollment | The mandate is signed for the header's lock and names the signing key. The business owns that lock and is verified, its administrator signed the mandate as the business account, the mandate hasn't expired, and the key is on the chain bound to the mandate's hash. An agent already enrolled takes a new mandate only when it lasts until the window ends for each of its commitments whose charge deadline hasn't passed, so a new mandate can't strand a booking |
 | Reserve approval | The key is an enrolled agent of the business that owns the header's lock, and isn't revoked. The request names the signing key as its agent key, and the agreement's buyer signature is that key's. Then the full reserve check runs, including the mandate, its scope and the key on the chain |
 | Sponsorship | The key is an enrolled agent of the business that owns the header's lock, isn't revoked, and its mandate is current. The transaction's sender is that business's account, and every call is one the relay pays for and the mandate permits |
 | Supplier authorization | The key is the signing key of the supplier the commitment names, the commitment's agent isn't revoked, and the commitment's reserve is on the chain and not yet accepted |
+| Cancellation, start request and start receipt | The key is the enrolled, unrevoked agent that made the commitment, and on the chain it's active and bound to the agent's current mandate, so a business that deactivates a key stops it at once. Recording a cancellation or a start request also needs a current mandate that permits it |
 
 Avow refuses an unknown key with `request.signer_unknown` and a revoked one with `agent.revoked`. If Avow can't read what a check needs, such as its own records or the chain, it refuses with `service.unavailable` and records nothing. It never approves, authorizes or sponsors on records it couldn't read, and the same bytes run every check again once it can.
 

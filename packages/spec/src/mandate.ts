@@ -2,7 +2,7 @@ import { isAddressEqual } from 'viem'
 import type { TermsProfile } from './profiles.js'
 import { type RailToken, toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
-import { type AnyTerms, enforceableTerms, validateTerms } from './terms.js'
+import { type AnyTerms, type EnforceableTerms, enforceableTerms, validateTerms } from './terms.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
@@ -33,6 +33,19 @@ export function validateMandate(m: Mandate): ReasonCode | null {
   }
   if (m.approvalRule.kind === 'above' && m.approvalRule.amount < 0n) return 'mandate.invalid'
   return null
+}
+
+/**
+ * Whether a mandate expires before the window of a commitment with these terms ends, which leaves
+ * the agent unable to act on the commitment for its whole life. The mandate check refuses such a
+ * reserve with `mandate.ends_before_window`, and Avow refuses a newly signed mandate that would do
+ * this to a commitment the agent already holds.
+ */
+export function mandateEndsBeforeWindow(
+  mandate: Pick<Mandate, 'expiry'>,
+  enforced: Pick<EnforceableTerms, 'releaseDate'>,
+): boolean {
+  return mandate.expiry < enforced.releaseDate
 }
 
 /**
@@ -77,7 +90,7 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   if (units > limit.amount) return deny('mandate.over_payment_limit')
   if (amount > m.capPerCommitment) return deny('mandate.over_commitment_cap')
   if (input.openReserves + amount > m.capOpenReserves) return deny('mandate.over_open_reserves_cap')
-  if (m.expiry < enforced.releaseDate) return deny('mandate.ends_before_window')
+  if (mandateEndsBeforeWindow(m, enforced)) return deny('mandate.ends_before_window')
 
   const rule = m.approvalRule
   if (rule.kind === 'always' || (rule.kind === 'above' && amount > rule.amount)) {
