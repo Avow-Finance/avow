@@ -4,7 +4,7 @@ import { FACTORY_ABI, readBacking } from '@avow-finance/verifier'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { getCode, getTransactionReceipt, readContract } from 'viem/actions'
 import { describe, expect, it } from 'vitest'
-import { keep } from './keeper.js'
+import { CHECK_STRIDE, keep } from './keeper.js'
 import { needsAttention } from './report.js'
 import { findLocks, findSides, MODERATO_LOG_LIMITS } from './scan.js'
 import { keeperSettings } from './settings.js'
@@ -83,6 +83,7 @@ describe.skipIf(!live)("the keeper on the workflow's factory, on Moderato", () =
       },
       now: Date.now,
       stopAt: Date.now() + settings.runFor,
+      stride: CHECK_STRIDE,
     })
     expect(needsAttention(report)).toBe(false)
     expect(report.scanned).toBe(report.locks)

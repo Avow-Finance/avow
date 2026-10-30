@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { moderatoClient } from '@avow-finance/sdk'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { keep } from './keeper.js'
+import { CHECK_STRIDE, keep } from './keeper.js'
 import { needsAttention, reasonOf } from './report.js'
 import { MODERATO_LOG_LIMITS } from './scan.js'
 import { keeperSettings } from './settings.js'
@@ -31,6 +31,7 @@ async function main() {
     log,
     now: Date.now,
     stopAt: startedAt + settings.runFor,
+    stride: CHECK_STRIDE,
   })
   if (needsAttention(report)) process.exitCode = 1
 }

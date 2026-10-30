@@ -7,16 +7,16 @@ A lock enforces its own deadlines. Once one passes, anyone may call the lock's `
 ## What a run does
 
 1. Finds every lock from the factory's `LockCreated` events since the block the factory was created in.
-2. Reads the locks' `Reserved`, `Released`, `Charged` and `Resolved` events over the lookback, 1,000 locks at a time, and keeps each side that was reserved and hasn't ended. Each run starts at a group picked from the latest block's number, so successive runs start in different places.
-3. Simulates `trigger` for each of those sides with `eth_call`. A side counts as having nothing due only when the lock reverts with `NothingDue()`. Any other revert, a rate limit or a node that doesn't answer leaves the side unchecked, and the run reports it.
+2. Reads the locks' `Reserved`, `Released`, `Charged` and `Resolved` events over the lookback, 1,000 locks at a time, and keeps each side that was reserved and hasn't ended. A run's turn is the chain's time counted in ten minutes, and the turn picks the group the run reads first, so each group comes first once in every as many turns as there are groups.
+3. Simulates `trigger` for each of those sides with `eth_call`, in the order they were reserved. Each time a group comes first, its checks start 100 sides further along that order, wrapping round to the start. A side counts as having nothing due only when the lock reverts with `NothingDue()`. Any other revert, a rate limit or a node that doesn't answer leaves the side unchecked, and the run reports it.
 4. Sends each step that's due as soon as its group of locks is read, before reading the next group. The first step due in a run has Moderato's faucet fund a key made for the run, once. Each `trigger` is signed locally and followed by its hash, since Moderato's public RPC can answer with an error after a transaction has landed. A run signs each step once, and when that transaction lands in no block, the next run sends the step again.
-5. Prints a line for each step it sent, with its link on the explorer, a line for each part of the search it didn't read, and a summary naming the locks it read and the oldest reserve it reached.
+5. Prints a line for each step it sent, with its link on the explorer, a line for each part of the search it didn't reach, and a summary counting the locks it read and naming the oldest reserve it reached.
 
 A run exits with status 1 when a step failed, a transaction's outcome is unknown, a side couldn't be checked or part of the search went unread, so a scheduled run that needs a look shows red.
 
 ## Anyone can create locks
 
-The factory creates a lock for any account, at anyone's request, so a keeper meets locks no business uses, and someone can create thousands of them. The keeper is built to keep going when they do. A query the node refuses for holding more than 20,000 logs is split and asked again. A query that fails leaves only its own blocks unread, and the run says which. Each group's due steps go out before the next group is read, and runs start at different groups, so locks behind a pile of empty ones still get reached. A run starts no query or send after `RUN_MINUTES`, and it names the locks it didn't reach.
+The factory creates a lock for any account, at anyone's request, so a keeper meets locks no business uses, and someone can create thousands of them. The keeper is built to keep going when they do. A query the node refuses for holding more than 20,000 logs is split and asked again. A query that fails leaves only its own blocks unread, and the run says which. Each group's due steps go out before the next group is read, and the turn moves which group goes first and where its checks start, so locks behind a pile of empty ones and sides behind a long queue still get reached. A run asks for time before every query and every side it checks, starts neither after `RUN_MINUTES`, and gives the count of locks and open sides it didn't reach.
 
 ## Why anyone can run it
 
@@ -63,7 +63,8 @@ checked 3 of 3 locks created in blocks 41503611 to 41758904, and 7 sides reserve
 ## What a run reaches
 
 - Sides reserved within the lookback, and nothing older. A side whose next step comes due more than `LOOKBACK_DAYS` after its reserve, such as a booking 20 days ahead with the default 14, drops out of the window first, and the keeper never sends that step. Each run's summary names the oldest reserve it reached. Set `LOOKBACK_DAYS` longer than the longest gap between a reserve and its last deadline on your factory's locks. Each extra day adds about one and a half queries a run for every 1,000 locks.
-- Every lock the factory created, read from its start block. Moderato's public RPC refuses a log query whose last block is more than 100,000 past its first, so the keeper reads logs 100,000 blocks at a time. Moderato makes a block about every 0.6 seconds, so each month adds about 43 queries to finding the locks. When a run's queries outgrow `RUN_MINUTES`, it names what it didn't reach, and later runs start elsewhere.
+- Every lock the factory created, read from its start block on every run. Moderato's public RPC refuses a log query whose last block is more than 100,000 past its first, so the keeper reads logs 100,000 blocks at a time. Moderato makes a block about every 0.6 seconds, so each month adds about 43 queries to finding the locks.
+- Every open side, at least once in every G × m turns, where G is the number of groups and m is the open sides in that side's group divided by 100 and rounded up. That holds on the 10-minute schedule while each run gets through finding the locks, reading the group it reads first and 100 checks. A run with time for everything checks every open side. When time runs out first, the run gives the count of locks and open sides it didn't reach, and later turns start with the other groups and further along each group's sides.
 - Steps on time, up to the schedule. GitHub can start a scheduled run late, so a step can land some minutes after its deadline, and it turns off a public repository's scheduled workflows after 60 days without activity. Anyone who needs steps to land on time runs a keeper of their own as well.
 
 ## Tests

@@ -12,12 +12,17 @@ export type StepResult = CommitmentSide &
     | { outcome: 'unchecked'; reason: string }
   )
 
-/** A part of the search a run didn't read, and why, so a later run or a person picks it up. */
+/**
+ * A part of the search a run didn't reach, and why, so a later run or a person picks it up. It
+ * gives a count of the locks or sides it leaves out.
+ */
 export type Unread =
   /** Factory blocks whose new locks the run didn't read. */
   | { part: 'factory'; range: BlockRange; reason: string }
   /** Blocks of the lookback whose events the run didn't read for some of the locks. */
   | { part: 'locks'; locks: number; range: BlockRange; reason: string }
+  /** Open sides the run found and didn't check. */
+  | { part: 'sides'; sides: number; reason: string }
 
 /** Why a run stops starting queries and sends before it has read everything. */
 export const OUT_OF_TIME = 'the run ran out of time'
@@ -80,14 +85,15 @@ export function resultLine(result: StepResult, explorer: string): string {
   }
 }
 
-/** The line a run prints for a part of the search it didn't read. */
+/** The line a run prints for a part of the search it didn't reach. */
 export function unreadLine(unread: Unread): string {
-  const blocks = `blocks ${unread.range.from} to ${unread.range.to}`
   switch (unread.part) {
     case 'factory':
-      return `did not read ${blocks} for new locks: ${unread.reason}`
+      return `did not read blocks ${unread.range.from} to ${unread.range.to} for new locks: ${unread.reason}`
     case 'locks':
-      return `did not read ${blocks} for ${unread.locks} locks: ${unread.reason}`
+      return `did not read blocks ${unread.range.from} to ${unread.range.to} for ${unread.locks} locks: ${unread.reason}`
+    case 'sides':
+      return `did not check ${unread.sides} open sides: ${unread.reason}`
   }
 }
 

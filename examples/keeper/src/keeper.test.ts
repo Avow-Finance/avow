@@ -1,7 +1,7 @@
 import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import type { CommitmentSide } from './chain.js'
-import { keep } from './keeper.js'
+import { CHECK_STRIDE, keep } from './keeper.js'
 import { needsAttention } from './report.js'
 import { commitment, EXPLORER, FACTORY, lockAt } from './test/fixtures.js'
 import { landedHash, type Script, scriptedChain } from './test/scripted-chain.js'
@@ -46,7 +46,13 @@ const factory: Script = {
 /** A run against the scripted factory, with every lock in one group unless `addresses` says. */
 async function run(
   change: Partial<Script> = {},
-  options: { startBlock?: bigint; addresses?: number; stopAt?: number } = {},
+  options: {
+    startBlock?: bigint
+    addresses?: number
+    stopAt?: number
+    lookback?: bigint
+    stride?: number
+  } = {},
 ) {
   const { chain, recorded, now } = scriptedChain({ ...factory, ...change })
   const lines: string[] = []
@@ -54,12 +60,13 @@ async function run(
     chain,
     factory: FACTORY,
     startBlock: options.startBlock ?? 100n,
-    lookback: 600n,
+    lookback: options.lookback ?? 600n,
     limits: { blocks: 100n, addresses: options.addresses ?? 10 },
     explorer: EXPLORER,
     log: (line) => lines.push(line),
     now,
     stopAt: options.stopAt ?? Number.POSITIVE_INFINITY,
+    stride: options.stride ?? CHECK_STRIDE,
   })
   return { report, recorded, lines }
 }
@@ -200,8 +207,9 @@ describe('a keeper run', () => {
 })
 
 describe('a keeper run among many locks', () => {
-  // One lock a group, so each lock's events are a query of their own. The latest block, 1,000,
-  // leaves 1 when divided by the three groups, so the run starts at the second, L2's.
+  // One lock a group, so each lock's events are a query of their own. The latest block's time,
+  // 1,000 seconds, falls in turn 1, which leaves 1 when divided by the three groups, so the run
+  // starts at the second group, L2's.
 
   it("sends each group's due steps before it reads the next group", async () => {
     const { recorded } = await run({ due: [OPEN, OTHER] }, { addresses: 1 })
@@ -215,14 +223,17 @@ describe('a keeper run among many locks', () => {
     ])
   })
 
-  it('starts each run at a group that moves with the latest block, so every lock gets reached', async () => {
+  it('reads a different group first on each turn of ten minutes, so each group comes first in turn', async () => {
     const first = async (head: bigint) => {
       const { recorded } = await run({ head }, { addresses: 1 })
       return recorded.sideQueries[0]?.locks
     }
     expect(await first(1000n)).toEqual([L2])
-    expect(await first(1001n)).toEqual([L3])
-    expect(await first(1002n)).toEqual([L1])
+    // Still turn 1, so still L2.
+    expect(await first(1199n)).toEqual([L2])
+    expect(await first(1200n)).toEqual([L3])
+    expect(await first(1800n)).toEqual([L1])
+    expect(await first(2400n)).toEqual([L2])
   })
 
   it('stops starting work once its time is up, says which locks it did not reach, and keeps what it sent', async () => {
@@ -271,5 +282,54 @@ describe('a keeper run among many locks', () => {
     })
     expect(report).toMatchObject({ locks: 3, scanned: 3, reserved: 5, open: 2, unread: [] })
     expect(recorded.sent).toEqual([OPEN])
+  })
+})
+
+describe('a keeper run with more open sides than it has time to check', () => {
+  // One group of two locks. BUSY holds 40 open sides with nothing due, reserved before the one due
+  // side on VICTIM, so in reserve order the due side comes last of 41. Each block is ten minutes,
+  // so each head is the next turn. Reading the factory and the group takes 20 calls, and the run
+  // stops at 32, which leaves time for 12 checks, fewer when one of them sends.
+  const [BUSY, VICTIM] = [lockAt(1), lockAt(2)]
+  const WAITING = Array.from({ length: 40 }, (_, i) => side(BUSY, 100 + i, 'buyer'))
+  const DUE = side(VICTIM, 1, 'buyer')
+  const crowded: Partial<Script> = {
+    timeOf: (block) => block * 600n,
+    tick: 1,
+    locks: [
+      { lock: BUSY, block: 150n },
+      { lock: VICTIM, block: 160n },
+    ],
+    events: [
+      ...WAITING.map((s, i) => ({ ...s, kind: 'reserved' as const, block: 450n + BigInt(i) })),
+      { ...DUE, kind: 'reserved', block: 520n },
+    ],
+    due: [DUE],
+  }
+  const runAt = (head: bigint) =>
+    run({ ...crowded, head }, { addresses: 1000, lookback: 10n ** 12n, stopAt: 32, stride: 10 })
+
+  it('checks every open side within as many turns as the stride takes to go round the group', async () => {
+    // 41 open sides and a stride of 10 go round in 5 turns.
+    const checked = new Set<string>()
+    let sends = 0
+    for (let head = 1000n; head < 1005n; head++) {
+      const { recorded } = await runAt(head)
+      for (const s of recorded.simulated) checked.add(s.commitmentId)
+      sends += recorded.sent.length
+    }
+    expect(checked.size).toBe(41)
+    expect(sends).toBeGreaterThan(0)
+  })
+
+  it('counts the open sides it had no time to check', async () => {
+    const { report, recorded, lines } = await runAt(1001n)
+    const left = 41 - recorded.simulated.length
+    expect(left).toBeGreaterThan(0)
+    expect(report.unread).toEqual([
+      { part: 'sides', sides: left, reason: 'the run ran out of time' },
+    ])
+    expect(lines).toContain(`did not check ${left} open sides: the run ran out of time`)
+    expect(needsAttention(report)).toBe(true)
   })
 })

@@ -68,48 +68,79 @@ export async function firstBlockSince(
 /** Why a block a split can't make smaller stays unread. */
 const CROWDED = 'it holds more logs than the node returns in one answer'
 
-/** Whether two unread parts are the same kind of gap, so one can extend the other. */
-const sameGap = (a: Unread, b: Unread) =>
-  a.part === b.part &&
-  a.reason === b.reason &&
-  (a.part === 'factory' || (b.part === 'locks' && a.locks === b.locks))
+/** A stretch of blocks a read left unread, and why. */
+export interface Gap {
+  range: BlockRange
+  reason: string
+}
 
-/** Adds a part left unread, joined to the last one when it carries on from it for the same reason. */
-function leave(unread: Unread[], next: Unread) {
-  const last = unread.at(-1)
-  if (last && sameGap(last, next) && last.range.to + 1n === next.range.from) {
-    unread[unread.length - 1] = { ...last, range: { from: last.range.from, to: next.range.to } }
+/** Adds a gap, joined to the last one when it carries straight on from it for the same reason. */
+function leave(gaps: Gap[], next: Gap) {
+  const last = gaps.at(-1)
+  if (last && last.reason === next.reason && last.range.to + 1n === next.range.from) {
+    gaps[gaps.length - 1] = {
+      reason: last.reason,
+      range: { from: last.range.from, to: next.range.to },
+    }
   } else {
-    unread.push(next)
+    gaps.push(next)
   }
 }
 
-/** What reading a range found, with each block that held more logs than one answer carries. */
+/** What reading a range found, and the stretches of it left unread. */
 export interface Read<T> {
   logs: T[]
-  crowded: TooManyLogsError[]
+  gaps: Gap[]
 }
 
 /**
- * Every log `read` finds in the range, in block order. While the node answers that a range holds
- * too many logs for one answer, it reads each half on its own, so a range crowded with logs slows
- * the search without stopping it. A single block that still holds too many is left out and named
- * in `crowded`. Any other failure throws.
+ * Every log `read` finds in the range, in block order, with the stretches it couldn't read. While
+ * the node answers that a range holds too many logs for one answer, it reads each half on its own,
+ * so a range crowded with logs slows the search without stopping it. It asks `inTime` before every
+ * query, halves included. A single block that still holds too many, a query that fails and a query
+ * there's no time for each leave only their own blocks unread, and every log read before them is
+ * kept. It never throws.
  */
 export async function readAll<T>(
   range: BlockRange,
   read: (range: BlockRange) => Promise<T[]>,
+  inTime: () => boolean,
 ): Promise<Read<T>> {
+  if (!inTime()) return { logs: [], gaps: [{ range, reason: OUT_OF_TIME }] }
   try {
-    return { logs: await read(range), crowded: [] }
+    return { logs: await read(range), gaps: [] }
   } catch (error) {
-    if (!(error instanceof TooManyLogsError)) throw error
-    if (range.from === range.to) return { logs: [], crowded: [error] }
+    if (!(error instanceof TooManyLogsError)) {
+      return { logs: [], gaps: [{ range, reason: reasonOf(error) }] }
+    }
+    if (range.from === range.to) return { logs: [], gaps: [{ range, reason: CROWDED }] }
     const middle = (range.from + range.to) / 2n
-    const lower = await readAll({ from: range.from, to: middle }, read)
-    const upper = await readAll({ from: middle + 1n, to: range.to }, read)
-    return { logs: [...lower.logs, ...upper.logs], crowded: [...lower.crowded, ...upper.crowded] }
+    const lower = await readAll({ from: range.from, to: middle }, read, inTime)
+    const upper = await readAll({ from: middle + 1n, to: range.to }, read, inTime)
+    const gaps: Gap[] = []
+    for (const gap of [...lower.gaps, ...upper.gaps]) leave(gaps, gap)
+    return { logs: lower.logs.concat(upper.logs), gaps }
   }
+}
+
+/**
+ * Reads a range one chunk at a time, keeping every log and joining the gaps. Once time is up, each
+ * chunk left is one more gap, so the rest of the range reads as a single gap.
+ */
+async function readChunks<T>(
+  range: BlockRange,
+  limits: LogLimits,
+  read: (range: BlockRange) => Promise<T[]>,
+  inTime: () => boolean,
+): Promise<Read<T>> {
+  let logs: T[] = []
+  const gaps: Gap[] = []
+  for (const part of chunks(range, limits.blocks)) {
+    const found = await readAll(part, read, inTime)
+    logs = logs.concat(found.logs)
+    for (const gap of found.gaps) leave(gaps, gap)
+  }
+  return { logs, gaps }
 }
 
 /** What reading part of the chain found, and the parts it couldn't read. */
@@ -130,32 +161,19 @@ export async function findLocks(
   limits: LogLimits,
   inTime: () => boolean,
 ): Promise<Found<Address[]>> {
+  const read = await readChunks(range, limits, (r) => chain.locksCreated(factory, r), inTime)
   const locks = new Map<string, Address>()
-  const unread: Unread[] = []
-  for (const part of chunks(range, limits.blocks)) {
-    if (!inTime()) {
-      leave(unread, {
-        part: 'factory',
-        range: { from: part.from, to: range.to },
-        reason: OUT_OF_TIME,
-      })
-      break
-    }
-    try {
-      const read = await readAll(part, (r) => chain.locksCreated(factory, r))
-      for (const lock of read.logs) locks.set(lock.toLowerCase(), lock)
-      for (const e of read.crowded)
-        leave(unread, { part: 'factory', range: e.range, reason: CROWDED })
-    } catch (e) {
-      leave(unread, { part: 'factory', range: part, reason: reasonOf(e) })
-    }
+  for (const lock of read.logs) locks.set(lock.toLowerCase(), lock)
+  return {
+    found: [...locks.values()],
+    unread: read.gaps.map((gap): Unread => ({ part: 'factory', ...gap })),
   }
-  return { found: [...locks.values()], unread }
 }
 
 /** How many sides were reserved in a range, and those of them that haven't ended. */
 export interface Sides {
   reserved: number
+  /** In the order they were reserved. */
   open: CommitmentSide[]
 }
 
@@ -176,27 +194,16 @@ export async function findSides(
   limits: LogLimits,
   inTime: () => boolean,
 ): Promise<Found<Sides>> {
+  const read = await readChunks(range, limits, (r) => chain.sideEvents(locks, r), inTime)
   const reserved = new Map<string, CommitmentSide>()
   const ended = new Set<string>()
-  const unread: Unread[] = []
-  const skip = (from: bigint, to: bigint, reason: string) =>
-    leave(unread, { part: 'locks', locks: locks.length, range: { from, to }, reason })
-  for (const part of chunks(range, limits.blocks)) {
-    if (!inTime()) {
-      skip(part.from, range.to, OUT_OF_TIME)
-      break
-    }
-    try {
-      const read = await readAll(part, (r) => chain.sideEvents(locks, r))
-      for (const { kind, ...side } of read.logs) {
-        if (kind === 'reserved') reserved.set(keyOf(side), side)
-        else ended.add(keyOf(side))
-      }
-      for (const e of read.crowded) skip(e.range.from, e.range.to, CROWDED)
-    } catch (e) {
-      skip(part.from, part.to, reasonOf(e))
-    }
+  for (const { kind, ...side } of read.logs) {
+    if (kind === 'reserved') reserved.set(keyOf(side), side)
+    else ended.add(keyOf(side))
   }
   const open = [...reserved].filter(([key]) => !ended.has(key)).map(([, side]) => side)
-  return { found: { reserved: reserved.size, open }, unread }
+  return {
+    found: { reserved: reserved.size, open },
+    unread: read.gaps.map((gap): Unread => ({ part: 'locks', locks: locks.length, ...gap })),
+  }
 }

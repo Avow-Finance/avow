@@ -27,9 +27,26 @@ export interface KeeperRun {
   log: (line: string) => void
   /** The time now, in milliseconds. */
   now: () => number
-  /** The time, in milliseconds, after which the run starts no query, simulation or send. */
+  /** The time, in milliseconds, after which the run starts no query and checks no further side. */
   stopAt: number
+  /** How many open sides further along a group's checks start each time it reads that group first. */
+  stride: number
 }
+
+/** A run's turn is the chain's time in these, ten minutes, the workflow's schedule. */
+const TURN_SECONDS = 600n
+
+/**
+ * How far a group's checks move on each time the group comes first. A run that comes to a group
+ * first has nearly all its time left, so it gets through this many checks.
+ */
+export const CHECK_STRIDE = 100
+
+/** The items starting at `start`, wrapping round to the ones before it. */
+const rotated = <T>(items: readonly T[], start: number): T[] => [
+  ...items.slice(start),
+  ...items.slice(0, start),
+]
 
 /**
  * Sends the step due for a side. When nothing the keeper sent took effect and the lock no longer
@@ -54,12 +71,14 @@ async function take(chain: KeeperChain, side: CommitmentSide): Promise<StepResul
 
 /**
  * One run. It finds every lock the factory created since the start block, then reads the locks a
- * group at a time over the lookback, starting at a group that moves with the latest block, so a
- * run that can't read them all reaches different locks each time. For each side in a group that
- * was reserved and hasn't ended, it simulates `trigger`, and it sends each step that's due before
- * it reads the next group. The first step due has the faucet fund the key, once a run. After
- * `stopAt` it starts nothing new. It logs a line for each result and each part it didn't read, and
- * a summary at the end.
+ * group at a time over the lookback. The run's turn, which moves on every ten minutes of chain
+ * time, picks the group it reads first, so each group comes first once every as many turns as
+ * there are groups. Each time a group comes first, its checks start `stride` open sides further
+ * along, wrapping round, so a side anywhere in a group gets checked within a bounded number of
+ * turns. For each side in a group that was reserved and hasn't ended, it simulates `trigger`, and it
+ * sends each step that's due before it reads the next group. The first step due has the faucet fund
+ * the key, once a run. After `stopAt` it starts nothing new and counts what it didn't reach. It
+ * logs a line for each result and each part it didn't reach, and a summary at the end.
  */
 export async function keep(run: KeeperRun): Promise<KeeperReport> {
   const { chain, limits } = run
@@ -106,10 +125,6 @@ export async function keep(run: KeeperRun): Promise<KeeperReport> {
     return funding
   }
   const serve = async (side: CommitmentSide) => {
-    if (!inTime()) {
-      record({ ...side, outcome: 'unchecked', reason: OUT_OF_TIME })
-      return
-    }
     let due: boolean
     try {
       due = await chain.isDue(side)
@@ -126,8 +141,11 @@ export async function keep(run: KeeperRun): Promise<KeeperReport> {
   }
 
   const batches = groups(locks.found, limits.addresses)
-  const first = batches.length === 0 ? 0 : Number(head.number % BigInt(batches.length))
-  const order = batches.map((_, i) => batches[(first + i) % batches.length] ?? [])
+  const count = BigInt(Math.max(batches.length, 1))
+  const turn = head.timestamp / TURN_SECONDS
+  // Each group comes first once every `count` turns, and `visit` counts those times.
+  const visit = turn / count
+  const order = rotated(batches, Number(turn % count))
   for (const [i, batch] of order.entries()) {
     if (!inTime()) {
       const left = order.slice(i).reduce((n, b) => n + b.length, 0)
@@ -137,9 +155,17 @@ export async function keep(run: KeeperRun): Promise<KeeperReport> {
     const sides = await findSides(chain, batch, lookback, limits, inTime)
     sides.unread.forEach(skip)
     if (sides.unread.length === 0) report.scanned += batch.length
+    const { open } = sides.found
     report.reserved += sides.found.reserved
-    report.open += sides.found.open.length
-    for (const side of sides.found.open) await serve(side)
+    report.open += open.length
+    const start = open.length === 0 ? 0 : Number((visit * BigInt(run.stride)) % BigInt(open.length))
+    for (const [j, side] of rotated(open, start).entries()) {
+      if (!inTime()) {
+        skip({ part: 'sides', sides: open.length - j, reason: OUT_OF_TIME })
+        break
+      }
+      await serve(side)
+    }
   }
 
   run.log(summaryLine(report))

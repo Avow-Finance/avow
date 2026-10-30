@@ -53,7 +53,7 @@ describe('reading a range', () => {
       if (found.length > 2) throw new TooManyLogsError(range)
       return found
     }
-    expect(await readAll({ from: 100n, to: 109n }, read)).toEqual({ logs, crowded: [] })
+    expect(await readAll({ from: 100n, to: 109n }, read, always)).toEqual({ logs, gaps: [] })
     expect(asked[0]).toEqual({ from: 100n, to: 109n })
     expect(asked.slice(1)).toEqual([
       { from: 100n, to: 104n },
@@ -65,18 +65,52 @@ describe('reading a range', () => {
     ])
   })
 
-  it('names a block that alone holds too many logs, keeps the rest, and throws any other failure', async () => {
+  it('leaves a block that alone holds too many logs unread, and keeps the rest', async () => {
     const read = async (range: BlockRange) => {
       if (range.from <= 5n && range.to >= 5n) throw new TooManyLogsError(range)
       return [range.from]
     }
-    const { logs, crowded } = await readAll({ from: 4n, to: 7n }, read)
-    expect(logs).toEqual([4n, 6n])
-    expect(crowded.map((e) => e.range)).toEqual([{ from: 5n, to: 5n }])
-    const down = async (): Promise<bigint[]> => {
-      throw new Error('HTTP request failed. 502 Bad Gateway')
+    expect(await readAll({ from: 4n, to: 7n }, read, always)).toEqual({
+      logs: [4n, 6n],
+      gaps: [
+        {
+          range: { from: 5n, to: 5n },
+          reason: 'it holds more logs than the node returns in one answer',
+        },
+      ],
+    })
+  })
+
+  it('keeps the logs it read when one half fails, and leaves only that half unread', async () => {
+    // Eight logs in blocks 100 to 107, two at most an answer, and a node that fails from block 150.
+    const logs = [100n, 101n, 102n, 103n, 104n, 105n, 106n, 107n]
+    const read = async (range: BlockRange) => {
+      if (range.from >= 150n) throw new Error('HTTP request failed. 502 Bad Gateway')
+      const found = logs.filter((b) => b >= range.from && b <= range.to)
+      if (found.length > 2) throw new TooManyLogsError(range)
+      return found
     }
-    await expect(readAll({ from: 5n, to: 6n }, down)).rejects.toThrow('502')
+    expect(await readAll({ from: 100n, to: 199n }, read, always)).toEqual({
+      logs,
+      gaps: [{ range: { from: 150n, to: 199n }, reason: 'HTTP request failed. 502 Bad Gateway' }],
+    })
+  })
+
+  it('starts no query once time is up, halves included, and keeps what it read before', async () => {
+    // Sixteen logs, four at most an answer, so the range splits twice before a part fits. Time
+    // runs out after three queries.
+    const logs = Array.from({ length: 16 }, (_, i) => 100n + BigInt(i))
+    let queries = 0
+    const read = async (range: BlockRange) => {
+      queries++
+      const found = logs.filter((b) => b >= range.from && b <= range.to)
+      if (found.length > 4) throw new TooManyLogsError(range)
+      return found
+    }
+    const { logs: kept, gaps } = await readAll({ from: 100n, to: 115n }, read, () => queries < 3)
+    expect(queries).toBe(3)
+    expect(kept).toEqual([100n, 101n, 102n, 103n])
+    expect(gaps).toEqual([{ range: { from: 104n, to: 115n }, reason: 'the run ran out of time' }])
   })
 })
 
@@ -147,19 +181,19 @@ describe('finding locks', () => {
   })
 
   it('starts no query once time is up, and leaves the rest of the range unread', async () => {
-    const { chain, recorded } = scriptedChain({
+    // Each query takes a millisecond, and time is up after two.
+    const { chain, recorded, now } = scriptedChain({
       head: 125n,
       maxSpan: MAX_SPAN,
+      tick: 1,
       locks: [{ lock: lockAt(1), block: 125n }],
     })
-    let queries = 0
-    const inTime = () => queries++ < 2
     const { found, unread } = await findLocks(
       chain,
       FACTORY,
       { from: 100n, to: 125n },
       LIMITS,
-      inTime,
+      () => now() < 2,
     )
     expect(found).toEqual([])
     expect(recorded.lockQueries).toHaveLength(2)
