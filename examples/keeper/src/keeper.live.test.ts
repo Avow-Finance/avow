@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { moderatoClient } from '@avow-finance/sdk'
 import { ENDINGS } from '@avow-finance/spec'
 import { FACTORY_ABI, readBacking } from '@avow-finance/verifier'
@@ -10,6 +9,7 @@ import { needsAttention } from './report.js'
 import { findLocks, findSides, MODERATO_LOG_LIMITS } from './scan.js'
 import { keeperSettings } from './settings.js'
 import { explorerOf, tempoKeeperChain } from './tempo.js'
+import { workflowEnv } from './test/workflow.js'
 
 /**
  * The keeper against the factory the scheduled workflow serves on Moderato, with the settings read
@@ -18,25 +18,16 @@ import { explorerOf, tempoKeeperChain } from './tempo.js'
  * funded by the faucet. Nothing is saved. Runs when AVOW_LIVE_TEMPO=1.
  */
 const live = process.env.AVOW_LIVE_TEMPO === '1'
-
-/** The factory and start block the scheduled workflow runs the keeper with. */
-function workflowSettings() {
-  const workflow = readFileSync(
-    new URL('../../../.github/workflows/keeper.yml', import.meta.url),
-    'utf8',
-  )
-  const env = Object.fromEntries(
-    [
-      ...workflow.matchAll(/^\s*(AVOW_FACTORY|AVOW_FACTORY_START_BLOCK):\s*"?([^"\s]+)"?\s*$/gm),
-    ].map((m) => [m[1], m[2]]),
-  )
-  return keeperSettings(env)
-}
+const always = () => true
 
 function onModerato() {
   const client = moderatoClient()
   const key = privateKeyToAccount(generatePrivateKey())
-  return { settings: workflowSettings(), client, chain: tempoKeeperChain({ client, key }) }
+  return {
+    settings: keeperSettings(workflowEnv()),
+    client,
+    chain: tempoKeeperChain({ client, key }),
+  }
 }
 
 describe.skipIf(!live)("the keeper on the workflow's factory, on Moderato", () => {
@@ -54,9 +45,10 @@ describe.skipIf(!live)("the keeper on the workflow's factory, on Moderato", () =
     const head = await chain.head()
     const range = { from: settings.startBlock, to: head.number }
     expect(range.to - range.from + 1n).toBeGreaterThan(MODERATO_LOG_LIMITS.blocks)
-    const locks = await findLocks(chain, settings.factory, range, MODERATO_LOG_LIMITS)
-    expect(locks.length).toBeGreaterThan(0)
-    for (const lock of locks) {
+    const locks = await findLocks(chain, settings.factory, range, MODERATO_LOG_LIMITS, always)
+    expect(locks.unread).toEqual([])
+    expect(locks.found.length).toBeGreaterThan(0)
+    for (const lock of locks.found) {
       const fromFactory = await readContract(client, {
         address: settings.factory,
         abi: FACTORY_ABI,
@@ -65,15 +57,16 @@ describe.skipIf(!live)("the keeper on the workflow's factory, on Moderato", () =
       })
       expect(fromFactory).toBe(true)
     }
-    const sides = await findSides(chain, locks, range, MODERATO_LOG_LIMITS)
-    for (const side of sides.open) {
+    const sides = await findSides(chain, locks.found, range, MODERATO_LOG_LIMITS, always)
+    expect(sides.unread).toEqual([])
+    for (const side of sides.found.open) {
       const backing = await readBacking(client, side.lock, side.commitmentId, side.side)
       expect(backing).not.toBeNull()
       expect(ENDINGS).not.toContain(backing?.state)
     }
   }, 120_000)
 
-  it('sends every step that is due, each landing and leaving nothing due', async () => {
+  it('reads everything and lands each step it sends, with the lock acting on that commitment', async () => {
     const { settings, client, chain } = onModerato()
     const explorer = explorerOf(client)
     const lines: string[] = []
@@ -88,15 +81,23 @@ describe.skipIf(!live)("the keeper on the workflow's factory, on Moderato", () =
         lines.push(line)
         console.log(line)
       },
+      now: Date.now,
+      stopAt: Date.now() + settings.runFor,
     })
     expect(needsAttention(report)).toBe(false)
+    expect(report.scanned).toBe(report.locks)
     for (const result of report.results) {
       if (result.outcome !== 'sent') continue
+      // Another step can come due straight after this one, so the check is that this one landed
+      // and the lock logged a step for this commitment in it.
       const receipt = await getTransactionReceipt(client, { hash: result.hash })
       expect(receipt.status).toBe('success')
-      expect(await chain.isDue(result)).toBe(false)
+      const fromLock = receipt.logs.filter(
+        (log) => log.address.toLowerCase() === result.lock.toLowerCase(),
+      )
+      expect(fromLock.some((log) => log.topics[1] === result.commitmentId)).toBe(true)
       expect(lines.some((l) => l.endsWith(`${explorer}/tx/${result.hash}`))).toBe(true)
     }
-    expect(lines.at(-1)).toMatch(/^checked \d+ locks created in blocks /)
-  }, 300_000)
+    expect(lines.at(-1)).toMatch(/^checked \d+ of \d+ locks created in blocks /)
+  }, 600_000)
 })

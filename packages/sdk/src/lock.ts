@@ -145,11 +145,14 @@ export function approveSupplierCall(lock: Address, supplier: Address): Call {
 }
 
 /**
- * The lock's `trigger`, as the testnet lock declares it. It takes whichever step is due for one
- * side of a commitment once its deadline has passed, such as returning a reserve the supplier
- * never accepted, releasing a kept reserve at its release date, paying a confirmed charge once its
- * contest window closes or splitting a contested charge nobody ruled on at day 90, and it reverts
- * when no step is due. Anyone can send it, since the lock pays only the parties it recorded.
+ * The lock's `trigger`, as the testnet lock declares it, with the error it reverts with when no
+ * step is due. It takes whichever step is due for one side of a commitment once a deadline has
+ * passed. It returns a reserve the supplier never accepted, releases a kept reserve at its release
+ * date, times out a charge report Avow didn't confirm or refer in time, pays a confirmed charge
+ * once its contest window closes and applies a posted ruling once its delay has passed. At day 90
+ * it resolves a paused charge nobody ruled on, paying a confirmed charge at the day-90 share and
+ * returning an unconfirmed one to the business in full. Anyone can send it, since the lock pays
+ * only the parties it recorded.
  */
 export const TRIGGER_ABI = [
   {
@@ -162,6 +165,7 @@ export const TRIGGER_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  { type: 'error', name: 'NothingDue', inputs: [] },
 ] as const
 
 /** The call that takes the step due for one side of a commitment, from any account. */

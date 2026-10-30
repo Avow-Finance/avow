@@ -15,7 +15,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Transaction } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import type { CommitmentSide } from './chain.js'
+import { type CommitmentSide, TooManyLogsError } from './chain.js'
 import { tempoKeeperChain } from './tempo.js'
 import { commitment, FACTORY, lockAt } from './test/fixtures.js'
 import { type NodeLog, type NodeScript, scriptedNode } from './test/scripted-node.js'
@@ -193,7 +193,7 @@ describe('the keeper on Tempo', () => {
     )
   })
 
-  it('counts a revert as no step due, and any other failure as no answer', async () => {
+  it("counts only the lock's NothingDue() as no step due, simulated from the run's key", async () => {
     const { node, key, chain } = onNode({ head: 500n, due: [dueKey(S1)] })
     expect(await chain.isDue(S1)).toBe(true)
     expect(await chain.isDue({ ...S1, side: 'supplier' })).toBe(false)
@@ -209,9 +209,44 @@ describe('the keeper on Tempo', () => {
     const call = triggerCall(S1.lock, S1.commitmentId, S1.side)
     expect(request.to ?? request.calls?.[0]?.to).toBe(call.to)
     expect(request.data ?? request.calls?.[0]?.data).toBe(call.data)
+  })
 
-    const down = onNode({ head: 500n, due: [dueKey(S1)], callsFail: true })
-    await expect(down.chain.isDue(S1)).rejects.toThrow('HTTP request failed')
+  it('throws on any other revert, so the run reports the side as unchecked', async () => {
+    // The lock's answer for a commitment it doesn't know, and a revert that carries no data.
+    const unknown = onNode({ head: 500n, revertData: '0x5b07c989' })
+    await expect(unknown.chain.isDue(S1)).rejects.toThrow(
+      'The lock reverted with 0x5b07c989, an error other than NothingDue()',
+    )
+    const bare = onNode({ head: 500n, revertData: null })
+    await expect(bare.chain.isDue(S1)).rejects.toThrow('Execution reverted')
+  })
+
+  it('throws when the node is rate limited or down', async () => {
+    for (const callsFail of ['http-rate-limit', 'rpc-rate-limit', 'gateway'] as const) {
+      const { chain } = onNode({ head: 500n, due: [dueKey(S1)], callsFail })
+      await expect(chain.isDue(S1), callsFail).rejects.toThrow()
+      await expect(chain.isDue({ ...S1, side: 'supplier' }), callsFail).rejects.toThrow()
+    }
+  })
+
+  it('throws a TooManyLogsError for a range the node holds too many logs for', async () => {
+    const { chain } = onNode({
+      head: 500n,
+      maxResults: 1,
+      logs: [lockCreated(L1, 120n), lockCreated(L2, 130n)],
+    })
+    const refusal = chain.locksCreated(FACTORY, { from: 100n, to: 200n })
+    await expect(refusal).rejects.toBeInstanceOf(TooManyLogsError)
+    await expect(refusal).rejects.toMatchObject({ range: { from: 100n, to: 200n } })
+    expect(await chain.locksCreated(FACTORY, { from: 100n, to: 125n })).toEqual([getAddress(L1)])
+    const sides = onNode({
+      head: 500n,
+      maxResults: 1,
+      logs: [reserved(S1, 110n), released(S1, 120n)],
+    })
+    await expect(sides.chain.sideEvents([L1], { from: 100n, to: 200n })).rejects.toBeInstanceOf(
+      TooManyLogsError,
+    )
   })
 
   it("reads the outcome by hash when the node answers the send with an error, and sends the step's transaction once", async () => {

@@ -29,6 +29,17 @@ export type SendResult =
   | { outcome: 'unknown'; reason: string; hashes: readonly Hex[] }
 
 /**
+ * A log query the node refused because its range holds more logs than the node returns in one
+ * answer. The keeper splits the range and asks again.
+ */
+export class TooManyLogsError extends Error {
+  constructor(readonly range: BlockRange) {
+    super(`Blocks ${range.from} to ${range.to} hold more logs than the node returns in one answer`)
+    this.name = 'TooManyLogsError'
+  }
+}
+
+/**
  * What the keeper reads from the chain and sends to it. `tempoKeeperChain` reads and sends on
  * Tempo, and the tests script one, so the keeper's own logic never touches a chain client.
  */
@@ -37,11 +48,20 @@ export interface KeeperChain {
   head(): Promise<{ number: bigint; timestamp: bigint }>
   /** A block's time. */
   timestampOf(block: bigint): Promise<bigint>
-  /** The locks the factory created in a range that one log query may cover. */
+  /**
+   * The locks the factory created in a range that one log query may cover. It throws a
+   * `TooManyLogsError` when the range holds more logs than the node returns at once.
+   */
   locksCreated(factory: Address, range: BlockRange): Promise<Address[]>
-  /** The events that open and end sides on the locks, in a range that one log query may cover. */
+  /**
+   * The events that open and end sides on the locks, in a range that one log query may cover. It
+   * throws a `TooManyLogsError` when the range holds more logs than the node returns at once.
+   */
   sideEvents(locks: readonly Address[], range: BlockRange): Promise<SideEvent[]>
-  /** Whether `trigger` would take a step for the side now. It throws when the node can't say. */
+  /**
+   * Whether `trigger` would take a step for the side now. It answers false only when the lock
+   * reverts with `NothingDue()`, and throws on any other revert or failure.
+   */
   isDue(side: CommitmentSide): Promise<boolean>
   /** Has the testnet faucet fund the key the keeper sends from. */
   fund(): Promise<void>

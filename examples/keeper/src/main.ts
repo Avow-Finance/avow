@@ -11,9 +11,11 @@ const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
 
 /**
  * One run against Moderato. It exits with status 1 when a step failed, a transaction's outcome is
- * unknown or a side couldn't be checked, so a scheduled run shows what needs a look.
+ * unknown, a side couldn't be checked or part of the search went unread, so a scheduled run shows
+ * what needs a look.
  */
 async function main() {
+  const startedAt = Date.now()
   const settings = keeperSettings(process.env)
   const client = moderatoClient(settings.rpcUrl)
   // A key for this run alone. It holds only what the testnet faucet sends it, and the run keeps
@@ -27,6 +29,8 @@ async function main() {
     limits: MODERATO_LOG_LIMITS,
     explorer: explorerOf(client),
     log,
+    now: Date.now,
+    stopAt: startedAt + settings.runFor,
   })
   if (needsAttention(report)) process.exitCode = 1
 }

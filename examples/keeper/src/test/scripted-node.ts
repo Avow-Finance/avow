@@ -37,17 +37,25 @@ export type SendBehavior =
 export interface NodeScript {
   head: bigint
   logs?: NodeLog[]
+  /** The most logs one eth_getLogs answer holds, 20,000 by default as on Moderato. */
+  maxResults?: number
   /** Calls to `trigger` that succeed, as `lock:commitmentId:sideCode`, all lowercase. */
   due?: string[]
-  /** Whether eth_call gets no answer at all, as when the RPC is down. */
-  callsFail?: boolean
+  /**
+   * The data a call to `trigger` that isn't due reverts with, the lock's `NothingDue()` by
+   * default, or null for a revert with none.
+   */
+  revertData?: Hex | null
+  /** How every eth_call fails, when it does: a gateway error, an HTTP 429 or a JSON-RPC limit. */
+  callsFail?: 'gateway' | 'http-rate-limit' | 'rpc-rate-limit'
   send?: SendBehavior
   /** The receipt a transaction it takes gets, or none ever. */
   receipt?: 'success' | 'reverted' | 'none'
 }
 
 const FAUCET_HASHES: Hex[] = [`0x${'fa'.repeat(32)}`, `0x${'fb'.repeat(32)}`]
-const NOT_DUE = '0x86fdb19c' // the error the deployed lock reverts with when no step is due
+/** What the deployed lock reverts with when no step is due, `NothingDue()`. */
+export const NOTHING_DUE: Hex = '0x86fdb19c'
 
 const rpcError = (method: string, params: unknown, code: number, message: string, data?: Hex) =>
   new RpcRequestError({
@@ -150,25 +158,44 @@ export function scriptedNode(script: NodeScript) {
     }
     const named = new Set([filter.address].flat().map((a) => a.toLowerCase()))
     const wanted = new Set(filter.topics[0].map((t) => t.toLowerCase()))
-    return (script.logs ?? [])
+    const found = (script.logs ?? [])
       .filter((l) => named.has(l.address.toLowerCase()) && wanted.has(l.topics[0].toLowerCase()))
       .filter((l) => l.block >= from && l.block <= to)
-      .map((l, i) => ({
-        address: l.address.toLowerCase(),
-        topics: l.topics,
-        data: l.data,
-        blockNumber: numberToHex(l.block),
-        blockHash: hashOf(l.block),
-        transactionHash: keccak256(numberToHex(l.block * 1000n + BigInt(i))),
-        transactionIndex: '0x0',
-        logIndex: numberToHex(i),
-        removed: false,
-      }))
+    const most = script.maxResults ?? 20_000
+    if (found.length > most) {
+      const retry = `${from}-${from + (to - from) / 2n}`
+      throw rpcError(
+        method,
+        params,
+        -32602,
+        `query exceeds max results ${most}, retry with the range ${retry}`,
+      )
+    }
+    return found.map((l, i) => ({
+      address: l.address.toLowerCase(),
+      topics: l.topics,
+      data: l.data,
+      blockNumber: numberToHex(l.block),
+      blockHash: hashOf(l.block),
+      transactionHash: keccak256(numberToHex(l.block * 1000n + BigInt(i))),
+      transactionIndex: '0x0',
+      logIndex: numberToHex(i),
+      removed: false,
+    }))
   }
 
   function simulate(method: string, params: unknown[]) {
-    if (script.callsFail) {
-      throw new HttpRequestError({ url: MODERATO_RPC_URL, status: 502, details: 'Bad Gateway' })
+    switch (script.callsFail) {
+      case 'gateway':
+        throw new HttpRequestError({ url: MODERATO_RPC_URL, status: 502, details: 'Bad Gateway' })
+      case 'http-rate-limit':
+        throw new HttpRequestError({
+          url: MODERATO_RPC_URL,
+          status: 429,
+          details: 'Too Many Requests',
+        })
+      case 'rpc-rate-limit':
+        throw rpcError(method, params, -32005, 'rate limit exceeded')
     }
     const [request] = params as [{ to?: Address; data?: Hex; calls?: { to: Address; data: Hex }[] }]
     const to = request.to ?? request.calls?.[0]?.to
@@ -177,7 +204,8 @@ export function scriptedNode(script: NodeScript) {
     const { args } = decodeFunctionData({ abi: TRIGGER_ABI, data })
     const key = `${to}:${args[0]}:${args[1]}`.toLowerCase()
     if (!(script.due ?? []).includes(key)) {
-      throw rpcError(method, params, 3, 'execution reverted', NOT_DUE)
+      const data = script.revertData === undefined ? NOTHING_DUE : script.revertData
+      throw rpcError(method, params, 3, 'execution reverted', data ?? undefined)
     }
     return '0x'
   }

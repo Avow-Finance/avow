@@ -20,6 +20,7 @@ const RESOLVED = side(L1, 3, 'buyer')
 const OPEN = side(L1, 4, 'buyer')
 const OTHER = side(L2, 5, 'buyer')
 const BEFORE_LOOKBACK = side(L1, 6, 'buyer')
+const LOOKBACK = { from: 400n, to: 1000n }
 
 const factory: Script = {
   head: 1000n,
@@ -42,22 +43,34 @@ const factory: Script = {
   ],
 }
 
-async function run(change: Partial<Script> = {}, startBlock = 100n) {
-  const { chain, recorded } = scriptedChain({ ...factory, ...change })
+/** A run against the scripted factory, with every lock in one group unless `addresses` says. */
+async function run(
+  change: Partial<Script> = {},
+  options: { startBlock?: bigint; addresses?: number; stopAt?: number } = {},
+) {
+  const { chain, recorded, now } = scriptedChain({ ...factory, ...change })
   const lines: string[] = []
   const report = await keep({
     chain,
     factory: FACTORY,
-    startBlock,
+    startBlock: options.startBlock ?? 100n,
     lookback: 600n,
-    limits: { blocks: 100n, addresses: 10 },
+    limits: { blocks: 100n, addresses: options.addresses ?? 10 },
     explorer: EXPLORER,
     log: (line) => lines.push(line),
+    now,
+    stopAt: options.stopAt ?? Number.POSITIVE_INFINITY,
   })
   return { report, recorded, lines }
 }
 
 const which = (s: CommitmentSide) => `${s.commitmentId} (${s.side}) on lock ${s.lock}`
+/** The calls that read a group's events, send or fund, with each group named by its locks. */
+const story = (calls: string[]) =>
+  calls
+    .filter((c) => !c.startsWith('locks') && !c.startsWith('isDue'))
+    .map((c) => (c.startsWith('sides') ? (c.split(' ')[1] ?? '') : c))
+    .filter((c, i, all) => c !== all[i - 1])
 
 describe('a keeper run', () => {
   it('simulates only the sides that have not ended, and sends only the ones whose simulation succeeds', async () => {
@@ -67,19 +80,28 @@ describe('a keeper run', () => {
     expect(recorded.sent).toEqual([OPEN])
     expect(report).toMatchObject({
       locksFrom: 100n,
-      commitmentsFrom: 400n,
       to: 1000n,
       locks: 3,
+      scanned: 3,
+      commitmentsFrom: 400n,
       reserved: 5,
       open: 2,
       due: 1,
       results: [{ ...OPEN, outcome: 'sent', hash: landedHash(OPEN) }],
+      unread: [],
     })
     expect(needsAttention(report)).toBe(false)
     expect(lines).toEqual([
       `sent the step due for ${which(OPEN)}: ${EXPLORER}/tx/${landedHash(OPEN)}`,
-      'checked 3 locks created in blocks 100 to 1000 and 5 sides reserved in blocks 400 to 1000: 2 open, 1 due, 1 sent, 0 taken by another sender, 0 failed, 0 unknown, 0 unchecked',
+      'checked 3 of 3 locks created in blocks 100 to 1000, and 5 sides reserved since 1970-01-01T00:06:40.000Z (block 400): 2 open, 1 due, 1 sent, 0 taken by another sender, 0 failed, 0 unknown, 0 unchecked, 0 parts unread',
     ])
+  })
+
+  it('names the oldest reserve it reaches, the first block of the lookback and its time', async () => {
+    const { report, lines } = await run()
+    expect(report.commitmentsFrom).toBe(400n)
+    expect(report.commitmentsSince).toBe(400n)
+    expect(lines.at(-1)).toContain('sides reserved since 1970-01-01T00:06:40.000Z (block 400)')
   })
 
   it('searches every block since the start for locks, and the lookback alone for commitments', async () => {
@@ -99,6 +121,12 @@ describe('a keeper run', () => {
     expect(lines).toHaveLength(1)
   })
 
+  it('has the faucet fund the key once a run, however many steps are due', async () => {
+    const { recorded } = await run({ due: [OPEN, OTHER] }, { addresses: 1 })
+    expect(recorded.sent).toEqual([OTHER, OPEN])
+    expect(recorded.funded).toBe(1)
+  })
+
   it('counts a step another sender took first as taken, and a step still due as failed', async () => {
     const { report, lines } = await run({
       due: [OPEN, OTHER],
@@ -114,6 +142,18 @@ describe('a keeper run', () => {
       `another sender took the step due for ${which(OPEN)} first`,
       `could not send the step due for ${which(OTHER)}: The transaction 0xab reverted`,
     ])
+  })
+
+  it('counts a failed send as failed when the check after it gets no answer', async () => {
+    const { report } = await run({
+      due: [OPEN],
+      send: () => ({ outcome: 'failed', reason: 'The node refused to prepare the transaction' }),
+      unansweredAfterSend: [OPEN],
+    })
+    expect(report.results).toEqual([
+      { ...OPEN, outcome: 'failed', reason: 'The node refused to prepare the transaction' },
+    ])
+    expect(needsAttention(report)).toBe(true)
   })
 
   it('reports a transaction whose outcome is unknown with each of its hashes, for a person to look at', async () => {
@@ -135,8 +175,8 @@ describe('a keeper run', () => {
     const { report, recorded } = await run({ due: [OPEN], unanswered: [OTHER] })
     expect(recorded.sent).toEqual([OPEN])
     expect(report.results).toEqual([
-      { ...OTHER, outcome: 'unchecked', reason: 'HTTP request failed. 502 Bad Gateway' },
       { ...OPEN, outcome: 'sent', hash: landedHash(OPEN) },
+      { ...OTHER, outcome: 'unchecked', reason: 'HTTP request failed. 502 Bad Gateway' },
     ])
     expect(needsAttention(report)).toBe(true)
   })
@@ -144,6 +184,7 @@ describe('a keeper run', () => {
   it('sends nothing when the faucet does not fund the key, and says so for each step due', async () => {
     const { report, recorded } = await run({ due: [OPEN, OTHER], faucetFails: true })
     expect(recorded.sent).toEqual([])
+    expect(recorded.funded).toBe(1)
     const reason = "the faucet didn't fund the key: the faucet is resting"
     expect(report.results).toEqual([
       { ...OPEN, outcome: 'failed', reason },
@@ -152,6 +193,83 @@ describe('a keeper run', () => {
   })
 
   it('refuses a start block past the latest block', async () => {
-    await expect(run({}, 1001n)).rejects.toThrow('The start block 1001 is past the latest block')
+    await expect(run({}, { startBlock: 1001n })).rejects.toThrow(
+      'The start block 1001 is past the latest block',
+    )
+  })
+})
+
+describe('a keeper run among many locks', () => {
+  // One lock a group, so each lock's events are a query of their own. The latest block, 1,000,
+  // leaves 1 when divided by the three groups, so the run starts at the second, L2's.
+
+  it("sends each group's due steps before it reads the next group", async () => {
+    const { recorded } = await run({ due: [OPEN, OTHER] }, { addresses: 1 })
+    expect(story(recorded.calls)).toEqual([
+      L2,
+      'fund',
+      `send ${L2}:${OTHER.commitmentId}:buyer`,
+      L3,
+      L1,
+      `send ${L1}:${OPEN.commitmentId}:buyer`,
+    ])
+  })
+
+  it('starts each run at a group that moves with the latest block, so every lock gets reached', async () => {
+    const first = async (head: bigint) => {
+      const { recorded } = await run({ head }, { addresses: 1 })
+      return recorded.sideQueries[0]?.locks
+    }
+    expect(await first(1000n)).toEqual([L2])
+    expect(await first(1001n)).toEqual([L3])
+    expect(await first(1002n)).toEqual([L1])
+  })
+
+  it('stops starting work once its time is up, says which locks it did not reach, and keeps what it sent', async () => {
+    // Each call takes a millisecond. Reading the factory takes 10 queries and L2's events 7, then
+    // the run simulates, funds and sends OTHER, which brings the clock to 20.
+    const { report, recorded, lines } = await run(
+      { due: [OPEN, OTHER], tick: 1 },
+      { addresses: 1, stopAt: 20 },
+    )
+    expect(recorded.sent).toEqual([OTHER])
+    expect(report.scanned).toBe(1)
+    expect(report.unread).toEqual([
+      { part: 'locks', locks: 2, range: LOOKBACK, reason: 'the run ran out of time' },
+    ])
+    expect(lines).toContain('did not read blocks 400 to 1000 for 2 locks: the run ran out of time')
+    expect(needsAttention(report)).toBe(true)
+  })
+
+  it('reads and serves the other groups when one group cannot be read, and says which part it missed', async () => {
+    const { report, recorded, lines } = await run(
+      { due: [OPEN, OTHER], refused: [L2] },
+      { addresses: 1 },
+    )
+    expect(recorded.sent).toEqual([OPEN])
+    expect(report.scanned).toBe(2)
+    expect(report.unread).toEqual([
+      { part: 'locks', locks: 1, range: LOOKBACK, reason: 'HTTP request failed. 502 Bad Gateway' },
+    ])
+    expect(lines).toContain(
+      'did not read blocks 400 to 1000 for 1 locks: HTTP request failed. 502 Bad Gateway',
+    )
+    expect(needsAttention(report)).toBe(true)
+  })
+
+  it('finds and serves every lock when the logs overflow what one answer holds', async () => {
+    // The three locks come in one chunk, and the lookback's first chunk holds five reserves, both
+    // more than the two logs the node returns at once.
+    const { report, recorded } = await run({
+      maxResults: 2,
+      due: [OPEN],
+      locks: [
+        { lock: L1, block: 150n },
+        { lock: L2, block: 151n },
+        { lock: L3, block: 152n },
+      ],
+    })
+    expect(report).toMatchObject({ locks: 3, scanned: 3, reserved: 5, open: 2, unread: [] })
+    expect(recorded.sent).toEqual([OPEN])
   })
 })

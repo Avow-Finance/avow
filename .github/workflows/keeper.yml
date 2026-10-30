@@ -1,10 +1,11 @@
 name: Keeper
 
-# Sends each step that has come due on the demo factory's locks on Moderato, such as returning a
-# reserve nobody accepted, releasing a kept one at its release date or paying a confirmed charge
-# once its contest window closes, so those steps land when Avow's settlement service is down. Each
-# run makes its own key, has Moderato's faucet fund it when a step is due and signs locally, so the
-# workflow holds no secret. Nothing here moves real money.
+# Sends each step that has come due on the demo factory's locks on Moderato, for sides reserved
+# within LOOKBACK_DAYS, such as returning a reserve nobody accepted, releasing a kept one at its
+# release date or paying a confirmed charge once its contest window closes, so those steps land
+# when Avow's settlement service is down. Each run makes its own key, has Moderato's faucet fund it
+# when a step is due and signs locally, so the workflow holds no secret. Nothing here moves real
+# money.
 on:
   schedule:
     - cron: "*/10 * * * *"
@@ -27,6 +28,12 @@ jobs:
       # The demo factory, and the block it was created in, where the search for its locks starts.
       AVOW_FACTORY: "0x9B518c24F9aa9272e20fa78aeDC83b1F00b991a9"
       AVOW_FACTORY_START_BLOCK: "41503611"
+      # The keeper sends steps only for sides reserved within these days. Each run's summary names
+      # the oldest reserve it reached.
+      LOOKBACK_DAYS: "14"
+      # A run starts no query or send after these minutes, so it ends inside timeout-minutes, and
+      # it reports what it didn't reach.
+      RUN_MINUTES: "8"
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

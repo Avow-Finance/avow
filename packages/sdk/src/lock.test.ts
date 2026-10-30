@@ -1,5 +1,5 @@
 import { FACTORY_ABI as VERIFIER_FACTORY_ABI } from '@avow-finance/verifier'
-import { decodeFunctionData, getAbiItem, toFunctionSelector } from 'viem'
+import { decodeFunctionData, encodeErrorResult, getAbiItem, toFunctionSelector } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   ADMINISTRATOR_ABI,
@@ -21,6 +21,11 @@ describe("the lock's trigger", () => {
     expect(selector).toBe(toFunctionSelector('trigger(bytes32,uint8)'))
     // The deployed locks' dispatchers carry it, so a change to the copy can't slip by.
     expect(selector).toBe('0x1604f9c9')
+  })
+
+  it('names the error the testnet lock reverts with when no step is due', () => {
+    // The data a deployed lock returned for a side that had already ended.
+    expect(encodeErrorResult({ abi: TRIGGER_ABI, errorName: 'NothingDue' })).toBe('0x86fdb19c')
   })
 
   it('sends each side to its lock with the code the lock stores for it', () => {

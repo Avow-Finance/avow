@@ -17,7 +17,7 @@ This repository holds the open parts of Avow that developers and suppliers run t
 | `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | In progress |
 | `@avow-finance/spec` | The commitment schema the others share: records, terms and their templates, references, signed messages, reason codes and the mandate check | In progress |
 
-Quickstarts for a buyer and a supplier live in [examples](examples). Each runs on its own machine against Avow's hosted API. Beside them, a [keeper](examples/keeper) sends every step that comes due on the locks, so a reserve goes back on time even when Avow is down.
+Quickstarts for a buyer and a supplier live in [examples](examples). Each runs on its own machine against Avow's hosted API. Beside them, a [keeper](examples/keeper) sends the steps that come due on commitments reserved within its lookback, two weeks by default, so those steps land even when Avow is down.
 
 ## How a commitment works
 
