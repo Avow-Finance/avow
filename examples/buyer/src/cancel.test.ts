@@ -143,6 +143,16 @@ describe('cancelling once free cancellation has ended on the chain', () => {
     expect(sent).toEqual([])
   })
 
+  it('says cancelling no longer changes the charge once the no-show charge can be reported', async () => {
+    avowSays = refusal('commitment.cancel_closed')
+    await expect(cancelBooking(deps(), booking.commitmentId)).rejects.toThrow(
+      `The supplier can already report the no-show charge for ${booking.commitmentId}, so cancelling now wouldn't change what the business pays, and Avow recorded nothing`,
+    )
+    expect(asked).toEqual([booking.commitmentId])
+    expect(store.cancellation(booking.commitmentId)).toBeNull()
+    expect(sent).toEqual([])
+  })
+
   it('never asks Avow to cancel a commitment the lock has already ended', async () => {
     const cases: [LockedBacking | null, string][] = [
       [heldFor(booking, { state: 'released' }), 'already given the reserve back to the business'],
@@ -369,8 +379,9 @@ describe("Avow's other answers", () => {
     expect(store.cancellation(booking.commitmentId)).toBeNull()
   })
 
-  it('names the answer Avow gives a cancellation it recorded for an earlier run', async () => {
-    // What the SDK throws when Avow's answer names another signed request than this run's.
+  it("says Avow may hold a cancellation whose record doesn't check out, and saves nothing", async () => {
+    // What the SDK throws when Avow's timestamp names neither this request nor the earlier one
+    // the answer says carried the cancellation.
     avowSays = new AvowApiError(
       `Avow's answer can't be used: ${describeReason('message.invalid')}`,
       {
@@ -381,8 +392,9 @@ describe("Avow's other answers", () => {
       },
     )
     await expect(cancelBooking(deps(), null)).rejects.toThrow(
-      "an earlier run most likely got Avow's answer and stopped before saving it, and the booking is already cancelled at Avow",
+      `Avow answered the cancellation of ${booking.commitmentId}, but its record doesn't check out against the request this run signed, so nothing was saved. Avow may hold the cancellation. Run cancel again, which asks Avow for its record.`,
     )
+    expect(store.cancellation(booking.commitmentId)).toBeNull()
   })
 
   it('passes on a message.invalid refusal as Avow gave it, since Avow recorded nothing', async () => {
@@ -400,7 +412,7 @@ describe("Avow's other answers", () => {
       definite: false,
     })
     await expect(cancelBooking(deps(), null)).rejects.toThrow(
-      `Avow gave no definite answer, so it may have recorded the cancellation of ${booking.commitmentId}.`,
+      `Avow gave no definite answer, so it may have recorded the cancellation of ${booking.commitmentId}. Run cancel again, and if Avow recorded it, it answers with the time it recorded.`,
     )
     expect(store.cancellation(booking.commitmentId)).toBeNull()
   })
