@@ -1,6 +1,7 @@
 import {
   type AnyTerms,
   type CommitmentReference,
+  chainedTerms,
   LOCK_RECORD_FIELDS,
   lockTerms,
   type ObservedTransfer,
@@ -32,6 +33,7 @@ import {
   approval,
   CHAIN_ID,
   COMMITMENT,
+  dependencyOn,
   id,
   LOCK,
   LOCK_TERMS,
@@ -170,6 +172,17 @@ describe('verifyCommitmentReference and verifyCommitmentTerms', () => {
       },
       chain,
     )
+
+  it('refuse version 3 terms, whose bookings relied on they never read', async () => {
+    const chained = chainedTerms(terms, [dependencyOn()])
+    const hash = termsHash(chained, SALT)
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, approval({ termsHash: hash })))
+    const result = await check({
+      reference: { ...reference, termsHash: hash },
+      terms: chained as unknown as AnyTerms,
+    })
+    expect(result).toEqual({ ok: false, reason: 'terms.version_unknown' })
+  })
 
   it('find the commitment under its terms hash, and the lock enforcing what the terms say', async () => {
     expect(await verifyCommitmentReference(reference, chain)).toEqual({ ok: true })

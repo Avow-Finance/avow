@@ -1,6 +1,7 @@
 import {
   type Approval,
   approvalTypedData,
+  chainedTerms,
   digestOf,
   dollars,
   gpuReservationTerms,
@@ -175,6 +176,23 @@ const book = (
     category: 'compute',
   })
 
+/** Version 3 terms relying on a booking in a lock that doesn't exist, typed as a booking's. */
+const relyingOnAnother = () =>
+  chainedTerms(gpuReservationTerms(gpuBooking()), [
+    {
+      on: {
+        kind: 'commitment',
+        chainId: 42431,
+        lock: '0x000000000000000000000000000000000000dead',
+        commitmentId: id('no such booking'),
+        side: 'buyer',
+        termsHash: id('no such terms'),
+      },
+      condition: 'accepted',
+      disclosed: 'subject',
+    },
+  ]) as never
+
 /** Books, and returns the commitment's id, with the lock holding its reserve. */
 async function booked(s: Awaited<ReturnType<typeof setup>>): Promise<Hex> {
   const result = await book(s)
@@ -283,6 +301,38 @@ describe('booking with a supplier', () => {
       await s.agent.book({ supplier: s.connection, terms: older as never, category: 'compute' }),
     ).toEqual({ ok: false, reason: 'terms.version_unknown' })
     expect(s.calls).toEqual([])
+  })
+
+  it('refuses a booking that relies on another before anything is signed or sent to Avow', async () => {
+    // Until the agent checks the bookings it relies on, a version 3 booking never reaches its key,
+    // the supplier or Avow, even one that names a lock that doesn't exist.
+    const s = await setup()
+    expect(
+      await s.agent.book({
+        supplier: s.connection,
+        terms: relyingOnAnother(),
+        category: 'compute',
+      }),
+    ).toEqual({ ok: false, reason: 'terms.version_unknown' })
+    expect(s.calls).toEqual([])
+    expect(s.sent).toEqual([])
+  })
+
+  it('refuses version 3 itself, before the mandate check runs', async () => {
+    // With the mandate expired, the mandate check refuses a plain booking with its own reason, so
+    // only the agent's own refusal gives this one.
+    const s = await setup()
+    s.clock.now = NOW + 86_400n
+    expect(await book(s)).toEqual({ ok: false, reason: 'mandate.expired' })
+    expect(
+      await s.agent.book({
+        supplier: s.connection,
+        terms: relyingOnAnother(),
+        category: 'compute',
+      }),
+    ).toEqual({ ok: false, reason: 'terms.version_unknown' })
+    expect(s.calls).toEqual([])
+    expect(s.sent).toEqual([])
   })
 
   it("refuses a booking the mandate doesn't allow before asking anyone, as Avow and the verifier do", async () => {

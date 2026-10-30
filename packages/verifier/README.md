@@ -10,7 +10,7 @@ Lets a supplier check an Avow commitment before it grants capacity, accept it an
 
 1. The envelope names a message type, that type's version and a chain this code reads. The authorization hasn't expired, stays valid for no more than five minutes, and one of Avow's published keys signed it.
 2. It's for the commitment the supplier agreed to, with the terms hash the supplier signed. KYB marked as test data passes only where the supplier allows it, and only on a testnet.
-3. The supplier's terms hold nothing the terms hash leaves out, and they and the salt produce that terms hash. The terms are version 2 under a template this code knows, or version 1 for a commitment made under it. The reserve equals the largest charge, the contest window meets the supplier's profile, and the terms name an arbiter and a day-90 share from 0 to 10,000.
+3. The supplier's terms hold nothing the terms hash leaves out, and they and the salt produce that terms hash. The terms are version 2 under a template this code knows, or version 1 for a commitment made under it. Version 3 terms are refused here, since this check doesn't read the bookings they rely on. The reserve equals the largest charge, the contest window meets the supplier's profile, and the terms name an arbiter and a day-90 share from 0 to 10,000.
 4. The token is one the supplier accepts for the terms' currency, the amount and deadlines match what the terms map to, the payee is the supplier's own payout address, and the acceptance deadline hasn't passed.
 5. On the chain, the lock comes from Avow's factory and holds a reserve for this commitment that nobody has accepted yet and that matches the authorization. Every value the lock stores and enforces is what `lockTerms` maps the supplier's terms to, and the agent's key or the account's root key funded the reserve.
 6. The agent's key is active, lasts until the release date, and carries the mandate hash Avow named, in the transaction the authorization points to.
@@ -29,6 +29,10 @@ An acceptance binds the supplier to everything in Avow's approval, so a supplier
 4. The lock stores the digest of exactly this approval and the same terms, and its token and dispute timing are the ones the supplier's profile accepts.
 
 Then it builds the acceptance, which names the lock's digest of the approval and expires within ten minutes, and a disclosure for the person who approves the signature. The disclosure states the reserve and what each charge can take and from when, who receives charges, the free-cancellation and acceptance deadlines, the charge deadline and the release date, and the dispute terms: Avow's confirmation window, the contest window, how long Avow's ruling key and then the arbiter can rule, when a ruling takes effect, and the supplier's day-90 share. `signAcceptance` takes the disclosure's id back, so nothing is signed until an integration has fetched the disclosure and the person has confirmed it. It signs only the frozen object `prepareAcceptance` returned, so a copy or an edit throws, and it refuses a key other than the signing key the approval names.
+
+## Bookings a booking relies on
+
+`verifyDependencies` checks the bookings version 3 terms rely on, `prepareAcceptance` runs it before anything else reads those terms, and [docs/dependency-check.md](../../docs/dependency-check.md) says what both check and what they leave unchecked.
 
 ## Release consents
 

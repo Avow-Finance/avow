@@ -12,8 +12,10 @@ import {
   approvalPartiesProblem,
   approvalTermsProblem,
   approvalTokenProblem,
+  type ChainedTerms,
   digestOf,
   type HashSigner,
+  isChainedTerms,
   isTermsV1,
   type LockTerms,
   type LockTiming,
@@ -32,8 +34,20 @@ import {
   size,
   zeroAddress,
 } from 'viem'
-import { type Agreed, checkAuthorization, same } from './authorization.js'
+import {
+  type Agreed,
+  checkAuthorization,
+  plainTerms,
+  same,
+  type TermsUnderCheck,
+} from './authorization.js'
 import type { ChainReader, LockedBacking } from './chain.js'
+import {
+  type CheckedDependency,
+  type DependencyDeps,
+  type DependencyRefusal,
+  verifyDependencies,
+} from './dependency.js'
 import { acceptanceDisclosure, type Disclosure } from './disclosure.js'
 import { issue } from './issued.js'
 import { randomNonce } from './nonce.js'
@@ -53,6 +67,11 @@ export interface AcceptanceConfig extends VerifierConfig {
 export interface AcceptanceDeps {
   config: AcceptanceConfig
   chain: ChainReader
+  /**
+   * The chain and factory pairs whose locks a booking relied on may sit in, each with its reader.
+   * Version 3 terms are refused with `dependency.lock_unknown` when this is left out.
+   */
+  dependencies?: DependencyDeps
 }
 
 /** What a supplier hands the verifier to get an acceptance to sign. */
@@ -69,10 +88,16 @@ export interface AcceptanceRequest {
    */
   agreed: Required<Agreed>
   /**
-   * The terms this supplier agreed to for the booking, from its own records. Version 2, or version
-   * 1 for a commitment made under it.
+   * The terms this supplier agreed to for the booking, from its own records. Version 2, version 3
+   * in full for a booking that relies on the supplier's own bookings, or version 1 for a commitment
+   * made under it.
    */
-  terms: AnyTerms
+  terms: AnyTerms | ChainedTerms
+  /**
+   * For version 3 terms, the section of each booking they rely on that the supplier shows whoever
+   * checks it, as JSON, in the terms' order.
+   */
+  disclosed?: readonly unknown[]
   now: bigint
   /** The acceptance's nonce, a fresh random one when left out. */
   nonce?: bigint
@@ -90,9 +115,21 @@ export interface ReadyAcceptance {
   signingKey: Address
   /** What to show the person who approves the signature, before signing. */
   disclosure: Disclosure
+  /**
+   * Each booking version 3 terms rely on, with the block it was read at. Empty for a booking that
+   * relies on none.
+   */
+  dependencies: readonly CheckedDependency[]
 }
 
-export type PreparedAcceptance = ReadyAcceptance | { ok: false; reason: ReasonCode }
+/**
+ * The acceptance, or why it was refused. A refusal by the check of a booking relied on says which
+ * one failed and the block it was read at.
+ */
+export type PreparedAcceptance =
+  | ReadyAcceptance
+  | { ok: false; reason: ReasonCode }
+  | DependencyRefusal
 
 const sameTiming = (a: LockTiming, b: LockTiming) =>
   a.minContestWindow === b.minContestWindow &&
@@ -106,6 +143,10 @@ const sameTiming = (a: LockTiming, b: LockTiming) =>
  * to everything in Avow's approval, so this builds one only after every check passes, and refuses
  * with the first reason that applies.
  *
+ * 0. For version 3 terms, every booking they rely on passes `verifyDependencies` first, with the
+ *    supplier's own account as the one whose lock has to hold it. That holds whoever the terms say
+ *    checks for the buyer, since the supplier has the terms in full. Nothing below reads them
+ *    before.
  * 1. Avow's authorization passes every check `verifySupplierAuthorization` makes, with the buyer's
  *    signed mandate required, so a mandate that's forged, expired, revoked with its agent key, or
  *    that doesn't allow this supplier, category, currency, token or amount refuses.
@@ -131,10 +172,13 @@ export async function prepareAcceptance(
   const { config, chain } = deps
   const refuse = (reason: ReasonCode): PreparedAcceptance => ({ ok: false, reason })
   const t = request.terms
-  const shape = termsShapeProblem(t)
-  if (shape) return refuse(shape)
-  // Version 1 terms written before the dispute block existed can't be checked against the approval.
-  if (isTermsV1(t) && !(t as { dispute?: unknown }).dispute) return refuse('terms.incomplete')
+  if (!isChainedTerms(t)) {
+    const shape = termsShapeProblem(t)
+    if (shape) return refuse(shape)
+    // Version 1 terms written before the dispute block existed can't be checked against the
+    // approval.
+    if (isTermsV1(t) && !(t as { dispute?: unknown }).dispute) return refuse('terms.incomplete')
+  }
   if (request.mandate === undefined || request.mandate === null) return refuse('mandate.missing')
   // The buyer and its mandate come from the agreement the supplier signed, so they're required.
   const { buyerBusinessId, mandateHash: agreedMandate } = request.agreed ?? {}
@@ -142,11 +186,27 @@ export async function prepareAcceptance(
     return refuse('message.invalid')
   }
 
+  // Version 3 terms go no further until every booking they rely on passes. The checked terms the
+  // check gives back are the only way they reach the checks below.
+  let under: TermsUnderCheck
+  let dependencies: readonly CheckedDependency[] = []
+  if (isChainedTerms(t)) {
+    const relied = await verifyDependencies(
+      { terms: t, supplier: config.account, disclosed: request.disclosed ?? [] },
+      deps.dependencies ?? { readers: [] },
+    )
+    if (!relied.ok) return relied
+    under = { kind: 'chained', terms: relied.terms }
+    dependencies = relied.checked
+  } else {
+    under = { kind: 'plain', terms: t }
+  }
+
   const checked = await checkAuthorization(
     {
       authorization: request.authorization,
       agreed: request.agreed,
-      terms: t,
+      terms: under,
       mandate: request.mandate,
       now: request.now,
     },
@@ -173,7 +233,7 @@ export async function prepareAcceptance(
   let enforced: LockTerms
   let caps: ApprovalCaps
   try {
-    enforced = lockTerms(t, token.decimals)
+    enforced = lockTerms(plainTerms(under), token.decimals)
     caps = approvalCaps(mandate, token.decimals)
   } catch {
     return refuse('authorization.token_not_accepted')
@@ -243,6 +303,7 @@ export async function prepareAcceptance(
       token,
       timing: lockInfo.timing,
     }),
+    dependencies,
   })
 }
 

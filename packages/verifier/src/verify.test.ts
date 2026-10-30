@@ -2,6 +2,7 @@ import {
   type AnyTerms,
   AUTHORIZATION_TERMS_FIELDS,
   type AuthorizationTermsField,
+  chainedTerms,
   digestOf,
   type GpuReservationTerms,
   LOCK_RECORD_FIELDS,
@@ -20,6 +21,7 @@ import { type LockedBacking, MemoryChain } from './chain.js'
 import {
   agent,
   agreed,
+  approval,
   authorization,
   avow,
   buyer,
@@ -27,6 +29,7 @@ import {
   COMMITMENT,
   config,
   DOMAIN,
+  dependencyOn,
   id,
   json,
   KEY_TX,
@@ -40,6 +43,7 @@ import {
   newKey,
   RECORD_CHANGES,
   reservedChain,
+  SALT,
   signedAuthorization,
   signedMandate,
   TOKEN,
@@ -502,5 +506,20 @@ describe('setup mistakes stop the check', () => {
         deps: { ...deps, chain: mainnet, config: { ...config, chainId: 4217 } },
       }),
     ).rejects.toThrow()
+  })
+})
+
+describe('a booking that relies on another business’s booking', () => {
+  it('is refused here, however well it matches, since this check reads none of those bookings', async () => {
+    const chained = chainedTerms(terms, [dependencyOn()])
+    const hash = termsHash(chained, SALT)
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, approval({ termsHash: hash })))
+    const auth = await signedAuthorization(authorization({ termsHash: hash }))
+    const result = await verify(auth, {
+      terms: chained as unknown as AnyTerms,
+      agreed: { ...agreed, termsHash: hash },
+      mandate: await signedMandate(mandate),
+    })
+    expect(result).toEqual(refused('terms.version_unknown'))
   })
 })
