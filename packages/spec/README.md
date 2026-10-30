@@ -90,7 +90,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1 | That message changes |
 | Terms | `version` inside the terms hash, 2 | The header, a section's schema, canonical JSON or the hashing changes |
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
-| Commitment record | `COMMITMENT_RECORD_VERSION`, 3 | The record's own fields change. Version 2 added the references a record cites. Version 3 gave a reserve that went back at its release date its own kind of outcome, `reached_release_date`, which version 2 recorded as `kept`. A version 1 record reads as version 3 with no references, and a version 2 record reads as version 3 unchanged |
+| Commitment record | `COMMITMENT_RECORD_VERSION`, 3 | The record's own fields change. Version 2 added the references a record cites. Version 3 gave a reserve that went back at its release date its own kind of outcome, `reached_release_date`, which versions 1 and 2 recorded as `kept`, as they did the supplier's consent. A version 1 or 2 record reads as version 3, citing nothing when it's version 1. One that ended as `kept` stays version 2, so writing it back keeps its meaning |
 
 Every signed message names its version, chain and lock in its EIP-712 domain, and carries a nonce and an expiry. A signed request to Avow's API carries a request id in place of the nonce, which names one operation. A reader refuses a version it doesn't know for that message type.
 

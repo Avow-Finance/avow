@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   COMMITMENT_STATES,
+  CONSENT_OUTCOMES,
   type Commitment,
   type CommitmentFields,
   type CommitmentIn,
@@ -8,6 +9,7 @@ import {
   type ContestRecord,
   commitmentFitsState,
   ENDINGS,
+  isConsentOutcome,
   isContested,
   isEnding,
   OUTCOME_ENDINGS,
@@ -399,6 +401,7 @@ describe('parseCommitment', () => {
     outcome: Outcome | null,
   ): UncheckedCommitment => ({ ...fields, state, contest, outcome })
   const outcomeOf = (kind: OutcomeKind): Outcome => ({ kind, charged: 0n, released: reserve })
+  const OUTCOME_KINDS = Object.keys(OUTCOME_ENDINGS) as OutcomeKind[]
 
   it('reads a record in every state, holding the contest and outcome that state calls for', () => {
     for (const state of COMMITMENT_STATES) {
@@ -415,8 +418,12 @@ describe('parseCommitment', () => {
     const impossible: UncheckedCommitment[] = [
       anyRecord('draft', null, outcomeOf('kept')),
       // A contest outside the contested states, or none inside them.
-      ...COMMITMENT_STATES.map((s) =>
+      ...COMMITMENT_STATES.filter((s) => s !== 'released').map((s) =>
         anyRecord(s, isContested(s) ? null : contest, records[s].outcome),
+      ),
+      // A contest on a release the supplier didn't consent to.
+      ...OUTCOME_KINDS.filter((k) => OUTCOME_ENDINGS[k] === 'released' && !isConsentOutcome(k)).map(
+        (kind) => anyRecord('released', contest, outcomeOf(kind)),
       ),
       // An outcome before an ending, or none in one.
       ...COMMITMENT_STATES.map((s) =>
@@ -424,9 +431,9 @@ describe('parseCommitment', () => {
       ),
       // An outcome of a kind that belongs to another ending.
       ...ENDINGS.flatMap((s) =>
-        (Object.keys(OUTCOME_ENDINGS) as OutcomeKind[])
-          .filter((kind) => OUTCOME_ENDINGS[kind] !== s)
-          .map((kind) => anyRecord(s, records[s].contest, outcomeOf(kind))),
+        OUTCOME_KINDS.filter((kind) => OUTCOME_ENDINGS[kind] !== s).map((kind) =>
+          anyRecord(s, records[s].contest, outcomeOf(kind)),
+        ),
       ),
     ]
     for (const record of impossible) {
@@ -453,6 +460,22 @@ describe('parseCommitment', () => {
     })
   })
 
+  it("reads a release by the supplier's consent that keeps the contest it came after", () => {
+    for (const kind of CONSENT_OUTCOMES) {
+      const record: Commitment = {
+        ...fields,
+        state: 'released',
+        contest,
+        outcome: { kind, charged: 0n, released: reserve },
+      }
+      expect(commitmentFitsState(record), kind).toBe(true)
+      expect(parseCommitment(roundTrip(record)), kind).toEqual({
+        ok: true,
+        value: lowerHex(record),
+      })
+    }
+  })
+
   it('types a record so that its state decides its contest and outcome', () => {
     // @ts-expect-error A draft holds no outcome.
     const withOutcome: Commitment = { ...records.draft, outcome: records.released.outcome }
@@ -460,11 +483,15 @@ describe('parseCommitment', () => {
     const uncontested: Commitment = { ...records.paused, contest: null }
     // @ts-expect-error A released commitment can't end as a no-show, which ends in a charge.
     const noShow: Commitment = { ...records.released, outcome: records.charged.outcome }
-    expect([withOutcome, uncontested, noShow].map((r) => commitmentFitsState(r))).toEqual([
-      false,
-      false,
-      false,
-    ])
+    // @ts-expect-error Only a release by the supplier's consent keeps a contest.
+    const contestedLapse: Commitment = {
+      ...records.released,
+      contest,
+      outcome: { kind: 'not_accepted', charged: 0n, released: reserve },
+    }
+    expect(
+      [withOutcome, uncontested, noShow, contestedLapse].map((r) => commitmentFitsState(r)),
+    ).toEqual([false, false, false, false])
   })
 
   it('refuses an outcome whose amounts do not fit its ending', () => {
@@ -521,8 +548,8 @@ describe('parseCommitment', () => {
     expect(parseCommitment(roundTrip(older))).toEqual({ ok: true, value: lowerHex(underV1) })
   })
 
-  it('reads a version 2 record as version 3 unchanged, with a kept outcome staying kept', () => {
-    for (const record of [commitment, underV1, records.released]) {
+  it('reads a version 2 record as version 3 unchanged, unless it ended as kept', () => {
+    for (const record of [commitment, underV1, records.paused, records.charged, records.resolved]) {
       expect(parseCommitment(roundTrip({ ...record, schemaVersion: '2' }))).toEqual({
         ok: true,
         value: lowerHex(record),
@@ -530,23 +557,42 @@ describe('parseCommitment', () => {
     }
   })
 
-  it('refuses a version 1 or 2 record with the outcome version 3 added', () => {
-    const releasedAs = (kind: 'kept' | 'reached_release_date'): Commitment => ({
-      ...records.released,
-      terms: v1,
-      termsHash: termsHash(v1, SALT),
-      outcome: { kind, charged: 0n, released: v1.reserve },
-    })
-    /** The record as version 1 or 2 wrote it. Version 1 cited no references. */
-    const asVersion = (record: Commitment, schemaVersion: string) => {
-      const { references, ...rest } = { ...record, schemaVersion }
-      return roundTrip(schemaVersion === '1' ? rest : { ...rest, references })
-    }
+  const releasedAs = (kind: 'kept' | 'reached_release_date'): Commitment => ({
+    ...records.released,
+    contest: null,
+    terms: v1,
+    termsHash: termsHash(v1, SALT),
+    outcome: { kind, charged: 0n, released: v1.reserve },
+  })
+  /** The record as version 1 or 2 wrote it. Version 1 cited no references. */
+  const asVersion = (record: Commitment, schemaVersion: string) => {
+    const { references, ...rest } = { ...record, schemaVersion }
+    return roundTrip(schemaVersion === '1' ? rest : { ...rest, references })
+  }
+
+  it('keeps a version 1 or 2 record that ended as kept at version 2, so writing it back keeps its meaning', () => {
+    // Either version's kept may be a return at the release date or the supplier's consent.
+    const asRead = lowerHex({ ...releasedAs('kept'), schemaVersion: '2' })
     for (const version of ['1', '2']) {
-      expect(parseCommitment(asVersion(releasedAs('kept'), version))).toEqual({
-        ok: true,
-        value: lowerHex(releasedAs('kept')),
-      })
+      const read = parseCommitment(asVersion(releasedAs('kept'), version))
+      expect(read, version).toEqual({ ok: true, value: asRead })
+      if (!read.ok) continue
+      expect(roundTrip(read.value).schemaVersion, version).toBe('2')
+      expect(parseCommitment(roundTrip(read.value)), version).toEqual(read)
+    }
+    // A live record reads as version 3, so the ending it reaches later uses version 3's kinds.
+    const live = parseCommitment(roundTrip({ ...records.accepted, schemaVersion: '2' }))
+    if (!live.ok) throw new Error(live.reason)
+    const atReleaseDate = {
+      ...live.value,
+      state: 'released',
+      outcome: { kind: 'reached_release_date', charged: 0n, released: reserve },
+    }
+    expect(parseCommitment(roundTrip(atReleaseDate)).ok).toBe(true)
+  })
+
+  it('refuses a version 1 or 2 record with the outcome version 3 added', () => {
+    for (const version of ['1', '2']) {
       expect(parseCommitment(asVersion(releasedAs('reached_release_date'), version))).toEqual({
         ok: false,
         reason: 'message.invalid',

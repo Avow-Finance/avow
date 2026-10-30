@@ -172,6 +172,8 @@ describe('fromAp2IntentMandate', () => {
       'Nov 5, 2026 09:00 GMT',
       '2026-11-05T09:00:00',
       '2026-11-05T09:00:00.500Z',
+      // Date.parse drops anything under a millisecond, so this one would read as a whole second.
+      '2026-11-05T09:00:00.0001Z',
       '2026-02-30T09:00:00Z',
       // A moment before 1970, which no expiry can be.
       '0000-01-01T00:00:00Z',

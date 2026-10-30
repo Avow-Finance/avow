@@ -5,6 +5,7 @@ import {
   type Commitment,
   commitmentFitsState,
   OUTCOME_ENDINGS,
+  type Outcome,
   type OutcomeKind,
   type UncheckedCommitment,
 } from './commitment.js'
@@ -501,11 +502,21 @@ export function parseReserveRequest(json: unknown): ReserveRequest {
 }
 
 /**
- * Parses a stored or sent commitment record. A version 1 record reads as a version 3 record that
- * cites nothing, and a version 2 record reads as version 3 unchanged, so writing either back
- * writes version 3. A record version this code doesn't read is refused as unknown. A record whose
- * contest or outcome its state can't hold, such as a draft with an outcome or a release that
- * charged something, is refused as invalid.
+ * The version a record from before version 3 reads as. Both earlier versions recorded a return at
+ * the release date as `kept`, as they did the supplier's consent, and an ended record doesn't say
+ * which it was. So a record that ended as `kept` stays version 2, the last version whose `kept`
+ * means either, and writing it back keeps that meaning. Any other record reads as version 3 with
+ * its meaning unchanged, so a live one records its ending in version 3's kinds.
+ */
+const versionBeforeV3 = (outcome: Outcome | null) =>
+  outcome?.kind === 'kept' ? '2' : COMMITMENT_RECORD_VERSION
+
+/**
+ * Parses a stored or sent commitment record. A version 1 or 2 record reads as version 3, citing
+ * nothing when it's version 1, and one that ended as `kept` stays version 2. A record version this
+ * code doesn't read is refused as unknown. A record whose contest or outcome
+ * its state can't hold, such as a draft with an outcome or a release that charged something, is
+ * refused as invalid.
  */
 export function parseCommitment(json: unknown): Parsed<Commitment> {
   const header = versionHeader.safeParse(json)
@@ -514,11 +525,12 @@ export function parseCommitment(json: unknown): Parsed<Commitment> {
   if (header.data.schemaVersion === '1') {
     const older = commitmentJsonV1.safeParse(json)
     if (!older.success) return { ok: false, reason: 'message.invalid' }
-    record = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION, references: [] }
+    const schemaVersion = versionBeforeV3(older.data.outcome)
+    record = { ...older.data, schemaVersion, references: [] }
   } else if (header.data.schemaVersion === '2') {
     const older = commitmentJsonV2.safeParse(json)
     if (!older.success) return { ok: false, reason: 'message.invalid' }
-    record = { ...older.data, schemaVersion: COMMITMENT_RECORD_VERSION }
+    record = { ...older.data, schemaVersion: versionBeforeV3(older.data.outcome) }
   } else if (header.data.schemaVersion === COMMITMENT_RECORD_VERSION) {
     const parsed = commitmentJson.safeParse(json)
     if (!parsed.success) return { ok: false, reason: 'message.invalid' }

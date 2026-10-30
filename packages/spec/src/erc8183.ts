@@ -1,5 +1,5 @@
 import type { Address, Hex } from 'viem'
-import type { Commitment, CommitmentState, Ending } from './commitment.js'
+import { type Commitment, type CommitmentState, type Ending, isOffChain } from './commitment.js'
 import { toTokenUnits } from './rail.js'
 import { lockTerms } from './terms.js'
 
@@ -75,14 +75,15 @@ export interface Erc8183Job {
   /** The business account whose lock holds the reserve. */
   client: Address
   /**
-   * The supplier's payee that the reserve's backing names, which a charge pays. Null until the
-   * reserve is in a lock.
+   * The supplier's payee that the reserve's backing names, which a charge pays. Null in a state
+   * where no money has reached the lock, even when the record already holds the backing.
    */
   provider: Address | null
   /**
    * The lock that the reserve's backing names, which decides every charge. It pays one once the
    * contest window closes, applies Avow's ruling or the arbiter's, and applies the day-90 default.
-   * Null until the reserve is in a lock.
+   * Null in a state where no money has reached the lock, even when the record already holds the
+   * backing.
    */
   evaluator: Address | null
   /** The reserve, which is the most the supplier can charge. Usage is paid apart from it. */
@@ -104,15 +105,18 @@ export interface Erc8183Job {
 /**
  * The job view of a commitment, from its record, the business account the record leaves to the
  * chain, and the decimals of the reserve's token. The lock and the payee come from the reserve's
- * backing. The record has to fit its state, as `parseCommitment` checks. Throws when an amount
- * can't be paid exactly in a token with these decimals.
+ * backing once the state says money reached the lock. The record has to fit its state, as
+ * `parseCommitment` checks. Throws when an amount can't be paid exactly in a token with these
+ * decimals.
  */
 export function toErc8183Job(
   c: Commitment,
   chain: { account: Address; decimals: number },
 ): Erc8183Job {
   const terms = lockTerms(c.terms, chain.decimals)
-  const backing = c.backing.find((b) => b.side === terms.side)?.ref ?? null
+  const backing = isOffChain(c.state)
+    ? null
+    : (c.backing.find((b) => b.side === terms.side)?.ref ?? null)
   return {
     status: erc8183Status(c),
     client: chain.account,

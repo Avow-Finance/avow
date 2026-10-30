@@ -4,11 +4,7 @@ import type { Reference } from './references.js'
 import { type AnyTerms, enforceableTerms } from './terms.js'
 import type { Side } from './types.js'
 
-/**
- * The 11 commitment states. Draft, agreed, awaiting approval and expired live on
- * Avow's servers, and Tempo sees a commitment from the moment money is reserved. The last four
- * are endings.
- */
+/** The 11 commitment states. The last four are endings. */
 export const COMMITMENT_STATES = [
   'draft',
   'agreed',
@@ -32,6 +28,21 @@ export function isEnding(state: CommitmentState): state is Ending {
 }
 
 /**
+ * The states that live only on Avow's servers, because no money has reached the lock. Tempo sees a
+ * commitment in every other state, from the moment its reserve is locked.
+ */
+export const OFF_CHAIN_STATES = [
+  'draft',
+  'agreed',
+  'awaiting_approval',
+  'expired',
+] as const satisfies readonly CommitmentState[]
+
+export function isOffChain(state: CommitmentState): boolean {
+  return (OFF_CHAIN_STATES as readonly string[]).includes(state)
+}
+
+/**
  * Every move between states. A draft can move to itself on a
  * counter-offer, and an ending moves nowhere.
  */
@@ -48,10 +59,12 @@ export const TRANSITIONS: { readonly [S in CommitmentState]: readonly Commitment
   // Kept, cancelled in time, supplier failed or past the release date, or a late cancellation or
   // no-show reported by the charge deadline.
   accepted: ['released', 'charge_pending'],
-  // The contest window closes, or the business contests within it.
-  charge_pending: ['charged', 'paused'],
-  // A ruling 24 hours after it's posted, or the day-90 default.
-  paused: ['resolved'],
+  // The contest window closes, the business contests within it, or the supplier consents to give
+  // the reserve back.
+  charge_pending: ['charged', 'paused', 'released'],
+  // A ruling 24 hours after it's posted, the day-90 default, or the supplier's consent before a
+  // ruling is posted.
+  paused: ['resolved', 'released'],
   expired: [],
   released: [],
   charged: [],
@@ -63,8 +76,26 @@ export function canMove(from: CommitmentState, to: CommitmentState): boolean {
 }
 
 /**
+ * The states the lock takes the supplier's consent to give the reserve back in: an accepted
+ * reserve, a pending charge, and a paused charge until a ruling is posted. `TRANSITIONS` moves each
+ * of them to `released`.
+ */
+export const CONSENT_STATES = [
+  'accepted',
+  'charge_pending',
+  'paused',
+] as const satisfies readonly CommitmentState[]
+export type ConsentState = (typeof CONSENT_STATES)[number]
+
+/** Whether the lock takes the supplier's consent in a commitment's state or a backing's. */
+export function takesConsent(state: CommitmentState | RailState): state is ConsentState {
+  return (CONSENT_STATES as readonly string[]).includes(state)
+}
+
+/**
  * The states a commitment reaches only through the business contesting a pending charge. A record
- * in one of them carries that contest, and a record in any other state has none.
+ * in one of them carries that contest. A release by the supplier's consent carries it when the
+ * consent came after the contest, and a record in any other state has none.
  */
 export const CONTESTED_STATES = ['paused', 'resolved'] as const satisfies readonly CommitmentState[]
 export type ContestedState = (typeof CONTESTED_STATES)[number]
@@ -77,7 +108,7 @@ export function isContested(state: CommitmentState): state is ContestedState {
  * How a commitment ended, with the ending each kind belongs to. `kept` is the supplier's consent to
  * give the reserve back because the commitment was kept, which the lock takes at any time.
  * `reached_release_date` is a reserve that went back at its release date with no report. A record
- * before version 3 used `kept` for both.
+ * before version 3 used `kept` for both, so one that ended as `kept` stays version 2.
  */
 export const OUTCOME_ENDINGS = {
   expired: 'expired',
@@ -93,6 +124,17 @@ export const OUTCOME_ENDINGS = {
   day_90_default: 'resolved',
 } as const satisfies Record<string, Ending>
 export type OutcomeKind = keyof typeof OUTCOME_ENDINGS
+
+/** The kinds of outcome the supplier's consent records, one for each reason a consent gives. */
+export const CONSENT_OUTCOMES = [
+  'kept',
+  'supplier_failed',
+] as const satisfies readonly OutcomeKindIn<'released'>[]
+export type ConsentOutcome = (typeof CONSENT_OUTCOMES)[number]
+
+export function isConsentOutcome(kind: OutcomeKind): kind is ConsentOutcome {
+  return (CONSENT_OUTCOMES as readonly string[]).includes(kind)
+}
 
 /** The kinds of outcome that end a commitment in `E`. */
 export type OutcomeKindIn<E extends Ending> = {
@@ -143,7 +185,10 @@ export interface ContestRecord {
 
 /** The fields a commitment record holds in every state. */
 export interface CommitmentFields {
-  /** The record's own version, `COMMITMENT_RECORD_VERSION`. Its terms carry theirs. */
+  /**
+   * The record's own version, `COMMITMENT_RECORD_VERSION`, or 2 for a record that ended as `kept`
+   * before version 3. Its terms carry theirs.
+   */
   schemaVersion: string
   commitmentId: Hex
   category: string
@@ -162,11 +207,22 @@ export interface CommitmentFields {
 /** A commitment record in the state `S`, holding the contest and outcome that state calls for. */
 export type CommitmentIn<S extends CommitmentState> = CommitmentFields & {
   state: S
-  /** The business's contest in a state reached through one, and null in every other state. */
-  contest: S extends ContestedState ? ContestRecord : null
-  /** How the commitment ended, of a kind that belongs to its ending, and null before one. */
-  outcome: S extends Ending ? Outcome<OutcomeKindIn<S>> : null
-}
+} & ContestAndOutcome<S>
+
+/**
+ * The contest and outcome a record in `S` holds. The business's contest is in every state reached
+ * through one and null in every other, except that a release by the supplier's consent may carry
+ * it, since the lock takes that consent after a contest. The outcome is how the commitment ended,
+ * of a kind that belongs to its ending, and null before one.
+ */
+type ContestAndOutcome<S extends CommitmentState> = S extends 'released'
+  ?
+      | { contest: null; outcome: Outcome<OutcomeKindIn<S>> }
+      | { contest: ContestRecord; outcome: Outcome<ConsentOutcome> }
+  : {
+      contest: S extends ContestedState ? ContestRecord : null
+      outcome: S extends Ending ? Outcome<OutcomeKindIn<S>> : null
+    }
 
 /**
  * One promise between a buyer and a supplier, as the API stores it and the SDK reads it. Its state
@@ -186,16 +242,19 @@ export type UncheckedCommitment = CommitmentFields & {
 }
 
 /**
- * Whether a record holds the contest and outcome its state calls for. A contest belongs to the
- * contested states and to no other, and an outcome to the endings and to no other, with a kind
- * that belongs to the record's own ending and amounts that fit it.
+ * Whether a record holds the contest and outcome its state calls for. An outcome belongs to the
+ * endings and to no other state, with a kind that belongs to the record's own ending and amounts
+ * that fit it. A contest belongs to the contested states, and to a release by the supplier's
+ * consent that came after one, and to no other.
  */
 export function commitmentFitsState(record: UncheckedCommitment): record is Commitment {
-  if ((record.contest !== null) !== isContested(record.state)) return false
-  if (!isEnding(record.state)) return record.outcome === null
-  const outcome = record.outcome
-  if (outcome === null || OUTCOME_ENDINGS[outcome.kind] !== record.state) return false
-  return amountsFit(record.state, outcome, enforceableTerms(record.terms).reserve)
+  const { state, contest, outcome } = record
+  if (!isEnding(state)) return outcome === null && (contest !== null) === isContested(state)
+  if (outcome === null || OUTCOME_ENDINGS[outcome.kind] !== state) return false
+  const contestFits = isContested(state)
+    ? contest !== null
+    : contest === null || isConsentOutcome(outcome.kind)
+  return contestFits && amountsFit(state, outcome, enforceableTerms(record.terms).reserve)
 }
 
 /**

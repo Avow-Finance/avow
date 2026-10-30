@@ -6,13 +6,13 @@ A commitment's states and the mandate behind it map onto ERC-8183 jobs and AP2 0
 
 [ERC-8183](https://eips.ethereum.org/EIPS/eip-8183), a draft of 25 February 2026, describes a job that a client funds in escrow and a provider submits work for. An evaluator then completes the job, which pays the provider, or rejects it, which refunds the client. A commitment uses its money differently. The lock reserves what a broken promise would cost, the supplier is paid from it only for a charge the terms allow, and a kept commitment returns the whole reserve to the business. The job view keeps that difference visible.
 
-`toErc8183Job` reads a commitment as a job. It takes the business account and the token's decimals from the caller, and everything else from the record.
+`toErc8183Job` reads a commitment as a job. It takes the business account and the token's decimals from the caller, and everything else from the record. A commitment that is a draft, agreed, awaiting approval or expired lives only on Avow's servers, so its job names no provider or evaluator, even when the record already holds the backing Avow approved.
 
 | Job field | From the commitment |
 | --- | --- |
 | `client` | The business account whose lock holds the reserve |
-| `provider` | The supplier's payee that the reserve's backing names, which a charge pays, or null until the reserve is in a lock |
-| `evaluator` | The lock that the reserve's backing names, or null until the reserve is in a lock. The lock pays a charge once the contest window closes, applies Avow's ruling or the arbiter's, and applies the day-90 default |
+| `provider` | The supplier's payee that the reserve's backing names, which a charge pays. Null while the commitment's state says no money has reached the lock |
+| `evaluator` | The lock that the reserve's backing names. Null while the commitment's state says no money has reached the lock. The lock pays a charge once the contest window closes, applies Avow's ruling or the arbiter's, and applies the day-90 default |
 | `budget` | The reserve in the token's base units, the most the supplier can charge |
 | `expiredAt` | The release date, from which anyone can return a reserve the supplier accepted with no report |
 | `description` | The salted terms hash both sides signed |
@@ -41,11 +41,11 @@ The view decides an ending from the commitment's state and how it ended. ERC-818
 | `resolved` | `ruled`, `day_90_default` | Completed, or Rejected when nothing was paid | A ruling or the day-90 default decided the charge |
 | `expired` | `expired` | Rejected | The commitment never reached the lock, and nothing moved |
 
-Version 2 of the commitment record recorded a return at the release date as `kept`, so a version 2 record reads as `kept` and its job shows Rejected, which ERC-8183 allows at any time.
+Versions 1 and 2 of the commitment record recorded a return at the release date as `kept`, as they did the supplier's consent. Such a record stays version 2 when read, keeps `kept`, and its job shows Rejected, which ERC-8183 allows at any time.
 
-Every move a commitment can make maps to a move ERC-8183 allows or to no move at all, and no ending that can come before the release date shows as Expired. A test checks each move against ERC-8183's state table, including the supplier's consent from a pending or paused charge, so a new state, move or way of ending fails it until it maps.
+Every move a commitment can make maps to a move ERC-8183 allows or to no move at all, and no ending that can come before the release date shows as Expired. A test checks each move in the commitment's state table against ERC-8183's, so a new state, move or way of ending fails it until it maps. The supplier's consent from a pending or paused charge is one of those moves.
 
-ERC-8183 has no contest, since its evaluator decides alone. A contested commitment shows as still submitted, and its contest record stays with Avow's records.
+ERC-8183 has no contest, since its evaluator decides alone. A contested commitment shows as still submitted until it ends, and its contest record stays with Avow's records, on a release by the supplier's consent as well.
 
 ### What doesn't carry over
 

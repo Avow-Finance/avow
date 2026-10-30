@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   type BackingRecord,
+  CONSENT_OUTCOMES,
+  CONSENT_STATES,
   type Commitment,
   type CommitmentFields,
   type CommitmentState,
   type ContestRecord,
+  canMove,
   ENDINGS,
+  isContested,
   isEnding,
   OUTCOME_ENDINGS,
   type OutcomeKind,
@@ -71,15 +75,22 @@ const contest: ContestRecord = {
   contestedAt: START + 900n,
 }
 
-/** A record that ended in `kind`, having charged `charged` micros of the reserve. */
-function ended(kind: OutcomeKind, charged: bigint): Commitment {
+/**
+ * A record that ended in `kind`, having charged `charged` micros of the reserve, and holding the
+ * business's contest when `contested`, as every ruling and day-90 default does.
+ */
+function ended(
+  kind: OutcomeKind,
+  charged: bigint,
+  contested = OUTCOME_ENDINGS[kind] === 'resolved',
+): Commitment {
   const ending = OUTCOME_ENDINGS[kind]
   const locked = kind === 'expired' ? 0n : reserve
   return {
     ...fields,
     backing: kind === 'expired' ? [] : fields.backing,
     state: ending,
-    contest: ending === 'resolved' ? contest : null,
+    contest: contested ? contest : null,
     outcome: { kind, charged, released: locked - charged },
   } as Commitment
 }
@@ -117,23 +128,14 @@ const ENDS_BEFORE_RELEASE_DATE: { readonly [K in OutcomeKind]: boolean } = {
   day_90_default: true,
 }
 
-/**
- * The lock takes the supplier's consent to give a reserve back from an accepted reserve, a pending
- * charge, or a paused one with no ruling. TRANSITIONS holds only the first, and the job view has to
- * fit all three.
- */
-const CONSENT_RELEASES = (['accepted', 'charge_pending', 'paused'] as const).flatMap((from) =>
-  (['kept', 'supplier_failed'] as const).map((kind) => ({ from, kind })),
-)
-
 describe('commitments as ERC-8183 jobs', () => {
   it('moves a job only as ERC-8183 allows, for every move a commitment makes', () => {
     const allowed = (from: Erc8183Status, to: Erc8183Status) =>
       from === to || ERC8183_TRANSITIONS[from].includes(to)
     const statusOf = (state: CommitmentState) =>
       ERC8183_STATUS_OF[state as keyof typeof ERC8183_STATUS_OF]
-    // Every move into an ending, with each kind of outcome it can end in.
-    const endings: { from: CommitmentState; kind: OutcomeKind }[] = [...CONSENT_RELEASES]
+    // Every move into an ending, with each kind of outcome that ending holds.
+    const endings: { from: CommitmentState; kind: OutcomeKind }[] = []
     for (const [from, targets] of Object.entries(TRANSITIONS) as [
       CommitmentState,
       readonly CommitmentState[],
@@ -162,10 +164,14 @@ describe('commitments as ERC-8183 jobs', () => {
   })
 
   it('shows an early release by consent as a rejection, which the evaluator can make at any time', () => {
-    for (const { from, kind } of CONSENT_RELEASES) {
-      const status = erc8183Status(ended(kind, 0n))
-      expect(status, `${kind} from ${from}`).toBe('Rejected')
-      expect(ERC8183_TRANSITIONS[ERC8183_STATUS_OF[from]]).toContain(status)
+    for (const from of CONSENT_STATES) {
+      expect(canMove(from, 'released'), from).toBe(true)
+      for (const kind of CONSENT_OUTCOMES) {
+        // A consent after a contest leaves the contest on the record.
+        const status = erc8183Status(ended(kind, 0n, isContested(from)))
+        expect(status, `${kind} from ${from}`).toBe('Rejected')
+        expect(ERC8183_TRANSITIONS[ERC8183_STATUS_OF[from]]).toContain(status)
+      }
     }
   })
 
@@ -264,19 +270,29 @@ describe('toErc8183Job', () => {
     expect(job).toMatchObject({ status: 'Submitted', provider: newPayee, evaluator: otherLock })
   })
 
-  it('names no provider or evaluator before the reserve reaches a lock', () => {
-    const draft = toErc8183Job(
-      { ...fields, backing: [], state: 'draft', contest: null, outcome: null },
-      chain,
-    )
-    expect(draft).toMatchObject({ status: 'Open', provider: null, evaluator: null, settled: null })
-    const lapsed = toErc8183Job(ended('expired', 0n), chain)
-    expect(lapsed).toMatchObject({
-      status: 'Rejected',
-      provider: null,
-      evaluator: null,
-      settled: { paid: 0n, refunded: 0n },
-    })
+  it('names no provider or evaluator in a state where no money reached the lock', () => {
+    // Avow records the backing it approved before the reserve lands, while the lock has none.
+    const approved: BackingRecord = { ...backingIn(), status: 'none' }
+    for (const backing of [[], [approved]]) {
+      for (const state of ['draft', 'agreed', 'awaiting_approval'] as const) {
+        const job = toErc8183Job({ ...fields, backing, state, contest: null, outcome: null }, chain)
+        expect(job, state).toMatchObject({ status: 'Open', provider: null, evaluator: null })
+      }
+      const lapsed = toErc8183Job({ ...ended('expired', 0n), backing }, chain)
+      expect(lapsed).toMatchObject({
+        status: 'Rejected',
+        provider: null,
+        evaluator: null,
+        settled: { paid: 0n, refunded: 0n },
+      })
+    }
+    // Once the reserve was locked, the job names both, after it ends as well.
+    for (const job of [
+      toErc8183Job({ ...fields, state: 'reserved', contest: null, outcome: null }, chain),
+      toErc8183Job(ended('not_accepted', 0n), chain),
+    ]) {
+      expect(job).toMatchObject({ provider: PAYEE, evaluator: LOCK })
+    }
   })
 
   it("gives every amount in the token's base units, whatever its decimals", () => {

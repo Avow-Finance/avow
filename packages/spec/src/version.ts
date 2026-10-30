@@ -62,8 +62,9 @@ export function isSupportedMessageVersion(type: string, version: string): boolea
 /**
  * The version of a stored commitment record. Version 2 added the references a record cites.
  * Version 3 gave a reserve that went back at its release date its own kind of outcome, which
- * version 2 recorded as kept. A version 1 record reads as version 3 with no references, and a
- * version 2 record reads as version 3 unchanged. The record's terms carry their own version.
+ * versions 1 and 2 recorded as kept, as they did the supplier's consent. A version 1 or 2 record
+ * reads as version 3, citing nothing when it's version 1. One that ended as kept stays version 2,
+ * so writing it back keeps its meaning. The record's terms carry their own version.
  */
 export const COMMITMENT_RECORD_VERSION = '3'
 
