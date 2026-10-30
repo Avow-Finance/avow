@@ -73,6 +73,18 @@ export function enrollSettings(env: Env) {
   return settings
 }
 
+/** What `cancel` needs: Avow's API, which records a late cancellation, and the reserve's token. */
+export function cancelSettings(env: Env) {
+  const r = new Reader(env)
+  const settings = {
+    ...baseSettings(env),
+    apiUrl: r.text('AVOW_API_URL', ORIGIN),
+    token: r.address('AVOW_TOKEN'),
+  }
+  r.done()
+  return settings
+}
+
 /** What `book` needs: Avow's API and dispute settings, the supplier and the booking's window. */
 export function bookSettings(env: Env) {
   const r = new Reader(env)

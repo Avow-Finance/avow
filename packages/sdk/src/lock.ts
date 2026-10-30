@@ -73,13 +73,23 @@ export const RESERVE_SELECTOR: Hex = toFunctionSelector(RESERVE_ABI[0])
 /**
  * The calls a business account's root key makes on its own lock and on the factory, as the testnet
  * contracts declare them. Approving a supplier lets an agent reserve for it, and only the account's
- * root key can do it.
+ * root key can do it. Cancelling before free cancellation ends takes a reserve back in full.
  */
 export const ADMINISTRATOR_ABI = [
   {
     type: 'function',
     name: 'approveSupplier',
     inputs: [{ name: 'supplier', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'cancelFree',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32' },
+      { name: 'side', type: 'uint8' },
+    ],
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -140,6 +150,24 @@ export function approveSupplierCall(lock: Address, supplier: Address): Call {
       abi: ADMINISTRATOR_ABI,
       functionName: 'approveSupplier',
       args: [supplier],
+    }),
+  }
+}
+
+/**
+ * The call, from the business account's root key, that cancels a commitment on the lock before
+ * free cancellation ends and gives the whole reserve back. It cancels the buyer's side, the only
+ * side a lock holds a reserve for in this release. Until then Avow refuses to record a
+ * cancellation, with `commitment.cancel_on_lock`, since the business cancels on the lock without
+ * anyone else's signature.
+ */
+export function cancelFreeCall(lock: Address, commitmentId: Hex): Call {
+  return {
+    to: lock,
+    data: encodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      functionName: 'cancelFree',
+      args: [commitmentId, SIDE_CODES.buyer],
     }),
   }
 }

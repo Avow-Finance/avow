@@ -79,7 +79,7 @@ export const REASON_CODES = {
   'commitment.cancel_on_lock':
     "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",
   'commitment.ended':
-    "The commitment's charge deadline has passed, so it can no longer be cancelled or started",
+    "The commitment's charge deadline has passed, so it can no longer be cancelled, started or reported on",
   'authorization.payee_mismatch': "The payee isn't the supplier's own payout address",
   'authorization.terms_mismatch': "The authorization's amount or deadlines differ from the terms",
   'authorization.commitment_mismatch':
@@ -109,6 +109,14 @@ export const REASON_CODES = {
   'consent.count_passed':
     'The commitment already has more reports than the consent names, so the lock would never take it',
   'consent.count_out_of_range': 'The consent names a report count no commitment can reach',
+  'report.not_reportable':
+    'The lock holds the commitment as something other than accepted, and only an accepted commitment takes a report',
+  'report.open':
+    'A report on the commitment is still open, and the lock takes one report at a time',
+  'report.limit_reached': 'The commitment already has two reports, the most a lock takes',
+  'report.kind_not_allowed': "The commitment's terms carry no charge of this kind",
+  'report.amount_invalid': 'The amount is zero or more than the terms let this kind of charge take',
+  'report.too_early': "The terms don't let this kind of charge be reported yet",
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',
   'chain.reserve_mismatch':
     'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',
@@ -122,7 +130,7 @@ export const REASON_CODES = {
   'chain.lock_timing_unexpected':
     "The lock's dispute timing or token isn't what the supplier's profile accepts",
   'chain.supplier_mismatch':
-    "The commitment on the lock names another supplier account than this supplier's",
+    "The commitment on the lock names another supplier account or signing key than this supplier's",
   'reference.commitment_mismatch':
     "The lock holds no commitment for this reference, holds it under another terms hash, or the reference names a side the terms' backing doesn't secure",
   'payment.not_found': 'No transfer is at that chain, transaction and log index',

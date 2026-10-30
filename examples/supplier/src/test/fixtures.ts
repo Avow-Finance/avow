@@ -185,6 +185,7 @@ export function reservedChain(): MemoryChain {
     approvalHash: approvalDigest(approval, DOMAIN),
     fundingKey: approval.fundingKey,
     reportCount: 0,
+    hasReport: false,
     hasRuling: false,
   })
   chain.setAgentKey(

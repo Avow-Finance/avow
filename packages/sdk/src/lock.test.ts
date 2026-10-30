@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ADMINISTRATOR_ABI,
   approveSupplierCall,
+  cancelFreeCall,
   createLockCall,
   FACTORY_ABI,
   RESERVE_ABI,
@@ -82,6 +83,9 @@ describe("the administrator's calls", () => {
     expect(
       toFunctionSelector(getAbiItem({ abi: ADMINISTRATOR_ABI, name: 'approveSupplier' })),
     ).toBe(toFunctionSelector('approveSupplier(address)'))
+    expect(toFunctionSelector(getAbiItem({ abi: ADMINISTRATOR_ABI, name: 'cancelFree' }))).toBe(
+      toFunctionSelector('cancelFree(bytes32,uint8)'),
+    )
     expect(toFunctionSelector(getAbiItem({ abi: FACTORY_ABI, name: 'createLock' }))).toBe(
       toFunctionSelector('createLock(address)'),
     )
@@ -101,5 +105,18 @@ describe("the administrator's calls", () => {
     expect(decodeFunctionData({ abi: ADMINISTRATOR_ABI, data: approved.data }).args).toEqual([
       '0x00000000000000000000000000000000000000C1',
     ])
+  })
+
+  it("cancel the buyer's side of a commitment on the business's own lock", () => {
+    const COMMITMENT = `0x${'5c'.repeat(32)}` as const
+    const cancelled = cancelFreeCall(LOCK, COMMITMENT)
+    expect(cancelled.to).toBe(LOCK)
+    const { functionName, args } = decodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      data: cancelled.data,
+    })
+    expect(functionName).toBe('cancelFree')
+    // The lock files the buyer's side under 0.
+    expect(args).toEqual([COMMITMENT, 0])
   })
 })

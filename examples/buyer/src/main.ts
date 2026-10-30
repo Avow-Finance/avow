@@ -24,12 +24,19 @@ import {
   type Signed,
   TEMPO_MODERATO,
   TESTNET_DEMO_PROFILE,
-  toWire,
 } from '@avow-finance/spec'
+import type { Address } from 'viem'
 import { Account, Actions } from 'viem/tempo'
+import { cancelArgs, cancelBooking } from './cancel.js'
 import { initBusiness } from './init.js'
 import { quickstartBooking, quickstartMandate } from './plan.js'
-import { baseSettings, bookSettings, enrollSettings, initSettings } from './settings.js'
+import {
+  baseSettings,
+  bookSettings,
+  cancelSettings,
+  enrollSettings,
+  initSettings,
+} from './settings.js'
 import { type BuyerSetup, BuyerStore } from './store.js'
 import { httpSupplier } from './supplier.js'
 
@@ -150,16 +157,15 @@ function mandateOf(setup: BuyerSetup): Signed<Mandate> {
   return setup.mandate
 }
 
-/** The agent books with the supplier, funds the reserve and waits for the supplier to accept. */
-async function book() {
-  const settings = bookSettings(process.env)
-  const untilReleased = process.argv.includes('--until-released')
-  const store = new BuyerStore(settings.stateDir)
+/** The business's agent, acting under the mandate the setup holds, through Avow's hosted API. */
+function agentOf(
+  store: BuyerStore,
+  settings: { apiUrl: string; token: Address },
+  client: ReturnType<typeof moderatoClient>,
+) {
   const { agentKey } = keysOf(store)
-  const lock = lockOf(store)
-  const client = moderatoClient(settings.rpcUrl)
-  const d: AvowDomain = { chainId: TEMPO_MODERATO, verifyingContract: lock }
-  const agent = createAgent({
+  const d: AvowDomain = { chainId: TEMPO_MODERATO, verifyingContract: lockOf(store) }
+  return createAgent({
     client,
     key: agentKey,
     mandate: mandateOf(store.setup()),
@@ -172,6 +178,15 @@ async function book() {
       onResend: logResend,
     }),
   })
+}
+
+/** The agent books with the supplier, funds the reserve and waits for the supplier to accept. */
+async function book() {
+  const settings = bookSettings(process.env)
+  const untilReleased = process.argv.includes('--until-released')
+  const store = new BuyerStore(settings.stateDir)
+  const client = moderatoClient(settings.rpcUrl)
+  const agent = agentOf(store, settings, client)
   const supplier = await httpSupplier(settings.supplierUrl)
   const now = (await client.getBlock({ blockTag: 'latest' })).timestamp
   // The booking's terms, built with the GPU reservation template the booking falls under.
@@ -190,14 +205,12 @@ async function book() {
   try {
     result = await agent.book({ supplier, terms, category: 'compute' })
   } catch (e) {
-    if (e instanceof BookingError) {
-      store.saveBooking(e.commitment.commitmentId, toWire({ ...e.commitment, outcome: e.outcome }))
-    }
+    if (e instanceof BookingError) store.saveBooking({ ...e.commitment, outcome: e.outcome })
     throw e
   }
   if (!result.ok) throw new Error(`The booking was refused: ${result.reason}`)
   const c = result.commitment
-  store.saveBooking(c.commitmentId, toWire(c))
+  store.saveBooking(c)
   log(
     `reserved ${c.commitmentId}, funded in ${c.reservedIn ?? 'a transaction the agent did not send'}`,
   )
@@ -222,6 +235,28 @@ async function book() {
   }
 }
 
+/**
+ * Cancels a booking, the one named or the one made last. Avow records a late cancellation, and
+ * before free cancellation ends the root key cancels on the lock and gets the whole reserve back.
+ */
+async function cancel() {
+  const { commitmentId } = cancelArgs(process.argv.slice(3))
+  const settings = cancelSettings(process.env)
+  const store = new BuyerStore(settings.stateDir)
+  const { root } = keysOf(store)
+  const client = moderatoClient(settings.rpcUrl)
+  await cancelBooking(
+    {
+      store,
+      agent: agentOf(store, settings, client),
+      chainTime: async () => (await client.getBlock({ blockTag: 'latest' })).timestamp,
+      sendFromRoot: (call) => sendOwn({ client, account: root, calls: [call] }),
+      log,
+    },
+    commitmentId,
+  )
+}
+
 function account() {
   const { stateDir } = baseSettings(process.env)
   const store = new BuyerStore(stateDir)
@@ -235,10 +270,18 @@ function account() {
   )
 }
 
-const commands: Record<string, () => Promise<void> | void> = { init, enroll, book, account }
+const commands: Record<string, () => Promise<void> | void> = {
+  init,
+  enroll,
+  book,
+  cancel,
+  account,
+}
 const command = commands[process.argv[2] ?? '']
 if (!command) {
-  console.error('Usage: avow-buyer init | enroll | book [--until-released] | account')
+  console.error(
+    'Usage: avow-buyer init | enroll | book [--until-released] | cancel [commitmentId] | account',
+  )
   process.exit(2)
 }
 Promise.resolve(command()).catch((e: unknown) => {

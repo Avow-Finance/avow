@@ -29,6 +29,13 @@ const address = (env: Record<string, string | undefined>, name: string, missing:
   return getAddress(value)
 }
 
+/** Throws naming every setting that's missing or wrong, when any is. */
+function refuseMissing(missing: string[]) {
+  if (missing.length > 0) {
+    throw new Error(`These settings are missing or wrong: ${missing.sort().join(', ')}`)
+  }
+}
+
 const whole = (value: string | undefined, fallback: number) => {
   const n = value === undefined || value === '' ? fallback : Number(value)
   return Number.isSafeInteger(n) && n > 0 ? n : null
@@ -40,6 +47,15 @@ export function baseSettings(env: Record<string, string | undefined>) {
     stateDir: env.STATE_DIR?.trim() || '.avow-supplier',
     rpcUrl: env.RPC_URL?.trim() || MODERATO_RPC_URL,
   }
+}
+
+/** What `report` needs: Avow's factory, so a lock counts only if it made it, and the token. */
+export function reportSettings(env: Record<string, string | undefined>) {
+  const missing: string[] = []
+  const factory = address(env, 'AVOW_FACTORY', missing)
+  const token = address(env, 'AVOW_TOKEN', missing)
+  refuseMissing(missing)
+  return { ...baseSettings(env), factory, token }
 }
 
 /** Every setting `serve` needs. It throws naming each one that's missing or wrong. */
@@ -64,9 +80,7 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
   if (maxReserve === null) missing.push('MAX_RESERVE_DOLLARS')
   const pollSeconds = whole(env.POLL_SECONDS, 5)
   if (pollSeconds === null) missing.push('POLL_SECONDS')
-  if (missing.length > 0) {
-    throw new Error(`These settings are missing or wrong: ${missing.sort().join(', ')}`)
-  }
+  refuseMissing(missing)
   return {
     ...baseSettings(env),
     apiUrl,

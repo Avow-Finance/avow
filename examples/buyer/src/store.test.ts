@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { accountSigner, signMandate } from '@avow-finance/sdk'
@@ -14,6 +14,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { quickstartMandate } from './plan.js'
 import { type BuyerSetup, BuyerStore } from './store.js'
+import { fundedBooking } from './test/bookings.js'
 
 // Every key is generated for the run, and every state directory is removed after its test.
 const LOCK: Address = '0x00000000000000000000000000000000000010c4'
@@ -169,6 +170,117 @@ describe("the business's state directory", () => {
     for (const [file, says] of broken) {
       write('setup.json', file)
       expect(() => store.setup(), says).toThrow(says)
+    }
+  })
+})
+
+describe("the business's bookings and cancellations", () => {
+  const OTHER: Hex = `0x${'ee'.repeat(32)}`
+
+  it('saves a booking and reads it back parsed, funded or not', async () => {
+    store.saveSetup({ lock: LOCK })
+    const funded = await fundedBooking()
+    store.saveBooking(funded)
+    // The same record in any key order, with its hex in lower case as the store reads it.
+    const read = JSON.parse(caseless(store.booking(funded.commitmentId)))
+    expect(read).toEqual(JSON.parse(caseless(funded)))
+    expect(store.booking(funded.commitmentId)?.terms).toEqual(funded.terms)
+    const { reservedIn: _, ...approved } = await fundedBooking(1_800_000_060n)
+    store.saveBooking({ ...approved, outcome: 'unknown' })
+    expect(store.booking(approved.commitmentId)).toMatchObject({ outcome: 'unknown' })
+    expect(store.booking(OTHER)).toBeNull()
+  })
+
+  it('finds the booking the agent made last', async () => {
+    store.saveSetup({ lock: LOCK })
+    expect(store.latestBooking()).toBeNull()
+    const first = await fundedBooking(1_800_000_000n)
+    const last = await fundedBooking(1_800_003_600n)
+    store.saveBooking(last)
+    store.saveBooking(first)
+    expect(store.latestBooking()?.commitmentId).toBe(last.commitmentId)
+  })
+
+  it("refuses a booking file that doesn't hold one, and writes no booking a read would refuse", async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    const json = toWire(booking) as Record<string, Record<string, unknown>>
+    const message = json.agreement?.message as Record<string, unknown>
+    const file = `bookings/${booking.commitmentId}.json`
+    const broken: [unknown, string][] = [
+      ['{', "isn't JSON"],
+      [{ ...json, extra: true }, "doesn't hold a booking"],
+      [{ ...json, commitmentId: OTHER }, `holds the booking for ${OTHER}`],
+      [{ ...json, outcome: 'failed' }, 'holds both a funding and an outcome, or neither'],
+      [
+        { ...json, supplier: { businessId: 'biz_supplier' } },
+        "holds a supplier that doesn't parse",
+      ],
+      [{ ...json, terms: { ...json.terms, version: 3 } }, "holds terms that don't parse"],
+      [
+        { ...json, approval: { ...json.approval, lock: OTHER_LOCK } },
+        "holds an approval that doesn't parse (message.wrong_contract)",
+      ],
+      [
+        { ...json, agreement: { ...json.agreement, message: { ...message, commitmentId: OTHER } } },
+        'holds an agreement or an approval for another commitment',
+      ],
+    ]
+    for (const [text, says] of broken) {
+      write(file, text)
+      expect(() => store.booking(booking.commitmentId), says).toThrow(says)
+      expect(() => store.latestBooking(), says).toThrow(says)
+    }
+    const { reservedIn: _, ...neither } = booking
+    expect(() => store.saveBooking(neither as never)).toThrow(
+      "wasn't written, since it holds both a funding and an outcome, or neither",
+    )
+  })
+
+  it('reads no booking before init has saved a lock', async () => {
+    const booking = await fundedBooking()
+    expect(() => store.saveBooking(booking)).toThrow('holds no lock yet')
+  })
+
+  it('records a cancellation once, and only for a funded booking it holds', async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    expect(store.cancellation(booking.commitmentId)).toBeNull()
+    store.saveCancellation(booking.commitmentId, { by: 'avow', cancelledAt: 1_800_000_400n })
+    expect(store.cancellation(booking.commitmentId)).toEqual({
+      by: 'avow',
+      cancelledAt: 1_800_000_400n,
+    })
+    const onLock = { by: 'lock', transactionHash: KEY_TX } as const
+    expect(() => store.saveCancellation(booking.commitmentId, onLock)).toThrow(
+      `already shows the booking ${booking.commitmentId} cancelled`,
+    )
+    expect(() => store.saveCancellation(OTHER, onLock)).toThrow(`holds no booking for ${OTHER}`)
+    const { reservedIn: _, ...approved } = await fundedBooking(1_800_000_060n)
+    store.saveBooking({ ...approved, outcome: 'failed' })
+    expect(() => store.saveCancellation(approved.commitmentId, onLock)).toThrow('never funded')
+    store.saveBooking({ ...approved, outcome: 'unknown' })
+    store.saveCancellation(approved.commitmentId, onLock)
+    expect(store.cancellation(approved.commitmentId)).toEqual(onLock)
+  })
+
+  it("refuses a cancellation file that doesn't hold one", async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    mkdirSync(join(dir, 'cancellations'))
+    const file = `cancellations/${booking.commitmentId}.json`
+    const id = booking.commitmentId
+    const broken: [unknown, string][] = [
+      ['{', "isn't JSON"],
+      [{ commitmentId: id, by: 'avow' }, "doesn't hold a cancellation"],
+      [{ commitmentId: id, by: 'lock', transactionHash: '0x1234' }, "doesn't hold a cancellation"],
+      [{ commitmentId: OTHER, by: 'avow', cancelledAt: '1' }, `holds the cancellation of ${OTHER}`],
+    ]
+    for (const [text, says] of broken) {
+      write(file, text)
+      expect(() => store.cancellation(id), says).toThrow(says)
     }
   })
 })

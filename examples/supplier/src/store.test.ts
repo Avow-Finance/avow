@@ -1,9 +1,9 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
-import type { Hex } from 'viem'
+import { type Hex, keccak256, stringToHex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Booking, SentAcceptance, SupplierStore } from './store.js'
+import type { Booking, FiledReport, SentTransaction, SupplierStore } from './store.js'
 import { agreedBooking, COMMITMENT, NOW, tempStore } from './test/fixtures.js'
 
 let store: SupplierStore
@@ -34,7 +34,7 @@ describe("the supplier's state directory", () => {
 
   it('writes a booking as JSON and reads it back parsed, its terms, agreement and send included', () => {
     expect(store.booking(COMMITMENT)).toBeNull()
-    const sent: SentAcceptance = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
+    const sent: SentTransaction = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
     const booking: Booking = { ...agreedBooking(), status: 'accepting', sent }
     store.put(booking)
     expect(store.booking(COMMITMENT)).toEqual(booking)
@@ -45,7 +45,7 @@ describe("the supplier's state directory", () => {
   })
 
   it('keeps an acceptance transaction only on a booking that is accepting or accepted', () => {
-    const sent: SentAcceptance = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
+    const sent: SentTransaction = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
     for (const status of ['accepting', 'accepted'] as const) {
       const booking: Booking = { ...agreedBooking(), status, sent }
       store.put(booking)
@@ -89,5 +89,42 @@ describe("the supplier's state directory", () => {
     }
     writeFileSync(bookingFile(COMMITMENT), '{')
     expect(() => store.booking(COMMITMENT)).toThrow("isn't JSON")
+  })
+})
+
+describe("the supplier's reports", () => {
+  const note = `A late cancellation on booking ${COMMITMENT}, reported at 2027-01-15T08:00:00Z.`
+  const report: FiledReport = {
+    commitmentId: COMMITMENT,
+    kind: 'lateCancellation',
+    amount: 250_000_000n,
+    note,
+    evidenceHash: keccak256(stringToHex(note)),
+  }
+  it('saves a report with its note and reads it back, its transaction included', () => {
+    expect(store.report(COMMITMENT)).toBeNull()
+    store.putReport(report)
+    expect(store.report(COMMITMENT)).toEqual(report)
+    const sent: SentTransaction = { hash: `0x${'ab'.repeat(32)}`, validBefore: NOW + 25n }
+    store.putReport({ ...report, sent })
+    expect(store.report(COMMITMENT)).toEqual({ ...report, sent })
+  })
+
+  it("refuses a report whose evidence hash isn't its note's, or that's for another commitment", () => {
+    const path = join(store.dir, 'reports', `${COMMITMENT}.json`)
+    expect(() => store.putReport({ ...report, note: `${note} Changed later.` })).toThrow(
+      `${path} wasn't written, since it holds an evidence hash its note doesn't give`,
+    )
+    store.putReport(report)
+    const broken: [unknown, string][] = [
+      [{ ...report, note: 'Another note.' }, "holds an evidence hash its note doesn't give"],
+      [{ ...report, commitmentId: OTHER }, `holds the report on ${OTHER}`],
+      [{ ...report, kind: 'cleaning' }, "doesn't hold a report"],
+      [{ ...report, amount: 250 }, "doesn't hold a report"],
+    ]
+    for (const [json, says] of broken) {
+      writeFileSync(path, JSON.stringify(toWire(json)))
+      expect(() => store.report(COMMITMENT), says).toThrow(`${path} ${says}`)
+    }
   })
 })

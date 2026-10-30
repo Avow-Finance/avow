@@ -5,6 +5,7 @@ import {
   type Mandate,
   mandateHash,
   mandateTypedData,
+  reportTypedData,
   type SupplierAuthorization,
   signForAccount,
   supplierAuthorizationTypedData,
@@ -34,6 +35,7 @@ import { type AcceptanceConfig, prepareAcceptance, signAcceptance } from './acce
 import { type ChainReader, MemoryChain } from './chain.js'
 import { prepareReleaseConsent, signReleaseConsent } from './consent.js'
 import { FACTORY_ABI, LOCK_ABI } from './lock-abi.js'
+import { prepareReport } from './report.js'
 import { tempoChainReader } from './tempo.js'
 
 /**
@@ -41,7 +43,8 @@ import { tempoChainReader } from './tempo.js'
  * words below are what a lock at this address on this chain returns from `commitment` once the
  * reserve lands, once the acceptance lands, once a contested charge is confirmed and once a ruling
  * is posted. The Tempo reader decodes them, the verifier builds an acceptance and two release
- * consents from them, and the pins hold the messages and signatures. A lock given these messages
+ * consents from them, and the pins hold the messages and signatures. It builds a report from them
+ * too, with its fields taken from the record the reader decoded. A lock given these messages
  * takes them, so a change to how the reader decodes the lock or how the verifier builds a message
  * fails here. The keys come from public labels and hold nothing.
  */
@@ -352,6 +355,7 @@ const reservedBacking = {
   approvalHash: APPROVAL_DIGEST,
   fundingKey: agent.address,
   reportCount: 0,
+  hasReport: false,
   hasRuling: false,
 }
 
@@ -469,12 +473,14 @@ describe("the lock's own bytes, read by the Tempo reader", () => {
       state: 'paused',
       held: 100_000_000n,
       reportCount: 1,
+      hasReport: true,
     })
     expect(await read(RULED)).toEqual({
       ...reservedBacking,
       state: 'paused',
       held: 100_000_000n,
       reportCount: 1,
+      hasReport: true,
       hasRuling: true,
     })
   })
@@ -566,5 +572,41 @@ describe('the messages the verifier builds from them', () => {
       ok: false,
       reason: 'consent.not_releasable',
     })
+  })
+
+  it('is a report of the charge the accepted record holds, and none once a report stands', async () => {
+    const report = (record: Hex) =>
+      prepareReport(
+        {
+          lock: LOCK,
+          commitmentId: COMMITMENT,
+          kind: 'lateCancellation',
+          evidenceHash: id('vector late cancellation'),
+          now: START - 300n,
+          nonce: 3n,
+        },
+        {
+          config: {
+            chainId: CHAIN_ID,
+            signingKey: signingKey.address,
+            acceptedTokens: config.acceptedTokens,
+          },
+          chain: chainOver(record),
+        },
+      )
+    const prepared = await report(ACCEPTED)
+    if (!prepared.ok) throw new Error(prepared.reason)
+    // The late cancellation's most, $250, as the record's first charge holds it.
+    expect(prepared.report).toEqual({
+      commitmentId: COMMITMENT,
+      side: 'buyer',
+      kind: 'lateCancellation',
+      amount: 250_000_000n,
+      evidenceHash: id('vector late cancellation'),
+      nonce: 3n,
+      expiry: START + 300n,
+    })
+    expect(prepared.digest).toBe(digestOf(reportTypedData(prepared.report, DOMAIN)))
+    expect(await report(CONTESTED)).toEqual({ ok: false, reason: 'report.not_reportable' })
   })
 })

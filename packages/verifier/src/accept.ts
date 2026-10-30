@@ -29,17 +29,16 @@ import {
   type Address,
   encodeFunctionData,
   type Hex,
-  hexToBigInt,
   isAddressEqual,
   isHex,
   size,
-  toHex,
   zeroAddress,
 } from 'viem'
 import { type Agreed, checkAuthorization, same } from './authorization.js'
 import type { ChainReader, LockedBacking } from './chain.js'
 import { acceptanceDisclosure, type Disclosure, disclosureId } from './disclosure.js'
 import { issue, wasIssued } from './issued.js'
+import { randomNonce } from './nonce.js'
 import type { VerifierConfig } from './verify.js'
 
 /** An acceptance stays valid for ten minutes at most, and never past the acceptance deadline. */
@@ -102,8 +101,6 @@ const sameTiming = (a: LockTiming, b: LockTiming) =>
   a.rulingDelay === b.rulingDelay &&
   a.rulingKeyEnd === b.rulingKeyEnd &&
   a.day90 === b.day90
-
-const randomNonce = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(32))))
 
 /**
  * The supported way for a supplier to get an acceptance to sign. An acceptance binds the supplier

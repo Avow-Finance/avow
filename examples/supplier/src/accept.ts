@@ -15,6 +15,7 @@ import {
   verifySupplierAuthorization,
 } from '@avow-finance/verifier'
 import type { Address, Hex } from 'viem'
+import { showDisclosure } from './disclosure.js'
 import type { Booking, BookingStatus, SupplierStore } from './store.js'
 
 export interface AcceptDeps {
@@ -157,12 +158,7 @@ export async function advance(deps: AcceptDeps, booking: Booking): Promise<Booki
     deps.log(`the verifier built no acceptance for ${b.commitmentId}: ${prepared.reason}`)
     return b.status
   }
-  // The quickstart confirms for its person. A real integration shows this and waits for a yes.
-  deps.log(`${prepared.disclosure.title} (disclosure ${prepared.disclosure.id})`)
-  for (const section of prepared.disclosure.sections) {
-    deps.log(`  ${section.heading}`)
-    for (const line of section.lines) deps.log(`    ${line}`)
-  }
+  showDisclosure(prepared.disclosure, deps.log)
   const acceptance = await signAcceptance(prepared, deps.signingKey, {
     disclosureId: prepared.disclosure.id,
   })

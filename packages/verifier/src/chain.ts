@@ -39,9 +39,17 @@ export interface LockedBacking {
   fundingKey: Address
   /** Every report ever filed on the commitment, which a release consent names. */
   reportCount: number
+  /**
+   * Whether a report stands on the commitment, filed and not withdrawn. The lock takes no other
+   * report while one does, and on an accepted commitment it's open, waiting for Avow's answer.
+   */
+  hasReport: boolean
   /** Whether a ruling has been posted on the commitment. */
   hasRuling: boolean
 }
+
+/** The most reports a lock takes for one commitment. */
+export const MAX_REPORTS = 2
 
 export interface LockInfo {
   /** True when Avow's factory, as the reader was set up with it, created the lock. */

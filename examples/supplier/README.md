@@ -1,6 +1,6 @@
 # Supplier quickstart
 
-A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, and it accepts each reserve Avow authorizes once its own checks pass. Run it on your own machine, apart from Avow.
+A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, it accepts each reserve Avow authorizes once its own checks pass, and it reports a charge on a booking cancelled late or never used. Run it on your own machine, apart from Avow.
 
 ## What it does
 
@@ -13,6 +13,14 @@ A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, 
 - A booking whose reserve never arrives lapses at its acceptance deadline, and Avow returns any reserve then.
 
 Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between. The adapter reads an accepted or lapsed booking once, then leaves it alone. It logs a booking file it can't read once, and reads that file again once it changes.
+
+## Reporting a charge
+
+- `report` reports a late cancellation, or a no-show with `--no-show`, on the accepted booking whose commitment id you pass, or on the latest accepted one.
+- It writes a short note to the store saying which booking and kind it reports and when, and the report names the note's keccak256 as its evidence. Keep the note, since a ruling may ask for it.
+- The verifier builds the report from the lock, for the most the terms let that kind take, and refuses one the lock wouldn't take with a reason code, such as `report.too_early` before a late cancellation can be charged.
+- The signing key signs the report once its disclosure is shown and sends it to the lock, paying the fee as it does for acceptances. The transaction's hash is recorded before its bytes go out, so `report` run again follows the report the lock holds and never sends a second one.
+- Then it follows the lock and says what Avow did. Avow confirms a late-cancellation report only when it recorded the business's cancellation at or after the free-cancellation deadline and before the charge deadline. A confirmed charge pays at most the late-cancellation amount once the contest window closes, unless the business contests it first, and the rest of the reserve goes back to the business. Avow refers any other report to a ruling.
 
 ## Settings
 
@@ -29,6 +37,8 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `STATE_DIR` | Where the keys and bookings live, `.avow-supplier` by default |
 | `RPC_URL` | Moderato's RPC, `https://rpc.moderato.tempo.xyz` by default |
 
+`serve` needs every setting above. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
+
 ## Running it
 
 ```sh
@@ -43,3 +53,10 @@ node dist/main.js serve
 ```
 
 Agents need your URL, so run it where they can reach it. `node dist/main.js profile` prints your addresses again.
+
+Once the buyer has cancelled after free cancellation ended, report the late cancellation, from another terminal while `serve` keeps running. A no-show can be reported once the booked window's grace period has passed.
+
+```sh
+node dist/main.js report
+node dist/main.js report 0x<commitment id> --no-show
+```

@@ -81,9 +81,9 @@ describe("the quickstart's booking and mandate", () => {
     expect(() => quickstartBooking({ ...base, startsIn: 720n, minutes: 0n })).toThrow('a minute')
   })
 
-  it('lets the agent reserve only with the one supplier, for a week', () => {
+  it('lets the agent reserve only with the one supplier, for a week, and cancel or start', () => {
     expect(mandate).toMatchObject({
-      actions: ['reserve'],
+      actions: ['reserve', 'cancel', 'start'],
       suppliers: ['biz_supplier'],
       capPerCommitment: reserve,
       capOpenReserves: 3n * reserve,

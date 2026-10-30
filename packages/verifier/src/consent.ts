@@ -13,14 +13,12 @@ import {
   signForAccount,
   takesConsent,
 } from '@avow-finance/spec'
-import { type Address, type Hex, hexToBigInt, isAddressEqual, isHex, size, toHex } from 'viem'
+import { type Address, type Hex, isAddressEqual, isHex, size } from 'viem'
 import { same } from './authorization.js'
-import type { ChainReader } from './chain.js'
+import { type ChainReader, MAX_REPORTS } from './chain.js'
 import { type Disclosure, disclosureId, releaseConsentDisclosure } from './disclosure.js'
 import { issue, wasIssued } from './issued.js'
-
-/** The most reports a lock takes for one commitment. */
-export const MAX_REPORTS = 2
+import { randomNonce } from './nonce.js'
 
 export interface ConsentConfig {
   chainId: number
@@ -65,8 +63,6 @@ export interface ReadyReleaseConsent {
 }
 
 export type PreparedReleaseConsent = ReadyReleaseConsent | { ok: false; reason: ReasonCode }
-
-const randomNonce = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(32))))
 
 /**
  * The supported way for a supplier account to get a release consent to sign. It reads the
