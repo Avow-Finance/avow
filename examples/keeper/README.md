@@ -30,7 +30,7 @@ You need Node 22.12 or later and pnpm 10. From the repository's root:
 pnpm install
 pnpm --filter "@avow-examples/keeper..." build
 cd examples/keeper
-AVOW_FACTORY=0x9B518c24F9aa9272e20fa78aeDC83b1F00b991a9 AVOW_FACTORY_START_BLOCK=41503611 node dist/main.js
+AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283 AVOW_FACTORY_START_BLOCK=41801818 node dist/main.js
 ```
 
 | Setting | What it is |
@@ -41,16 +41,16 @@ AVOW_FACTORY=0x9B518c24F9aa9272e20fa78aeDC83b1F00b991a9 AVOW_FACTORY_START_BLOCK
 | `RUN_MINUTES` | How long a run starts queries and sends for, 8 by default |
 | `RPC_URL` | Moderato's RPC, `https://rpc.moderato.tempo.xyz` by default |
 
-The demo factory above was created in block 41503611, the first block at which `eth_getCode` returns its code.
+The demo factory above was created in block 41801818, the first block at which `eth_getCode` returns its code. It replaced the first demo factory, `0x9B518c24F9aa9272e20fa78aeDC83b1F00b991a9` from block 41503611, on 30 Oct 2026, when the lock's `confirm` and `refer` began naming the report they answer. To serve locks from the first factory, run the keeper with that address and block.
 
-Each line a run prints starts with the time, left out here. The keeper's first run on the demo factory sent two overdue day-90 defaults:
+Each line a run prints starts with the time, left out here. The keeper's first run, on the first demo factory, sent two overdue day-90 defaults:
 
 ```text
 sent the step due for 0xf83f4bef595fed73ad1c7998d48512dc1060784a6c13da0a7cbefba37404128b (buyer) on lock 0x101878B1adBfC7029Cb41FFc19D00Fb6b79151B4: https://explore.testnet.tempo.xyz/tx/0xec484d1b4a56cfc6832bb513f71317ad263c75d577ed6269733087eeaef1f162
 sent the step due for 0x3481f517a3b5abfda25d35889178ca3668d07c9af31c096df5ab521969b821df (buyer) on lock 0xC43138A5Ce266d730AaDc1944c0b247d27c599f5: https://explore.testnet.tempo.xyz/tx/0x3fe912776365d00e6d148921b30ee586d98479f5f42131001bb10b918bf9a00e
 ```
 
-Every run ends with a summary. A later run, with nothing left due, ended with this one:
+Every run ends with a summary. A later run on that factory, with nothing left due, ended with this one:
 
 ```text
 checked 3 of 3 locks created in blocks 41503611 to 41758904, and 7 sides reserved since 2026-10-28T05:19:00.000Z (block 41503611): 0 open, 0 due, 0 sent, 0 taken by another sender, 0 failed, 0 unknown, 0 unchecked, 0 parts unread

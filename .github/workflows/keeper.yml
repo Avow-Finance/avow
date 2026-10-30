@@ -26,8 +26,8 @@ jobs:
     timeout-minutes: 15
     env:
       # The demo factory, and the block it was created in, where the search for its locks starts.
-      AVOW_FACTORY: "0x9B518c24F9aa9272e20fa78aeDC83b1F00b991a9"
-      AVOW_FACTORY_START_BLOCK: "41503611"
+      AVOW_FACTORY: "0x8fa7177c84BE069df2a51F096ED28d5D661B8283"
+      AVOW_FACTORY_START_BLOCK: "41801818"
       # The keeper sends steps only for sides reserved within these days. Each run's summary names
       # the oldest reserve it reached.
       LOOKBACK_DAYS: "14"
