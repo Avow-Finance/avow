@@ -3,7 +3,13 @@ import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
 import { type Hex, keccak256, stringToHex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Booking, FiledReport, SentTransaction, SupplierStore } from './store.js'
+import {
+  type Booking,
+  type FiledReport,
+  readCommitmentId,
+  type SentTransaction,
+  type SupplierStore,
+} from './store.js'
 import { agreedBooking, COMMITMENT, NOW, tempStore } from './test/fixtures.js'
 
 let store: SupplierStore
@@ -90,12 +96,21 @@ describe("the supplier's state directory", () => {
     writeFileSync(bookingFile(COMMITMENT), '{')
     expect(() => store.booking(COMMITMENT)).toThrow("isn't JSON")
   })
+
+  it('reads a commitment id as the store writes one, and nothing else', () => {
+    expect(readCommitmentId(COMMITMENT.toUpperCase().replace('0X', '0x'))).toBe(COMMITMENT)
+    expect(readCommitmentId(COMMITMENT)).toBe(COMMITMENT)
+    for (const text of ['0x1234', `${COMMITMENT}00`, COMMITMENT.slice(2), ` ${COMMITMENT}`]) {
+      expect(readCommitmentId(text), text).toBeNull()
+    }
+  })
 })
 
 describe("the supplier's reports", () => {
   const note = `A late cancellation on booking ${COMMITMENT}, reported at 2027-01-15T08:00:00Z.`
   const report: FiledReport = {
     commitmentId: COMMITMENT,
+    reportNumber: 1,
     kind: 'lateCancellation',
     amount: 250_000_000n,
     note,
@@ -121,6 +136,10 @@ describe("the supplier's reports", () => {
       [{ ...report, commitmentId: OTHER }, `holds the report on ${OTHER}`],
       [{ ...report, kind: 'cleaning' }, "doesn't hold a report"],
       [{ ...report, amount: 250 }, "doesn't hold a report"],
+      // The lock takes two reports on a commitment at most, and the number is what tells them apart.
+      [{ ...report, reportNumber: 0 }, "doesn't hold a report"],
+      [{ ...report, reportNumber: 3 }, "doesn't hold a report"],
+      [{ ...report, reportNumber: undefined }, "doesn't hold a report"],
     ]
     for (const [json, says] of broken) {
       writeFileSync(path, JSON.stringify(toWire(json)))

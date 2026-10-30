@@ -16,6 +16,7 @@ import {
   termsAgreementJson,
   toWire,
 } from '@avow-finance/spec'
+import { MAX_REPORTS } from '@avow-finance/verifier'
 import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { z } from 'zod'
@@ -53,6 +54,11 @@ export interface SentTransaction {
  */
 export interface FiledReport {
   commitmentId: Hex
+  /**
+   * Which of the commitment's reports it is, 1 or 2. The lock's report count reaches it once the
+   * report lands, which tells a landed report from one that never did, even after a withdrawal.
+   */
+  reportNumber: number
   kind: ChargeKind
   /** Base units of the lock's token. */
   amount: bigint
@@ -91,6 +97,13 @@ const bytes32 = z
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .transform(lower<Hex>)
 const keysJson = z.strictObject({ accountKey: bytes32, signingKey: bytes32 })
+
+/** A commitment id as the store writes one, 32 bytes of hex in lower case, or null for anything else. */
+export function readCommitmentId(text: string): Hex | null {
+  const parsed = bytes32.safeParse(text)
+  return parsed.success ? parsed.data : null
+}
+
 const decimal = z
   .string()
   .regex(/^(0|[1-9][0-9]*)$/)
@@ -98,6 +111,7 @@ const decimal = z
 const sentJson = z.strictObject({ hash: bytes32, validBefore: decimal.nullable() })
 const reportJson = z.strictObject({
   commitmentId: bytes32,
+  reportNumber: z.number().int().min(1).max(MAX_REPORTS),
   kind: z.enum(Object.keys(CHARGE_KINDS) as [ChargeKind, ...ChargeKind[]]),
   amount: decimal,
   note: z.string().min(1).max(1000),

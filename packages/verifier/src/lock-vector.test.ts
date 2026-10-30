@@ -224,6 +224,33 @@ const RULED = withWords(CONTESTED, {
   rulingToSupplier: 60_000_000n,
 })
 
+/**
+ * The accepted record just after the same report, open and waiting for Avow, so it stands while
+ * nothing has made it final or contested it. Unlike the records above, no lock's own bytes pin this
+ * one or the next. They're built from the accepted record by the lock's rules for those steps.
+ */
+const REPORTED = withWords(ACCEPTED, {
+  hasReport: 1n,
+  reportCount: 1n,
+  reportDeadline: START - 300n,
+  reportedAt: START - 600n,
+  reportAmount: 100_000_000n,
+  reportEvidence: id('vector late cancellation'),
+  'firstReportAt[0]': START - 600n,
+})
+
+/**
+ * Then the business contests it a minute later, and the supplier account withdraws it half a minute
+ * after that, before Avow answers. The commitment is accepted again with no report standing, and the
+ * contest stays on record.
+ */
+const WITHDRAWN = withWords(REPORTED, {
+  hasReport: 0n,
+  contested: 1n,
+  pausedBy: 3n,
+  pausedAt: START - 540n,
+})
+
 /** The lock's settings, which a lock at this address returns. */
 const VIEWS = {
   factory: FACTORY,
@@ -485,6 +512,24 @@ describe("the lock's own bytes, read by the Tempo reader", () => {
     })
   })
 
+  it('decode whether a report stands apart from whether it is final or contested', async () => {
+    const read = (record: Hex) => chainOver(record).backing(LOCK, COMMITMENT, 'buyer')
+    // Open, so it stands though nothing has made it final or contested it.
+    expect(await read(REPORTED)).toEqual({
+      ...reservedBacking,
+      state: 'accepted',
+      reportCount: 1,
+      hasReport: true,
+    })
+    // Withdrawn, so nothing stands though the contest stays on record.
+    expect(await read(WITHDRAWN)).toEqual({
+      ...reservedBacking,
+      state: 'accepted',
+      reportCount: 1,
+      hasReport: false,
+    })
+  })
+
   it("read no lock that the pinned factory didn't create", async () => {
     expect(await chainOver(RESERVED).lock('0x0000000000000000000000000000000000002512')).toBeNull()
   })
@@ -607,6 +652,11 @@ describe('the messages the verifier builds from them', () => {
       expiry: START + 300n,
     })
     expect(prepared.digest).toBe(digestOf(reportTypedData(prepared.report, DOMAIN)))
+    expect(prepared.reportNumber).toBe(1)
+    expect(await report(REPORTED)).toEqual({ ok: false, reason: 'report.open' })
     expect(await report(CONTESTED)).toEqual({ ok: false, reason: 'report.not_reportable' })
+    // Once the first is withdrawn, the next report is the commitment's second.
+    const second = await report(WITHDRAWN)
+    expect(second.ok && second.reportNumber).toBe(2)
   })
 })

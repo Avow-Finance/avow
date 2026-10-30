@@ -1,5 +1,6 @@
 import { type Call, SendError } from '@avow-finance/sdk'
 import {
+  type ChainReader,
   formatTime,
   type LockedBacking,
   type MemoryChain,
@@ -37,6 +38,8 @@ const CONFIRM_WINDOW = 300n
 let store: SupplierStore
 let remove: () => void
 let chain: MemoryChain
+/** The lock as it stands, whatever node a test has the command read from. */
+let read: ChainReader['backing']
 let base: LockedBacking
 let deps: ReportChargeDeps
 let logged: string[]
@@ -55,6 +58,7 @@ const accepted = (change: Partial<Booking> = {}) =>
 beforeEach(async () => {
   ;({ store, remove } = tempStore())
   chain = reservedChain()
+  read = chain.backing.bind(chain)
   base = (await chain.backing(LOCK, COMMITMENT, 'buyer')) as LockedBacking
   setLock({})
   store.put(accepted())
@@ -77,19 +81,38 @@ beforeEach(async () => {
       if (sendDoes === 'fail') {
         throw new SendError('it reverted', 'failed', { hashes: [HASH], signings: 1 })
       }
-      // The lock takes the report, which stays open until Avow answers it.
-      setLock({ hasReport: true, reportCount: 1 }, commitmentId)
+      // The lock takes the report and counts it, and the report stays open until Avow answers.
+      const before = await read(LOCK, commitmentId, 'buyer')
+      setLock({ hasReport: true, reportCount: (before?.reportCount ?? 0) + 1 }, commitmentId)
       return { status: 'success' }
     },
     chainTime: async () => clock.now,
     finalizedTime: async () => clock.finalized,
     wait: async () => {
-      steps.shift()?.()
+      const step = steps.shift()
+      // A command that waits more often than the test planned for fails here rather than spinning.
+      if (!step) throw new Error('the test ran out of lock steps')
+      step()
     },
     log: (line) => logged.push(line),
   }
 })
 afterEach(() => remove())
+
+/**
+ * Has the command read the lock, from the moment a report lands, through a node still behind the
+ * report's block for the next `reads` reads.
+ */
+const lagAfterLanding = (reads: number) => {
+  const send = deps.send
+  deps.send = async (call, onSent) => {
+    const receipt = await send(call, onSent)
+    let behind = reads
+    chain.backing = async (lock, commitmentId, side) =>
+      behind-- > 0 ? { ...base, state: 'accepted' } : read(lock, commitmentId, side)
+    return receipt
+  }
+}
 
 /** Avow confirms the report, so only the charge stays held and its contest window starts. */
 const confirm = () =>
@@ -103,6 +126,7 @@ describe('reporting a late cancellation', () => {
     const note = `A late cancellation on booking ${COMMITMENT}, lock ${LOCK} on chain ${CHAIN_ID}, reported at ${formatTime(REPORT_AT)}.`
     expect(filed).toEqual({
       commitmentId: COMMITMENT,
+      reportNumber: 1,
       kind: 'lateCancellation',
       amount: 250_000_000n,
       note,
@@ -175,6 +199,39 @@ describe('reporting a late cancellation', () => {
       `Sending the report for ${COMMITMENT} failed, so the lock took none`,
     )
   })
+
+  it('files the second report on a commitment whose first was withdrawn, and follows it by its number', async () => {
+    // A report filed and withdrawn before this store held one.
+    setLock({ reportCount: 1 })
+    const confirmSecond = () =>
+      setLock({ state: 'charge_pending', hasReport: true, reportCount: 2, held: 250_000_000n })
+    steps = [confirmSecond]
+    expect(await reportCharge(deps, reportArgs([]))).toBe('confirmed')
+    expect(store.report(COMMITMENT)?.reportNumber).toBe(2)
+    expect(await reportCharge(deps, reportArgs([]))).toBe('confirmed')
+    expect(sent).toHaveLength(1)
+  })
+})
+
+describe('a lock read from a node behind the report', () => {
+  it("waits for the report to show, and doesn't take the lock from before it for a withdrawal", async () => {
+    lagAfterLanding(1)
+    steps = [confirm]
+    expect(await reportCharge(deps, reportArgs([]))).toBe('confirmed')
+  })
+
+  it('stops once the deadline passes without the report showing, and a rerun follows it', async () => {
+    lagAfterLanding(Number.POSITIVE_INFINITY)
+    steps = [() => (clock.now += CONFIRM_WINDOW)]
+    await expect(reportCharge(deps, reportArgs([]))).rejects.toThrow(
+      `The report on ${COMMITMENT} landed, but the node still shows the lock without it. Run report again to follow it.`,
+    )
+    // The node catches up.
+    chain.backing = read
+    steps = [confirm]
+    expect(await reportCharge(deps, reportArgs([]))).toBe('confirmed')
+    expect(sent).toHaveLength(1)
+  })
 })
 
 describe('a report the store shows sent', () => {
@@ -184,19 +241,52 @@ describe('a report the store shows sent', () => {
     sent = []
     expect(await reportCharge(deps, reportArgs([COMMITMENT]))).toBe('confirmed')
     expect(sent).toEqual([])
-    expect(logged).toContain(`the report sent in ${HASH} stands on the lock, so no other is sent`)
+    expect(logged).toContain(`the report sent in ${HASH} landed on the lock, so no other is sent`)
   })
 
-  it('waits while the last one may still land, and sends a new one once it no longer can', async () => {
+  it('follows a report that landed and was withdrawn, and files no other', async () => {
+    // The supplier account withdraws the report while the command follows it.
+    steps = [() => setLock({ reportCount: 1 })]
+    expect(await reportCharge(deps, reportArgs([]))).toBe('withdrawn')
+    expect(logged.at(-1)).toBe(
+      `The supplier account withdrew the report on ${COMMITMENT}, so nothing comes of it.`,
+    )
+    // Long after the report's transaction stopped being valid, a rerun still finds it landed.
+    clock.now += 60n
+    clock.finalized = clock.now
+    expect(await reportCharge(deps, reportArgs([]))).toBe('withdrawn')
+    expect(sent).toHaveLength(1)
+    expect(logged).toContain(`the report sent in ${HASH} landed on the lock, so no other is sent`)
+  })
+
+  /** A report an earlier run sent a minute ago, valid until `REPORT_AT`, that no read showed land. */
+  const sentEarlier = () => {
     const note = evidenceNote(accepted(), 'lateCancellation', REPORT_AT - 60n)
     store.putReport({
       commitmentId: COMMITMENT,
+      reportNumber: 1,
       kind: 'lateCancellation',
       amount: 250_000_000n,
       note,
       evidenceHash: keccak256(stringToHex(note)),
       sent: { hash: HASH, validBefore: REPORT_AT },
     })
+  }
+
+  it('follows one that lands while the run reads the chain, and sends no other', async () => {
+    sentEarlier()
+    deps.finalizedTime = async () => {
+      // It lands in its last valid block, which finalizes as the run reads the chain.
+      setLock({ hasReport: true, reportCount: 1 })
+      return REPORT_AT + 1n
+    }
+    steps = [confirm]
+    expect(await reportCharge(deps, reportArgs([]))).toBe('confirmed')
+    expect(sent).toEqual([])
+  })
+
+  it('waits while the last one may still land, and sends a new one once it no longer can', async () => {
+    sentEarlier()
     await expect(reportCharge(deps, reportArgs([]))).rejects.toThrow('may still land')
     expect(sent).toEqual([])
     clock.finalized = REPORT_AT + 1n
@@ -253,9 +343,14 @@ describe('which booking it reports on', () => {
 })
 
 describe('what the lock shows became of a report', () => {
+  const at = (change: Partial<LockedBacking>, pastDeadline = false) =>
+    reportOutcome(
+      { ...base, state: 'accepted', hasReport: true, reportCount: 1, ...change },
+      1,
+      pastDeadline,
+    )
+
   it('reads each state the lock can show after a report lands', () => {
-    const at = (change: Partial<LockedBacking>, pastDeadline = false) =>
-      reportOutcome({ ...base, state: 'accepted', hasReport: true, ...change }, pastDeadline)
     expect(at({})).toBeNull()
     expect(at({}, true)).toBe('unanswered')
     expect(at({ hasReport: false })).toBe('withdrawn')
@@ -264,7 +359,23 @@ describe('what the lock shows became of a report', () => {
     expect(at({ state: 'paused' })).toBe('ruling')
     expect(at({ state: 'released' })).toBe('ended')
     expect(at({ state: 'resolved' })).toBe('ended')
-    expect(reportOutcome(null, false)).toBe('ended')
+  })
+
+  it('reads a report by its number, so a node behind it shows nothing yet and a later one shows a withdrawal', () => {
+    // A node behind the report's block, or behind the reserve itself.
+    expect(at({ hasReport: false, reportCount: 0 })).toBeNull()
+    expect(at({ hasReport: false, reportCount: 0 }, true)).toBeNull()
+    expect(reportOutcome(null, 1, true)).toBeNull()
+    // The lock takes one report at a time, so a later one means this one was withdrawn.
+    expect(at({ reportCount: 2 })).toBe('withdrawn')
+    expect(at({ state: 'charge_pending', reportCount: 2 })).toBe('withdrawn')
+    expect(
+      reportOutcome(
+        { ...base, state: 'charge_pending', hasReport: true, reportCount: 2 },
+        2,
+        false,
+      ),
+    ).toBe('confirmed')
   })
 })
 

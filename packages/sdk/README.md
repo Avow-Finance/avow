@@ -44,7 +44,7 @@ A sponsored transaction is valid for under half a minute. The sender reads the l
 
 `signMandate` and `signHumanApproval` sign for the business account with its root or an admin key, in Tempo's keychain V2 envelope, which the lock and Avow's API need. A browser passkey signs bare, and the envelope is added for it. `agentKeyTerms` turns a mandate into the key authorization Tempo enforces. Pass `[RESERVE_SELECTOR]` as the lock functions, so `reserve` is the one lock function the key can call.
 
-The account's root key sends its own calls to the lock. `approveSupplierCall` lets the business's agents reserve for a supplier, and `cancelFreeCall` cancels a commitment before free cancellation ends and gives the whole reserve back. Both are in `ADMINISTRATOR_ABI`, whose selectors a test pins.
+The account's root key sends its own calls to the lock. `approveSupplierCall` lets the business's agents reserve for a supplier, and `cancelFreeCall` cancels a commitment before free cancellation ends and gives the whole reserve back. Both are in `ADMINISTRATOR_ABI`, whose selectors a test pins. `cancelsFree` says whether the lock takes that cancellation now, from what it holds for the commitment and the chain's clock, with no mandate involved.
 
 ## Moderato
 

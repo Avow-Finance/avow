@@ -9,7 +9,15 @@ import {
   type ReleaseConsent,
   type ReleaseReason,
 } from '@avow-finance/spec'
-import { type Address, formatUnits, getAddress, type Hex, keccak256, stringToHex } from 'viem'
+import {
+  type Address,
+  formatUnits,
+  getAddress,
+  type Hex,
+  isAddressEqual,
+  keccak256,
+  stringToHex,
+} from 'viem'
 
 export interface DisclosureSection {
   heading: string
@@ -94,6 +102,20 @@ export function formatLength(seconds: bigint): string {
 /** Base units of a token as an amount of its currency, with the base units beside it. */
 export function formatAmount(units: bigint, token: RailToken): string {
   return `${token.currency} ${formatUnits(units, token.decimals)} (${units} base units of ${getAddress(token.token)})`
+}
+
+/** The token a supplier lists that a lock on its chain holds reserves in, or null when it lists none. */
+export function listedToken(
+  tokens: readonly RailToken[],
+  chainId: number,
+  token: Address,
+): RailToken | null {
+  return tokens.find((t) => t.chainId === chainId && isAddressEqual(t.token, token)) ?? null
+}
+
+/** Base units of a lock's token as an amount of its currency, or as base units when it isn't listed. */
+export function formatLockAmount(units: bigint, token: RailToken | null): string {
+  return token ? formatAmount(units, token) : `${units} base units of the lock's token`
 }
 
 /** Basis points as a percentage. */
@@ -194,9 +216,7 @@ export function reportDisclosure(args: {
   reportCount: number
 }): Disclosure {
   const { report: r, timing } = args
-  const amount = args.token
-    ? formatAmount(r.amount, args.token)
-    : `${r.amount} base units of the lock's token`
+  const amount = formatLockAmount(r.amount, args.token)
   return seal({
     title: 'Report a charge',
     digest: args.digest,
@@ -250,9 +270,7 @@ export function releaseConsentDisclosure(args: {
   now: bigint
 }): Disclosure {
   const { consent: c } = args
-  const held = args.token
-    ? formatAmount(args.held, args.token)
-    : `${args.held} base units of the lock's token`
+  const held = formatLockAmount(args.held, args.token)
   const later = c.reportCount > args.currentCount
   const until = formatTime(c.expiry)
   return seal({

@@ -14,12 +14,10 @@ import {
   approvalTokenProblem,
   digestOf,
   type HashSigner,
-  isKeySignature,
   isTermsV1,
   type LockTerms,
   type LockTiming,
   lockTerms,
-  MESSAGE_VERSIONS,
   parseSigned,
   type ReasonCode,
   type Signed,
@@ -36,9 +34,10 @@ import {
 } from 'viem'
 import { type Agreed, checkAuthorization, same } from './authorization.js'
 import type { ChainReader, LockedBacking } from './chain.js'
-import { acceptanceDisclosure, type Disclosure, disclosureId } from './disclosure.js'
-import { issue, wasIssued } from './issued.js'
+import { acceptanceDisclosure, type Disclosure } from './disclosure.js'
+import { issue } from './issued.js'
 import { randomNonce } from './nonce.js'
+import { signWithKey } from './signing.js'
 import type { VerifierConfig } from './verify.js'
 
 /** An acceptance stays valid for ten minutes at most, and never past the acceptance deadline. */
@@ -265,40 +264,23 @@ function holdsApproval(b: LockedBacking, a: Approval): boolean {
  * throws. It also throws when the confirmation names another disclosure, or when the key isn't
  * the signing key Avow's approval names.
  */
-export async function signAcceptance(
+export function signAcceptance(
   prepared: ReadyAcceptance,
   key: HashSigner,
   confirmation: { disclosureId: Hex },
 ): Promise<Signed<Acceptance>> {
-  if (!wasIssued(prepared)) {
-    throw new Error('Sign only the acceptance prepareAcceptance returned, as it returned it')
-  }
-  const digest = digestOf(acceptanceTypedData(prepared.acceptance, prepared.domain))
-  const { disclosure } = prepared
-  if (
-    !same(digest, prepared.digest) ||
-    !same(disclosure.digest, digest) ||
-    !same(disclosureId(disclosure), disclosure.id)
-  ) {
-    throw new Error('The acceptance or its disclosure changed after prepareAcceptance built them')
-  }
-  if (!same(confirmation?.disclosureId, disclosure.id)) {
-    throw new Error(
-      "Show the person this acceptance's disclosure, and pass its id back once they confirm it",
-    )
-  }
-  const signature = await key.sign({ hash: digest })
-  if (!isKeySignature(digest, signature, prepared.signingKey)) {
-    throw new Error("The key that signed isn't the signing key Avow's approval names")
-  }
-  return {
-    type: 'Acceptance',
-    schemaVersion: MESSAGE_VERSIONS.Acceptance,
-    chainId: prepared.domain.chainId,
-    lock: prepared.domain.verifyingContract,
+  return signWithKey({
+    prepared,
+    typedData: acceptanceTypedData(prepared.acceptance, prepared.domain),
     message: prepared.acceptance,
-    signature,
-  }
+    key,
+    confirmation,
+    names: {
+      message: 'acceptance',
+      prepare: 'prepareAcceptance',
+      signingKey: "the signing key Avow's approval names",
+    },
+  })
 }
 
 /**

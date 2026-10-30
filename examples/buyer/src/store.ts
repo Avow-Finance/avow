@@ -4,6 +4,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
@@ -61,18 +62,45 @@ export type BuyerBooking = Commitment | UnsettledBooking
 export const neverFunded = (b: BuyerBooking): boolean => 'outcome' in b && b.outcome === 'failed'
 
 /**
- * How the business cancelled a booking. Through Avow once free cancellation ended, with the time
- * Avow recorded, or on the lock before then, with the transaction that gave the reserve back.
+ * How the business cancelled a booking, once that's settled. Through Avow once free cancellation
+ * ended, with the time Avow recorded, or on the lock before then, with the transaction that gave
+ * the reserve back.
  */
-export type Cancellation =
+export type SettledCancellation =
   | { by: 'avow'; cancelledAt: bigint }
   | { by: 'lock'; transactionHash: Hex }
+
+/**
+ * A cancellation on the lock whose transaction went out before anyone saw it land. It's saved just
+ * before the bytes go out, so a later run settles it from the transaction's receipt and never asks
+ * Avow to record a late cancellation of a reserve that came back in full.
+ */
+export interface SentCancellation {
+  by: 'lock'
+  sent: { hash: Hex; validBefore: bigint | null }
+}
+
+/** Where a booking's cancellation stands in the store. */
+export type Cancellation = SettledCancellation | SentCancellation
+
+/** Whether a cancellation is settled, or still a transaction nobody has seen land. */
+export const isSettled = (c: Cancellation): c is SettledCancellation => !('sent' in c)
 
 const bytes32 = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .transform((s) => s.toLowerCase() as Hex)
+const decimal = z
+  .string()
+  .regex(/^(0|[1-9][0-9]*)$/)
+  .transform((s) => BigInt(s))
 const keysJson = z.strictObject({ rootKey: bytes32, agentKey: bytes32 })
+
+/** A commitment id as the store writes one, 32 bytes of hex in lower case, or null for anything else. */
+export function readCommitmentId(text: string): Hex | null {
+  const parsed = bytes32.safeParse(text)
+  return parsed.success ? parsed.data : null
+}
 const bookingJson = z.strictObject({
   commitmentId: bytes32,
   supplier: z.unknown(),
@@ -84,16 +112,14 @@ const bookingJson = z.strictObject({
   reservedIn: bytes32.nullable().optional(),
   outcome: z.enum(['failed', 'unknown']).optional(),
 })
-const cancellationJson = z.discriminatedUnion('by', [
+const cancellationJson = z.union([
+  z.strictObject({ commitmentId: bytes32, by: z.literal('avow'), cancelledAt: decimal }),
+  z.strictObject({ commitmentId: bytes32, by: z.literal('lock'), transactionHash: bytes32 }),
   z.strictObject({
     commitmentId: bytes32,
-    by: z.literal('avow'),
-    cancelledAt: z
-      .string()
-      .regex(/^(0|[1-9][0-9]*)$/)
-      .transform((s) => BigInt(s)),
+    by: z.literal('lock'),
+    sent: z.strictObject({ hash: bytes32, validBefore: decimal.nullable() }),
   }),
-  z.strictObject({ commitmentId: bytes32, by: z.literal('lock'), transactionHash: bytes32 }),
 ])
 const setupJson = z.strictObject({
   lock: z
@@ -337,7 +363,7 @@ export class BuyerStore {
     writeAtomically(path, text)
   }
 
-  /** How the business cancelled a booking, or null when the store shows no cancellation. */
+  /** Where a booking's cancellation stands, or null when the store shows none. */
   cancellation(commitmentId: Hex): Cancellation | null {
     const path = this.#cancellationFile(commitmentId)
     const json = readJson(path)
@@ -352,8 +378,9 @@ export class BuyerStore {
   }
 
   /**
-   * Records how the business cancelled a booking. It refuses a commitment the store holds no
-   * booking for, a booking whose funding failed, and a booking the store already shows cancelled.
+   * Records where a booking's cancellation stands. A sent cancellation gives way to a later send or
+   * to a settled cancellation, and a settled one is final. It refuses a commitment the store holds
+   * no booking for and a booking whose funding failed.
    */
   saveCancellation(commitmentId: Hex, cancellation: Cancellation) {
     const booking = this.booking(commitmentId)
@@ -361,7 +388,8 @@ export class BuyerStore {
     if (neverFunded(booking)) {
       throw new Error(`The booking ${commitmentId} was never funded, so it has nothing to cancel`)
     }
-    if (this.cancellation(commitmentId)) {
+    const known = this.cancellation(commitmentId)
+    if (known && isSettled(known)) {
       throw new Error(`${this.dir} already shows the booking ${commitmentId} cancelled`)
     }
     mkdirSync(this.#cancellations, { recursive: true, mode: 0o700 })
@@ -369,5 +397,14 @@ export class BuyerStore {
       this.#cancellationFile(commitmentId),
       `${JSON.stringify(toWire({ commitmentId: booking.commitmentId, ...cancellation }), null, 2)}\n`,
     )
+  }
+
+  /** Forgets a sent cancellation that never landed. It refuses to forget a settled one. */
+  forgetSentCancellation(commitmentId: Hex) {
+    const known = this.cancellation(commitmentId)
+    if (!known || isSettled(known)) {
+      throw new Error(`${this.dir} holds no sent cancellation for ${commitmentId}`)
+    }
+    rmSync(this.#cancellationFile(commitmentId))
   }
 }

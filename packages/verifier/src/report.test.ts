@@ -2,7 +2,7 @@ import { digestOf, isKeySignature, REPORT_TYPES, reportTypedData } from '@avow-f
 import { decodeFunctionData, getAbiItem, getAddress, toFunctionSelector } from 'viem'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { type LockedBacking, MemoryChain } from './chain.js'
-import { disclosureId, formatTime } from './disclosure.js'
+import { disclosureId, formatLockAmount, formatTime, listedToken } from './disclosure.js'
 import {
   prepareReport,
   REPORT_ABI,
@@ -90,6 +90,27 @@ describe('a report the lock takes', () => {
     expect(LATE.most).toBe(250_000_000n)
     expect(prepared.digest).toBe(digestOf(reportTypedData(prepared.report, DOMAIN)))
     expect(prepared.signingKey).toBe(supplierKey.address)
+    expect(prepared.reportNumber).toBe(1)
+  })
+
+  it('gives each report a fresh random nonce unless the supplier names one', async () => {
+    const nonce = async () => {
+      const prepared = await prepareReport(
+        {
+          lock: LOCK,
+          commitmentId: COMMITMENT,
+          kind: 'lateCancellation',
+          evidenceHash: EVIDENCE,
+          now: REPORT_NOW,
+        },
+        deps,
+      )
+      if (!prepared.ok) throw new Error(prepared.reason)
+      return prepared.report.nonce
+    }
+    const [first, second] = [await nonce(), await nonce()]
+    expect(first).toBeGreaterThan(0n)
+    expect(first).not.toBe(second)
   })
 
   it('charges less when the supplier names less, and a no-show from its earliest', async () => {
@@ -106,7 +127,7 @@ describe('a report the lock takes', () => {
 
   it('takes a second report once the first is withdrawn', async () => {
     setCommitment({ reportCount: 1, hasReport: false })
-    expect((await prepare()).ok).toBe(true)
+    expect((await ready()).reportNumber).toBe(2)
   })
 })
 
@@ -301,6 +322,16 @@ describe('the disclosure', () => {
     }
     expect(disclosure.preauthorization).toBeNull()
     expect(disclosure.digest).toBe((await ready()).digest)
+  })
+
+  it('finds the listed token a lock holds, and writes base units of a token nobody listed', () => {
+    expect(listedToken([TOKEN], CHAIN_ID, getAddress(TOKEN.token))).toBe(TOKEN)
+    expect(listedToken([TOKEN], 1, TOKEN.token)).toBeNull()
+    expect(listedToken([TOKEN], CHAIN_ID, '0x20c0000000000000000000000000000000000002')).toBeNull()
+    expect(formatLockAmount(250_000_000n, TOKEN)).toBe(
+      'USD 250 (250000000 base units of 0x20C0000000000000000000000000000000000001)',
+    )
+    expect(formatLockAmount(250_000_000n, null)).toBe("250000000 base units of the lock's token")
   })
 
   it("names the second report, and shows base units of a token the supplier doesn't list", async () => {

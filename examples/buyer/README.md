@@ -7,18 +7,18 @@ A business and its agent on Moderato, from an empty account to a reserve the sup
 - `init` makes the business's root key and the agent's key, has Moderato's faucet fund the account's fees, and creates the business's lock from Avow's factory. Once `enroll` has saved a mandate for that lock, `init` keeps it and refuses an `AVOW_FACTORY` that gives another. To start over with another lock, use a new `STATE_DIR`.
 - `enroll` signs the agent's mandate with the root key, which stands in for the administrator's passkey. The mandate lets the agent reserve with one supplier, for compute, up to the reserve you set per booking, for a week, and cancel or start its bookings through Avow. One transaction from the root key puts the agent's key on the account with the mandate's hash and approves the supplier on the lock. Then the agent enrolls with Avow.
 - `book` has the agent book 8 H100s with the supplier. It builds the booking's terms with the GPU reservation template, then the SDK agrees them with the supplier, asks Avow to approve the reserve, checks Avow's approval against the terms and the mandate, and funds the reserve from the account while Avow's relay pays the fee. It then follows the lock until the supplier accepts. With `--until-released` it waits on until Avow returns the reserve at its release date.
-- `cancel` cancels a booking, the one whose commitment id you pass or the latest in the store, by one of the two paths below, and saves the cancellation in the store. A booking the store already shows cancelled is never sent to Avow again. Avow answers a second cancellation with the first one's record, which names the earlier request, so the SDK can't use it.
-
-A business enrolled before `cancel` existed holds a mandate that permits only reserves. It has to enroll again with a new `STATE_DIR` to cancel through Avow.
+- `cancel` cancels a booking, the one whose commitment id you pass or the latest in the store, by one of the two paths below. It reads the lock first and saves the cancellation in the store. A booking the store already shows cancelled is never sent again. Avow answers a second cancellation with the first one's record, which names the earlier request, so the SDK can't use it.
 
 ## Cancelling
 
-Avow's clock decides which path a cancellation takes.
+The lock and the chain's clock decide which path a cancellation takes.
 
-1. **Before free cancellation ends**, Avow refuses with `commitment.cancel_on_lock`. The root key then cancels on the lock itself, which gives the whole reserve back, and no charge can follow.
-2. **Once free cancellation has ended**, Avow records the cancellation with its own timestamp, and `cancel` prints that time. The supplier can then report a late-cancellation charge. Avow confirms the report only when it recorded the cancellation at or after the free-cancellation deadline and before the charge deadline, and refers any other report to a ruling. A confirmed charge pays the supplier at most the late-cancellation amount once the contest window closes, and the rest of the reserve goes back to the business.
+1. **While free cancellation is open on the chain**, the root key cancels on the lock itself, which gives the whole reserve back, and no charge can follow. That needs no mandate, so it works for any booking the lock still holds. The store keeps the transaction's hash from just before it goes out, so the next `cancel` settles a run that was cut short from the transaction's receipt.
+2. **Once free cancellation has ended**, the agent asks Avow to record the cancellation, which Avow does with its own timestamp, and `cancel` prints that time. The supplier can then report a late-cancellation charge. Avow confirms the report only when it recorded the cancellation at or after the free-cancellation deadline and before the charge deadline, and refers any other report to a ruling. A confirmed charge pays the supplier at most the late-cancellation amount once the contest window closes, and the rest of the reserve goes back to the business.
 
-Once the charge deadline has passed, Avow refuses with `commitment.ended`, and `cancel` says the booking can no longer be cancelled.
+A commitment the lock has already given back, charged or settled is never sent to Avow. Once the charge deadline has passed, Avow refuses with `commitment.ended`, and `cancel` says the booking can no longer be cancelled.
+
+The late path needs a mandate that permits `cancel`. A business enrolled before `cancel` existed holds one that permits only reserves. Its bookings still cancel on the lock while free cancellation is open, from the `STATE_DIR` that holds them. Running `enroll` again keeps the mandate the store holds, so a mandate that permits `cancel` and `start` takes a new account. Run `init` with a new `STATE_DIR`, send Avow the new account and lock to be registered as you did the first time, and run `enroll` once Avow has registered them.
 
 ## Settings
 

@@ -6,7 +6,7 @@ import {
   type Side,
   type Signed,
 } from '@avow-finance/spec'
-import { FACTORY_ABI } from '@avow-finance/verifier'
+import { FACTORY_ABI, type LockedBacking } from '@avow-finance/verifier'
 import { type Address, encodeFunctionData, type Hex, toFunctionSelector } from 'viem'
 import { Abis } from 'viem/tempo'
 
@@ -170,6 +170,16 @@ export function cancelFreeCall(lock: Address, commitmentId: Hex): Call {
       args: [commitmentId, SIDE_CODES.buyer],
     }),
   }
+}
+
+/**
+ * Whether the lock takes `cancelFreeCall` for a commitment at `now`, by the chain's clock. It takes
+ * it for a reserve the supplier hasn't accepted, or one accepted with no report standing, until
+ * free cancellation ends, whatever the agent's mandate permits.
+ */
+export function cancelsFree(held: LockedBacking, now: bigint): boolean {
+  const open = held.state === 'reserved' || (held.state === 'accepted' && !held.hasReport)
+  return open && now < held.freeCancelBy
 }
 
 /**

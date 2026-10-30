@@ -25,7 +25,7 @@ import {
   TEMPO_MODERATO,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
-import type { Address } from 'viem'
+import { type Address, TransactionReceiptNotFoundError } from 'viem'
 import { Account, Actions } from 'viem/tempo'
 import { cancelArgs, cancelBooking } from './cancel.js'
 import { initBusiness } from './init.js'
@@ -236,8 +236,9 @@ async function book() {
 }
 
 /**
- * Cancels a booking, the one named or the one made last. Avow records a late cancellation, and
- * before free cancellation ends the root key cancels on the lock and gets the whole reserve back.
+ * Cancels a booking, the one named or the one made last. While the lock takes a free cancellation,
+ * the root key cancels there and gets the whole reserve back, and once free cancellation has ended
+ * Avow records a late cancellation.
  */
 async function cancel() {
   const { commitmentId } = cancelArgs(process.argv.slice(3))
@@ -250,7 +251,16 @@ async function cancel() {
       store,
       agent: agentOf(store, settings, client),
       chainTime: async () => (await client.getBlock({ blockTag: 'latest' })).timestamp,
-      sendFromRoot: (call) => sendOwn({ client, account: root, calls: [call] }),
+      finalizedTime: async () => (await client.getBlock({ blockTag: 'finalized' })).timestamp,
+      sendFromRoot: (call, onSent) => sendOwn({ client, account: root, calls: [call], onSent }),
+      receipt: async (hash) => {
+        try {
+          return (await client.getTransactionReceipt({ hash })).status
+        } catch (error) {
+          if (error instanceof TransactionReceiptNotFoundError) return null
+          throw error
+        }
+      },
       log,
     },
     commitmentId,

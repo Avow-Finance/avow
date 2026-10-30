@@ -5,8 +5,6 @@ import {
   type ChargeReport,
   digestOf,
   type HashSigner,
-  isKeySignature,
-  MESSAGE_VERSIONS,
   type RailToken,
   REPORT_TYPES,
   type ReasonCode,
@@ -14,11 +12,11 @@ import {
   type Signed,
 } from '@avow-finance/spec'
 import { type Address, encodeFunctionData, type Hex, isAddressEqual, isHex, size } from 'viem'
-import { same } from './authorization.js'
 import { type ChainReader, MAX_REPORTS } from './chain.js'
-import { type Disclosure, disclosureId, reportDisclosure } from './disclosure.js'
-import { issue, wasIssued } from './issued.js'
+import { type Disclosure, listedToken, reportDisclosure } from './disclosure.js'
+import { issue } from './issued.js'
 import { randomNonce } from './nonce.js'
+import { signWithKey } from './signing.js'
 
 /** A report stays valid for ten minutes at most, and never past the charge deadline. */
 export const REPORT_VALIDITY = 600n
@@ -59,6 +57,11 @@ export interface ReadyReport {
   digest: Hex
   /** The key that has to sign, the signing key the lock holds for the commitment. */
   signingKey: Address
+  /**
+   * Which of the commitment's reports this one is, 1 or 2. The lock's `reportCount` reaches it once
+   * the report lands, and passes it once a later report replaces a withdrawn one.
+   */
+  reportNumber: number
   /** What to show the person who approves the signature, before signing. */
   disclosure: Disclosure
 }
@@ -134,15 +137,13 @@ export async function prepareReport(
   }
   const d: AvowDomain = { chainId: config.chainId, verifyingContract: request.lock }
   const digest = digestOf(reportTypedData(report, d))
-  const token = config.acceptedTokens.find(
-    (t) => t.chainId === config.chainId && isAddressEqual(t.token, lockInfo.token),
-  )
   return issue({
     ok: true,
     report,
     domain: d,
     digest,
     signingKey: config.signingKey,
+    reportNumber: b.reportCount + 1,
     disclosure: reportDisclosure({
       digest,
       report,
@@ -150,7 +151,7 @@ export async function prepareReport(
       chainId: config.chainId,
       account: lockInfo.account,
       payee: b.payee,
-      token: token ?? null,
+      token: listedToken(config.acceptedTokens, config.chainId, lockInfo.token),
       chargeDeadline: b.chargeDeadline,
       contestWindow: b.contestWindow,
       day90SupplierShareBps: b.day90SupplierShareBps,
@@ -166,40 +167,23 @@ export async function prepareReport(
  * throws. It also throws when the confirmation names another disclosure, or when the key isn't
  * the signing key the lock holds for the commitment.
  */
-export async function signReport(
+export function signReport(
   prepared: ReadyReport,
   key: HashSigner,
   confirmation: { disclosureId: Hex },
 ): Promise<Signed<ChargeReport>> {
-  if (!wasIssued(prepared)) {
-    throw new Error('Sign only the report prepareReport returned, as it returned it')
-  }
-  const digest = digestOf(reportTypedData(prepared.report, prepared.domain))
-  const { disclosure } = prepared
-  if (
-    !same(digest, prepared.digest) ||
-    !same(disclosure.digest, digest) ||
-    !same(disclosureId(disclosure), disclosure.id)
-  ) {
-    throw new Error('The report or its disclosure changed after prepareReport built them')
-  }
-  if (!same(confirmation?.disclosureId, disclosure.id)) {
-    throw new Error(
-      "Show the person this report's disclosure, and pass its id back once they confirm it",
-    )
-  }
-  const signature = await key.sign({ hash: digest })
-  if (!isKeySignature(digest, signature, prepared.signingKey)) {
-    throw new Error("The key that signed isn't the signing key the lock holds for the commitment")
-  }
-  return {
-    type: 'Report',
-    schemaVersion: MESSAGE_VERSIONS.Report,
-    chainId: prepared.domain.chainId,
-    lock: prepared.domain.verifyingContract,
+  return signWithKey({
+    prepared,
+    typedData: reportTypedData(prepared.report, prepared.domain),
     message: prepared.report,
-    signature,
-  }
+    key,
+    confirmation,
+    names: {
+      message: 'report',
+      prepare: 'prepareReport',
+      signingKey: 'the signing key the lock holds for the commitment',
+    },
+  })
 }
 
 /**

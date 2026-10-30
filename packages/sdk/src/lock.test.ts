@@ -1,10 +1,11 @@
-import { FACTORY_ABI as VERIFIER_FACTORY_ABI } from '@avow-finance/verifier'
+import { type LockedBacking, FACTORY_ABI as VERIFIER_FACTORY_ABI } from '@avow-finance/verifier'
 import { decodeFunctionData, encodeErrorResult, getAbiItem, toFunctionSelector } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   ADMINISTRATOR_ABI,
   approveSupplierCall,
   cancelFreeCall,
+  cancelsFree,
   createLockCall,
   FACTORY_ABI,
   RESERVE_ABI,
@@ -118,5 +119,43 @@ describe("the administrator's calls", () => {
     expect(functionName).toBe('cancelFree')
     // The lock files the buyer's side under 0.
     expect(args).toEqual([COMMITMENT, 0])
+  })
+
+  it('cancel free only while the lock takes it, by its state and the chain clock', () => {
+    const FREE_CANCEL_BY = 1_800_000_000n
+    const ZERO = `0x${'00'.repeat(32)}` as const
+    const held = (change: Partial<LockedBacking> = {}): LockedBacking => ({
+      state: 'accepted',
+      token: '0x20c0000000000000000000000000000000000001',
+      amount: 500_000_000n,
+      held: 500_000_000n,
+      payee: SUPPLIER,
+      supplier: SUPPLIER,
+      supplierSigner: SUPPLIER,
+      freeCancelBy: FREE_CANCEL_BY,
+      acceptBy: FREE_CANCEL_BY + 600n,
+      chargeDeadline: FREE_CANCEL_BY + 3600n,
+      contestWindow: 600n,
+      releaseDate: FREE_CANCEL_BY + 3600n,
+      charges: [],
+      day90SupplierShareBps: 5000,
+      arbiter: SUPPLIER,
+      termsHash: ZERO,
+      mandateHash: ZERO,
+      approvalHash: ZERO,
+      fundingKey: SUPPLIER,
+      reportCount: 0,
+      hasReport: false,
+      hasRuling: false,
+      ...change,
+    })
+    const open = FREE_CANCEL_BY - 1n
+    expect(cancelsFree(held(), open)).toBe(true)
+    expect(cancelsFree(held({ state: 'reserved' }), open)).toBe(true)
+    expect(cancelsFree(held(), FREE_CANCEL_BY)).toBe(false)
+    expect(cancelsFree(held({ hasReport: true, reportCount: 1 }), open)).toBe(false)
+    for (const state of ['charge_pending', 'paused', 'released', 'charged', 'resolved'] as const) {
+      expect(cancelsFree(held({ state }), open), state).toBe(false)
+    }
   })
 })

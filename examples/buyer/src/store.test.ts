@@ -13,7 +13,7 @@ import { type Address, getAddress, type Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { quickstartMandate } from './plan.js'
-import { type BuyerSetup, BuyerStore } from './store.js'
+import { type BuyerSetup, BuyerStore, readCommitmentId } from './store.js'
 import { fundedBooking } from './test/bookings.js'
 
 // Every key is generated for the run, and every state directory is removed after its test.
@@ -265,6 +265,35 @@ describe("the business's bookings and cancellations", () => {
     expect(store.cancellation(approved.commitmentId)).toEqual(onLock)
   })
 
+  it('lets a cancellation sent to the lock give way to a later send or a settled one, or be forgotten', async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    const id = booking.commitmentId
+    expect(() => store.forgetSentCancellation(id)).toThrow(`holds no sent cancellation for ${id}`)
+    const sent = { by: 'lock', sent: { hash: KEY_TX, validBefore: 1_800_000_025n } } as const
+    store.saveCancellation(id, sent)
+    expect(store.cancellation(id)).toEqual(sent)
+    const later = { by: 'lock', sent: { hash: OTHER, validBefore: null } } as const
+    store.saveCancellation(id, later)
+    expect(store.cancellation(id)).toEqual(later)
+    store.forgetSentCancellation(id)
+    expect(store.cancellation(id)).toBeNull()
+    store.saveCancellation(id, sent)
+    store.saveCancellation(id, { by: 'lock', transactionHash: KEY_TX })
+    expect(store.cancellation(id)).toEqual({ by: 'lock', transactionHash: KEY_TX })
+    // A settled cancellation is final.
+    expect(() => store.saveCancellation(id, later)).toThrow('already shows the booking')
+    expect(() => store.forgetSentCancellation(id)).toThrow(`holds no sent cancellation for ${id}`)
+  })
+
+  it('reads a commitment id as the store writes one, and nothing else', () => {
+    expect(readCommitmentId(`0x${'AB'.repeat(32)}`)).toBe(`0x${'ab'.repeat(32)}`)
+    for (const text of ['0x1234', `${'ab'.repeat(32)}`, `0x${'ab'.repeat(32)}0`, '']) {
+      expect(readCommitmentId(text), text).toBeNull()
+    }
+  })
+
   it("refuses a cancellation file that doesn't hold one", async () => {
     store.saveSetup({ lock: LOCK })
     const booking = await fundedBooking()
@@ -276,6 +305,14 @@ describe("the business's bookings and cancellations", () => {
       ['{', "isn't JSON"],
       [{ commitmentId: id, by: 'avow' }, "doesn't hold a cancellation"],
       [{ commitmentId: id, by: 'lock', transactionHash: '0x1234' }, "doesn't hold a cancellation"],
+      [
+        { commitmentId: id, by: 'lock', transactionHash: KEY_TX, sent: { hash: KEY_TX } },
+        "doesn't hold a cancellation",
+      ],
+      [
+        { commitmentId: id, by: 'avow', sent: { hash: KEY_TX, validBefore: null } },
+        "doesn't hold a cancellation",
+      ],
       [{ commitmentId: OTHER, by: 'avow', cancelledAt: '1' }, `holds the cancellation of ${OTHER}`],
     ]
     for (const [text, says] of broken) {
