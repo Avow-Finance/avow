@@ -1,0 +1,79 @@
+---
+title: Welcome to Avow!
+subtitle: Create, verify, and compose backed commitments for autonomous trade.
+slug: welcome
+hide-page-actions: true
+hide-nav-links: true
+hide-feedback: true
+layout: overview
+---
+
+<div className="welcome-hero-tint">
+  <img src="/docs/assets/welcome-light.jpg" className="block dark:hidden" style={{pointerEvents:'none',cursor:'default',transform:'none',transition:'none',animation:'none'}} />
+  <img src="/docs/assets/welcome-dark.jpg" className="hidden dark:block" style={{pointerEvents:'none',cursor:'default',transform:'none',transition:'none',animation:'none'}} />
+</div>
+
+## Build with Avow
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="duotone credit-card" imagePosition="top">
+    Understand the building blocks of Avow and how they fit together.
+
+  </Card>
+
+  <Card title="Authorize Agents" icon="duotone arrows-repeat" imagePosition="top">
+    Set what your agents can commit to, with limits and expiry.
+
+  </Card>
+
+  <Card title="Create & Compose Commitments" icon="duotone file-invoice-dollar" imagePosition="top">
+    Agree on terms, reserve funds, and link commitments across suppliers.
+
+  </Card>
+
+  <Card title="Verify & Accept" icon="leaf" imagePosition="top">
+    Check authority, terms, and backing before accepting.
+  </Card>
+</CardGroup>
+
+
+## Get started
+
+<Steps>
+  <Step title="Install the SDK">
+    One SDK gives you access to Payments, Subscriptions, and Invoicing.
+
+  <CodeBlocks>
+    ```bash title="npm"
+    npm install @acme/sdk
+    ```
+
+    ```bash title="pip"
+    pip install acme-sdk
+    ```
+
+    ```bash title="go"
+    go get github.com/acme/acme-go
+    ```
+  </CodeBlocks>
+
+  </Step>
+
+  <Step title="Authenticate">
+    Create an API key from the Acme Dashboard and add it to your environment:
+
+  ```bash
+  export ACME_API_KEY="sk_live_..."
+  ```
+
+  </Step>
+
+  <Step title="Explore the docs">
+    You're ready to go. Dive deeper into the platform:
+
+    * [Developer Quickstart](/api-reference) - Create and verify your first backed commitment on testnet.
+
+    - [Supplier Guide](/writing-content) - Learn how to accept commitments and handle releases and charges.
+  </Step>
+</Steps>
+
