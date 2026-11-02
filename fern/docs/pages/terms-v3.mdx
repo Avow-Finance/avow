@@ -1,6 +1,9 @@
-# Version 3 terms
+---
+title: Version 3 terms
+slug: docs/composable-commitments/terms-v3
+---
 
-A booking can rely on another business's booking. A compute reseller sells a training agent 8 H100s and books the same capacity from a GPU cloud, so the reseller's sale stands on its own purchase. The sale uses version 3 terms, which are version 2 terms with one more section, `dependencies`, and one more header field, `dependencyCheck`. A plain booking keeps version 2, byte for byte. Everything on this page is in `@avow-finance/spec`, and [Checking the bookings a booking relies on](dependency-check.md) covers who checks a dependency, when, and what that proves.
+A booking can rely on another business's booking. A compute reseller sells a training agent 8 H100s and books the same capacity from a GPU cloud, so the reseller's sale stands on its own purchase. The sale uses version 3 terms, which are version 2 terms with one more section, `dependencies`, and one more header field, `dependencyCheck`. A plain booking keeps version 2, byte for byte. Everything on this page is in `@avow-finance/spec`, and [Checking the bookings a booking relies on](/docs/composable-commitments/dependency-check) covers who checks a dependency, when, and what that proves.
 
 ## The dependencies section
 

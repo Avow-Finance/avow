@@ -1,6 +1,9 @@
-# Checking the bookings a booking relies on
+---
+title: Checking the bookings a booking relies on
+slug: docs/composable-commitments/dependency-check
+---
 
-A reseller sells capacity it booked from someone else, so its sale relies on its own purchase, and the sale's [version 3 terms](terms-v3.md) name that purchase. `verifyDependencies`, in `@avow-finance/verifier`, checks each booking named before anyone commits to the sale. It proves that a matching booking had been accepted when it was checked, and it promises nothing about that booking after that moment.
+A reseller sells capacity it booked from someone else, so its sale relies on its own purchase, and the sale's [version 3 terms](/docs/composable-commitments/terms-v3) name that purchase. `verifyDependencies`, in `@avow-finance/verifier`, checks each booking named before anyone commits to the sale. It proves that a matching booking had been accepted when it was checked, and it promises nothing about that booking after that moment.
 
 ## Who checks, and when
 

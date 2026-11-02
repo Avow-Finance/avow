@@ -10,6 +10,12 @@ navigation:
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+  - section: Composable commitments
+    contents:
+      - page: Version 3 terms
+        path: ./docs/pages/terms-v3.mdx
+      - page: Checking dependencies
+        path: ./docs/pages/dependency-check.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

@@ -32,7 +32,7 @@ Then it builds the acceptance, which names the lock's digest of the approval and
 
 ## Bookings a booking relies on
 
-`verifyDependencies` checks the bookings version 3 terms rely on, `prepareAcceptance` runs it before anything else reads those terms, and [docs/dependency-check.md](../../docs/dependency-check.md) says what both check and what they leave unchecked.
+`verifyDependencies` checks the bookings version 3 terms rely on, `prepareAcceptance` runs it before anything else reads those terms, and [Checking dependencies](../../fern/docs/pages/dependency-check.mdx) says what both check and what they leave unchecked.
 
 ## Release consents
 

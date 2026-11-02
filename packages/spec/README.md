@@ -75,7 +75,7 @@ Each section has its own label, so a section can't be read as another section. A
 
 ## The terms, version 3
 
-Version 3 terms add a `dependencies` section for a booking that relies on another business's booking, and [docs/terms-v3.md](../../docs/terms-v3.md) describes them, their dependency disclosure control and the buyer's view.
+Version 3 terms add a `dependencies` section for a booking that relies on another business's booking, and [Version 3 terms](../../fern/docs/pages/terms-v3.mdx) describes them, their dependency disclosure control and the buyer's view.
 
 ## Version 1 terms
 
