@@ -15,6 +15,7 @@ import {
   mandateJson,
   mandateTypedData,
   parseSigned,
+  plainTermsOf,
   type RailToken,
   type ReasonCode,
   type SupplierAuthorization,
@@ -22,10 +23,12 @@ import {
   supplierAuthorizationTypedData,
   termsHash,
   termsShapeProblem,
+  validateChainedTerms,
   validateTerms,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual, recoverAddress, zeroAddress } from 'viem'
 import type { ChainReader, LockedBacking, LockInfo } from './chain.js'
+import type { CheckedChainedTerms } from './dependency.js'
 import type { VerifierConfig } from './verify.js'
 
 /** Avow signs a supplier authorization for five minutes. */
@@ -44,11 +47,27 @@ export interface Agreed {
   mandateHash?: Hex
 }
 
+/**
+ * The supplier's own terms, as an authorization is checked against them. Plain terms are version
+ * 2, or version 1 for a commitment made under it. Chained terms are version 3 terms every booking
+ * of which passed `verifyDependencies`, which only that check gives.
+ */
+export type TermsUnderCheck =
+  | { kind: 'plain'; terms: AnyTerms }
+  | { kind: 'chained'; terms: CheckedChainedTerms }
+
+/**
+ * The terms the rules, the mandate and the lock read. Version 3 terms make the plain booking
+ * `plainTermsOf` gives, since the lock enforces nothing in their dependencies section.
+ */
+export function plainTerms(under: TermsUnderCheck): AnyTerms {
+  return under.kind === 'plain' ? under.terms : plainTermsOf(under.terms)
+}
+
 export interface AuthorizationInput {
   authorization: unknown
   agreed: Agreed
-  /** The supplier's own terms: version 2, or version 1 for a commitment made under it. */
-  terms: AnyTerms
+  terms: TermsUnderCheck
   mandate?: unknown
   now: bigint
 }
@@ -135,12 +154,19 @@ export async function checkAuthorization(
   if (auth.kybTestData && !config.acceptTestData) return refuse('business.test_data')
 
   // The supplier's terms against the ones Avow signed, once they have a shape the hash covers.
-  const t = input.terms
-  const shape = termsShapeProblem(t)
-  if (shape) return refuse(shape)
-  if (!same(termsHash(t, auth.salt), auth.termsHash)) return refuse('terms.hash_mismatch')
-  const termsProblem = validateTerms(t, config.profile)
+  const under = input.terms
+  // Checked version 3 terms passed their shape check in `verifyDependencies`.
+  if (under.kind === 'plain') {
+    const shape = termsShapeProblem(under.terms)
+    if (shape) return refuse(shape)
+  }
+  if (!same(termsHash(under.terms, auth.salt), auth.termsHash)) return refuse('terms.hash_mismatch')
+  const termsProblem =
+    under.kind === 'plain'
+      ? validateTerms(under.terms, config.profile)
+      : validateChainedTerms(under.terms, config.profile)
   if (termsProblem) return refuse(termsProblem)
+  const t = plainTerms(under)
   // What the lock enforces, read from the supplier's terms the way Avow's API reads them.
   const e = enforceableTerms(t)
   const token = config.acceptedTokens.find(

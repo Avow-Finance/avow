@@ -29,6 +29,7 @@ import type {
   LockInfo,
   ObservedContest,
 } from './chain.js'
+import type { PinnedLockReader } from './dependency.js'
 import { FACTORY_ABI, LOCK_ABI, LOCK_PAUSED_EVENT_ABI, PAUSE_CAUSES } from './lock-abi.js'
 
 /** The keychain stores a key with no expiry as the largest uint64. */
@@ -314,6 +315,58 @@ export interface TempoReaderOptions {
   chainId?: number
 }
 
+/** The chain's id from the options or the client, or a setup mistake when neither names one. */
+function chainIdOf(client: Client, options: TempoReaderOptions): number {
+  const chainId = options.chainId ?? client.chain?.id
+  if (chainId === undefined) throw new Error("Name the chain's id, or give the client a chain")
+  return chainId
+}
+
+/**
+ * Reads the locks one factory created on Tempo, every read as of a block named by number, for the
+ * check of a booking another booking relies on. The latest finalized block is the one pinned, so
+ * no later block can change what it shows, and a node that doesn't have a block refuses the read.
+ * The caller trusts the node the client talks to, so it uses one it chose.
+ */
+export function tempoLockReader(client: Client, options: TempoReaderOptions): PinnedLockReader {
+  const { factory } = options
+  const lockView = (lock: Address, name: 'factory' | 'account', blockNumber: bigint) =>
+    readContract(client, { address: lock, abi: LOCK_ABI, functionName: name, blockNumber })
+  return {
+    chainId: chainIdOf(client, options),
+    factory,
+    async head() {
+      const block = await getBlock(client, { blockTag: 'finalized' })
+      return { number: block.number, hash: block.hash }
+    },
+    async blockHash(blockNumber) {
+      try {
+        return (await getBlock(client, { blockNumber })).hash
+      } catch (error) {
+        if (error instanceof BlockNotFoundError) return null
+        throw error
+      }
+    },
+    isLock: (lock, blockNumber) =>
+      readContract(client, {
+        address: factory,
+        abi: FACTORY_ABI,
+        functionName: 'isLock',
+        args: [lock],
+        blockNumber,
+      }),
+    async lockFields(lock, blockNumber) {
+      const [lockFactory, account] = await Promise.all([
+        lockView(lock, 'factory', blockNumber),
+        lockView(lock, 'account', blockNumber),
+      ])
+      return { factory: lockFactory, account }
+    },
+    commitment: (lock, commitmentId, side, blockNumber) =>
+      readBacking(client, lock, commitmentId, side, { blockNumber }),
+  }
+}
+
 /**
  * Reads Tempo directly: the lock's settings and its record of a commitment, the agent key in the
  * keychain, and account signatures through Tempo's own signature verifier. A lock counts as
@@ -321,8 +374,7 @@ export interface TempoReaderOptions {
  * a factory. The supplier trusts the node the client talks to, so it uses one it chose.
  */
 export function tempoChainReader(client: Client, options: TempoReaderOptions): ChainReader {
-  const chainId = options.chainId ?? client.chain?.id
-  if (chainId === undefined) throw new Error("Name the chain's id, or give the client a chain")
+  const chainId = chainIdOf(client, options)
   const check = tempoKeychainCheck(client)
   const tokenOf = (lock: Address) =>
     readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' })
