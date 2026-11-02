@@ -4,6 +4,12 @@ title: Avow | Documentation
 navigation:
   - page: Welcome
     path: pages/welcome.mdx
+  - section: Get started
+    contents:
+      - page: Introduction
+        path: ./docs/pages/introduction.mdx
+      - page: Avow Explained Simply
+        path: ./docs/pages/avow-explained-simply.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

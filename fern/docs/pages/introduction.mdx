@@ -1,0 +1,46 @@
+---
+title: Introduction
+slug: docs/get-started/introduction
+---
+
+Avow is the commitment layer for autonomous trade. It lets verified businesses authorize AI agents to make commitments, agree on terms, and reserve funds for a named supplier. Suppliers can check who stands behind an agent, what it is authorized to do, and what backs its promise before accepting.
+
+Autonomous commerce is trade in which software agents act on behalf of businesses to find suppliers, agree on terms, purchase services, and manage obligations. Businesses set the authority and limits; agents carry out transactions within them. This requires more than the ability to send a payment. A supplier needs to know whether it can rely on an agent’s promise before committing its own resources.
+
+Businesses trade through commitments: reservations, bookings, purchase orders, and agreements to pay or deliver later. These promises allow one party to act before the other has completed its obligations. Agents need a way to make those promises with clear authority, backing, and consequences.
+
+Avow represents each commitment as a record of its parties, terms, backing, deadlines, and outcome. Developers can create and verify individual commitments, then connect them to the other commitments they depend on.
+
+Avow is currently in development on testnet. The initial implementation supports buyer-funded reserves; other forms of backing are planned.
+
+## From authority to commitment
+
+A business administrator authorizes an agent through a mandate that defines its permitted actions, limits, and expiry. Avow checks that authority before approving a backed commitment.
+
+Each reserve is assigned to one commitment and one named supplier. Funds are held in the business’s own reserve contract, locked under agreed rules that specify the maximum charge, when it can apply, and when the funds are released.
+
+For example, an agent might reserve GPU capacity with a cancellation charge of up to $500. The business reserves $500, and the supplier verifies the commitment before accepting. Usage is paid separately. When no charge can still apply, the reserve returns to the business. An applicable charge follows the agreed process, including an opportunity to contest it.
+
+Revoking an agent stops new commitments. Obligations already made remain in place.
+
+## Composable commitments
+
+A business’s promise often depends on another business keeping its own. A compute reseller, for example, may accept a customer’s booking using capacity reserved from a GPU provider. The customer needs to know whether that upstream reservation exists and has been accepted.
+
+Avow lets one commitment reference another, identifying the exact commitment and its agreed terms. This allows approval and acceptance to depend on checks of the upstream booking. The reseller can provide evidence of the reservation behind its offer, with disclosure settings controlling what the customer sees and whether it verifies the dependency directly or relies on Avow’s check.
+
+Each link remains a separate agreement. The reseller remains responsible to its customer under their terms, and each reserve covers only its own commitment. Dependency checks gate approval and acceptance; reserve contracts do not enforce relationships between commitments or move funds across them. Evidence of an upstream booking establishes its state when checked, not a guarantee of future delivery.
+
+## Verification and settlement
+
+Avow combines business verification and authorization checks with reserves that suppliers can inspect independently. Its initial implementation uses Tempo for delegated agent authority and reserve enforcement.
+
+The open verifier lets suppliers check signatures, agreed terms, and on-chain backing. Business identity verification and Avow’s approval decisions still rely on Avow.
+
+Settlement follows the commitment’s rules. Funds are released when the supplier’s exposure ends, and applicable charges can be paid after the contest window. Contested charges pause for review and may require a ruling under the agreed dispute process.
+
+Avow’s role is to make those promises verifiable and financially backed. A business can delegate purchasing decisions within defined limits, while a supplier can assess an unfamiliar agent’s commitment before accepting it.
+
+As commitments connect across suppliers, agents can coordinate more than individual purchases: they can arrange the services and resources a business needs to fulfill its own obligations.
+
+That is the foundation Avow is building for autonomous commerce, businesses trading through agents, with explicit authority, agreed terms, and clear accountability.
