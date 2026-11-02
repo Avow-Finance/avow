@@ -3,7 +3,7 @@ instances:
 title: Avow | Documentation
 navigation:
   - page: Welcome
-    path: pages/welcome.mdx
+    path: ./docs/pages/welcome.mdx
   - section: Get started
     contents:
       - page: Introduction

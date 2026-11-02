@@ -1,6 +1,6 @@
 ---
-title: Welcome to Avow!
-subtitle: Create, verify, and compose backed commitments for autonomous trade.
+title: Welcome to Avow
+subtitle: Give your AI agents authority to make commitments that suppliers can check before they accept.
 slug: welcome
 hide-page-actions: true
 hide-nav-links: true
@@ -8,72 +8,60 @@ hide-feedback: true
 layout: overview
 ---
 
-<div className="welcome-hero-tint">
-  <img src="/docs/assets/welcome-light.jpg" className="block dark:hidden" style={{pointerEvents:'none',cursor:'default',transform:'none',transition:'none',animation:'none'}} />
-  <img src="/docs/assets/welcome-dark.jpg" className="hidden dark:block" style={{pointerEvents:'none',cursor:'default',transform:'none',transition:'none',animation:'none'}} />
-</div>
+Avow runs on testnet today. Nothing here moves real money.
 
 ## Build with Avow
 
 <CardGroup cols={2}>
-  <Card title="Core Concepts" icon="duotone credit-card" imagePosition="top">
-    Understand the building blocks of Avow and how they fit together.
-
+  <Card title="How Avow works" icon="duotone book" href="/docs/get-started/introduction">
+    Authority, commitments, reserves and how one commitment can rely on another.
   </Card>
 
-  <Card title="Authorize Agents" icon="duotone arrows-repeat" imagePosition="top">
-    Set what your agents can commit to, with limits and expiry.
-
+  <Card title="Avow explained simply" icon="duotone lightbulb" href="/docs/get-started/avow-explained-simply">
+    The same ideas without the jargon.
   </Card>
 
-  <Card title="Create & Compose Commitments" icon="duotone file-invoice-dollar" imagePosition="top">
-    Agree on terms, reserve funds, and link commitments across suppliers.
-
+  <Card title="Buyer quickstart" icon="duotone cart-shopping" href="https://github.com/Avow-Finance/avow/tree/main/examples/buyer">
+    A business and its agent, from an empty account to a booking a supplier accepts.
   </Card>
 
-  <Card title="Verify & Accept" icon="leaf" imagePosition="top">
-    Check authority, terms, and backing before accepting.
+  <Card title="Supplier quickstart" icon="duotone server" href="https://github.com/Avow-Finance/avow/tree/main/examples/supplier">
+    Check an agent's authority and its reserve, then accept the booking.
   </Card>
 </CardGroup>
-
 
 ## Get started
 
 <Steps>
-  <Step title="Install the SDK">
-    One SDK gives you access to Payments, Subscriptions, and Invoicing.
-
-  <CodeBlocks>
-    ```bash title="npm"
-    npm install @acme/sdk
-    ```
-
-    ```bash title="pip"
-    pip install acme-sdk
-    ```
-
-    ```bash title="go"
-    go get github.com/acme/acme-go
-    ```
-  </CodeBlocks>
-
-  </Step>
-
-  <Step title="Authenticate">
-    Create an API key from the Acme Dashboard and add it to your environment:
+  <Step title="Build the quickstarts">
+    The SDK isn't on npm yet, so the quickstarts run from the repository. You need Node 22.12 or later and pnpm 10.
 
   ```bash
-  export ACME_API_KEY="sk_live_..."
+  git clone https://github.com/Avow-Finance/avow.git
+  cd avow
+  pnpm install
+  pnpm --filter "@avow-examples/buyer..." --filter "@avow-examples/supplier..." build
   ```
 
   </Step>
 
-  <Step title="Explore the docs">
-    You're ready to go. Dive deeper into the platform:
+  <Step title="Create your test business">
+    Run `init` in the buyer quickstart with Avow's lock factory. It makes your business's keys, its account on Tempo's testnet and its lock, and prints the account and lock to send to your Avow contact, who registers the business and adds test funds.
 
-    * [Developer Quickstart](/api-reference) - Create and verify your first backed commitment on testnet.
+  ```bash
+  cd examples/buyer
+  AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283 node dist/main.js init
+  ```
 
-    - [Supplier Guide](/writing-content) - Learn how to accept commitments and handle releases and charges.
+  </Step>
+
+  <Step title="Make your first booking">
+    Authorize the agent, then let it book with the supplier quickstart running beside it. Each quickstart's README walks through cancelling, reporting a charge and contesting it.
+
+  ```bash
+  node dist/main.js enroll
+  node dist/main.js book --until-released
+  ```
+
   </Step>
 </Steps>
-
