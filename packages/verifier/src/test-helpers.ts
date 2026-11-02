@@ -2,13 +2,19 @@ import {
   type Approval,
   approvalDigest,
   approvalTypedData,
+  type CommitmentReference,
+  type Dependency,
   digestOf,
+  discloseSection,
+  dollars,
+  gpuReservationTerms,
   type LockRecordField,
   type LockTerms,
   type Mandate,
   mandateHash,
   mandateTypedData,
   type RailToken,
+  type Side,
   type SupplierAuthorization,
   signForAccount,
   supplierAuthorizationTypedData,
@@ -21,6 +27,7 @@ import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import type { AcceptanceConfig } from './accept.js'
 import { type LockedBacking, type LockInfo, MemoryChain } from './chain.js'
+import type { DependencyRecord, PinnedBlock, PinnedLockReader } from './dependency.js'
 import type { VerifierConfig } from './verify.js'
 
 /** Shared test setup. Keys are generated for each run and never leave memory. */
@@ -286,4 +293,170 @@ export function reservedChain(): MemoryChain {
     KEY_TX,
   )
   return chain
+}
+
+/**
+ * A booking another booking relies on. The supplier, a reseller, booked 8 H100s for an hour from a
+ * GPU cloud, as the buyer in its own lock, and sells the buyer capacity out of it. The lock's public
+ * view of that booking shows its reserve and charge caps to anyone, so the rate the supplier pays is
+ * the one price that stays hidden.
+ */
+export const FACTORY: Address = '0x00000000000000000000000000000000000fac01'
+export const OTHER_FACTORY: Address = '0x00000000000000000000000000000000000fac02'
+/** The GPU cloud's account, which supplies the upstream booking. */
+export const gpuCloud = newKey()
+/** The supplier's own lock, which holds what it booked from the GPU cloud. */
+export const SUPPLIER_LOCK: Address = '0x00000000000000000000000000000000000010c6'
+export const UPSTREAM_COMMITMENT = id('the supplier books the GPU cloud')
+export const upstreamTerms = gpuReservationTerms({
+  resource: { gpu: 'H100', count: 8, region: 'demo', sku: 'cloud-h100x8' },
+  currency: 'USD',
+  windowStart: START,
+  windowDuration: 3600n,
+  pricePerGpuHour: 2_170_000n,
+  freeCancelBy: START - 600n,
+  lateCancellation: dollars(123),
+  noShow: dollars(321),
+  gracePeriod: 120n,
+  chargeDeadline: START + 3600n,
+  contestWindow: 600n,
+  releaseDate: START + 3600n,
+  arbiter: ARBITER,
+  day90SupplierShareBps: 5000,
+})
+export const UPSTREAM_SALT = `0x${'77'.repeat(32)}` as const
+export const UPSTREAM_HASH = termsHash(upstreamTerms, UPSTREAM_SALT)
+/** The upstream rate in micros, as JSON writes it, which the lock never stores. */
+export const UPSTREAM_RATE = '2170000'
+/** The upstream subject as the supplier shows it to the buyer, as JSON. */
+export const shownUpstream = json(discloseSection(upstreamTerms, UPSTREAM_SALT, 'subject'))
+
+/**
+ * A dependency on the upstream booking, on the buyer side of the supplier's own lock. A change can
+ * make one the types forbid, such as the supplier side, for the checks that refuse it anyway.
+ */
+export function dependencyOn(change: Partial<CommitmentReference> = {}): Dependency {
+  return {
+    on: {
+      kind: 'commitment',
+      chainId: CHAIN_ID,
+      lock: SUPPLIER_LOCK,
+      commitmentId: UPSTREAM_COMMITMENT,
+      side: 'buyer',
+      termsHash: UPSTREAM_HASH,
+      ...change,
+    } as Dependency['on'],
+    condition: 'accepted',
+    disclosed: 'subject',
+  }
+}
+
+/** The block the scripted chain pins by default. */
+export const PINNED: PinnedBlock = { number: 4321n, hash: id('block 4321') }
+
+export interface ScriptedLock {
+  /** Whether the reader's factory lists the lock. */
+  listed: boolean
+  /** The factory the lock's own field names. */
+  factory: Address
+  account: Address
+  /** Records by `commitmentId:side`. */
+  records: Record<string, DependencyRecord>
+}
+
+export const recordKey = (commitmentId: Hex, side: Side) => `${commitmentId.toLowerCase()}:${side}`
+
+/** The supplier's lock as it stands once the GPU cloud accepted the upstream booking it supplies. */
+export function supplierLock(record: Partial<DependencyRecord> | null = {}): ScriptedLock {
+  return {
+    listed: true,
+    factory: FACTORY,
+    account: supplierAccount.address,
+    records: record
+      ? {
+          [recordKey(UPSTREAM_COMMITMENT, 'buyer')]: {
+            state: 'accepted',
+            hasReport: false,
+            termsHash: UPSTREAM_HASH,
+            supplier: gpuCloud.address,
+            ...record,
+          },
+        }
+      : {},
+  }
+}
+
+export type ReaderCall = keyof Omit<PinnedLockReader, 'chainId' | 'factory'>
+
+export interface LockScript {
+  chainId?: number
+  factory?: Address
+  head?: PinnedBlock
+  /**
+   * The blocks `head` gives in turn, as a chain that moves on between reads, the last one from
+   * then on. `[head]` by default.
+   */
+  heads?: PinnedBlock[]
+  /** Locks by address. The supplier's lock with an accepted upstream booking by default. */
+  locks?: Record<string, ScriptedLock>
+  /** What `blockHash` gives for the pinned height, the pinned hash by default. */
+  rehash?: Hex | null
+  /** A call that throws, as a node that errors. */
+  fails?: ReaderCall
+  /** A call that never answers. */
+  hangs?: ReaderCall
+}
+
+/**
+ * A pinned lock reader the tests script. It records every call with the block it named, so a test
+ * can see that every read was pinned to the same block.
+ */
+export function scriptedLocks(script: LockScript = {}): {
+  reader: PinnedLockReader
+  calls: { call: ReaderCall; at: bigint }[]
+} {
+  const heads = script.heads ?? [script.head ?? PINNED]
+  let given = 0
+  const locks = new Map(
+    Object.entries(script.locks ?? { [SUPPLIER_LOCK]: supplierLock() }).map(([a, l]) => [
+      a.toLowerCase(),
+      l,
+    ]),
+  )
+  const calls: { call: ReaderCall; at: bigint }[] = []
+  const answer = async <T>(call: ReaderCall, at: bigint, value: () => T): Promise<T> => {
+    calls.push({ call, at })
+    if (script.fails === call) throw new Error('HTTP request failed. 502 Bad Gateway')
+    if (script.hangs === call) return new Promise<T>(() => {})
+    return value()
+  }
+  const lockAt = (lock: Address) => {
+    const found = locks.get(lock.toLowerCase())
+    if (!found) throw new Error(`No contract at ${lock}`)
+    return found
+  }
+  const reader: PinnedLockReader = {
+    chainId: script.chainId ?? CHAIN_ID,
+    factory: script.factory ?? FACTORY,
+    head: () => {
+      const head = heads[Math.min(given++, heads.length - 1)] ?? PINNED
+      return answer('head', head.number, () => head)
+    },
+    blockHash: (n) =>
+      answer('blockHash', n, () => {
+        const at = heads.find((h) => h.number === n)
+        if (!at) return null
+        return script.rehash === undefined ? at.hash : script.rehash
+      }),
+    isLock: (lock, at) =>
+      answer('isLock', at, () => locks.get(lock.toLowerCase())?.listed ?? false),
+    lockFields: (lock, at) =>
+      answer('lockFields', at, () => {
+        const { factory, account } = lockAt(lock)
+        return { factory, account }
+      }),
+    commitment: (lock, commitmentId, side, at) =>
+      answer('commitment', at, () => lockAt(lock).records[recordKey(commitmentId, side)] ?? null),
+  }
+  return { reader, calls }
 }

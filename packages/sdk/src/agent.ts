@@ -10,6 +10,7 @@ import {
   checkEnvelope,
   checkMandate,
   digestOf,
+  isChainedTerms,
   isKeySignature,
   isTermsV1,
   lockTerms,
@@ -471,8 +472,12 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
 
     async book(b: Booking): Promise<BookResult> {
       const { terms } = b
-      // A new commitment takes version 2 terms, which the mandate check alone wouldn't insist on.
-      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown' }
+      // A new commitment takes version 2 terms. Version 1 is only for commitments made under it,
+      // and this agent doesn't read the bookings version 3 terms rely on, so both stop here,
+      // before anything is signed.
+      if (isTermsV1(terms) || isChainedTerms(terms)) {
+        return { ok: false, reason: 'terms.version_unknown' }
+      }
       const supplier = b.supplier.profile
       const commitmentId = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const request = {

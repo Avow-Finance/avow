@@ -43,7 +43,11 @@ export interface VerifyInput {
   authorization: unknown
   /** The commitment the supplier agreed to, from the terms agreement it signed. */
   agreed: Agreed
-  /** The supplier's own copy of the agreed terms: version 2, or version 1 for one made under it. */
+  /**
+   * The supplier's own copy of the agreed terms: version 2, or version 1 for one made under it.
+   * Version 3 terms are refused, since this check doesn't read the bookings they rely on, and
+   * `prepareAcceptance` takes them.
+   */
   terms: AnyTerms
   /** The buyer's signed mandate, as JSON, when the supplier wants to check it too. */
   mandate?: unknown
@@ -75,7 +79,11 @@ export async function verifySupplierAuthorization(
   input: VerifyInput,
   deps: VerifierDeps,
 ): Promise<Verification> {
-  const checked = await checkAuthorization(input, deps.config, deps.chain)
+  const checked = await checkAuthorization(
+    { ...input, terms: { kind: 'plain', terms: input.terms } },
+    deps.config,
+    deps.chain,
+  )
   if (!checked.ok) return checked
   const { authorization: auth, domain: d } = checked
   const { acceptBy } = enforceableTerms(input.terms)
