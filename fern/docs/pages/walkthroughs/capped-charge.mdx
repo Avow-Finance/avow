@@ -1,0 +1,59 @@
+---
+title: A capped charge
+slug: docs/walkthroughs/capped-charge
+---
+
+The business cancels after free cancellation has ended, and the supplier charges for it. The terms cap a late cancellation at half the reserve, so the supplier is paid at most $250 of the $500, and the other $250 goes back to the business. Avow confirms the charge only because its own records show the business cancelling inside the late window. A supplier can't charge more than the cap, and a late-cancellation charge with no late cancellation in Avow's records goes to a ruling instead.
+
+Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running.
+
+## Book
+
+```bash
+cd examples/buyer
+node dist/main.js book
+```
+
+Without `--until-released`, `book` stops once the supplier accepts. Keep the commitment id it printed.
+
+## Cancel late
+
+Free cancellation ends six minutes after `book`, and the supplier can report a no-show from 14 minutes after it. Cancel in between.
+
+```bash
+node dist/main.js cancel 0x<commitment id>
+```
+
+Free cancellation has ended on the chain, so the agent asks Avow to record the cancellation, and Avow records it with its own timestamp.
+
+```
+free cancellation of 0x<commitment id> has ended, so the agent asks Avow to record the cancellation
+Avow recorded the cancellation of 0x<commitment id> at <time>
+```
+
+A `cancel` sent while free cancellation is still open cancels on the lock instead, and the whole reserve goes back with no charge. That's the right outcome for a real business, and it ends this walkthrough early, so wait the six minutes.
+
+## Report the charge
+
+In a second supplier terminal, with `serve` still running, report the late cancellation.
+
+```bash
+cd examples/supplier
+node dist/main.js report 0x<commitment id>
+```
+
+The verifier builds the report from the lock, for the most the terms let a late cancellation take, and the supplier's signing key sends it. `report` then waits for Avow, which confirms or refers every report within five minutes on testnet.
+
+```
+the lock took the report of a late cancellation on 0x<commitment id>
+waiting for Avow to confirm or refer the report on 0x<commitment id>
+Avow confirmed the charge on 0x<commitment id>. It pays USD 250 (250000000 base units of 0x20C0…1185) once the contest window of 10 minutes closes, unless the business contests it first, and the rest of the reserve went back to the business.
+```
+
+## The charge pays
+
+At confirmation the lock sends the business the $250 the charge can't take. Ten minutes later the contest window closes, Avow's settlement service sends the charge, and the lock pays $250 to the supplier's payout address. Both payments are on the [Moderato explorer](https://explore.testnet.tempo.xyz) under the lock.
+
+## What it proves
+
+The cap holds in the lock itself. The verifier never builds a report above it, and the lock refuses one that asks for more. Avow confirmed this charge because it recorded the cancellation after free cancellation ended and before a no-show could be reported. A report on a booking the business never cancelled late gets referred to a ruling, never confirmed, and the business has ten minutes to contest even a confirmed charge, as [A disputed charge](/docs/walkthroughs/dispute) shows.

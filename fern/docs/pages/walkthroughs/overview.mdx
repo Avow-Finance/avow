@@ -1,0 +1,84 @@
+---
+title: Run all four in an hour
+slug: docs/walkthroughs/overview
+---
+
+These walkthroughs take one person through the four things Avow has to get right, using the buyer and supplier quickstarts on one machine against Avow's hosted testnet service. You play both sides. The buyer quickstart is a business and its agent, and the supplier quickstart is the business the agent books from. Every amount is test tUSD on Tempo's Moderato testnet, so nothing here moves real money.
+
+| Walkthrough | What it shows |
+| --- | --- |
+| [A kept booking](/docs/walkthroughs/kept-booking) | The supplier accepts, and the whole reserve goes back to the business at its release date |
+| [A capped charge](/docs/walkthroughs/capped-charge) | The business cancels late, and the supplier is paid no more than the late-cancellation amount |
+| [A disputed charge](/docs/walkthroughs/dispute) | The business contests a charge, the lock pauses it, Avow rules, and the lock pays as ruled |
+| [Limits that hold](/docs/walkthroughs/limits) | A booking over the agent's limits is refused with a reason code |
+
+## Set up both sides once
+
+Build the quickstarts as the [welcome page](/welcome) shows, then make both businesses.
+
+```bash
+export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
+(cd examples/buyer && node dist/main.js init)
+(cd examples/supplier && node dist/main.js init)
+```
+
+The buyer prints its account and lock, and the supplier prints three addresses. Send all of them to your Avow contact with a name and country for each business. Avow registers both, sends the buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
+
+| Setting | Side | What it is |
+| --- | --- | --- |
+| `AVOW_API_URL` | Both | Avow's hosted API, `https://api.testnet.avow.finance` |
+| `AVOW_TOKEN` | Both | The token reserves are held in |
+| `BUYER_BUSINESS_ID` | Buyer | The business id Avow registered the buyer under |
+| `AVOW_ARBITER` | Buyer | The arbiter Avow's approvals name |
+| `SUPPLIER_BUSINESS_ID` | Supplier | The business id Avow registered the supplier under |
+| `AVOW_APPROVAL_KEYS` | Supplier | The address Avow signs authorizations with |
+
+Start the supplier in its own terminal and leave it running. The buyer reaches it at `SUPPLIER_URL`, which is `http://localhost:8790` when both run on your machine.
+
+```bash
+cd examples/supplier
+node dist/main.js serve
+```
+
+Then authorize the agent from the buyer's terminal. Keep the default limits, which let the agent hold three $500 bookings at once.
+
+```bash
+cd examples/buyer
+export SUPPLIER_URL=http://localhost:8790
+node dist/main.js enroll
+```
+
+## The order that fits an hour
+
+A booking with the default window takes 42 minutes from `book` to its release, and a dispute takes about as long, so the walkthroughs run side by side. Times are from the first `book`.
+
+| Time | Buyer | Supplier |
+| --- | --- | --- |
+| 0:00 | Books the dispute's booking, then the capped charge's | Accepts each booking on its own |
+| 0:02 | Books the kept booking in a second terminal, and leaves it waiting for the release | Accepts it |
+| 0:04 | Tries the two bookings in [Limits that hold](/docs/walkthroughs/limits), which are refused | Nothing |
+| 0:08 | Cancels the dispute's booking and the capped charge's booking, now that free cancellation has ended | Nothing |
+| 0:09 | Nothing | Reports a late cancellation on both, and Avow confirms each within five minutes |
+| About 0:13 | Contests the dispute's charge as soon as Avow confirms it, since the contest window lasts ten minutes | Nothing |
+| About 0:25 | Nothing | The capped charge pays $250 once its contest window has closed |
+| 0:44 | The kept booking's reserve comes back | Nothing |
+| By 0:50 | Avow has ruled on the dispute within 30 minutes of the pause, and the lock pays five minutes after the ruling | The ruling's share arrives |
+
+Name each booking by the commitment id `book` printed, since `cancel` and `contest` otherwise take the latest booking. The agent's key can move $1,500 a day at the default limits, which is exactly these three reserves. If a booking has to be made again the same day, ask Avow to register a fresh buyer, and run `init` with a new `STATE_DIR`.
+
+## Testnet timing
+
+Avow's testnet locks run on minutes where a live lock would run on days, so a whole dispute fits in an hour.
+
+| Step | On testnet |
+| --- | --- |
+| Free cancellation ends | 6 minutes after `book`, with the default window |
+| A no-show can be reported | 14 minutes after `book` |
+| The reserve is released, and the last charge can be reported | 42 minutes after `book` |
+| Avow confirms or refers a report | Within 5 minutes of the report |
+| The business can contest a confirmed charge | For 10 minutes after Avow confirms it |
+| Avow rules on a paused charge | Within 30 minutes of the pause |
+| The lock pays a ruling | 5 minutes after Avow posts it |
+| The arbiter can rule | Until 90 minutes after the pause, when the lock splits a charge nobody ruled on |
+
+Every transaction is on the [Moderato explorer](https://explore.testnet.tempo.xyz). Search for your lock to follow each booking's reserve, report, contest and payment.
