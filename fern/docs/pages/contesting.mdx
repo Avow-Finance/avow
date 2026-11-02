@@ -1,4 +1,7 @@
-# Contesting a charge
+---
+title: Contesting a charge
+slug: docs/charges-and-disputes/contesting
+---
 
 A business that disagrees with a charge its supplier reported contests it on its own lock. The contest pauses the charge, so nothing is paid until someone rules, and the ruling rests on the records, the business's reason and its statement. This page fixes the six reasons and what each answers, the statement and its hash, and how the statement reaches Avow. `@avow-finance/spec` implements every rule here, and the SDK's `contest` follows them.
 
@@ -65,7 +68,7 @@ keccak256(abi.encode(string "avow:contest-statement:v1", string canonicalJson))
 
 which `contestStatementHash` computes. The label names the format's version, and keeps a statement's hash from ever matching a hash of the terms. A change to the statement's fields, its encoding or its hashing takes a new label.
 
-[`packages/spec/vectors/contest-statement-v1.json`](../packages/spec/vectors/contest-statement-v1.json) holds worked examples, with the canonical JSON and the hash of each. One of them carries non-ASCII letters, an emoji, quotes, a backslash, a tab and both kinds of line break, so an implementation that escapes or normalizes text hashes it differently.
+[`packages/spec/vectors/contest-statement-v1.json`](https://github.com/Avow-Finance/avow/blob/main/packages/spec/vectors/contest-statement-v1.json) holds worked examples, with the canonical JSON and the hash of each. One of them carries non-ASCII letters, an emoji, quotes, a backslash, a tab and both kinds of line break, so an implementation that escapes or normalizes text hashes it differently.
 
 ## Sending the contest
 
@@ -78,7 +81,7 @@ Either way the lock logs `Paused(commitmentId, side, termsHash, cause, pausedAt,
 
 ## Giving Avow the statement
 
-The chain holds the statement's hash, and Avow needs the text to rule on. The business account's root key signs a request, as [signed requests](../packages/spec/signed-requests.md) set out, to
+The chain holds the statement's hash, and Avow needs the text to rule on. The business account's root key signs a request, as [signed requests](https://github.com/Avow-Finance/avow/blob/main/packages/spec/signed-requests.md) set out, to
 
 ```
 POST /v1/commitments/{commitmentId}/contest-statements

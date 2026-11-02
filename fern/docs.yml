@@ -10,6 +10,10 @@ navigation:
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+  - section: Charges and disputes
+    contents:
+      - page: Contesting a charge
+        path: ./docs/pages/contesting.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'
