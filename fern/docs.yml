@@ -1,0 +1,9 @@
+instances:
+  - url: avow.docs.buildwithfern.com
+title: Avow | Documentation
+navigation:
+  - page: Welcome
+    path: pages/welcome.mdx
+colors:
+  accentPrimary: '#ffffff'
+  background: '#000000'
