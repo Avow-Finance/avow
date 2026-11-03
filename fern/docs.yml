@@ -14,6 +14,10 @@ navigation:
     contents:
       - page: Contesting a charge
         path: ./docs/pages/contesting.mdx
+  - section: Reference
+    contents:
+      - page: Relay refusals
+        path: ./docs/pages/relay-refusals.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

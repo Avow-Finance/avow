@@ -17,12 +17,14 @@ import {
   parseEnrollment,
   parseReserveApproval,
   parseSponsorship,
+  parseSponsorshipRefusal,
   parseStartReceiptAnswer,
   parseStartRequestAnswer,
   parseSupplierAuthorizationAnswer,
   type ReasonCode,
   type RequestKey,
   type Signed,
+  type SponsorshipRefusal,
   type SupplierAuthorizationAnswer,
   signApiRequest,
 } from '@avow-finance/spec'
@@ -48,10 +50,21 @@ export class AvowApiError extends Error {
    * and a caller shouldn't treat it as refused.
    */
   readonly definite: boolean
+  /**
+   * What Avow's relay added to its refusal, such as when the key can ask again or which budget is
+   * spent, or null for any other answer.
+   */
+  readonly sponsorship: SponsorshipRefusal | null
 
   constructor(
     message: string,
-    details: { status: number; reason: ReasonCode | null; requestId: Hex; definite: boolean },
+    details: {
+      status: number
+      reason: ReasonCode | null
+      requestId: Hex
+      definite: boolean
+      sponsorship?: SponsorshipRefusal | null
+    },
     options?: { cause?: unknown },
   ) {
     super(message, options)
@@ -60,6 +73,7 @@ export class AvowApiError extends Error {
     this.reason = details.reason
     this.requestId = details.requestId
     this.definite = details.definite
+    this.sponsorship = details.sponsorship ?? null
   }
 }
 
@@ -247,6 +261,7 @@ export function avowRequests(config: AvowRequestConfig) {
               reason: lastReason,
               requestId,
               definite: true,
+              sponsorship: parseSponsorshipRefusal(json),
             })
           }
         }
