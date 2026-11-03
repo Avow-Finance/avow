@@ -1,5 +1,5 @@
 import { MODERATO_RPC_URL } from '@avow-finance/sdk'
-import { type Address, getAddress, isAddress } from 'viem'
+import { type Address, getAddress, type Hex, isAddress } from 'viem'
 
 export interface SupplierSettings {
   /** Avow's API, an origin such as `https://api.testnet.avow.finance`. */
@@ -18,6 +18,20 @@ export interface SupplierSettings {
   /** The largest reserve this supplier takes for one booking, in micros. */
   maxReserve: bigint
   pollSeconds: number
+  /** How many open bookings it holds for one buyer's lock. */
+  maxOpenPerBuyer: number
+  /** How many open bookings it holds in all. */
+  maxOpenBookings: number
+}
+
+/**
+ * The keys a host passes in its environment from a secret store: the signing key, and only the
+ * account's address. The account key stays wherever `init` left it, since `serve` never signs
+ * with it.
+ */
+export interface EnvKeys {
+  signingKey: Hex
+  account: Address
 }
 
 const address = (env: Record<string, string | undefined>, name: string, missing: string[]) => {
@@ -82,6 +96,10 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
   if (maxReserve === null) missing.push('MAX_RESERVE_DOLLARS')
   const pollSeconds = whole(env.POLL_SECONDS, 5)
   if (pollSeconds === null) missing.push('POLL_SECONDS')
+  const maxOpenPerBuyer = whole(env.MAX_OPEN_PER_BUYER, 5)
+  if (maxOpenPerBuyer === null) missing.push('MAX_OPEN_PER_BUYER')
+  const maxOpenBookings = whole(env.MAX_OPEN_BOOKINGS, 200)
+  if (maxOpenBookings === null) missing.push('MAX_OPEN_BOOKINGS')
   refuseMissing(missing)
   return {
     ...baseSettings(env),
@@ -93,5 +111,27 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
     port: port as number,
     maxReserve: BigInt(maxReserve as number) * 1_000_000n,
     pollSeconds: pollSeconds as number,
+    maxOpenPerBuyer: maxOpenPerBuyer as number,
+    maxOpenBookings: maxOpenBookings as number,
   }
+}
+
+/**
+ * The keys in the environment, or null when it holds none, so the commands use the state
+ * directory's keys file. `SUPPLIER_SIGNING_KEY` and `SUPPLIER_ACCOUNT` go together, and it throws
+ * naming the one that's missing or wrong when only one is right.
+ */
+export function envKeys(env: Record<string, string | undefined>): EnvKeys | null {
+  const signingKey = env.SUPPLIER_SIGNING_KEY?.trim() ?? ''
+  const account = env.SUPPLIER_ACCOUNT?.trim() ?? ''
+  if (signingKey === '' && account === '') return null
+  const missing: string[] = []
+  if (!/^0x[0-9a-fA-F]{64}$/.test(signingKey)) missing.push('SUPPLIER_SIGNING_KEY')
+  if (!isAddress(account, { strict: false })) missing.push('SUPPLIER_ACCOUNT')
+  if (missing.length > 0) {
+    throw new Error(
+      `These settings are missing or wrong: ${missing.join(', ')}. Set both SUPPLIER_SIGNING_KEY and SUPPLIER_ACCOUNT to take the keys from the environment, or neither to use the keys file.`,
+    )
+  }
+  return { signingKey: signingKey.toLowerCase() as Hex, account: getAddress(account) }
 }

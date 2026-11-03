@@ -7,6 +7,9 @@ A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, 
 - `GET /profile` gives agents the supplier's business id, account, payout address and signing key.
 - `POST /agreements` signs an agent's terms agreement. It signs GPU reservation terms that meet Avow's testnet profile, reserve no more than its limit and leave it at least a minute to accept. It records the booking before it answers, and it answers the same offer again with the same signature.
 - Both routes and their bodies are the ones `@avow-finance/spec` fixes for every supplier adapter, so an agent that talks to this adapter talks to yours.
+- `GET /policy` publishes what it accepts, as sentences a developer reads and as the numbers an agent checks an offer against. It's built from the same rules `POST /agreements` enforces, so the two never drift apart.
+- It holds at most 5 open bookings for one buyer's lock and 200 in all, so one buyer can't take every slot and the poll stays short however many agents book. An offer past either limit gets a 429 and can come again once a booking is accepted or lapses. An offer it already signed still gets its signature.
+- `GET /health` answers while the process runs, for a load balancer or a container platform.
 - Every few seconds it asks Avow to authorize each booking it signed, with a request its signing key signs. Once the agent has funded the reserve, Avow answers with its authorization, its approval and the buyer's mandate.
 - The verifier checks all three against the supplier's own terms and the lock before the supplier holds capacity, then builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
 - It grants the capacity only once the acceptance's receipt shows the lock took it, as the verifier's README asks. Until then the reserve can still go back to the business, so a booking stays `held` and nothing is granted.
@@ -34,10 +37,14 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `PORT` | Where agents reach you, 8790 by default |
 | `MAX_RESERVE_DOLLARS` | The largest reserve you take for one booking, 1000 by default |
 | `POLL_SECONDS` | How often it asks Avow about open bookings, 5 by default |
+| `MAX_OPEN_PER_BUYER` | The most open bookings it holds for one buyer's lock, 5 by default |
+| `MAX_OPEN_BOOKINGS` | The most open bookings it holds in all, 200 by default |
 | `STATE_DIR` | Where the keys and bookings live, `.avow-supplier` by default |
 | `RPC_URL` | Moderato's RPC, `https://rpc.moderato.tempo.xyz` by default |
 
 `serve` needs every setting above. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
+
+A booking is open from the moment the supplier signs its agreement until the lock holds the acceptance or the booking lapses.
 
 ## Running it
 
@@ -60,3 +67,16 @@ Once the buyer has cancelled after free cancellation ended, report the late canc
 node dist/main.js report
 node dist/main.js report 0x<commitment id> --no-show
 ```
+
+## Hosting it
+
+Run `init` on your own machine, then give the host only what `serve` needs. `serve` signs with the signing key alone and never with the account key, so the account key stays on your machine with `keys.json`. Back that file up, since the account is where charges are paid.
+
+| Setting | What it is |
+| --- | --- |
+| `SUPPLIER_SIGNING_KEY` | The `signingKey` from `keys.json`, passed from your host's secret store |
+| `SUPPLIER_ACCOUNT` | The `account` address `init` printed |
+
+Set both and `serve`, `report` and `profile` take the keys from the environment. Set neither and they read `keys.json`. One without the other stops the command with the name of the setting that's missing.
+
+Put `STATE_DIR` on a disk that outlives the process, such as a network volume, since the bookings and reports live there and a restart picks up from them. Run one `serve` process at a time, because the store counts open bookings from what its own process saves. A host that rolls out a new version should stop the old process before it starts the new one.
