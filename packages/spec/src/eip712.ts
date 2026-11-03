@@ -45,6 +45,9 @@ const ruleCode = { never: 0, above: 1, always: 2 } as const satisfies Record<
 export const CHARGE_KINDS = { lateCancellation: 0, noShow: 1 } as const
 export type ChargeKind = keyof typeof CHARGE_KINDS
 
+/** The most reports a lock takes for one commitment, one at a time. */
+export const MAX_REPORTS = 2
+
 /** Why the supplier account consents to give a reserve back. */
 export const RELEASE_REASONS = { kept: 1, supplierFailed: 2 } as const
 export type ReleaseReason = keyof typeof RELEASE_REASONS

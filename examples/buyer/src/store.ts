@@ -8,13 +8,18 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
-import type { ApprovedCommitment, Commitment } from '@avow-finance/sdk'
+import type { ApprovedCommitment, Commitment, LandedContest } from '@avow-finance/sdk'
 import {
   type Approval,
   approvalJson,
+  CHARGE_KINDS,
+  type ChargeKind,
+  type ContestStatement,
+  contestStatementHash,
   type Enrollment,
   type Mandate,
   mandateJson,
+  parseContestStatement,
   parseEnrollment,
   parseSigned,
   parseSignedAgreement,
@@ -86,6 +91,25 @@ export type Cancellation = SettledCancellation | SentCancellation
 /** Whether a cancellation is settled, or still a transaction nobody has seen land. */
 export const isSettled = (c: Cancellation): c is SettledCancellation => !('sent' in c)
 
+/**
+ * A contest whose transaction went out before anyone saw it land. It's saved just before the bytes
+ * go out, so a later run settles it from the transaction's receipt and gives Avow the statement the
+ * transaction carried, which can't change once it's on the chain.
+ */
+export interface SentContest {
+  statement: ContestStatement
+  sent: { hash: Hex; validBefore: bigint | null }
+}
+
+/** A contest the lock took, with when Avow recorded its statement, or null until Avow has. */
+export type LandedContestRecord = LandedContest & { recordedAt: bigint | null }
+
+/** Where a booking's contest stands in the store. */
+export type StoredContest = SentContest | LandedContestRecord
+
+/** Whether a contest landed, or is still a transaction nobody has seen land. */
+export const hasLanded = (c: StoredContest): c is LandedContestRecord => !('sent' in c)
+
 const bytes32 = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/)
@@ -114,6 +138,24 @@ const cancellationJson = z.union([
     commitmentId: bytes32,
     by: z.literal('lock'),
     sent: z.strictObject({ hash: bytes32, validBefore: decimal.nullable() }),
+  }),
+])
+const chargeKind = z.enum(Object.keys(CHARGE_KINDS) as [ChargeKind, ...ChargeKind[]])
+const contestJson = z.union([
+  z.strictObject({
+    commitmentId: bytes32,
+    statement: z.unknown(),
+    sent: z.strictObject({ hash: bytes32, validBefore: decimal.nullable() }),
+  }),
+  z.strictObject({
+    commitmentId: bytes32,
+    statement: z.unknown(),
+    statementHash: bytes32,
+    transactionHash: bytes32,
+    charge: z.strictObject({ kind: chargeKind, amount: decimal }),
+    pausedAt: decimal,
+    ruleBy: decimal,
+    recordedAt: decimal.nullable(),
   }),
 ])
 const setupJson = z.strictObject({
@@ -217,6 +259,31 @@ function parseBooking(
   throw refuse('holds both a funding and an outcome, or neither')
 }
 
+/**
+ * The contest some JSON holds for one commitment. Its statement has to parse and name that
+ * commitment, and a landed contest's statement hash has to be the statement's own, so a file can't
+ * pair the text with a hash it doesn't give.
+ */
+function parseContest(
+  json: unknown,
+  commitmentId: Hex,
+  refuse: (what: string) => Error,
+): StoredContest {
+  const outer = contestJson.safeParse(json)
+  if (!outer.success) throw refuse("doesn't hold a contest")
+  const { commitmentId: named, statement: written, ...rest } = outer.data
+  if (named !== commitmentId.toLowerCase()) throw refuse(`holds the contest of ${named}`)
+  const statement = parseContestStatement(written)
+  if (!statement.ok) throw refuse(`holds a statement that doesn't parse (${statement.reason})`)
+  if (statement.value.commitmentId !== named)
+    throw refuse('holds a statement for another commitment')
+  if ('sent' in rest) return { statement: statement.value, sent: rest.sent }
+  if (rest.statementHash !== contestStatementHash(statement.value)) {
+    throw refuse("holds a statement hash its statement doesn't give")
+  }
+  return { ...rest, statement: statement.value }
+}
+
 /** Whether booking `a` was agreed after booking `b`, by when their agreements expire. */
 function agreedAfter(a: BuyerBooking, b: BuyerBooking): boolean {
   const [x, y] = [a.agreement.message.expiry, b.agreement.message.expiry]
@@ -224,19 +291,21 @@ function agreedAfter(a: BuyerBooking, b: BuyerBooking): boolean {
 }
 
 /**
- * The business's state directory: its keys, its setup, one file per booking and one per
- * cancellation. Keep it out of version control and back it up, since the keys can't be made again.
- * A booking's file holds its salt, which only the two parties should see. Each file is parsed as
- * it's read, and one that doesn't hold what it should is refused, so nothing unchecked from disk
- * reaches the agent.
+ * The business's state directory: its keys, its setup, and one file per booking, per cancellation
+ * and per contest. Keep it out of version control and back it up, since the keys can't be made
+ * again. A booking's file holds its salt, which only the two parties should see. Each file is
+ * parsed as it's read, and one that doesn't hold what it should is refused, so nothing unchecked
+ * from disk reaches the agent.
  */
 export class BuyerStore {
   readonly #bookings: string
   readonly #cancellations: string
+  readonly #contests: string
 
   constructor(readonly dir: string) {
     this.#bookings = join(dir, 'bookings')
     this.#cancellations = join(dir, 'cancellations')
+    this.#contests = join(dir, 'contests')
     mkdirSync(this.#bookings, { recursive: true, mode: 0o700 })
   }
 
@@ -314,6 +383,10 @@ export class BuyerStore {
 
   #cancellationFile(commitmentId: Hex) {
     return join(this.#cancellations, `${commitmentId.toLowerCase()}.json`)
+  }
+
+  #contestFile(commitmentId: Hex) {
+    return join(this.#contests, `${commitmentId.toLowerCase()}.json`)
   }
 
   /** The booking for a commitment, or null when there's none. It refuses a file that doesn't hold one. */
@@ -401,5 +474,55 @@ export class BuyerStore {
       throw new Error(`${this.dir} holds no sent cancellation for ${commitmentId}`)
     }
     rmSync(this.#cancellationFile(commitmentId))
+  }
+
+  /** Where a booking's contest stands, or null when the store shows none. */
+  contest(commitmentId: Hex): StoredContest | null {
+    const path = this.#contestFile(commitmentId)
+    const json = readJson(path)
+    if (json === null) return null
+    return parseContest(json, commitmentId, (what) => new Error(`${path} ${what}`))
+  }
+
+  /**
+   * Records where a booking's contest stands. A sent contest gives way to a later send or to the
+   * contest that landed, and a landed one changes only to record when Avow recorded its statement.
+   * It refuses a commitment the store holds no booking for and a booking whose funding failed, and
+   * what it would write gets every check a read makes first.
+   */
+  saveContest(commitmentId: Hex, contest: StoredContest) {
+    const booking = this.booking(commitmentId)
+    if (!booking) throw new Error(`${this.dir} holds no booking for ${commitmentId}`)
+    if (neverFunded(booking)) {
+      throw new Error(`The booking ${commitmentId} was never funded, so it has nothing to contest`)
+    }
+    const known = this.contest(commitmentId)
+    if (known && hasLanded(known)) {
+      const sameContest =
+        hasLanded(contest) &&
+        contest.transactionHash === known.transactionHash &&
+        contest.statementHash === known.statementHash
+      if (!sameContest || known.recordedAt !== null) {
+        throw new Error(`${this.dir} already holds the contest of ${commitmentId} that landed`)
+      }
+    }
+    const path = this.#contestFile(commitmentId)
+    const text = `${JSON.stringify(toWire({ commitmentId: booking.commitmentId, ...contest }), null, 2)}\n`
+    parseContest(
+      JSON.parse(text),
+      commitmentId,
+      (what) => new Error(`${path} wasn't written, since it ${what}`),
+    )
+    mkdirSync(this.#contests, { recursive: true, mode: 0o700 })
+    writeAtomically(path, text)
+  }
+
+  /** Forgets a sent contest that never landed. It refuses to forget one that landed. */
+  forgetSentContest(commitmentId: Hex) {
+    const known = this.contest(commitmentId)
+    if (!known || hasLanded(known)) {
+      throw new Error(`${this.dir} holds no sent contest for ${commitmentId}`)
+    }
+    rmSync(this.#contestFile(commitmentId))
   }
 }

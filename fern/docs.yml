@@ -3,7 +3,7 @@ instances:
 title: Avow | Documentation
 navigation:
   - page: Welcome
-    path: pages/welcome.mdx
+    path: ./docs/pages/welcome.mdx
   - section: Get started
     contents:
       - page: Introduction
@@ -22,6 +22,10 @@ navigation:
         path: ./docs/pages/walkthroughs/dispute.mdx
       - page: Limits that hold
         path: ./docs/pages/walkthroughs/limits.mdx
+  - section: Charges and disputes
+    contents:
+      - page: Contesting a charge
+        path: ./docs/pages/contesting.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

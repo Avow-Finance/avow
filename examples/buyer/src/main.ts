@@ -6,14 +6,20 @@ import {
   agentRequestKey,
   approveSupplierCall,
   BookingError,
+  type ContestConfig,
+  contest,
   createAgent,
   createLockCall,
   enrollAgent,
   FACTORY_ABI,
   httpAvowApi,
+  httpBusinessRecords,
   moderatoClient,
   moderatoUsdToken,
+  postContestStatement,
   RESERVE_SELECTOR,
+  readLandedContest,
+  rootRequestKey,
   sendOwn,
   signMandate,
 } from '@avow-finance/sdk'
@@ -25,15 +31,17 @@ import {
   TEMPO_MODERATO,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
-import { type Address, TransactionReceiptNotFoundError } from 'viem'
+import { type Address, type Hex, TransactionReceiptNotFoundError } from 'viem'
 import { Account, Actions } from 'viem/tempo'
 import { cancelArgs, cancelBooking } from './cancel.js'
+import { contestArgs, contestBooking } from './contest.js'
 import { initBusiness } from './init.js'
 import { quickstartBooking, quickstartMandate } from './plan.js'
 import {
   baseSettings,
   bookSettings,
   cancelSettings,
+  contestSettings,
   enrollSettings,
   initSettings,
 } from './settings.js'
@@ -236,6 +244,24 @@ async function book() {
 }
 
 /**
+ * What settling a transaction the root key sent reads from the chain: the latest finalized block's
+ * time, and whether its receipt shows it succeeded or reverted, or null when there's none.
+ */
+function sentReads(client: ReturnType<typeof moderatoClient>) {
+  return {
+    finalizedTime: async () => (await client.getBlock({ blockTag: 'finalized' })).timestamp,
+    receipt: async (hash: Hex) => {
+      try {
+        return (await client.getTransactionReceipt({ hash })).status
+      } catch (error) {
+        if (error instanceof TransactionReceiptNotFoundError) return null
+        throw error
+      }
+    },
+  }
+}
+
+/**
  * Cancels a booking, the one named or the one made last. While the lock takes a free cancellation,
  * the root key cancels there and gets the whole reserve back, and once free cancellation has ended
  * Avow records a late cancellation.
@@ -251,19 +277,46 @@ async function cancel() {
       store,
       agent: agentOf(store, settings, client),
       chainTime: async () => (await client.getBlock({ blockTag: 'latest' })).timestamp,
-      finalizedTime: async () => (await client.getBlock({ blockTag: 'finalized' })).timestamp,
       sendFromRoot: (call, onSent) => sendOwn({ client, account: root, calls: [call], onSent }),
-      receipt: async (hash) => {
-        try {
-          return (await client.getTransactionReceipt({ hash })).status
-        } catch (error) {
-          if (error instanceof TransactionReceiptNotFoundError) return null
-          throw error
-        }
-      },
+      ...sentReads(client),
       log,
     },
     commitmentId,
+  )
+}
+
+/**
+ * Contests the charge on a booking, the one named or the one made last, with the business
+ * account's root key, which pays its own fee, and gives Avow the statement signed by that key.
+ */
+async function contestCommand() {
+  const args = contestArgs(process.argv.slice(3))
+  const settings = contestSettings(process.env)
+  const store = new BuyerStore(settings.stateDir)
+  const { root } = keysOf(store)
+  const lock = lockOf(store)
+  const client = moderatoClient(settings.rpcUrl)
+  const config: ContestConfig = {
+    client,
+    root,
+    lock,
+    avow: httpBusinessRecords({
+      baseUrl: settings.apiUrl,
+      key: rootRequestKey(root),
+      domain: { chainId: TEMPO_MODERATO, verifyingContract: lock },
+      onResend: logResend,
+    }),
+  }
+  await contestBooking(
+    {
+      store,
+      contest: (request) => contest(config, request),
+      post: (landed) => postContestStatement(config.avow, landed),
+      landed: (statement, hash) => readLandedContest(config, statement, hash),
+      ...sentReads(client),
+      log,
+    },
+    args,
   )
 }
 
@@ -285,12 +338,13 @@ const commands: Record<string, () => Promise<void> | void> = {
   enroll,
   book,
   cancel,
+  contest: contestCommand,
   account,
 }
 const command = commands[process.argv[2] ?? '']
 if (!command) {
   console.error(
-    'Usage: avow-buyer init | enroll | book [--until-released] | cancel [commitmentId] | account',
+    'Usage: avow-buyer init | enroll | book [--until-released] | cancel [commitmentId] | contest [commitmentId] --reason <reason> --statement "<text>" | account',
   )
   process.exit(2)
 }

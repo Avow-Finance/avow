@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { accountSigner, signMandate } from '@avow-finance/sdk'
 import {
   type AvowDomain,
+  type ContestStatement,
+  contestStatementHash,
   type Mandate,
   type Signed,
   TEMPO_MODERATO,
@@ -13,7 +15,7 @@ import { type Address, getAddress, type Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { quickstartMandate } from './plan.js'
-import { type BuyerSetup, BuyerStore } from './store.js'
+import { type BuyerSetup, BuyerStore, type LandedContestRecord } from './store.js'
 import { fundedBooking } from './test/bookings.js'
 
 // Every key is generated for the run, and every state directory is removed after its test.
@@ -311,6 +313,126 @@ describe("the business's bookings and cancellations", () => {
     for (const [text, says] of broken) {
       write(file, text)
       expect(() => store.cancellation(id), says).toThrow(says)
+    }
+  })
+})
+
+describe("the business's contests", () => {
+  const OTHER: Hex = `0x${'ee'.repeat(32)}`
+  const statementFor = (commitmentId: Hex, change: Partial<ContestStatement> = {}) =>
+    ({
+      commitmentId,
+      side: 'buyer',
+      reportNumber: 1,
+      reason: 'job_started',
+      text: 'We showed up, and the supplier receipted our start request.',
+      ...change,
+    }) satisfies ContestStatement
+  const landedFor = (statement: ContestStatement): LandedContestRecord => ({
+    statement,
+    statementHash: contestStatementHash(statement),
+    transactionHash: KEY_TX,
+    charge: { kind: 'noShow', amount: 500_000_000n },
+    pausedAt: 1_800_000_900n,
+    ruleBy: 1_800_002_700n,
+    recordedAt: null,
+  })
+
+  it('saves a sent contest and the contest that landed, which then changes only to say Avow recorded it', async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    const id = booking.commitmentId
+    const statement = statementFor(id)
+    expect(store.contest(id)).toBeNull()
+    const sent = { statement, sent: { hash: KEY_TX, validBefore: 1_800_000_025n } }
+    store.saveContest(id, sent)
+    expect(store.contest(id)).toEqual(sent)
+    // A later send replaces it, and so does the contest that landed.
+    const later = {
+      statement: statementFor(id, { reason: 'other' }),
+      sent: { hash: OTHER, validBefore: null },
+    }
+    store.saveContest(id, later)
+    expect(store.contest(id)).toEqual(later)
+    const landed = landedFor(statement)
+    store.saveContest(id, landed)
+    expect(store.contest(id)).toEqual(landed)
+    expect(() => store.forgetSentContest(id)).toThrow(`holds no sent contest for ${id}`)
+    // A landed contest takes no send and no other contest, only the time Avow recorded it.
+    expect(() => store.saveContest(id, sent)).toThrow(
+      `already holds the contest of ${id} that landed`,
+    )
+    expect(() => store.saveContest(id, { ...landed, transactionHash: OTHER })).toThrow(
+      'that landed',
+    )
+    store.saveContest(id, { ...landed, recordedAt: 1_800_000_910n })
+    expect(store.contest(id)).toEqual({ ...landed, recordedAt: 1_800_000_910n })
+    expect(() => store.saveContest(id, { ...landed, recordedAt: 1_800_000_999n })).toThrow(
+      'that landed',
+    )
+  })
+
+  it('forgets a sent contest, and records one only for a funded booking it holds', async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    const id = booking.commitmentId
+    expect(() => store.forgetSentContest(id)).toThrow(`holds no sent contest for ${id}`)
+    store.saveContest(id, {
+      statement: statementFor(id),
+      sent: { hash: KEY_TX, validBefore: null },
+    })
+    store.forgetSentContest(id)
+    expect(store.contest(id)).toBeNull()
+    const sent = { statement: statementFor(OTHER), sent: { hash: KEY_TX, validBefore: null } }
+    expect(() => store.saveContest(OTHER, sent)).toThrow(`holds no booking for ${OTHER}`)
+    const { reservedIn: _, ...approved } = await fundedBooking(1_800_000_060n)
+    store.saveBooking({ ...approved, outcome: 'failed' })
+    const failed = { statement: statementFor(approved.commitmentId), sent: sent.sent }
+    expect(() => store.saveContest(approved.commitmentId, failed)).toThrow('never funded')
+  })
+
+  it("writes no contest a read would refuse, and refuses a file that doesn't hold one", async () => {
+    store.saveSetup({ lock: LOCK })
+    const booking = await fundedBooking()
+    store.saveBooking(booking)
+    const id = booking.commitmentId
+    const statement = statementFor(id)
+    // A statement for another commitment, or a hash the statement doesn't give, is never written.
+    const elsewhere = { statement: statementFor(OTHER), sent: { hash: KEY_TX, validBefore: null } }
+    expect(() => store.saveContest(id, elsewhere)).toThrow("wasn't written")
+    const mismatched = { ...landedFor(statement), statementHash: OTHER }
+    expect(() => store.saveContest(id, mismatched)).toThrow("wasn't written")
+    expect(store.contest(id)).toBeNull()
+
+    mkdirSync(join(dir, 'contests'))
+    const file = `contests/${id}.json`
+    const wire = toWire(landedFor(statement)) as Record<string, unknown>
+    const broken: [unknown, string][] = [
+      ['{', "isn't JSON"],
+      [{ commitmentId: id, statement }, "doesn't hold a contest"],
+      [{ ...wire, commitmentId: OTHER }, `holds the contest of ${OTHER}`],
+      [
+        { commitmentId: id, ...wire, statement: { ...statement, text: '' } },
+        "holds a statement that doesn't parse",
+      ],
+      [
+        { commitmentId: id, ...wire, statementHash: OTHER },
+        "holds a statement hash its statement doesn't give",
+      ],
+      [
+        {
+          commitmentId: id,
+          statement: statementFor(OTHER),
+          sent: { hash: KEY_TX, validBefore: null },
+        },
+        'holds a statement for another commitment',
+      ],
+    ]
+    for (const [text, says] of broken) {
+      write(file, text)
+      expect(() => store.contest(id), says).toThrow(says)
     }
   })
 })

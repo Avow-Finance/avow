@@ -3,6 +3,7 @@ import {
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  contestStatementHash,
   describeReason,
   type Enrollment,
   type EnrollmentRequest,
@@ -12,6 +13,7 @@ import {
   type Parsed,
   parseApiError,
   parseCancellationAnswer,
+  parseContestStatementAnswer,
   parseEnrollment,
   parseReserveApproval,
   parseSponsorship,
@@ -25,8 +27,9 @@ import {
   signApiRequest,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
+import type { Account as TempoAccount } from 'viem/tempo'
 import type { AgentKey } from './agent.js'
-import type { AvowApi, AvowRecords } from './avow-api.js'
+import type { AvowApi, AvowRecords, BusinessRecords } from './avow-api.js'
 
 /**
  * Avow's API refused a request, answered with something the client can't use, or gave no definite
@@ -128,6 +131,14 @@ export function agentRequestKey(key: AgentKey): RequestKey {
     address: key.accessKeyAddress,
     signDigest: (hash) => key.sign({ hash, raw: true }),
   }
+}
+
+/**
+ * The business account's root key as a request signer. Its address is the account's own, and a
+ * root key signs bare, so Avow reads the signature as the account's without a keychain envelope.
+ */
+export function rootRequestKey(root: TempoAccount.RootAccount): RequestKey {
+  return { address: root.address, signDigest: (hash) => root.sign({ hash }) }
 }
 
 const MAX_WAIT = 15_000
@@ -337,6 +348,29 @@ export function httpAvowApi(config: HttpAvowApiConfig): AvowApi & { records: Avo
           const parsed = parseSponsorship(json)
           return parsed.ok ? { ok: true, value: parsed.value.transaction } : parsed
         },
+      }),
+  }
+}
+
+/**
+ * Avow's hosted API as the records the business account's root key writes to, for the business
+ * whose lock `domain` names. Each call is one operation sent through `avowRequests`, signed with
+ * `key`, which `rootRequestKey` makes from the root key. A contest statement's answer has to name
+ * the hash of the statement sent.
+ */
+export function httpBusinessRecords(config: HttpAvowApiConfig): BusinessRecords {
+  const send = avowRequests(config)
+  const { domain } = config
+  return {
+    postContestStatement: (request) =>
+      send({
+        domain,
+        path: API_PATHS.contestStatements(request.statement.commitmentId),
+        body: request,
+        read: (json) =>
+          parseContestStatementAnswer(json, {
+            statementHash: contestStatementHash(request.statement),
+          }),
       }),
   }
 }

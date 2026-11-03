@@ -1,6 +1,12 @@
-import { decodeEventLog, type Hex } from 'viem'
+import { decodeEventLog, type Hex, type Log } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { FACTORY_EVENTS_ABI, LOCK_EVENTS_ABI } from './lock-abi.js'
+import {
+  FACTORY_EVENTS_ABI,
+  LOCK_EVENTS_ABI,
+  LOCK_PAUSED_EVENT_ABI,
+  PAUSE_CAUSES,
+} from './lock-abi.js'
+import { contestInLogs } from './tempo.js'
 
 /*
  * Logs the demo factory on Moderato and its locks wrote, copied from the chain as the node
@@ -52,6 +58,26 @@ const RESOLVED = {
     '0xf83f4bef595fed73ad1c7998d48512dc1060784a6c13da0a7cbefba37404128b',
   ],
   data: '0x000000000000000000000000000000000000000000000000000000000000000041eb91411113a40c6359b033ddd9676261c2d73605506b80d8e891dc052142230000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ee6b280000000000000000000000000000000000000000000000000000000000ee6b280da697e901ae2246460db59a69afcf6399ef5755d0e05eca89cb53642032bc34f',
+} as const
+
+// 0x59bef8b12da4a5f6f69f93103c49a0a3b38deb72853389672e2c93d0f9ad7628, the business contesting a
+// confirmed $500 no-show on the lock 0xC43138A5Ce266d730AaDc1944c0b247d27c599f5, with the
+// fee token's transfer for the transaction's fee logged after it.
+const CONTEST_LOCK = '0xc43138a5ce266d730aadc1944c0b247d27c599f5'
+const PAUSED = {
+  topics: [
+    '0x2ad610aa4c58db8cdc9bde7148a208ef6d1de94e9da015e80df5c597edfaaed6',
+    '0x3481f517a3b5abfda25d35889178ca3668d07c9af31c096df5ab521969b821df',
+  ],
+  data: '0x00000000000000000000000000000000000000000000000000000000000000001bac44786e924d7ca705f4964421cd9b55eecc04d99dd645ed970b48cd6c27c00000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000006ae1ca850000000000000000000000000000000000000000000000000000000000000001810b3ba968a2b6329124681d07e86d6a280470e9b24507e878bdbfdbcf8bbb5c0000000000000000000000000000000000000000000000000000000000000000',
+} as const
+const FEE_TRANSFER = {
+  topics: [
+    '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+    '0x000000000000000000000000be54f9cbaf3c47b542cd64c41ac1dc26508986bc',
+    '0x000000000000000000000000feec000000000000000000000000000000000000',
+  ],
+  data: '0x00000000000000000000000000000000000000000000000000000000000000b9',
 } as const
 
 type RawLog = { topics: readonly [Hex, ...Hex[]]; data: Hex }
@@ -108,5 +134,63 @@ describe("the lock's events that open and end a side", () => {
       toSupplier: 250_000_000n,
       toBusiness: 250_000_000n,
     })
+  })
+})
+
+describe("the lock's pause event", () => {
+  const COMMITMENT = '0x3481f517a3b5abfda25d35889178ca3668d07c9af31c096df5ab521969b821df'
+  /** The two logs as the receipt held them, the pause at index 4 and the fee's transfer at 5. */
+  const receiptLogs = (lock: Hex = CONTEST_LOCK) =>
+    [
+      { ...PAUSED, address: lock, logIndex: 4 },
+      { ...FEE_TRANSFER, address: '0x20c0000000000000000000000000000000000001', logIndex: 5 },
+    ].map((l) => ({ ...l, topics: [...l.topics] })) as unknown as Log[]
+
+  it('decodes the Paused log a demo lock wrote for a contest', () => {
+    const { eventName, args } = decodeEventLog({
+      abi: LOCK_PAUSED_EVENT_ABI,
+      topics: [...PAUSED.topics],
+      data: PAUSED.data,
+      strict: true,
+    })
+    expect(eventName).toBe('Paused')
+    expect(args).toEqual({
+      commitmentId: COMMITMENT,
+      side: 0,
+      termsHash: '0x1bac44786e924d7ca705f4964421cd9b55eecc04d99dd645ed970b48cd6c27c0',
+      cause: PAUSE_CAUSES.contest,
+      pausedAt: 0x6ae1ca85n,
+      reasonCode: 1,
+      evidenceHash: '0x810b3ba968a2b6329124681d07e86d6a280470e9b24507e878bdbfdbcf8bbb5c',
+      returned: 0n,
+    })
+  })
+
+  it("finds that contest among the transaction's logs, and only from that lock", () => {
+    expect(contestInLogs(receiptLogs(), CONTEST_LOCK, COMMITMENT, 'buyer')).toEqual({
+      commitmentId: COMMITMENT,
+      side: 'buyer',
+      reasonCode: 1,
+      statementHash: '0x810b3ba968a2b6329124681d07e86d6a280470e9b24507e878bdbfdbcf8bbb5c',
+      pausedAt: 0x6ae1ca85n,
+    })
+    // The lock's address in another letter case is the same lock.
+    const checksummed = '0xC43138A5Ce266d730AaDc1944c0b247d27c599f5'
+    expect(contestInLogs(receiptLogs(), checksummed, COMMITMENT, 'buyer')?.reasonCode).toBe(1)
+    // The same log from any other contract counts for nothing.
+    const elsewhere = receiptLogs('0x00000000000000000000000000000000000010c4')
+    expect(contestInLogs(elsewhere, CONTEST_LOCK, COMMITMENT, 'buyer')).toBeNull()
+    expect(contestInLogs(receiptLogs(), CONTEST_LOCK, `0x${'ab'.repeat(32)}`, 'buyer')).toBeNull()
+    expect(contestInLogs(receiptLogs(), CONTEST_LOCK, COMMITMENT, 'supplier')).toBeNull()
+    expect(contestInLogs([], CONTEST_LOCK, COMMITMENT, 'buyer')).toBeNull()
+  })
+
+  it('reads a pause with another cause as no contest', () => {
+    for (const cause of [PAUSE_CAUSES.timeout, PAUSE_CAUSES.avowPause]) {
+      const word = cause.toString(16).padStart(64, '0')
+      const data = `${PAUSED.data.slice(0, 2 + 128)}${word}${PAUSED.data.slice(2 + 192)}` as Hex
+      const logs = [{ ...PAUSED, data, address: CONTEST_LOCK, topics: [...PAUSED.topics] }]
+      expect(contestInLogs(logs as unknown as Log[], CONTEST_LOCK, COMMITMENT, 'buyer')).toBeNull()
+    }
   })
 })
