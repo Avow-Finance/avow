@@ -78,7 +78,7 @@ With the default window, free cancellation ends six minutes after `book`, and th
 
 ```sh
 cd examples/buyer
-node dist/main.js init
+AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283 node dist/main.js init
 ```
 
 Send Avow the account and lock that `init` prints, with your business's name and country. Avow registers the business and sends the account test tUSD. Then:
