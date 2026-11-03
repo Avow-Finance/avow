@@ -1,3 +1,4 @@
+import { type ContestStatement, contestStatementHash } from '@avow-finance/spec'
 import { type LockedBacking, FACTORY_ABI as VERIFIER_FACTORY_ABI } from '@avow-finance/verifier'
 import { decodeFunctionData, encodeErrorResult, getAbiItem, toFunctionSelector } from 'viem'
 import { describe, expect, it } from 'vitest'
@@ -6,6 +7,7 @@ import {
   approveSupplierCall,
   cancelFreeCall,
   cancelsFree,
+  contestCall,
   createLockCall,
   FACTORY_ABI,
   RESERVE_ABI,
@@ -87,6 +89,10 @@ describe("the administrator's calls", () => {
     expect(toFunctionSelector(getAbiItem({ abi: ADMINISTRATOR_ABI, name: 'cancelFree' }))).toBe(
       toFunctionSelector('cancelFree(bytes32,uint8)'),
     )
+    // The deployed locks' dispatchers carry contest's selector, so a change to the copy can't slip by.
+    expect(toFunctionSelector(getAbiItem({ abi: ADMINISTRATOR_ABI, name: 'contest' }))).toBe(
+      '0x8a17dcbd',
+    )
     expect(toFunctionSelector(getAbiItem({ abi: FACTORY_ABI, name: 'createLock' }))).toBe(
       toFunctionSelector('createLock(address)'),
     )
@@ -121,6 +127,25 @@ describe("the administrator's calls", () => {
     expect(args).toEqual([COMMITMENT, 0])
   })
 
+  it("contest the statement's report with its reason's code and its hash", () => {
+    const statement: ContestStatement = {
+      commitmentId: `0x${'5c'.repeat(32)}`,
+      side: 'buyer',
+      reportNumber: 2,
+      reason: 'supplier_did_not_provide',
+      text: 'The GPUs were never there.',
+    }
+    const contested = contestCall(LOCK, statement)
+    expect(contested.to).toBe(LOCK)
+    const { functionName, args } = decodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      data: contested.data,
+    })
+    expect(functionName).toBe('contest')
+    expect(args).toEqual([statement.commitmentId, 0, 2, 4, contestStatementHash(statement)])
+    expect(() => contestCall(LOCK, { ...statement, text: '' })).toThrow("can't be encoded")
+  })
+
   it('cancel free only while the lock takes it, by its state and the chain clock', () => {
     const FREE_CANCEL_BY = 1_800_000_000n
     const ZERO = `0x${'00'.repeat(32)}` as const
@@ -145,7 +170,12 @@ describe("the administrator's calls", () => {
       approvalHash: ZERO,
       fundingKey: SUPPLIER,
       reportCount: 0,
+      reportKind: null,
+      reportAmount: 0n,
       hasReport: false,
+      contested: false,
+      chargeStart: 0n,
+      pausedAt: 0n,
       hasRuling: false,
       ...change,
     })

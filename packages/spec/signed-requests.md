@@ -1,6 +1,6 @@
 # Signed requests to Avow's API
 
-Every request an agent or a supplier sends to Avow's API is signed by the key that sends it. This page fixes what is signed, how each part is encoded, the order in which Avow checks a request, how a repeated request is handled, and what a signature does and doesn't prove. The SDK and Avow's API both build on `api-request.ts`. A client in another language follows this page and checks itself against `vectors/api-request-v1.json`.
+Every request an agent, a supplier or a business account's root key sends to Avow's API is signed by the key that sends it. This page fixes what is signed, how each part is encoded, the order in which Avow checks a request, how a repeated request is handled, and what a signature does and doesn't prove. The SDK and Avow's API both build on `api-request.ts`. A client in another language follows this page and checks itself against `vectors/api-request-v1.json`.
 
 ## What is signed
 
@@ -23,6 +23,7 @@ The domain is `{ name: "Avow", version: "1", chainId, verifyingContract }`. The 
 | An agent's enrollment | The lock of the agent's business | The mandate is signed for that lock, and Avow's record of the business names it |
 | Any other agent request | The lock of the agent's business | Avow finds the agent by its key within the business that owns this lock. An access key on two accounts is two agents, and a request acts only for the business whose lock it names |
 | A supplier's request about a commitment | The buyer's lock that holds the commitment | Avow looks the commitment up by chain, lock and commitment id together, since commitment ids are unique only within one lock |
+| A business account's own request | The business's lock | Avow's record of the business names the lock, and the signer has to be the business's account |
 
 The message's version is its own, apart from the lock's messages, so it can change without a new lock. The lock never reads an `ApiRequest`, and an `ApiRequest` signature can't stand for any other message, since EIP-712 hashes its type into the digest.
 
@@ -74,7 +75,7 @@ A client makes a new request id for each operation, including each poll for some
 | 401 | `request.unsigned`, `message.signature_invalid`, `message.expired` and `request.signer_unknown` | An error |
 | 403 | The signer is known but may not do this now, such as `agent.revoked` or `mandate.expired` | An error |
 | 404 | `business.unknown`, `supplier.unknown` or `commitment.unknown` | An error |
-| 409 | `request.id_reused` or `request.in_progress` | An error |
+| 409 | `request.id_reused` or `request.in_progress`, or a request the commitment's state on the chain or in Avow's records doesn't allow, such as `commitment.cancel_closed` or `contest.not_on_chain` | An error |
 | 422 | `sponsorship.refused` | An error |
 | 503 | `service.unavailable`, when Avow couldn't read what the request depends on | An error |
 
@@ -90,9 +91,10 @@ A valid signature tells Avow which key sent the request. It grants nothing on it
 | Reserve approval | The key is an enrolled agent of the business that owns the header's lock, and isn't revoked. The request names the signing key as its agent key, and the agreement's buyer signature is that key's. Then the full reserve check runs, including the mandate, its scope and the key on the chain |
 | Sponsorship | The key is an enrolled agent of the business that owns the header's lock, isn't revoked, and its mandate is current. The transaction's sender is that business's account, and every call is one the relay pays for and the mandate permits |
 | Supplier authorization | The key is the signing key of the supplier the commitment names, the commitment's agent isn't revoked, and the commitment's reserve is on the chain and not yet accepted |
+| Contest statement | The key is the root key of the business that owns the header's lock, so the signer is the business account's own address, and an admin key or an agent's key is refused. The commitment is one Avow approved on that lock. The transaction the body names succeeded in a final block and holds that lock's `Paused` event for the commitment and side, caused by a contest, with the statement's reason code and hash, and the lock held the statement's report as its latest at that block. A commitment has one statement, so the same statement posted again gets the first answer. [Contesting a charge](../../fern/docs/pages/contesting.mdx) sets out the statement, its hash and every refusal |
 | Cancellation, start request and start receipt | The key is the enrolled agent that made the commitment, and Avow hasn't revoked the agent or its mandate. On the chain the key is active, unexpired at the request's time and bound to the agent's current mandate, so a business that deactivates a key stops it from the next request for which Avow reads the chain. Recording a cancellation or a start request also needs a current mandate that permits it |
 
-Avow refuses an unknown key with `request.signer_unknown`, a revoked agent with `agent.revoked` and a revoked mandate with `mandate.revoked`. If Avow can't read its own records, it refuses with `service.unavailable` and records nothing. Enrollment, reserve approval, sponsorship and supplier authorization do the same when Avow can't read the chain, so Avow never enrolls, approves, sponsors or authorizes on a chain it couldn't read, and the same bytes run every check again once it can.
+Avow refuses an unknown key with `request.signer_unknown`, a revoked agent with `agent.revoked` and a revoked mandate with `mandate.revoked`. If Avow can't read its own records, it refuses with `service.unavailable` and records nothing. Enrollment, reserve approval, sponsorship, supplier authorization and contest statements do the same when Avow can't read the chain, so Avow never enrolls, approves, sponsors, authorizes or records a statement on a chain it couldn't read, and the same bytes run every check again once it can.
 
 The three records routes act on commitments that already exist, and a cancellation or a start request held up through an outage of the chain's endpoints would cost the business a charge it shouldn't owe. So when Avow's read of the agent's key fails, or doesn't answer in time, these routes rely on Avow's own records alone. Avow's revocation of the agent and its mandate still refuses, and recording a cancellation or a start request still needs a current mandate that permits it. Otherwise Avow records the request and logs that it couldn't check the key. A key the business deactivated on the chain can still record cancellations, start requests and start receipts while Avow can't read the chain, so a business that needs a key stopped at once also asks Avow to revoke the agent. A read that succeeds and shows the key inactive, expired or bound to another mandate always refuses.
 

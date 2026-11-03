@@ -425,3 +425,32 @@ export const LOCK_EVENTS_ABI = [
     anonymous: false,
   },
 ] as const
+
+/**
+ * The lock's event for a charge it pauses until someone rules, as the testnet lock declares it. A
+ * contest logs it with the business's reason code and its statement hash as `evidenceHash`. A report
+ * Avow didn't answer in time and Avow's own pause log it too, each with its own cause.
+ */
+export const LOCK_PAUSED_EVENT_ABI = [
+  {
+    type: 'event',
+    name: 'Paused',
+    inputs: [
+      { name: 'commitmentId', type: 'bytes32', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'termsHash', type: 'bytes32', indexed: false },
+      { name: 'cause', type: 'uint8', indexed: false },
+      { name: 'pausedAt', type: 'uint64', indexed: false },
+      { name: 'reasonCode', type: 'uint16', indexed: false },
+      { name: 'evidenceHash', type: 'bytes32', indexed: false },
+      { name: 'returned', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+] as const
+
+/**
+ * What paused a charge, by the code the lock stores as a commitment's `pausedBy` and logs as the
+ * `Paused` event's `cause`. A referral logs its own event instead.
+ */
+export const PAUSE_CAUSES = { referral: 1, timeout: 2, contest: 3, avowPause: 4 } as const

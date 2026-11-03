@@ -3,7 +3,7 @@
  * approval against the terms and funds the reserve with its own key, then reads what the lock
  * holds, and cancels or starts the job through an `AvowApi` that serves those records. The
  * administrator's side signs for the business account in Tempo's keychain V2 envelope, which the
- * lock and Avow's API check.
+ * lock and Avow's API check, and the account's root key contests a charge on its own lock.
  *
  * Pre-release and testnet only. The lock it calls is unaudited, and every interface may change
  * before 1.0.
@@ -20,6 +20,7 @@ export {
 export * from './agent.js'
 export * from './agent-key.js'
 export * from './avow-api.js'
+export * from './contest.js'
 export * from './http.js'
 export * from './lock.js'
 export * from './moderato.js'

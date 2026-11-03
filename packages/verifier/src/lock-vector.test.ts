@@ -321,6 +321,7 @@ function chainOver(commitment: Hex): ChainReader {
     agentKey: (...args) => memory.agentKey(...args),
     isAccountSignature: (...args) => memory.isAccountSignature(...args),
     transfer: (...args) => memory.transfer(...args),
+    contest: (...args) => memory.contest(...args),
   }
 }
 
@@ -382,7 +383,12 @@ const reservedBacking = {
   approvalHash: APPROVAL_DIGEST,
   fundingKey: agent.address,
   reportCount: 0,
+  reportKind: null,
+  reportAmount: 0n,
   hasReport: false,
+  contested: false,
+  chargeStart: 0n,
+  pausedAt: 0n,
   hasRuling: false,
 }
 
@@ -495,39 +501,65 @@ describe("the lock's own bytes, read by the Tempo reader", () => {
   it('decode each later step, with the fields that step changed', async () => {
     const read = (record: Hex) => chainOver(record).backing(LOCK, COMMITMENT, 'buyer')
     expect(await read(ACCEPTED)).toEqual({ ...reservedBacking, state: 'accepted' })
-    expect(await read(CONTESTED)).toEqual({
+    const contested = {
       ...reservedBacking,
       state: 'paused',
       held: 100_000_000n,
       reportCount: 1,
+      reportKind: 'lateCancellation',
+      reportAmount: 100_000_000n,
       hasReport: true,
-    })
-    expect(await read(RULED)).toEqual({
-      ...reservedBacking,
-      state: 'paused',
-      held: 100_000_000n,
-      reportCount: 1,
-      hasReport: true,
-      hasRuling: true,
-    })
+      contested: true,
+      pausedAt: START - 540n,
+    }
+    // Contested before Avow confirmed, so the charge never became pending.
+    expect(await read(CONTESTED)).toEqual({ ...contested, chargeStart: 0n })
+    expect(await read(RULED)).toEqual({ ...contested, hasRuling: true })
   })
 
   it('decode whether a report stands apart from whether it is final or contested', async () => {
     const read = (record: Hex) => chainOver(record).backing(LOCK, COMMITMENT, 'buyer')
     // Open, so it stands though nothing has made it final or contested it.
-    expect(await read(REPORTED)).toEqual({
+    const reported = {
       ...reservedBacking,
       state: 'accepted',
       reportCount: 1,
-      hasReport: true,
-    })
+      reportKind: 'lateCancellation',
+      reportAmount: 100_000_000n,
+    }
+    expect(await read(REPORTED)).toEqual({ ...reported, hasReport: true, contested: false })
     // Withdrawn, so nothing stands though the contest stays on record.
     expect(await read(WITHDRAWN)).toEqual({
-      ...reservedBacking,
-      state: 'accepted',
-      reportCount: 1,
+      ...reported,
       hasReport: false,
+      contested: true,
+      pausedAt: START - 540n,
     })
+  })
+
+  it('decode a confirmed charge with when its contest window opened and the kind it reports', async () => {
+    const read = (record: Hex) => chainOver(record).backing(LOCK, COMMITMENT, 'buyer')
+    // Avow confirms the open report a minute after it was filed, so the charge is pending.
+    const confirmed = withWords(REPORTED, {
+      state: 3n,
+      reportFinal: 1n,
+      confirmed: 1n,
+      chargeStart: START - 540n,
+      held: 100_000_000n,
+    })
+    expect(await read(confirmed)).toEqual({
+      ...reservedBacking,
+      state: 'charge_pending',
+      held: 100_000_000n,
+      reportCount: 1,
+      reportKind: 'lateCancellation',
+      reportAmount: 100_000_000n,
+      hasReport: true,
+      chargeStart: START - 540n,
+    })
+    expect((await read(withWords(confirmed, { reportKind: 1n })))?.reportKind).toBe('noShow')
+    // A kind this verifier doesn't read is refused, never guessed.
+    await expect(read(withWords(confirmed, { reportKind: 2n }))).rejects.toThrow('charge kind 2')
   })
 
   it("read no lock that the pinned factory didn't create", async () => {

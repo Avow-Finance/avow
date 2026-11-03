@@ -242,7 +242,12 @@ export function lockedBacking(
     approvalHash: approvalDigest(a, DOMAIN),
     fundingKey: a.fundingKey,
     reportCount: 0,
+    reportKind: null,
+    reportAmount: 0n,
     hasReport: false,
+    contested: false,
+    chargeStart: 0n,
+    pausedAt: 0n,
     hasRuling: false,
     ...change,
   }

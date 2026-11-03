@@ -85,6 +85,14 @@ export function cancelSettings(env: Env) {
   return settings
 }
 
+/** What `contest` needs: Avow's API, which records the statement. */
+export function contestSettings(env: Env) {
+  const r = new Reader(env)
+  const settings = { ...baseSettings(env), apiUrl: r.text('AVOW_API_URL', ORIGIN) }
+  r.done()
+  return settings
+}
+
 /** What `book` needs: Avow's API and dispute settings, the supplier and the booking's window. */
 export function bookSettings(env: Env) {
   const r = new Reader(env)

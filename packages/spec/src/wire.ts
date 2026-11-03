@@ -9,6 +9,7 @@ import {
   type OutcomeKind,
   type UncheckedCommitment,
 } from './commitment.js'
+import { CONTEST_REASON_NAMES } from './contest.js'
 import {
   CHARGE_KINDS,
   type ChargeKind,
@@ -334,7 +335,7 @@ const recordFields = {
     .nullable(),
   contest: z
     .strictObject({
-      reasonCode: z.string().min(1),
+      reasonCode: z.enum(CONTEST_REASON_NAMES),
       statementHash: bytes32,
       evidenceHashes: z.array(bytes32),
       contestedAt: u64,
