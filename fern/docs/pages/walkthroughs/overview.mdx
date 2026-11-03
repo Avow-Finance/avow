@@ -19,10 +19,11 @@ Build the quickstarts as the [welcome page](/welcome) shows, then make both busi
 ```bash
 export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
 (cd examples/buyer && node dist/main.js init)
+(cd examples/buyer && STATE_DIR=.avow-buyer-spare node dist/main.js init)
 (cd examples/supplier && node dist/main.js init)
 ```
 
-The buyer prints its account and lock, and the supplier prints three addresses. Send all of them to your Avow contact with a name and country for each business. Avow registers both, sends the buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
+The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. Send all of them to your Avow contact with a name and country for each business. Avow registers all three, sends each buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
 
 | Setting | Side | What it is |
 | --- | --- | --- |
@@ -62,9 +63,9 @@ A booking with the default window takes 42 minutes from `book` to its release, a
 | About 0:13 | Contests the dispute's charge as soon as Avow confirms it, since the contest window lasts ten minutes | Nothing |
 | About 0:25 | Nothing | The capped charge pays $250 once its contest window has closed |
 | 0:44 | The kept booking's reserve comes back | Nothing |
-| By 0:50 | Avow has ruled on the dispute within 30 minutes of the pause, and the lock pays five minutes after the ruling | The ruling's share arrives |
+| By 0:50 | Avow rules on the dispute within 30 minutes of the pause, by about 0:43, and the lock pays five minutes after the ruling | The ruling's share arrives |
 
-Name each booking by the commitment id `book` printed, since `cancel` and `contest` otherwise take the latest booking. The agent's key can move $1,500 a day at the default limits, which is exactly these three reserves. If a booking has to be made again the same day, ask Avow to register a fresh buyer, and run `init` with a new `STATE_DIR`.
+Name each booking by the commitment id `book` printed, since `cancel` and `contest` otherwise take the latest booking. The agent's key can move $1,500 a day at the default limits, which is exactly these three reserves. If a booking has to be made again the same day, switch to the spare with `export STATE_DIR=.avow-buyer-spare`, run `enroll` once, and book from there.
 
 ## Testnet timing
 
