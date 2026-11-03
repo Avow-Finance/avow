@@ -33,7 +33,9 @@ class Reader {
 
   done() {
     if (this.missing.length > 0) {
-      throw new Error(`These settings are missing or wrong: ${[...this.missing].sort().join(', ')}`)
+      throw new Error(
+        `These settings are missing or wrong: ${[...this.missing].sort().join(', ')}. Avow sends these when it registers you, and the quickstart's README lists each one. Set them in this terminal.`,
+      )
     }
   }
 }

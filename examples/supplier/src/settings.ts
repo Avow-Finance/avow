@@ -32,7 +32,9 @@ const address = (env: Record<string, string | undefined>, name: string, missing:
 /** Throws naming every setting that's missing or wrong, when any is. */
 function refuseMissing(missing: string[]) {
   if (missing.length > 0) {
-    throw new Error(`These settings are missing or wrong: ${missing.sort().join(', ')}`)
+    throw new Error(
+      `These settings are missing or wrong: ${missing.sort().join(', ')}. Avow sends these when it registers you, and the quickstart's README lists each one. Set them in this terminal.`,
+    )
   }
 }
 

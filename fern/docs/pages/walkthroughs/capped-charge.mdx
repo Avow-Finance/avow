@@ -9,8 +9,9 @@ Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/ove
 
 ## Book
 
+In a buyer terminal:
+
 ```bash
-cd examples/buyer
 node dist/main.js book
 ```
 
@@ -35,10 +36,9 @@ A `cancel` sent while free cancellation is still open cancels on the lock instea
 
 ## Report the charge
 
-In a second supplier terminal, with `serve` still running, report the late cancellation.
+Open a second supplier terminal, with `serve` still running in the first, and report the late cancellation.
 
 ```bash
-cd examples/supplier
 node dist/main.js report 0x<commitment id>
 ```
 

@@ -14,7 +14,7 @@ These walkthroughs take one person through the four things Avow has to get right
 
 ## Set up both sides once
 
-Build the quickstarts as the [welcome page](/welcome) shows, then make both businesses.
+Build the quickstarts as the [welcome page](/welcome) shows. From the repository's root folder, make the three businesses.
 
 ```bash
 export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
@@ -23,31 +23,48 @@ export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
 (cd examples/supplier && node dist/main.js init)
 ```
 
-The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. Send all of them to your Avow contact with a name and country for each business. Avow registers all three, sends each buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
+The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. Send all of them, with a name and country for each business, to the person at Avow who invited you to the testnet. Avow registers each business by hand, and nothing past this point works until it has. It sends each buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
 
 | Setting | Side | What it is |
 | --- | --- | --- |
+| `AVOW_FACTORY` | Both | Avow's lock factory, the address above |
 | `AVOW_API_URL` | Both | Avow's hosted API, `https://api.testnet.avow.finance` |
 | `AVOW_TOKEN` | Both | The token reserves are held in |
-| `BUYER_BUSINESS_ID` | Buyer | The business id Avow registered the buyer under |
+| `BUYER_BUSINESS_ID` | Buyer | The business id Avow registered the buyer under, with a second one for the spare |
 | `AVOW_ARBITER` | Buyer | The arbiter Avow's approvals name |
 | `SUPPLIER_BUSINESS_ID` | Supplier | The business id Avow registered the supplier under |
 | `AVOW_APPROVAL_KEYS` | Supplier | The address Avow signs authorizations with |
 
-Start the supplier in its own terminal and leave it running. The buyer reaches it at `SUPPLIER_URL`, which is `http://localhost:8790` when both run on your machine.
+The quickstarts read their settings from the environment, so every terminal needs them. Put them in a file at the repository's root, here called `avow-settings.sh`, and keep it out of version control.
+
+```bash
+export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
+export AVOW_API_URL=https://api.testnet.avow.finance
+export AVOW_TOKEN=<from Avow>
+export AVOW_ARBITER=<from Avow>
+export AVOW_APPROVAL_KEYS=<from Avow>
+export BUYER_BUSINESS_ID=<from Avow>
+export SUPPLIER_BUSINESS_ID=<from Avow>
+export SUPPLIER_URL=http://localhost:8790
+```
+
+The walkthroughs use two kinds of terminal. A supplier terminal works in `examples/supplier`, and a buyer terminal works in `examples/buyer`, each with the settings loaded. Open the first supplier terminal, start the supplier and leave it running. The buyer reaches it at `SUPPLIER_URL`.
 
 ```bash
 cd examples/supplier
+source ../../avow-settings.sh
 node dist/main.js serve
 ```
 
-Then authorize the agent from the buyer's terminal. Keep the default limits, which let the agent hold three $500 bookings at once.
+Then open a buyer terminal and authorize the agent. Keep the default limits, which let the agent hold three $500 bookings at once.
 
 ```bash
 cd examples/buyer
-export SUPPLIER_URL=http://localhost:8790
+source ../../avow-settings.sh
 node dist/main.js enroll
 ```
+
+Every later command says which kind of terminal it runs in. A second terminal of either kind opens the same way.
 
 ## The order that fits an hour
 
@@ -65,7 +82,7 @@ A booking with the default window takes 42 minutes from `book` to its release, a
 | 0:44 | The kept booking's reserve comes back | Nothing |
 | By 0:50 | Avow rules on the dispute within 30 minutes of the pause, by about 0:43, and the lock pays five minutes after the ruling | The ruling's share arrives |
 
-Name each booking by the commitment id `book` printed, since `cancel` and `contest` otherwise take the latest booking. The agent's key can move $1,500 a day at the default limits, which is exactly these three reserves. If a booking has to be made again the same day, switch to the spare with `export STATE_DIR=.avow-buyer-spare`, run `enroll` once, and book from there.
+Name each booking by the commitment id `book` printed, since `cancel` and `contest` otherwise take the latest booking. The agent's key can move $1,500 a day at the default limits, which is exactly these three reserves. If a booking has to be made again the same day, switch to the spare in a buyer terminal with `export STATE_DIR=.avow-buyer-spare BUYER_BUSINESS_ID=<the spare's id>`, run `enroll` once, and book from there.
 
 ## Testnet timing
 
