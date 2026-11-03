@@ -36,7 +36,7 @@ Avow is built first on [Tempo](https://tempo.xyz) testnet, with other rails to f
 
 ## Develop
 
-You need Node 22.12 or later and pnpm 10.
+You need Node 22.12 or later and pnpm 10. Without pnpm, run `corepack enable` once, with `sudo` if it asks, and the repository picks its own pnpm version.
 
 ```sh
 pnpm install
