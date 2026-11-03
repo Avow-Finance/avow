@@ -1,0 +1,55 @@
+---
+title: A disputed charge
+slug: docs/walkthroughs/dispute
+---
+
+The business disagrees with a charge and contests it. The lock pauses the charge, so nothing is paid while it's disputed. Avow reads the records and the business's statement, rules on how the charge divides, and the lock pays exactly that. If Avow doesn't rule in time, the arbiter can, and a charge nobody rules on splits by the share the terms fixed.
+
+Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running.
+
+## Get a charge to contest
+
+Book, cancel late and report the charge exactly as in [A capped charge](/docs/walkthroughs/capped-charge), and watch the supplier's `report` until Avow confirms the charge. The contest window opens then and lasts ten minutes, so have the contest ready.
+
+## Contest it
+
+The business contests from its own root key, with a reason and a statement.
+
+```bash
+cd examples/buyer
+node dist/main.js contest 0x<commitment id> --reason other --statement "A rehearsal contest of a confirmed late-cancellation charge."
+```
+
+The reason has to answer the kind of charge. A late cancellation takes `never_cancelled`, `cancelled_in_time`, `wrong_charge` or `other`, and `contest` refuses any other before it sends anything. The statement is the business's account in its own words, up to 4,000 bytes, and its hash goes to the lock with the contest. The lock takes one contest per commitment, so the statement can't change afterwards.
+
+`contest` reads the lock first, sends the contest, and then gives Avow the statement, signed by the same root key.
+
+```
+contesting the charge on 0x<commitment id> with the business account's root key
+contested a late cancellation charge of USD 250 on 0x<commitment id>, report 1, saying another reason, which the statement sets out (other)
+the lock paused the charge at <time>, in 0x<transaction>
+Avow must rule by <time>, and after that the arbiter rules
+Avow recorded the statement at <time>
+```
+
+A run that stops partway loses nothing. Run the same `contest` again and it finishes from where it stopped, giving Avow the same statement if Avow hadn't recorded it.
+
+## Avow rules
+
+Avow has 30 minutes from the pause to rule. It reads the cancellation record, the report, its own confirmation and the business's statement, decides how much of the $250 charge the supplier gets, and posts the ruling to the lock. Five minutes after the ruling, the lock pays the supplier's share to its payout address and the rest to the business. On testnet Avow tells both sides the ruling and its reason, whose hash goes on the chain with the ruling, and the lock's `Resolved` event on the [Moderato explorer](https://explore.testnet.tempo.xyz) shows the split.
+
+If Avow hasn't ruled after 30 minutes, the arbiter can rule until 90 minutes after the pause. Avow confirmed this charge, so if nobody rules, the lock then pays the supplier the day-90 share the terms fixed, half by default, and the rest to the business. A charge Avow never confirmed pays the supplier nothing at that point.
+
+## Windows the lock enforces
+
+The lock decides what it takes, and `contest` checks the same rules before sending anything.
+
+- A confirmed charge takes a contest until its contest window closes. After that, `contest` refuses with `contest.window_closed`.
+- A second contest on the same commitment gets `contest.already_contested`.
+- A report Avow referred is already paused for a ruling, so it needs no contest, and `contest` says so.
+
+[Contesting a charge](/docs/charges-and-disputes/contesting) sets out every reason, the statement's hash and each refusal.
+
+## What it proves
+
+A charge the business disputes pays nothing until someone with the authority to rule has ruled, and then pays exactly the ruling. The statement Avow rules on is the one the business sent, since its hash is on the chain. And if Avow fails to rule, the money still moves under rules fixed when the booking was made.

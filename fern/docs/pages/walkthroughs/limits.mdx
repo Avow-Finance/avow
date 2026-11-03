@@ -1,0 +1,61 @@
+---
+title: Limits that hold
+slug: docs/walkthroughs/limits
+---
+
+An agent can only commit what its business authorized. The mandate the administrator signed sets a cap per booking and a cap on what the agent's bookings can hold at once, among other limits, and a booking past either is refused with a reason code before any money moves. This walkthrough tries one booking past each cap.
+
+Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running, and with three bookings open. The quickstart's mandate lets the agent reserve up to $500 per booking and hold three bookings at once, so the dispute, the capped charge and the kept booking fill it.
+
+## A booking over the cap per booking
+
+Ask for a $600 reserve.
+
+```bash
+cd examples/buyer
+RESERVE_DOLLARS=600 node dist/main.js book
+```
+
+The SDK runs the same mandate check Avow and the supplier's verifier run, before the supplier signs anything, and refuses. `book` exits with an error.
+
+```
+booking with <supplier business id>
+The booking was refused: mandate.over_commitment_cap
+```
+
+Nothing was signed, and Avow was never asked. An agent that skipped the SDK's check would get the same code from Avow, which runs the check again before it approves a reserve, and the supplier's verifier runs it a third time before accepting.
+
+## A booking past the open bookings cap
+
+Book again at the default $500 while the three bookings are still open, so before the kept booking is released.
+
+```bash
+node dist/main.js book
+```
+
+The SDK's own check passes, since it doesn't read what the lock holds. The supplier signs the terms, and Avow refuses the reserve, because the lock already holds $1,500 under this mandate.
+
+```
+booking with <supplier business id>
+The booking was refused: mandate.over_open_reserves_cap
+```
+
+Avow approved nothing, so no reserve is funded. The supplier's `serve` keeps the booking it signed until its acceptance deadline, then lets it lapse.
+
+## The limits behind these
+
+Each code names the limit that refused the booking, so an agent can tell its business which one it hit.
+
+| Code | The limit |
+| --- | --- |
+| `mandate.over_commitment_cap` | The reserve is over the mandate's cap per booking |
+| `mandate.over_open_reserves_cap` | The reserve would take what the lock holds under the mandate past its cap |
+| `mandate.over_payment_limit` | The reserve is over the mandate's payment limit for the token |
+| `mandate.supplier_not_allowed` | The supplier isn't on the mandate's list |
+| `mandate.expired` | The mandate has expired |
+
+The chain holds its own copy of two of them. The lock refuses a reserve past the open bookings cap even with Avow's approval, and the business account's keychain refuses a transfer from the agent's key past its daily spending limit. A reserve sent without Avow's approval reverts on the lock.
+
+## What it proves
+
+The agent's authority is the mandate, and nothing the agent does widens it. The limit is checked by the agent's SDK, by Avow before it approves, by the supplier before it accepts, and by the chain for the caps that guard money, so a broken or hostile agent meets the same refusal as a careful one.

@@ -1,0 +1,47 @@
+---
+title: A kept booking
+slug: docs/walkthroughs/kept-booking
+---
+
+The agent books 8 H100s with the supplier, the supplier checks the booking and accepts it, and nothing goes wrong. The reserve sits in the business's own lock for the whole booking and goes back to the business at its release date, without anyone asking for it. Most bookings end this way, so this walkthrough is the baseline the other three change one step of.
+
+Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running.
+
+## Book
+
+```bash
+cd examples/buyer
+node dist/main.js book --until-released
+```
+
+`book` agrees the terms with the supplier, asks Avow to approve the reserve, checks Avow's approval against the terms and the mandate, and funds the reserve from the business account while Avow's relay pays the network fee. It prints the commitment id and the transaction that funded the reserve. Each line the quickstarts print starts with the time, which these pages leave out.
+
+```
+booking with <supplier business id>
+reserved 0x<commitment id>, funded in 0x<transaction>
+the lock shows 0x<commitment id> as reserved
+```
+
+## The supplier accepts
+
+The supplier's terminal needs nothing from you. Every few seconds `serve` asks Avow to authorize each booking it signed. Once the reserve is funded, Avow answers with its authorization, its approval and the buyer's mandate. The supplier's verifier checks all three against the supplier's own terms and the lock, and the supplier sends its acceptance to the lock. It grants the capacity only once the acceptance's receipt shows the lock took it.
+
+The buyer's terminal then shows the booking accepted.
+
+```
+the lock shows 0x<commitment id> as accepted
+```
+
+## The reserve comes back
+
+With `--until-released`, `book` keeps following the lock. The release date is the end of the booked window, 42 minutes after `book` with the default window. Avow's settlement service sends the release once it's due, and the lock pays the whole $500 back to the business account.
+
+```
+the lock shows 0x<commitment id> as released
+```
+
+The release doesn't depend on Avow staying up. Anyone can send a due release to the lock, and a keeper with no Avow key sends it when Avow's settlement service doesn't.
+
+## What it proves
+
+The supplier accepted only after checking, from the chain and Avow's signatures, who stood behind the agent, that the agent was within its limits, and that $500 sat in the business's lock under rules neither side can change. The business got every dollar back, because the lock pays a supplier only a charge the terms allow or a ruling, and this booking had neither.

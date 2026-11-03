@@ -10,6 +10,18 @@ navigation:
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+  - section: Walkthroughs
+    contents:
+      - page: Run all four in an hour
+        path: ./docs/pages/walkthroughs/overview.mdx
+      - page: A kept booking
+        path: ./docs/pages/walkthroughs/kept-booking.mdx
+      - page: A capped charge
+        path: ./docs/pages/walkthroughs/capped-charge.mdx
+      - page: A disputed charge
+        path: ./docs/pages/walkthroughs/dispute.mdx
+      - page: Limits that hold
+        path: ./docs/pages/walkthroughs/limits.mdx
   - section: Charges and disputes
     contents:
       - page: Contesting a charge
