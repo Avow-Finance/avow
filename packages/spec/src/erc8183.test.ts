@@ -69,7 +69,7 @@ const fields: CommitmentFields = {
   references: [],
 }
 const contest: ContestRecord = {
-  reasonCode: 'supplier_did_not_deliver',
+  reasonCode: 'supplier_did_not_provide',
   statementHash: id('contest statement'),
   evidenceHashes: [id('job log')],
   contestedAt: START + 900n,

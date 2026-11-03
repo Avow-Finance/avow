@@ -1,5 +1,7 @@
 import {
   type AvowDomain,
+  type ContestStatement,
+  contestStatementHash,
   encodeApiBody,
   type RequestKey,
   toWire,
@@ -15,7 +17,9 @@ import {
   agentRequestKey,
   enrollAgent,
   httpAvowApi,
+  httpBusinessRecords,
   requestSupplierAuthorization,
+  rootRequestKey,
 } from './http.js'
 
 // Every key is generated for the run and held only in memory.
@@ -577,5 +581,56 @@ describe('enrolling an agent and asking for a supplier authorization', () => {
     expect(seen[0]?.url).toBe(`${AUDIENCE}${path}`)
     expect(seen[0]?.body).toEqual(encodeApiBody({}))
     expect((await verified(seen[0] as Seen, path)).ok).toBe(true)
+  })
+})
+
+describe("the business's own records over the hosted API", () => {
+  const root = Account.fromSecp256k1(generatePrivateKey())
+  const statement: ContestStatement = {
+    commitmentId: `0x${'5c'.repeat(32)}`,
+    side: 'buyer',
+    reportNumber: 1,
+    reason: 'job_started',
+    text: 'We showed up, and the supplier receipted our start request.',
+  }
+  const statementHash = contestStatementHash(statement)
+  const contestedIn: Hex = `0x${'7a'.repeat(32)}`
+  const path = `/v1/commitments/${statement.commitmentId}/contest-statements`
+  const records = (fetcher: typeof fetch) =>
+    httpBusinessRecords({
+      baseUrl: AUDIENCE,
+      key: rootRequestKey(root),
+      domain,
+      fetch: fetcher,
+      now: () => NOW,
+      retryWait: 0,
+    })
+
+  it("posts a contest statement on the commitment's path, signed bare by the account's root key", async () => {
+    const { seen, fetcher } = fakeApi([() => json(200, { statementHash, recordedAt: NOW + 5n })])
+    const answer = await records(fetcher).postContestStatement({ statement, contestedIn })
+    expect(answer).toEqual({ statementHash, recordedAt: NOW + 5n })
+    expect(seen[0]?.url).toBe(`${AUDIENCE}${path}`)
+    expect(seen[0]?.body).toEqual(encodeApiBody({ statement, contestedIn }))
+    const v = verified(seen[0] as Seen, path)
+    // The root key's address is the account's own, so Avow reads the request as the account's.
+    expect(v.ok && v.value.credentials.signer).toBe(root.address.toLowerCase())
+    expect(rootRequestKey(root).address).toBe(root.address)
+  })
+
+  it('throws an answer about another statement without sending again, and passes on a refusal', async () => {
+    const other = { statementHash: `0x${'99'.repeat(32)}`, recordedAt: NOW }
+    const { seen, fetcher } = fakeApi([() => json(200, other)])
+    const thrown = await records(fetcher)
+      .postContestStatement({ statement, contestedIn })
+      .catch((e: unknown) => e)
+    expect(thrown).toBeInstanceOf(AvowApiError)
+    expect(thrown).toMatchObject({ reason: 'message.invalid', definite: true })
+    expect(seen).toHaveLength(1)
+
+    const refused = fakeApi([error(409, 'contest.not_on_chain')])
+    await expect(
+      records(refused.fetcher).postContestStatement({ statement, contestedIn }),
+    ).rejects.toMatchObject({ reason: 'contest.not_on_chain', status: 409, definite: true })
   })
 })

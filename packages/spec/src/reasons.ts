@@ -127,6 +127,20 @@ export const REASON_CODES = {
   'report.kind_not_allowed': "The commitment's terms carry no charge of this kind",
   'report.amount_invalid': 'The amount is zero or more than the terms let this kind of charge take',
   'report.too_early': "The terms don't let this kind of charge be reported yet",
+  'contest.not_contestable':
+    'The lock holds no pending charge and no standing report on the commitment for a contest to pause, or the commitment has ended',
+  'contest.already_contested':
+    'The business has already contested a charge on this commitment, and the contest stays on record, so a later report pauses at once',
+  'contest.window_closed':
+    "The charge's contest window has closed by the chain's clock, or closes before a contest sent now could land",
+  'contest.reason_not_for_charge':
+    "The reason doesn't answer the kind of charge the supplier reported, and wrong_charge and other answer any kind",
+  'contest.statement_invalid':
+    "The statement's text is blank, holds a control character, a Unicode noncharacter or broken Unicode, or is longer than a statement may be",
+  'contest.not_on_chain':
+    "The transaction named holds no contest of this commitment from the business's lock, failed, or isn't on the chain yet",
+  'contest.statement_mismatch':
+    "The statement's reason or hash differs from what the lock recorded for the contest",
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',
   'chain.reserve_mismatch':
     'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',

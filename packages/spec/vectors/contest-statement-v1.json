@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "label": "avow:contest-statement:v1",
+  "vectors": [
+    {
+      "name": "a no-show contested in plain text",
+      "statement": {
+        "commitmentId": "0x4698f427a98ce5f2123e7fed4a02d9bec286cb64da74eb43bad2835f3c89a95c",
+        "side": "buyer",
+        "reportNumber": 1,
+        "reason": "job_started",
+        "text": "Our agent sent the start request at 14:02 and the supplier receipted it at 14:03."
+      },
+      "canonicalJson": "{\"commitmentId\":\"0x4698f427a98ce5f2123e7fed4a02d9bec286cb64da74eb43bad2835f3c89a95c\",\"reason\":\"job_started\",\"reportNumber\":1,\"side\":\"buyer\",\"text\":\"Our agent sent the start request at 14:02 and the supplier receipted it at 14:03.\"}",
+      "hash": "0xe71cfc66a9f1901872e2b7ddea30f3e28bdbf4f9b29dfbd3de4cad2054f2bf51"
+    },
+    {
+      "name": "every kind of character the format keeps",
+      "statement": {
+        "commitmentId": "0x4698f427a98ce5f2123e7fed4a02d9bec286cb64da74eb43bad2835f3c89a95c",
+        "side": "buyer",
+        "reportNumber": 2,
+        "reason": "other",
+        "text": "Zürich \"east\" said 日本語 🙂 \\ ok\tthen:\nline two\r\nline three"
+      },
+      "canonicalJson": "{\"commitmentId\":\"0x4698f427a98ce5f2123e7fed4a02d9bec286cb64da74eb43bad2835f3c89a95c\",\"reason\":\"other\",\"reportNumber\":2,\"side\":\"buyer\",\"text\":\"Zürich \\\"east\\\" said 日本語 🙂 \\\\ ok\\tthen:\\nline two\\r\\nline three\"}",
+      "hash": "0x28aaa5f7613742d7a8045d9bdce908dafc7cbdcdcfcb28011820360d86b95aa8"
+    },
+    {
+      "name": "a commitment id in mixed case",
+      "statement": {
+        "commitmentId": "0x4698F427A98CE5F2123E7FED4A02D9BEC286CB64DA74EB43BAD2835F3C89A95C",
+        "side": "buyer",
+        "reportNumber": 1,
+        "reason": "never_cancelled",
+        "text": "We never cancelled."
+      },
+      "canonicalJson": "{\"commitmentId\":\"0x4698f427a98ce5f2123e7fed4a02d9bec286cb64da74eb43bad2835f3c89a95c\",\"reason\":\"never_cancelled\",\"reportNumber\":1,\"side\":\"buyer\",\"text\":\"We never cancelled.\"}",
+      "hash": "0xabb67e30ce8d8a95f68772baacb61e818b442495b5ca385a4ba4d480bf43fef4"
+    }
+  ]
+}

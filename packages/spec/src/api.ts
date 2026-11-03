@@ -1,5 +1,6 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
+import { type ContestStatement, parseContestStatement } from './contest.js'
 import {
   type ApiRequest,
   type Approval,
@@ -45,6 +46,8 @@ export const API_PATHS = {
     `/v1/commitments/${commitmentId.toLowerCase()}/start-requests`,
   startReceipts: (commitmentId: Hex) =>
     `/v1/commitments/${commitmentId.toLowerCase()}/start-receipts`,
+  contestStatements: (commitmentId: Hex) =>
+    `/v1/commitments/${commitmentId.toLowerCase()}/contest-statements`,
 } as const
 
 /**
@@ -157,6 +160,29 @@ export interface StartReceiptRequest {
 
 /** Avow's answer to a start receipt: recorded, or refused with the reason. */
 export type StartReceiptAnswer = { ok: true } | { ok: false; reason: ReasonCode }
+
+/**
+ * The business's statement for a contest the lock already took, which the business account's root
+ * key signs and sends so Avow holds the text it rules on. Avow records it only when the named
+ * transaction holds the lock's `Paused` event for this commitment with the statement's reason code
+ * and hash, so a statement can't stand for another contest, and a commitment has one statement.
+ */
+export interface ContestStatementRequest {
+  statement: ContestStatement
+  /** The transaction that carried the contest to the business's lock. */
+  contestedIn: Hex
+}
+
+/**
+ * Avow's answer once it holds a contest's statement: the statement's hash and when Avow first
+ * recorded it. A commitment has one contest, so posting its statement again, with any request id,
+ * gets the same answer and records nothing more.
+ */
+export interface ContestStatementAnswer {
+  statementHash: Hex
+  /** When Avow first recorded the statement, in unix seconds by Avow's clock. */
+  recordedAt: bigint
+}
 
 /**
  * What the API answers when it refuses a request outright, with a status of 400 or more, as
@@ -487,6 +513,33 @@ export function parseStartReceiptAnswer(json: unknown): Parsed<StartReceiptAnswe
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
+}
+
+/**
+ * Parses a contest statement the business's root key sends. Its statement has to parse as
+ * `parseContestStatement` reads one, and a refusal keeps that reason.
+ */
+export function parseContestStatementRequest(json: unknown): Parsed<ContestStatementRequest> {
+  const outer = z.strictObject({ statement: objectJson, contestedIn: bytes32 }).safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const statement = parseContestStatement(outer.data.statement)
+  if (!statement.ok) return statement
+  return { ok: true, value: { statement: statement.value, contestedIn: outer.data.contestedIn } }
+}
+
+/**
+ * Parses Avow's answer to a contest statement. Its hash has to be `statementHash`, the hash of the
+ * statement the caller sent, so an answer about any other statement is refused.
+ */
+export function parseContestStatementAnswer(
+  json: unknown,
+  expected: { statementHash: Hex },
+): Parsed<ContestStatementAnswer> {
+  const parsed = z.strictObject({ statementHash: bytes32, recordedAt: u64 }).safeParse(json)
+  if (!parsed.success || parsed.data.statementHash !== expected.statementHash.toLowerCase()) {
+    return { ok: false, reason: 'message.invalid' }
+  }
+  return { ok: true, value: parsed.data }
 }
 
 /**

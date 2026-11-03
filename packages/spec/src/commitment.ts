@@ -1,4 +1,5 @@
 import type { Hex } from 'viem'
+import type { ContestReason } from './contest.js'
 import type { BackingRef, RailState } from './rail.js'
 import type { Reference } from './references.js'
 import { type AnyTerms, enforceableTerms } from './terms.js'
@@ -175,9 +176,12 @@ export interface StartRecord {
   receipt: Hex | null
 }
 
-/** A contest. Every contest carries a reason code and a supporting statement. */
+/**
+ * A contest. Every contest carries one of the six reasons and the hash of the business's
+ * statement, `contestStatementHash`, as the lock logged them.
+ */
 export interface ContestRecord {
-  reasonCode: string
+  reasonCode: ContestReason
   statementHash: Hex
   evidenceHashes: readonly Hex[]
   contestedAt: bigint

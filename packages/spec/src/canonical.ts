@@ -48,8 +48,13 @@ export function canonicalJson(value: unknown): string {
 /** A lone surrogate is a string half of a character, which RFC 8785 refuses. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
+/** Whether a string is well-formed Unicode, holding no lone surrogate, as canonical JSON requires. */
+export function isWellFormedText(s: string): boolean {
+  return !LONE_SURROGATE.test(s)
+}
+
 function wellFormed(s: string): string {
-  if (LONE_SURROGATE.test(s)) throw new TypeError('Strings in canonical JSON must be well-formed')
+  if (!isWellFormedText(s)) throw new TypeError('Strings in canonical JSON must be well-formed')
   return s
 }
 

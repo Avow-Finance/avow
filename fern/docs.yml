@@ -3,13 +3,17 @@ instances:
 title: Avow | Documentation
 navigation:
   - page: Welcome
-    path: pages/welcome.mdx
+    path: ./docs/pages/welcome.mdx
   - section: Get started
     contents:
       - page: Introduction
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+  - section: Charges and disputes
+    contents:
+      - page: Contesting a charge
+        path: ./docs/pages/contesting.mdx
   - section: Reference
     contents:
       - page: Relay refusals

@@ -18,4 +18,5 @@ This repo holds Avow's open packages: the commitment schema, the verifier a supp
 - Packages stay `"private": true` until their first release.
 - Code comments explain themselves and don't point at documents outside this repo.
 - Product text uses reserve, commitment, charge, dispute and release, and never bond, coverage, premium, claim or guarantee.
+- Reference written for developers goes in `fern/docs/pages/` as MDX and is listed in `fern/docs.yml`, which builds the docs site. Quickstart READMEs stay beside their examples.
 - Writing for people (READMEs, docs, release notes) uses no em dashes, no "not X, it's Y" contrasts and no colon reveals, and takes a position.
