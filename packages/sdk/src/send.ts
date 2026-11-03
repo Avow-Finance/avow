@@ -1,3 +1,4 @@
+import { SPONSORED_RESERVE_GAS_CAP } from '@avow-finance/spec'
 import { TxEnvelopeTempo } from 'ox/tempo'
 import {
   type Account,
@@ -294,16 +295,23 @@ async function outcomeOf(
  */
 export const SPONSORED_GAS_HEADROOM_PERCENT = 15n
 
-/** A gas estimate with the sponsored headroom added, rounded up. */
-export const withGasHeadroom = (gas: bigint) =>
-  (gas * (100n + SPONSORED_GAS_HEADROOM_PERCENT) + 99n) / 100n
+/**
+ * A gas estimate with the sponsored headroom added, rounded up, and held to the relay's gas cap,
+ * so the headroom never turns a transaction the relay would pay for into one over its cap. An
+ * estimate already at or over the cap stays as it is, so the relay's refusal names the real need.
+ */
+export function withGasHeadroom(gas: bigint, cap: bigint = SPONSORED_RESERVE_GAS_CAP): bigint {
+  if (gas >= cap) return gas
+  const padded = (gas * (100n + SPONSORED_GAS_HEADROOM_PERCENT) + 99n) / 100n
+  return padded < cap ? padded : cap
+}
 
 /** Called with each transaction's hash and `validBefore` before its bytes go to the node. */
 export type OnSent = (hash: Hex, validBefore: bigint | null) => unknown
 
 /**
  * Sends a transaction whose fee Avow's relay pays. The key signs it locally with `feePayer: true`
- * and a gas limit 15% over the node's estimate, the relay co-signs it, and the sender checks the relay's bytes are the transaction the key
+ * and a gas limit 15% over the node's estimate, up to the relay's gas cap, the relay co-signs it, and the sender checks the relay's bytes are the transaction the key
  * signed before sending them and tracking their hash from the start, since the public RPC can
  * answer with an error after a transaction has landed. viem makes a sponsored transaction valid
  * for under half a minute. The sender signs again only once it has read every finalized block,
@@ -324,26 +332,38 @@ export function sendSponsored(args: {
   /** Called with each hash before its bytes go to the node, and awaited. */
   onSent?: OnSent
   limits?: SendLimits
+  /**
+   * The most gas the relay pays for in this transaction, which the headroom never goes past. A
+   * reserve's cap by default, for a deployment that sets a lower one.
+   */
+  gasCap?: bigint
 }): Promise<TransactionReceipt> {
-  return send(args, { feePayer: true }, withGasHeadroom, async (signed, sent) => {
-    let bytes: Hex
-    try {
-      bytes = await args.sponsor(signed)
-    } catch (error) {
-      throw new SendError(`The relay didn't co-sign: ${reason(error)}`, 'failed', sent, {
-        cause: error,
-      })
-    }
-    const problem = cosignProblem(signed, bytes)
-    if (problem) {
-      throw new SendError(
-        `The relay's bytes aren't the transaction the key signed: ${problem}`,
-        'failed',
-        sent,
-      )
-    }
-    return bytes
-  })
+  const cap = args.gasCap ?? SPONSORED_RESERVE_GAS_CAP
+  if (cap < 1n) throw new RangeError('The sponsored gas cap has to be at least 1')
+  return send(
+    args,
+    { feePayer: true },
+    (gas) => withGasHeadroom(gas, cap),
+    async (signed, sent) => {
+      let bytes: Hex
+      try {
+        bytes = await args.sponsor(signed)
+      } catch (error) {
+        throw new SendError(`The relay didn't co-sign: ${reason(error)}`, 'failed', sent, {
+          cause: error,
+        })
+      }
+      const problem = cosignProblem(signed, bytes)
+      if (problem) {
+        throw new SendError(
+          `The relay's bytes aren't the transaction the key signed: ${problem}`,
+          'failed',
+          sent,
+        )
+      }
+      return bytes
+    },
+  )
 }
 
 /**
