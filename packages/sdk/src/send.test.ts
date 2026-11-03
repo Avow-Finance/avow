@@ -235,7 +235,8 @@ vi.mock('viem/actions', () => ({
   },
 }))
 
-const { SendError, sendOwn, sendSponsored } = await import('./send.js')
+const { SendError, sendOwn, sendSponsored, withGasHeadroom } = await import('./send.js')
+const { SPONSORED_RESERVE_GAS_CAP } = await import('@avow-finance/spec')
 
 const limits = { prepareTries: 3, sendTries: 3, signings: 3, wait: 1, receiptTimeout: 300 }
 const ALPHA = '0x20c0000000000000000000000000000000000001'
@@ -382,6 +383,58 @@ describe('sending a transaction whose fee Avow pays', () => {
     expect(receipt.transactionHash).toBe(keccak256(node.state.sent[0] as Hex))
   })
 
+  it("signs for 15% more gas than the node's estimate, so a run that needs a little more lands", async () => {
+    node.state.outcomes = ['success']
+    const signed: Hex[] = []
+    await send(async (t) => {
+      signed.push(t)
+      return cosign(t)
+    })
+    // The fake node estimates 100,000 gas.
+    const tx = TxEnvelopeTempo.deserialize(signed[0] as TxEnvelopeTempo.Serialized)
+    expect(tx.gas).toBe(115_000n)
+    expect(withGasHeadroom(4_470_710n)).toBe(5_141_317n)
+  })
+
+  it("holds the headroom to the relay's gas cap, and leaves an estimate at or over it as it is", () => {
+    const cap = SPONSORED_RESERVE_GAS_CAP
+    expect(cap).toBe(6_000_000n)
+    // 15% over 5,300,000 would be 6,095,000, which the relay would refuse as over its cap.
+    expect(withGasHeadroom(5_300_000n)).toBe(cap)
+    expect(withGasHeadroom(cap - 1n)).toBe(cap)
+    expect(withGasHeadroom(cap)).toBe(cap)
+    expect(withGasHeadroom(cap + 1n)).toBe(cap + 1n)
+    // The last estimate the full headroom fits under the cap.
+    expect(withGasHeadroom(5_217_390n)).toBe(5_999_999n)
+  })
+
+  it('holds the headroom to a lower gas cap a deployment sets, and refuses a cap under one', async () => {
+    node.state.outcomes = ['success']
+    const signed: Hex[] = []
+    await sendSponsored({
+      client,
+      account: sender as never,
+      calls: CALLS,
+      limits,
+      gasCap: 110_000n,
+      sponsor: async (t) => {
+        signed.push(t)
+        return cosign(t)
+      },
+    })
+    const tx = TxEnvelopeTempo.deserialize(signed[0] as TxEnvelopeTempo.Serialized)
+    expect(tx.gas).toBe(110_000n)
+    expect(() =>
+      sendSponsored({
+        client,
+        account: sender as never,
+        calls: CALLS,
+        sponsor: cosign,
+        gasCap: 0n,
+      }),
+    ).toThrow(RangeError)
+  })
+
   it('prepares again while the node refuses, and gives up once the refusal holds', async () => {
     node.state.prepareRefusals = 2
     node.state.outcomes = ['success']
@@ -466,6 +519,8 @@ describe('sending a transaction its account pays for', () => {
     expect(receipt.transactionHash).toBe(hash)
     const tx = TxEnvelopeTempo.deserialize(node.state.sent[0] as TxEnvelopeTempo.Serialized)
     expect(tx.feePayerSignature).toBeUndefined()
+    // It pays its own fee, so it signs for the node's estimate as it is.
+    expect(tx.gas).toBe(100_000n)
   })
 
   it("carries a key authorization the account's root key signed", async () => {

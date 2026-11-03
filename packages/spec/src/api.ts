@@ -193,6 +193,12 @@ export interface ApiError {
   error: { reason: ReasonCode; message: string }
 }
 
+/**
+ * The most gas Avow's relay pays for in an agent's reserve, unless a deployment sets a lower cap,
+ * which a `sponsorship.over_cap` refusal names.
+ */
+export const SPONSORED_RESERVE_GAS_CAP = 6_000_000n
+
 /** The caps Avow's relay holds a transaction to: its gas, its fee per gas, and the most it could pay in fees. */
 export const SPONSORSHIP_CAPS = ['gas', 'fee_per_gas', 'fee'] as const
 export type SponsorshipCap = (typeof SPONSORSHIP_CAPS)[number]
