@@ -133,3 +133,41 @@ describe("the supplier's reports", () => {
     }
   })
 })
+
+describe('counting open bookings', () => {
+  const LOCK_B = '0x00000000000000000000000000000000000010c5'
+  const booking = (n: string, change: Partial<Booking> = {}) => {
+    const commitmentId = `0x${n.repeat(32)}` as Hex
+    return {
+      ...agreedBooking(),
+      commitmentId,
+      agreement: { ...agreedBooking().agreement, commitmentId },
+      ...change,
+    } as Booking
+  }
+
+  it('counts agreed, held and accepting bookings from disk, by lock, and skips files it refuses', () => {
+    store.put(booking('01'))
+    store.put(booking('02', { status: 'held' }))
+    store.put(booking('03', { status: 'accepted' }))
+    store.put(booking('04', { status: 'lapsed' }))
+    store.put(booking('05', { lock: LOCK_B, status: 'accepting' }))
+    writeFileSync(bookingFile(OTHER), '{')
+    expect(store.openBookings(agreedBooking().lock)).toEqual({ total: 3, onLock: 2 })
+    expect(store.openBookings(LOCK_B.toUpperCase().replace('0X', '0x') as Hex)).toEqual({
+      total: 3,
+      onLock: 1,
+    })
+  })
+
+  it('keeps the count in step with each save once it has read the disk', () => {
+    const lock = agreedBooking().lock
+    expect(store.openBookings(lock)).toEqual({ total: 0, onLock: 0 })
+    store.put(booking('01'))
+    store.put(booking('02'))
+    expect(store.openBookings(lock)).toEqual({ total: 2, onLock: 2 })
+    store.put(booking('01', { status: 'accepted' }))
+    store.put(booking('02', { status: 'lapsed' }))
+    expect(store.openBookings(lock)).toEqual({ total: 0, onLock: 0 })
+  })
+})

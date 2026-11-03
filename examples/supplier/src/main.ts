@@ -15,12 +15,13 @@ import {
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
+import type { Address } from 'viem'
 import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
 import { reportArgs, reportCharge } from './report.js'
-import { baseSettings, reportSettings, serveSettings } from './settings.js'
+import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
 import { SupplierStore } from './store.js'
 
 type Client = ReturnType<typeof moderatoClient>
@@ -36,12 +37,25 @@ const sendFrom = (client: Client, signingKey: PrivateKeyAccount) => (call: Call,
 const finalizedTimeOf = (client: Client) => async () =>
   (await client.getBlock({ blockTag: 'finalized' })).timestamp
 
-function keysOf(store: SupplierStore) {
+/** The keys the state directory's keys file holds, which `init` made. */
+function fileKeys(store: SupplierStore) {
   const keys = store.keys()
   if (!keys) throw new Error(`No keys in ${store.dir}. Run init first.`)
-  const account = privateKeyToAccount(keys.accountKey)
-  const signingKey = privateKeyToAccount(keys.signingKey)
-  return { account, signingKey }
+  return {
+    account: privateKeyToAccount(keys.accountKey).address,
+    signingKey: privateKeyToAccount(keys.signingKey),
+  }
+}
+
+/**
+ * The account's address and the signing key, from the environment when it holds them and from the
+ * keys file otherwise. A host keeps the signing key in a secret store this way, and the account key
+ * never reaches the machine that serves agents.
+ */
+function keysOf(store: SupplierStore): { account: Address; signingKey: PrivateKeyAccount } {
+  const fromEnv = envKeys(process.env)
+  if (!fromEnv) return fileKeys(store)
+  return { account: fromEnv.account, signingKey: privateKeyToAccount(fromEnv.signingKey) }
 }
 
 /** Makes the supplier's keys and has the faucet fund the signing key, which pays for acceptances. */
@@ -49,20 +63,14 @@ async function init() {
   const { stateDir, rpcUrl } = baseSettings(process.env)
   const store = new SupplierStore(stateDir)
   if (!store.keys()) store.makeKeys()
-  const { account, signingKey } = keysOf(store)
+  const { account, signingKey } = fileKeys(store)
   log(`funding the signing key ${signingKey.address} from Moderato's faucet`)
   await Actions.faucet.fundSync(moderatoClient(rpcUrl), {
     account: signingKey.address,
     timeout: 60_000,
   })
   log(`keys are in ${stateDir}/keys.json. Keep that file safe and out of version control.`)
-  console.log(
-    JSON.stringify(
-      { account: account.address, payee: account.address, signingKey: signingKey.address },
-      null,
-      2,
-    ),
-  )
+  console.log(JSON.stringify({ account, payee: account, signingKey: signingKey.address }, null, 2))
   log('Send Avow these three addresses to be registered as a supplier, then run serve.')
 }
 
@@ -75,8 +83,8 @@ async function serve() {
   const chain = tempoChainReader(client, { factory: settings.factory, chainId: TEMPO_MODERATO })
   const profile: SupplierProfile = {
     businessId: settings.businessId,
-    account: account.address,
-    payee: account.address,
+    account,
+    payee: account,
     signingKey: signingKey.address,
   }
   const server = agentServer({
@@ -88,6 +96,7 @@ async function serve() {
       profile: TESTNET_DEMO_PROFILE,
       minTimeToAccept: 60n,
     },
+    limits: { perBuyer: settings.maxOpenPerBuyer, total: settings.maxOpenBookings },
     store,
     signingKey,
     isLock: async (lock) => (await chain.lock(lock))?.fromFactory === true,
@@ -113,11 +122,11 @@ async function serve() {
       chainId: TEMPO_MODERATO,
       avowKeys: settings.approvalKeys,
       businessId: settings.businessId,
-      payee: account.address,
+      payee: account,
       acceptedTokens: [moderatoUsdToken(settings.token)],
       profile: TESTNET_DEMO_PROFILE,
       acceptTestData: true,
-      account: account.address,
+      account,
       signingKey: signingKey.address,
     },
     chain,
@@ -180,13 +189,7 @@ async function report() {
 function profile() {
   const { stateDir } = baseSettings(process.env)
   const { account, signingKey } = keysOf(new SupplierStore(stateDir))
-  console.log(
-    JSON.stringify(
-      { account: account.address, payee: account.address, signingKey: signingKey.address },
-      null,
-      2,
-    ),
-  )
+  console.log(JSON.stringify({ account, payee: account, signingKey: signingKey.address }, null, 2))
 }
 
 const commands: Record<string, () => Promise<void> | void> = { init, serve, report, profile }

@@ -12,12 +12,14 @@ import {
 import { isAddressEqual, recoverAddress } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type AgentDeps, agentServer, signAgreement } from './agents.js'
-import type { SupplierStore } from './store.js'
+import type { Booking, SupplierStore } from './store.js'
 import {
+  agreedBooking,
   agreement,
   CHAIN_ID,
   COMMITMENT,
   DOMAIN,
+  LOCK,
   NOW,
   SALT,
   supplierAccount,
@@ -48,6 +50,7 @@ beforeEach(() => {
       profile: TESTNET_DEMO_PROFILE,
       minTimeToAccept: 60n,
     },
+    limits: { perBuyer: 2, total: 3 },
     store,
     signingKey: supplierKey,
     isLock: async () => factoryMade,
@@ -56,6 +59,17 @@ beforeEach(() => {
   }
 })
 afterEach(() => remove())
+
+/** Another booking the supplier signed, on the fixtures' lock unless a test says otherwise. */
+const another = (n: string, change: Partial<Booking> = {}): Booking => {
+  const commitmentId = `0x${n.repeat(32)}` as const
+  return {
+    ...agreedBooking(),
+    commitmentId,
+    agreement: { ...agreement, commitmentId },
+    ...change,
+  } as Booking
+}
 
 /** The offer as an agent's SDK sends it, through JSON. */
 const offer = (change: Record<string, unknown> = {}) =>
@@ -91,6 +105,32 @@ describe('signing an agent’s terms agreement', () => {
   it('refuses a lock Avow’s factory didn’t make', async () => {
     factoryMade = false
     expect((await signAgreement(deps, offer())).status).toBe(422)
+  })
+
+  it('holds no more open bookings for one buyer’s lock than its limit, and frees a slot once one is accepted', async () => {
+    const OTHER_LOCK = '0x00000000000000000000000000000000000010c5'
+    store.put(another('01'))
+    store.put(another('02'))
+    const full = await signAgreement(deps, offer())
+    expect(full.status).toBe(429)
+    expect(parseSupplierRefusal(full.body)?.error).toContain('the most it holds for one buyer')
+    expect(store.booking(COMMITMENT)).toBeNull()
+    // Another buyer's lock still has room, up to the limit in all.
+    expect(store.openBookings(OTHER_LOCK)).toEqual({ total: 2, onLock: 0 })
+    store.put(another('01', { status: 'accepted' }))
+    expect((await signAgreement(deps, offer())).status).toBe(200)
+  })
+
+  it('holds no more open bookings in all than its limit, and still answers an offer it signed', async () => {
+    const OTHER_LOCK = '0x00000000000000000000000000000000000010c5'
+    const signed = await signAgreement(deps, offer())
+    for (const n of ['01', '02']) store.put(another(n, { lock: OTHER_LOCK }))
+    expect(store.openBookings(LOCK)).toEqual({ total: 3, onLock: 1 })
+    expect(await signAgreement(deps, offer())).toEqual(signed)
+    const other = { ...agreement, commitmentId: `0x${'03'.repeat(32)}` as const }
+    const full = await signAgreement(deps, offer({ agreement: other }))
+    expect(full.status).toBe(429)
+    expect(parseSupplierRefusal(full.body)?.error).toContain('as many open bookings as it takes')
   })
 
   it('refuses a body that isn’t an offer, saying why as the spec reads a refusal', async () => {
@@ -130,6 +170,14 @@ describe('signing an agent’s terms agreement', () => {
       expect(broken.status).toBe(400)
       expect(parseSupplierRefusal(await broken.json())).not.toBeNull()
       expect((await fetch(`${url}/other`)).status).toBe(404)
+      const health = await fetch(`${url}/health`)
+      expect([health.status, await health.json()]).toEqual([200, { status: 'ok' }])
+      const policy = await fetch(`${url}/policy`)
+      expect(policy.status).toBe(200)
+      expect(await policy.json()).toMatchObject({
+        businessId: 'biz_supplier',
+        limits: { maxReserve: '1000000000', openPerBuyer: 2, openInAll: 3 },
+      })
     } finally {
       await new Promise((resolve) => server.close(resolve))
     }

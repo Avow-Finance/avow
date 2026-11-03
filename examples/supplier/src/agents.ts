@@ -13,11 +13,14 @@ import {
 import type { Address, Hex } from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
 import { agreementProblem, type OfferRules } from './offer.js'
+import { acceptancePolicy, type OpenLimits } from './policy.js'
 import type { SupplierStore } from './store.js'
 
 export interface AgentDeps {
   profile: SupplierProfile
   rules: OfferRules
+  /** How many open bookings it holds for one buyer's lock and in all, which it publishes too. */
+  limits: OpenLimits
   store: SupplierStore
   signingKey: PrivateKeyAccount
   /** Whether a lock came from Avow's factory, so a booking can only be on a real lock. */
@@ -41,7 +44,9 @@ const fail = (status: number, error: string): Answer => ({
 /**
  * Signs an agent's terms agreement, the first thing an agent asks a supplier for. The supplier
  * records the booking before it answers, so a restart never loses one it signed. The same offer
- * sent again gets the same signature, and another offer for the same commitment is refused.
+ * sent again gets the same signature, and another offer for the same commitment is refused. A new
+ * offer past the open-booking limits gets a 429, so one buyer can't take every slot and the poll
+ * stays short however many agents book.
  */
 export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Answer> {
   const parsed = parseAgreementOffer(json)
@@ -75,6 +80,21 @@ export async function signAgreement(deps: AgentDeps, json: unknown): Promise<Ans
   const signature = await deps.signingKey.sign({
     hash: digestOf(termsAgreementTypedData(agreement, domain)),
   })
+  // Counted after the last wait and right before the save, so two offers at once can't both take
+  // the last slot. A signature it doesn't hand out binds nobody.
+  const open = deps.store.openBookings(domain.verifyingContract)
+  if (open.onLock >= deps.limits.perBuyer) {
+    return fail(
+      429,
+      `this supplier already holds ${open.onLock} open bookings for this lock, the most it holds for one buyer, so offer again once one is accepted or lapses`,
+    )
+  }
+  if (open.total >= deps.limits.total) {
+    return fail(
+      429,
+      'this supplier holds as many open bookings as it takes, so offer again once one is accepted or lapses',
+    )
+  }
   deps.store.put({ commitmentId, ...record, signature, status: 'agreed' })
   deps.log(`signed the agreement for ${commitmentId} on lock ${domain.verifyingContract}`)
   return { status: 200, body: { signature } satisfies AgreementSignature }
@@ -94,14 +114,21 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 /**
  * The supplier's endpoint for agents, at the routes the spec fixes for every adapter. A `GET` of
  * the profile route gives the supplier's business id, account, payout address and signing key,
- * and a `POST` to the agreements route signs a terms agreement.
+ * and a `POST` to the agreements route signs a terms agreement. Two routes of its own serve a
+ * host: `GET /policy` gives the acceptance policy built from the rules it signs by, and
+ * `GET /health` answers while the process does, for a load balancer or container platform.
  */
 export function agentServer(deps: AgentDeps): Server {
+  const policy = acceptancePolicy(deps.rules, deps.limits)
   return createServer(async (req, res) => {
     let answer: Answer
     try {
       if (req.method === 'GET' && req.url === SUPPLIER_ADAPTER_PATHS.profile) {
         answer = { status: 200, body: deps.profile satisfies SupplierProfile }
+      } else if (req.method === 'GET' && req.url === '/policy') {
+        answer = { status: 200, body: policy }
+      } else if (req.method === 'GET' && req.url === '/health') {
+        answer = { status: 200, body: { status: 'ok' } }
       } else if (req.method === 'POST' && req.url === SUPPLIER_ADAPTER_PATHS.agreements) {
         let json: unknown
         try {

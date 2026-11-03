@@ -41,6 +41,10 @@ export interface SupplierKeys {
 export const BOOKING_STATUSES = ['agreed', 'held', 'accepting', 'accepted', 'lapsed'] as const
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]
 
+/** Whether a booking is still open, one the supplier may yet accept: agreed, held or accepting. */
+export const isOpen = (status: BookingStatus) =>
+  status === 'agreed' || status === 'held' || status === 'accepting'
+
 /** The transaction last sent for a step, recorded before its bytes went to the chain. */
 export interface SentTransaction {
   hash: Hex
@@ -156,6 +160,8 @@ function readJson(path: string): unknown {
 export class SupplierStore {
   readonly #bookings: string
   readonly #reports: string
+  /** The lock of each open booking by commitment, read from disk once and kept in step by `put`. */
+  #open: Map<Hex, Address> | null = null
 
   constructor(readonly dir: string) {
     this.#bookings = join(dir, 'bookings')
@@ -242,6 +248,36 @@ export class SupplierStore {
       this.#bookingFile(booking.commitmentId),
       `${JSON.stringify(toWire(booking), null, 2)}\n`,
     )
+    const id = booking.commitmentId.toLowerCase() as Hex
+    if (!this.#open) return
+    if (isOpen(booking.status)) this.#open.set(id, booking.lock.toLowerCase() as Address)
+    else this.#open.delete(id)
+  }
+
+  /**
+   * How many open bookings the store holds in all, and how many of them are on one lock. It reads
+   * every booking file the first time it's asked, skipping any it refuses, since those hold no
+   * booking it can count, and after that counts from what `put` saved. So it assumes this process
+   * is the only one writing bookings, as `serve` is.
+   */
+  openBookings(lock: Address): { total: number; onLock: number } {
+    if (!this.#open) {
+      const open = new Map<Hex, Address>()
+      for (const id of this.commitmentIds()) {
+        let b: Booking | null
+        try {
+          b = this.booking(id)
+        } catch {
+          continue
+        }
+        if (b && isOpen(b.status)) open.set(b.commitmentId, b.lock)
+      }
+      this.#open = open
+    }
+    const wanted = lock.toLowerCase()
+    let onLock = 0
+    for (const l of this.#open.values()) if (l === wanted) onLock++
+    return { total: this.#open.size, onLock }
   }
 
   /** The commitment of every booking file, whether or not the file parses. */
