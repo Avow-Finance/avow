@@ -2,8 +2,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
-import { Writable } from 'node:stream'
 import { formatUsd, newSessionId } from '@avow-finance/spec'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
@@ -13,7 +11,7 @@ import { prepareSandboxBusiness, type SandboxPrompts } from '../sandbox/setup.js
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
-import { readBusinessConfig, runAgent } from './runner.js'
+import { ensureChildrenGone, readBusinessConfig, runAgent, terminalPrompts } from './runner.js'
 
 /**
  * `avow-sandbox` runs a sandbox agent the way a developer works on one, with the business and the
@@ -42,42 +40,6 @@ function openInBrowser(url: string): void {
   child.unref()
 }
 
-/** The terminal's input, a line at a time, with typing hidden while a passphrase is asked for. */
-function terminal() {
-  let muted = false
-  const output = new Writable({
-    write(chunk, encoding, done) {
-      if (!muted) process.stdout.write(chunk, encoding)
-      done()
-    },
-  })
-  const lines = createInterface({
-    input: process.stdin,
-    output,
-    terminal: Boolean(process.stdin.isTTY),
-  })
-  let closed = false
-  const waiting = new Set<(line: string | null) => void>()
-  lines.on('close', () => {
-    closed = true
-    for (const resolve of waiting) resolve(null)
-  })
-  const ask = (prompt: string, hidden = false) =>
-    new Promise<string | null>((resolve) => {
-      if (closed) return resolve(null)
-      process.stdout.write(prompt)
-      waiting.add(resolve)
-      muted = hidden
-      lines.question('', (answer) => {
-        muted = false
-        waiting.delete(resolve)
-        if (hidden && process.stdin.isTTY) process.stdout.write('\n')
-        resolve(answer)
-      })
-    })
-  return { ask, closed: () => closed }
-}
-
 async function main(args: readonly string[]): Promise<void> {
   const command = args[0] ?? 'start'
   if (command !== 'start' && command !== 'fresh') {
@@ -97,9 +59,10 @@ async function main(args: readonly string[]): Promise<void> {
     console.log(`Moved your previous business to ${aside}, keys and all. Setting up a fresh one.\n`)
   }
 
-  const input = terminal()
+  const input = terminalPrompts()
   const prompts: SandboxPrompts = {
     async newPassphrase() {
+      await ensureChildrenGone()
       for (;;) {
         const first = await input.ask(
           `Choose a passphrase for your business's key, at least ${MIN_PASSPHRASE} characters: `,
@@ -115,6 +78,7 @@ async function main(args: readonly string[]): Promise<void> {
       }
     },
     async passphrase() {
+      await ensureChildrenGone()
       const typed = await input.ask("Passphrase for your business's key: ", true)
       if (typed === null) throw new Error('No passphrase was typed.')
       return typed

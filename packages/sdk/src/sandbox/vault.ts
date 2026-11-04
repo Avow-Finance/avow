@@ -1,10 +1,10 @@
 import { type Address, bytesToHex, type Hex, hexToBytes, isHex } from 'viem'
 
 /**
- * The business's root key, sealed under a passphrase the developer sets. The key comes out only
- * when someone types the passphrase, so a process that can read the file still can't use the key.
- * It uses the platform's Web Crypto, PBKDF2 with SHA-256 to stretch the passphrase and AES-256-GCM
- * to seal the key, so it runs the same in Node and in a browser.
+ * The business's root key, sealed under a passphrase the developer sets. A process that reads the
+ * sealed file gets the key only by finding the passphrase, which PBKDF2 at 600,000 rounds makes slow
+ * to guess. It uses the platform's Web Crypto, PBKDF2 with SHA-256 to stretch the passphrase and
+ * AES-256-GCM to seal, so it runs the same in Node and in a browser.
  */
 export interface SealedKey {
   kdf: 'PBKDF2-SHA256'
@@ -68,6 +68,77 @@ export async function sealKey(
     ciphertext: bytesToHex(new Uint8Array(sealed)),
   }
 }
+
+/** Something else sealed under the same passphrase, such as the business's record. */
+export interface SealedBlob {
+  iv: Hex
+  ciphertext: Hex
+}
+
+/** The opened vault: the business's root key, and a way to seal and open more under it. */
+export interface OpenVault {
+  privateKey: Hex
+  seal(label: string, data: Uint8Array): Promise<SealedBlob>
+  open(label: string, blob: SealedBlob): Promise<Uint8Array>
+}
+
+/**
+ * Opens the vault with its passphrase, deriving the key once. Each blob sealed under it is bound to
+ * the account and a label of its own, so no blob can stand in for another, and changing one fails.
+ */
+export async function openVault(
+  sealed: SealedKey,
+  passphrase: string,
+  account: Address,
+): Promise<OpenVault> {
+  const key = await keyFrom(passphrase, hexToBytes(sealed.salt), sealed.iterations)
+  let opened: ArrayBuffer
+  try {
+    opened = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: hexToBytes(sealed.iv), additionalData: context(account) },
+      key,
+      hexToBytes(sealed.ciphertext),
+    )
+  } catch {
+    throw new Error("That passphrase doesn't open the business's key")
+  }
+  const labelled = (label: string) =>
+    new TextEncoder().encode(`avow-sandbox-${label}:${account.toLowerCase()}`)
+  return {
+    privateKey: bytesToHex(new Uint8Array(opened)),
+    async seal(label, data) {
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: labelled(label) },
+        key,
+        data,
+      )
+      return { iv: bytesToHex(iv), ciphertext: bytesToHex(new Uint8Array(ciphertext)) }
+    },
+    async open(label, blob) {
+      try {
+        return new Uint8Array(
+          await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: hexToBytes(blob.iv), additionalData: labelled(label) },
+            key,
+            hexToBytes(blob.ciphertext),
+          ),
+        )
+      } catch {
+        throw new Error(`The business's ${label} doesn't open, so it was changed or replaced`)
+      }
+    },
+  }
+}
+
+/** Whether some JSON is a sealed blob. */
+export const isSealedBlob = (v: unknown): v is SealedBlob =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as SealedBlob).iv === 'string' &&
+  isHex((v as SealedBlob).iv) &&
+  typeof (v as SealedBlob).ciphertext === 'string' &&
+  isHex((v as SealedBlob).ciphertext)
 
 /** Opens a sealed key with its passphrase, or throws when the passphrase doesn't open it. */
 export async function openKey(

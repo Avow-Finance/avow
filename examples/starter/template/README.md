@@ -16,14 +16,14 @@ Each time you press Enter, it runs `agent.ts` once. Afterwards it shows what you
 
 `business.ts` is your business. It names the authority, the most your agent can hold in bookings at once, and the suppliers it can book with. Only `npm start` reads it, and it asks you before it signs anything new from it.
 
-`agent.ts` is your agent. It names the booking, the supplier and the terms, and it runs in a process of its own that holds only the agent's key. It imports `@avow-finance/sdk/agent`, which has no way to open the business's key, sign a mandate or change the authority.
+`agent.ts` is your agent. It names the booking, the supplier and the terms, and it runs in a process of its own that holds only the agent's key, with no way to reach your terminal. It imports `@avow-finance/sdk/agent`, which has no way to open the business's key, sign a mandate or change the authority.
 
 ## What to try
 
 1. Press Enter. The agent books 8 H100s for an hour with a $200 reserve. It prints the commitment's reference and a link anyone can open to check it. Your machine then runs the open verifier. It checks Avow's approval against your terms and your mandate, checks that a lock Avow's factory made holds the commitment and enforces your terms, and checks that your agent's key is on your account under your mandate. Then the supplier accepts.
 2. Change `reserve` in `agent.ts` to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The SDK checks nothing past the mandate, so the refusal comes from Avow.
 3. Change `reserve` to 250 and press Enter. It fits, so the agent makes a second commitment under the same authority.
-4. Change `authority` in `business.ts` and press Enter. `npm start` asks you to confirm the new mandate and type the passphrase. It revokes the old agent key on your account, so that key can't sign for you again, and enrolls a new one. Bookings made under the old authority stay held in the lock until their release, and it lists them.
+4. Change `authority` in `business.ts` and press Enter. `npm start` asks you to confirm the new mandate and type the passphrase. It revokes every other agent key on your account, read from the chain, so no old key can sign for you again, and enrolls a new one. Bookings made under the old authority stay held in the lock until their release, and it lists them.
 
 Each reserve sits in your business's own lock, for one named supplier, until the booking's window ends. Then it goes back to the business.
 

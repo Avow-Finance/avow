@@ -6,10 +6,13 @@ import {
   createLockCall,
   FACTORY_ABI,
   httpSupplier,
+  liveAgentKeys,
+  memoryStore,
   moderatoClient,
   RESERVE_ABI,
   RESERVE_SELECTOR,
   reserveCalls,
+  revokeOtherAgentKeys,
   sandbox,
   sandboxMandate,
   sandboxTerms,
@@ -369,6 +372,74 @@ describe.skipIf(!live)('the chain, around the SDK and Avow', () => {
           sponsor,
         }),
       ).rejects.toThrow(/CallNotAllowed/)
+    },
+    10 * 60_000,
+  )
+
+  it(
+    "revokes every key the keychain still authorizes, whatever the agent's file says",
+    async () => {
+      const deployment = await sandbox.deployment()
+      const client = moderatoClient(deployment.rpcUrl)
+      const root = Account.fromSecp256k1(generatePrivateKey())
+      await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
+      const fromBlock = await client.getBlockNumber()
+      const lock: Address = await client.readContract({
+        address: deployment.factory,
+        abi: FACTORY_ABI,
+        functionName: 'lockAddress',
+        args: [root.address],
+      })
+      await sendOwn({
+        client,
+        account: root,
+        calls: [createLockCall(deployment.factory, root.address)],
+      })
+      const demo = (await httpSupplier(deployment.supplierUrl)).profile
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      const authorize = async () => {
+        const key = Account.fromSecp256k1(generatePrivateKey(), { access: root.address })
+        await authorizeSandboxKey({
+          deployment,
+          client,
+          root,
+          agent: key,
+          lock,
+          mandate: sandboxMandate({
+            businessId: 'chain-check',
+            agentId: `agt_${key.accessKeyAddress.slice(2, 12).toLowerCase()}`,
+            account: root.address,
+            agentKey: key.accessKeyAddress,
+            suppliers: [demo.businessId],
+            token: deployment.token,
+            capPerCommitment: dollars(500),
+            capOpenReserves: dollars(500),
+            expiry: now + 3600n,
+          }),
+          suppliers: [demo],
+        })
+        return key.accessKeyAddress.toLowerCase()
+      }
+      const first = await authorize()
+      const second = await authorize()
+      // The agent's process rewrites its own file to name a key that was never authorized, then
+      // empties it. The runner never reads that file to choose what to revoke.
+      const store = memoryStore()
+      await store.write('agent', JSON.stringify({ agentKey: `0x${'11'.repeat(32)}` }))
+      await store.write('agent', '')
+      const live = await liveAgentKeys(client, root.address, fromBlock)
+      expect(live.map((k) => k.toLowerCase()).sort()).toEqual([first, second].sort())
+      expect((await revokeOtherAgentKeys({ client, root, fromBlock })).length).toBe(2)
+      expect(await liveAgentKeys(client, root.address, fromBlock)).toEqual([])
+      for (const key of [first, second]) {
+        const k = await client.readContract({
+          address: Addresses.accountKeychain,
+          abi: Abis.accountKeychain,
+          functionName: 'getKey',
+          args: [root.address, key as Address],
+        })
+        expect(k.isRevoked).toBe(true)
+      }
     },
     10 * 60_000,
   )

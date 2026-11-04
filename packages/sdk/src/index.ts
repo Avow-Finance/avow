@@ -42,6 +42,12 @@ export {
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
 export { loadSandboxDeployment, madeOn, trustedFactory } from './sandbox/deployment.js'
+export {
+  approvedSuppliers,
+  liveAgentKeys,
+  revokeKeyCalls,
+  revokeOtherAgentKeys,
+} from './sandbox/keys.js'
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
 export * from './sandbox/session.js'

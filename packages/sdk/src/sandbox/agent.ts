@@ -52,7 +52,7 @@ import { micros, type SandboxResource, sandboxTerms, toDollars } from './terms.j
 
 /**
  * A booking refused before any money moved, by the SDK, Avow, Avow's relay, the lock or the
- * account's keychain. Its message is the sentence `refusalSentence` writes from the reason code,
+ * account's keychain, or a reserve that never landed for no reason anyone gave. Its message is the sentence `refusalSentence` writes from the reason code,
  * the layer and the amounts.
  */
 export class Refusal extends Error {
@@ -575,16 +575,27 @@ function keychainRefused(error: unknown): boolean {
   return false
 }
 
+/** Whether the funding transaction landed and reverted, somewhere in an error's causes. */
+function reverted(error: unknown): boolean {
+  let e: unknown = error
+  for (let i = 0; i < 6 && e instanceof Error; i++) {
+    if (/The transaction 0x[0-9a-fA-F]{64} reverted/.test(e.message)) return true
+    e = e.cause
+  }
+  return false
+}
+
 /**
  * Who refused a reserve Avow had approved. The account's keychain refuses a key past its daily
- * limit when the transaction is prepared, Avow's relay refuses with its own reason, and anything
- * else that kept the reserve out of the lock is the lock's.
+ * limit when the transaction is prepared, and Avow's relay refuses with its own reason. A funding
+ * transaction that landed and reverted is the lock's refusal, and anything else is unknown.
  */
 export function fundingRefusal(error: unknown): { code: ReasonCode; layer: RefusalLayer } {
   if (keychainRefused(error)) return { code: 'keychain.over_daily_limit', layer: 'keychain' }
   const reason = relayReason(error)
   if (reason) return { code: reason, layer: 'relay' }
-  return { code: 'chain.reserve_missing', layer: 'lock' }
+  if (reverted(error)) return { code: 'chain.reserve_missing', layer: 'lock' }
+  return { code: 'chain.reserve_missing', layer: 'unknown' }
 }
 
 /** Every check the buyer's side can make of a commitment it funded, in order. */

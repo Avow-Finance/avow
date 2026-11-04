@@ -6,15 +6,14 @@ import { AvowApiError } from '../http.js'
 import { SendError } from '../send.js'
 import { accountSigner, signMandate } from '../sign.js'
 import { fundingRefusal, Refusal, relayReason, sandboxAgent, setSandboxPlatform } from './agent.js'
+import { loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { sandboxMandate } from './mandate.js'
 import {
   addCommitment,
   loadAgentItem,
-  loadBusinessItem,
   loadCommitments,
   memoryStore,
   saveAgentItem,
-  saveBusinessItem,
 } from './store.js'
 import { checkSuppliers } from './suppliers.js'
 import { openKey, sealKey } from './vault.js'
@@ -65,9 +64,15 @@ describe('Refusal', () => {
       code: 'keychain.over_daily_limit',
       layer: 'keychain',
     })
-    expect(fundingRefusal(sent(new Error('reverted')))).toEqual({
+    expect(
+      fundingRefusal(sent(new Error(`The transaction 0x${'ab'.repeat(32)} reverted`))),
+    ).toEqual({
       code: 'chain.reserve_missing',
       layer: 'lock',
+    })
+    expect(fundingRefusal(sent(new Error('the node stopped answering')))).toEqual({
+      code: 'chain.reserve_missing',
+      layer: 'unknown',
     })
   })
 })
@@ -78,7 +83,12 @@ describe("the sandbox's items", () => {
     const privateKey = generatePrivateKey()
     const sealed = await sealKey(privateKey, 'correct horse battery', root.address)
     const store = memoryStore()
-    await saveBusinessItem(store, { account: root.address, key: sealed, business: null })
+    await saveBusinessItem(store, {
+      account: root.address,
+      key: sealed,
+      record: null,
+      business: null,
+    })
     const text = (await store.read('business')) as string
     expect(text).not.toContain(privateKey.slice(2))
     const item = await loadBusinessItem(store)

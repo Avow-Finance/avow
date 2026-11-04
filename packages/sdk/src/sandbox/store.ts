@@ -8,7 +8,6 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddress } from 'viem'
-import { isSealedKey, type SealedKey } from './vault.js'
 
 /**
  * What a sandbox keeps, each item apart. `business` holds the business's root key sealed under its
@@ -54,13 +53,6 @@ export interface StoredBusiness {
   businessId: string
 }
 
-/** The runner's item: the business account, its sealed root key and its registration. */
-export interface BusinessItem {
-  account: Address
-  key: SealedKey
-  business: StoredBusiness | null
-}
-
 /** The agent's item: its own key, and the mandate the business signed for it. */
 export interface AgentItem {
   agentKey: Hex
@@ -83,11 +75,11 @@ export interface StoredCommitment {
 }
 
 const isKey = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/i.test(v)
-const isAddressText = (v: unknown): v is Address => typeof v === 'string' && isAddress(v)
+export const isAddressText = (v: unknown): v is Address => typeof v === 'string' && isAddress(v)
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-function readJson(text: string, item: SandboxStoreItem): Record<string, unknown> {
+export function readJson(text: string, item: SandboxStoreItem): Record<string, unknown> {
   try {
     const json: unknown = JSON.parse(text)
     if (isRecord(json)) return json
@@ -99,10 +91,10 @@ function readJson(text: string, item: SandboxStoreItem): Record<string, unknown>
   )
 }
 
-const write = (store: SandboxStore, item: SandboxStoreItem, value: object) =>
+export const write = (store: SandboxStore, item: SandboxStoreItem, value: object) =>
   store.write(item, `${JSON.stringify(toWire({ version: 1, ...value }), null, 2)}\n`)
 
-function readBusiness(json: unknown): StoredBusiness | null {
+export function readBusiness(json: unknown): StoredBusiness | null {
   if (!isRecord(json)) return null
   const ok =
     typeof json.chainId === 'number' &&
@@ -123,22 +115,6 @@ function readSuppliers(json: unknown): SandboxSupplier[] | null {
   )
   return suppliers.length === json.length ? suppliers.map((s) => ({ id: s.id, url: s.url })) : null
 }
-
-/** The runner's item, or null when the business has no key yet. */
-export async function loadBusinessItem(store: SandboxStore): Promise<BusinessItem | null> {
-  const text = await store.read('business')
-  if (text === null) return null
-  const json = readJson(text, 'business')
-  if (!isAddressText(json.account) || !isSealedKey(json.key)) {
-    throw new Error(
-      "The sandbox's business file isn't in the form it writes. Move the .avow folder aside to start over.",
-    )
-  }
-  return { account: json.account, key: json.key, business: readBusiness(json.business) }
-}
-
-export const saveBusinessItem = (store: SandboxStore, item: BusinessItem) =>
-  write(store, 'business', item)
 
 /** The agent's item, or null when the business hasn't enrolled an agent. */
 export async function loadAgentItem(store: SandboxStore): Promise<AgentItem | null> {

@@ -4,7 +4,9 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { rootRequestKey } from '../http.js'
+import { removeSupplierCall } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
+import { sendOwn } from '../send.js'
 import {
   checkSession,
   platformSession,
@@ -13,24 +15,23 @@ import {
   sessionReporter,
 } from './agent.js'
 import { createSandboxBusiness, type SandboxBusinessStep, type SandboxClient } from './business.js'
+import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { loadSandboxDeployment, madeOn } from './deployment.js'
+import { approvedSuppliers, revokeOtherAgentKeys } from './keys.js'
 import { enrollSandboxAgent, sandboxMandate } from './mandate.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import {
   type AgentItem,
-  type BusinessItem,
   loadAgentItem,
-  loadBusinessItem,
   loadCommitments,
   type SandboxStore,
   type SandboxSupplier,
   saveAgentItem,
-  saveBusinessItem,
   saveCommitments,
 } from './store.js'
 import { checkSuppliers, connectSupplier } from './suppliers.js'
 import { micros, toDollars } from './terms.js'
-import { openKey, sealKey } from './vault.js'
+import { type OpenVault, openVault, sealKey } from './vault.js'
 
 /** What a business gives its agent, as `business.ts` in the starter says it. */
 export interface SandboxBusinessConfig {
@@ -110,10 +111,11 @@ const authorityText = (cap: bigint, suppliers: readonly string[]) =>
  * passphrase and seals a new root key under it, registers the business with Avow's sandbox, waits
  * for its test dollars and creates its lock. Whenever the authority or the suppliers in the config
  * differ from the agent's mandate, or the mandate is about to expire, it asks before signing a new
- * mandate, then asks for the passphrase. One transaction from the root key revokes the old agent
- * key in the account's keychain, removes the suppliers the new mandate drops from the lock, and puts
- * a new agent key on the account. The root key is opened only for those signatures, and never
- * stored or passed on in the clear.
+ * mandate, then asks for the passphrase. A transaction of its own revokes every other agent key the
+ * account's keychain still authorizes, read from the chain, so nothing the agent can write keeps a
+ * key live. Then a new agent key goes on the account, and each supplier the lock approves that the
+ * new mandate doesn't name comes off, each in its own transaction. The root key is opened only for
+ * those signatures, and never stored or passed on in the clear.
  */
 export async function prepareSandboxBusiness(
   options: PrepareSandboxBusinessOptions,
@@ -135,43 +137,49 @@ export async function prepareSandboxBusiness(
   const deployment = options.deployment ?? (await loadSandboxDeployment(screenUrl, send))
   const client: SandboxClient = moderatoClient(deployment.rpcUrl)
 
-  // The root key is held only inside this call, and only once the person typed the passphrase.
-  let root: Account.RootAccount | null = null
+  // The vault is open only inside this call, once the person typed the passphrase.
+  let vault: OpenVault | null = null
   let item: BusinessItem | null = await loadBusinessItem(store)
   if (!item) {
+    if ((await store.read('agent')) !== null) {
+      throw new Error(
+        "The business's file is gone from .avow but its agent's file is there, so the business's key is missing. Restore .avow/business.json, or start over with npm run fresh.",
+      )
+    }
     log(
       "Your business needs a key of its own. It's sealed on this machine under a passphrase you choose.",
     )
     const passphrase = await prompts.newPassphrase()
     const privateKey = generatePrivateKey()
-    root = Account.fromSecp256k1(privateKey)
-    item = {
-      account: root.address,
-      key: await sealKey(privateKey, passphrase, root.address),
-      business: null,
-    }
+    const account = Account.fromSecp256k1(privateKey).address
+    const key = await sealKey(privateKey, passphrase, account)
+    item = { account, key, record: null, business: null }
     await saveBusinessItem(store, item)
+    vault = await openVault(key, passphrase, account)
   }
   const sealed = item
-  const openRoot = async (): Promise<Account.RootAccount> => {
-    if (root) return root
-    const opened = Account.fromSecp256k1(
-      await openKey(sealed.key, await prompts.passphrase(), sealed.account),
-    )
-    if (!isAddressEqual(opened.address, sealed.account)) {
+  const open = async (): Promise<OpenVault> => {
+    vault ??= await openVault(sealed.key, await prompts.passphrase(), sealed.account)
+    return vault
+  }
+  const rootOf = (v: OpenVault) => {
+    const root = Account.fromSecp256k1(v.privateKey)
+    if (!isAddressEqual(root.address, sealed.account)) {
       throw new Error("The business's key doesn't match its account")
     }
-    root = opened
-    return opened
+    return root
   }
 
   let business = item.business
   if (!business || !madeOn(business, deployment)) {
     log('Setting up your sandbox business on Tempo testnet. The first time takes a minute or two.')
+    const v = await open()
+    // Every agent key goes on the account after this block, so the runner reads them from here on.
+    const fromBlock = await client.getBlockNumber()
     const made = await createSandboxBusiness({
       deployment,
       client,
-      root: await openRoot(),
+      root: rootOf(v),
       legalName: config.name,
       country,
       onStep: (s) => log(stepLine(s)),
@@ -186,7 +194,11 @@ export async function prepareSandboxBusiness(
       lock: made.lock,
       businessId: made.businessId,
     }
-    item = { ...item, business }
+    const record = await v.seal(
+      'record',
+      new TextEncoder().encode(JSON.stringify({ fromBlock: fromBlock.toString() })),
+    )
+    item = { ...item, record, business }
     await saveBusinessItem(store, item)
     // Commitments and an agent from another deployment belong to another lock.
     await saveCommitments(store, [])
@@ -221,9 +233,9 @@ export async function prepareSandboxBusiness(
     return prepared(agent, false)
   }
 
-  const question = changed
-    ? `Sign a new mandate as ${config.name}: ${authorityText(authority, ids)}? y/N`
-    : `Your agent's mandate expires within the hour. Sign a new one as ${config.name}: ${authorityText(authority, ids)}? y/N`
+  const question = `${
+    changed ? 'Sign a new mandate' : "Your agent's mandate expires within the hour. Sign a new one"
+  } as ${config.name}: ${authorityText(authority, ids)}? It revokes every other agent key on the account. y/N`
   if (!(await prompts.confirm(question))) {
     if (agent && current) {
       log(`Kept the current mandate: ${authorityText(current.capOpenReserves, current.suppliers)}.`)
@@ -233,25 +245,37 @@ export async function prepareSandboxBusiness(
       "No mandate was signed, so your agent can't book yet. Run npm start again to sign one.",
     )
   }
-  const signer = await openRoot()
+  const v = await open()
+  const root = rootOf(v)
+  if (!item.record) {
+    throw new Error(
+      "The business's sealed record is missing from .avow/business.json, so the runner can't tell which agent keys to revoke. Restore the file, or start over with npm run fresh.",
+    )
+  }
+  const { fromBlock } = JSON.parse(
+    new TextDecoder().decode(await v.open('record', item.record)),
+  ) as {
+    fromBlock: string
+  }
+  const since = BigInt(fromBlock)
+
+  // The revocation goes first, in a transaction of its own, so nothing after it can stop it.
+  const live = await revokeOtherAgentKeys({ client, root, fromBlock: since })
+  if (live.length > 0) {
+    log(
+      `Revoked ${live.length} agent key${live.length === 1 ? '' : 's'} the account's keychain still authorized.`,
+    )
+  }
   const profiles = await Promise.all(
     suppliers.map(async (s) => (await connectSupplier(s, send)).profile),
   )
-  // The suppliers the old mandate allowed and the new one drops come off the lock too.
-  const dropped = agent
-    ? await Promise.all(
-        agent.suppliers
-          .filter((s) => !ids.includes(s.id))
-          .map(async (s) => (await connectSupplier(s, send)).profile.account),
-      )
-    : []
   const agentPrivateKey = generatePrivateKey()
-  const agentKey = Account.fromSecp256k1(agentPrivateKey, { access: signer.address })
+  const agentKey = Account.fromSecp256k1(agentPrivateKey, { access: root.address })
   const now = systemClock()
   const mandate = sandboxMandate({
     businessId: business.businessId,
     agentId: `agt_${agentKey.accessKeyAddress.slice(2, 12).toLowerCase()}`,
-    account: signer.address,
+    account: root.address,
     agentKey: agentKey.accessKeyAddress,
     suppliers: ids,
     token: deployment.token,
@@ -259,19 +283,14 @@ export async function prepareSandboxBusiness(
     capOpenReserves: authority,
     expiry: now + 7n * DAY,
   })
-  const previousKey = agent
-    ? Account.fromSecp256k1(agent.agentKey, { access: signer.address })
-    : null
   const enrolled = await enrollSandboxAgent({
     deployment,
     client,
-    root: signer,
+    root,
     agent: agentKey,
     lock,
     mandate,
     suppliers: profiles,
-    ...(previousKey ? { revoke: previousKey.accessKeyAddress } : {}),
-    remove: dropped,
     fetch: send,
   })
   const next: AgentItem = {
@@ -284,20 +303,32 @@ export async function prepareSandboxBusiness(
   }
   await saveAgentItem(store, next)
   log(`Signed and enrolled your agent's mandate: ${authorityText(authority, ids)}.`)
-  if (agent && current) {
-    log(
-      "Revoked the previous agent key in the account's keychain, so it can't sign for the account again.",
-    )
-    if (dropped.length > 0)
-      log(`Removed ${dropped.length} supplier the new mandate drops from the lock.`)
-    await showPreviousBookings({ store, client, previous: agent.mandateHash, log })
+
+  // Each supplier the lock approves that the new mandate doesn't name comes off on its own, so one
+  // that fails leaves the others done, and the person hears which.
+  const keep = profiles.map((p) => p.account)
+  const dropped = (await approvedSuppliers(client, lock, since)).filter(
+    (a) => !keep.some((k) => isAddressEqual(k, a)),
+  )
+  for (const supplier of dropped) {
+    try {
+      await sendOwn({ client, account: root, calls: [removeSupplierCall(lock, supplier)] })
+      log(`Took supplier ${supplier} off the lock, since the new mandate doesn't name it.`)
+    } catch (error) {
+      log(
+        `Supplier ${supplier} is still approved on the lock: ${error instanceof Error ? error.message : String(error)}. The new mandate doesn't name it, so Avow won't approve a reserve for it.`,
+      )
+    }
+  }
+  await showHeldBookings({ store, client, current: enrolled.mandateHash, log })
+  if (current) {
     const session = checkSession(
       options.session !== undefined ? options.session : platformSession(),
     )
     if (session) {
       sessionReporter({
         session,
-        key: rootRequestKey(signer),
+        key: rootRequestKey(root),
         domain,
         apiUrl: deployment.apiUrl,
         fetch: send,
@@ -312,19 +343,19 @@ export async function prepareSandboxBusiness(
       })
     }
   }
-  root = null
+  vault = null
   return prepared(next, true)
 }
 
-/** Lists what the lock still holds under the previous authority, which stays until release. */
-async function showPreviousBookings(m: {
+/** Lists what the lock still holds under an earlier authority, which stays until its release. */
+async function showHeldBookings(m: {
   store: SandboxStore
   client: SandboxClient
-  previous: Hex
+  current: Hex
   log: (line: string) => void
 }): Promise<void> {
   const earlier = (await loadCommitments(m.store)).filter(
-    (c) => c.mandateHash.toLowerCase() === m.previous.toLowerCase(),
+    (c) => c.mandateHash.toLowerCase() !== m.current.toLowerCase(),
   )
   const held = (
     await Promise.all(
@@ -342,11 +373,8 @@ async function showPreviousBookings(m: {
     ({ backing }) =>
       backing && ['reserved', 'accepted', 'charge_pending', 'paused'].includes(backing.state),
   )
-  if (held.length === 0) {
-    m.log('Nothing booked under the previous authority is still held.')
-    return
-  }
-  m.log('Bookings made under the previous authority stay held in the lock until their release:')
+  if (held.length === 0) return
+  m.log('Bookings made under an earlier authority stay held in the lock until their release:')
   for (const { c, backing } of held) {
     const release = backing ? new Date(Number(backing.releaseDate) * 1000).toISOString() : 'unknown'
     m.log(`  ${formatUsd(c.amount)} with ${c.supplier}, ${backing?.state}, released at ${release}`)

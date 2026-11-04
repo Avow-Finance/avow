@@ -7,8 +7,9 @@ import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import { MODERATO_FACTORY } from '../moderato.js'
+import { saveBusinessItem } from '../sandbox/business-store.js'
 import { sandboxMandate } from '../sandbox/mandate.js'
-import { saveAgentItem, saveBusinessItem } from '../sandbox/store.js'
+import { saveAgentItem } from '../sandbox/store.js'
 import { sealKey } from '../sandbox/vault.js'
 import { accountSigner, signMandate } from '../sign.js'
 import { fileStore } from './platform.js'
@@ -83,6 +84,7 @@ describe("the agent's process", () => {
     await saveBusinessItem(store, {
       account: root.address,
       key: await sealKey(rootKey, PASSPHRASE, root.address),
+      record: null,
       business,
     })
     const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: LOCK }
