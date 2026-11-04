@@ -31,6 +31,12 @@ try {
   )
 } catch (error) {
   if (!(error instanceof Refusal)) throw error
-  console.log(`Refused by ${error.layer}: ${error.code}`)
+  // A refusal names who refused, and a reserve that never landed with no reason given failed.
+  console.log(
+    error.layer === 'unknown'
+      ? `Failed: ${error.code}`
+      : `Refused by ${error.layer}: ${error.code}`,
+  )
+  // What was refused and why, then when the same booking could pass.
   console.log(error.message)
 }

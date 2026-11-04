@@ -8,6 +8,7 @@ import {
   parseSessionEvent,
   parseSessionEventAnswer,
   parseSessionEventPost,
+  refusalReason,
   refusalSentence,
   SANDBOX_PATHS,
   SESSION_EVENT_TYPES,
@@ -127,6 +128,23 @@ describe('session events', () => {
   })
 })
 
+describe('refusalSentence', () => {
+  it('gives the refusal, then when the same booking could pass, in one sentence for every side', () => {
+    const amounts = {
+      needed: dollars(400),
+      left: dollars(300),
+      authority: dollars(500),
+      dailyLimit: dollars(1000),
+      dailyLeft: dollars(800),
+    }
+    const r = { code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts } as const
+    expect(refusalSentence(r)).toBe(`${refusalReason(r)} ${whenRetryPasses(r)}`)
+    expect(refusalSentence(r)).toMatch(
+      /^This booking needs \$400 and your agent has \$300 left of its \$500 held at once, so Avow refused .* The same booking can pass once enough of what the agent holds is released/,
+    )
+  })
+})
+
 describe('whenRetryPasses', () => {
   it('says when the same booking could pass, for each way it was refused', () => {
     expect(whenRetryPasses({ code: 'mandate.over_open_reserves_cap', layer: 'avow' })).toMatch(
@@ -145,12 +163,12 @@ describe('whenRetryPasses', () => {
       /only once the business signs a new mandate/,
     )
     expect(whenRetryPasses({ code: 'chain.reserve_missing', layer: 'unknown' })).toMatch(
-      /might pass if you try again/,
+      /^The same booking might pass if you try again\.$/,
     )
   })
 })
 
-describe('refusalSentence', () => {
+describe('refusalReason', () => {
   const amounts = {
     needed: dollars(400),
     left: dollars(300),
@@ -162,16 +180,14 @@ describe('refusalSentence', () => {
     "The lock takes no reserve without Avow's approval, and your agent's key moves at most $500 a day, a limit your business set on chain."
 
   it('says what the booking needs, what authority is left, who refused and what the chain holds', () => {
-    expect(
-      refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts }),
-    ).toBe(
+    expect(refusalReason({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })).toBe(
       `This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. ${onChain}`,
     )
-    expect(refusalSentence({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
+    expect(refusalReason({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
       `This booking needs $400, more than your agent's $500 held at once, so the SDK refused the reserve and no money moved. ${onChain}`,
     )
     expect(
-      refusalSentence({
+      refusalReason({
         code: 'mandate.over_open_reserves_cap',
         layer: 'avow',
         amounts: { ...amounts, dailyLimit: null },
@@ -182,11 +198,11 @@ describe('refusalSentence', () => {
   })
 
   it("says Avow's relay and the account's keychain refused when they did", () => {
-    expect(refusalSentence({ code: 'sponsorship.rate_limited', layer: 'relay', amounts })).toMatch(
+    expect(refusalReason({ code: 'sponsorship.rate_limited', layer: 'relay', amounts })).toMatch(
       /^Avow's relay refused this \$400 booking and no money moved\./,
     )
     expect(
-      refusalSentence({
+      refusalReason({
         code: 'keychain.over_daily_limit',
         layer: 'keychain',
         amounts: { ...amounts, dailyLeft: dollars(200) },
@@ -197,22 +213,20 @@ describe('refusalSentence', () => {
   })
 
   it('says so when nothing gave a reason', () => {
-    expect(refusalSentence({ code: 'chain.reserve_missing', layer: 'unknown', amounts })).toBe(
+    expect(refusalReason({ code: 'chain.reserve_missing', layer: 'unknown', amounts })).toBe(
       'The reserve for this $400 booking never landed, and nothing on the way said why, so no money moved.',
     )
   })
 
   it("says the lock refused when it did, and nothing it can't back", () => {
-    expect(
-      refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'lock', amounts }),
-    ).toBe(
+    expect(refusalReason({ code: 'mandate.over_open_reserves_cap', layer: 'lock', amounts })).toBe(
       'This booking needs $400 and your agent has $300 left of its $500 held at once, so the lock refused the reserve and no money moved.',
     )
-    expect(refusalSentence({ code: 'sponsorship.simulation_failed', layer: 'lock', amounts })).toBe(
+    expect(refusalReason({ code: 'sponsorship.simulation_failed', layer: 'lock', amounts })).toBe(
       "The lock refused this $400 booking and no money moved. The transaction fails when it runs on the latest block, so Avow's relay won't pay for it.",
     )
     for (const layer of ['sdk', 'avow', 'lock'] as const) {
-      expect(refusalSentence({ code: 'mandate.expired', layer, amounts })).not.toMatch(
+      expect(refusalReason({ code: 'mandate.expired', layer, amounts })).not.toMatch(
         /would refuse|even with/,
       )
     }

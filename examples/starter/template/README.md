@@ -24,7 +24,7 @@ Each time you press Enter, it runs `agent.ts` once. Afterwards it shows what you
 ## What to try
 
 1. Press Enter. The agent books 8 H100s for an hour with a $200 reserve. It prints the commitment's reference and a link anyone can open to check it. Your machine then runs the open verifier. It checks Avow's approval against your terms and your mandate, checks that a lock Avow's factory made holds the commitment and enforces your terms, and checks that your agent's key is on your account under your mandate. Then the supplier accepts.
-2. Change `reserve` in `agent.ts` to 400 and press Enter. Your agent has $300 left of its $500 held at once, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The SDK checks nothing past the mandate, so the refusal comes from Avow.
+2. Change `reserve` in `agent.ts` to 400 and press Enter. Your agent has $300 left of its $500 held at once, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it, the amounts and when the same booking could pass. The SDK checks nothing past the mandate, so the refusal comes from Avow.
 3. Change `reserve` to 250 and press Enter. It fits, so the agent makes a second commitment under the same authority.
 4. Change `authority` in `business.ts` and press Enter. `npm start` asks you to confirm the new mandate and type the passphrase. It revokes every other key on your account, read from the chain, so no old key can sign for you again, and enrolls a new one. Bookings made under the old authority stay held in the lock until their release, and it lists them.
 
@@ -41,7 +41,7 @@ npm run mcp:claude-code      # then run claude in this folder
 npm run mcp:claude-desktop   # then restart Claude Desktop
 ```
 
-With nothing else held, ask Claude to book $200 of GPU compute, and it's reserved and accepted. Ask it to book another $400, and Avow refuses it with $300 left of your $500 held at once. Claude gets the same reason code, layer and sentence you'd see, and it's told when the same booking could pass, here once a held booking ends or is cancelled, or once your business raises the authority.
+With nothing else held, ask Claude to book $200 of GPU compute, and it's reserved and accepted. Ask it to book another $400, and Avow refuses it with $300 left of your $500 held at once. Claude gets the same reason code, layer and sentence you'd see, and the sentence says when the same booking could pass, here once a held booking ends or is cancelled, or once your business raises the authority.
 
 ## What holds
 

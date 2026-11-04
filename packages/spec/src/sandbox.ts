@@ -313,14 +313,22 @@ const WHO: Record<RefusalLayer, string> = {
 }
 
 /**
- * A refusal in plain words with its amounts, so the developer's terminal and the session's screen
- * say the same thing from the same event. A refusal by the SDK or by Avow goes on to say what the
- * chain holds without trusting either. The lock takes no reserve without Avow's approval, and the
- * account's keychain holds the agent's key to the daily limit the business set. The caps the lock
- * checks are the ones Avow's approval carries, so the sentence never says the lock would refuse
- * what Avow approved.
+ * A refusal in plain words with its amounts, then when the same booking could pass, so the
+ * developer's terminal, a model's MCP tools and the session's screen say the same thing from the
+ * same event.
  */
 export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
+  return `${refusalReason(r)} ${whenRetryPasses(r)}`
+}
+
+/**
+ * The first part of `refusalSentence`, the refusal and its amounts. A refusal by the SDK or by
+ * Avow goes on to say what the chain holds without trusting either. The lock takes no reserve
+ * without Avow's approval, and the account's keychain holds the agent's key to the daily limit the
+ * business set. The caps the lock checks are the ones Avow's approval carries, so the sentence
+ * never says the lock would refuse what Avow approved.
+ */
+export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
   const { needed, left, authority, dailyLimit, dailyLeft } = r.amounts
   const onChain =
@@ -364,7 +372,7 @@ const RELAY_FOR_NOW: readonly ReasonCode[] = [
  */
 export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
   if (r.layer === 'unknown') {
-    return 'Nothing said why it failed, so the same booking might pass if you try again.'
+    return 'The same booking might pass if you try again.'
   }
   if (r.layer === 'keychain') {
     return "The same booking can pass once the key's day starts again, or once the business raises the daily limit on chain. Reserves cancelled today still count until then."

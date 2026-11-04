@@ -56,7 +56,7 @@ export const MCP_TOOLS = [
   {
     name: 'book',
     description:
-      "Books GPU capacity with one of your agent's suppliers, backed by a reserve in your business's own lock. Avow checks the booking against the mandate and what the lock holds before any money moves, the agent's machine runs the open verifier, and the supplier accepts on the lock. A refusal comes back with its reason code, the layer that refused it, the amounts and when the same booking could pass. Held reserves come back as bookings end or are cancelled, the key's daily limit starts again each day, Avow's relay can be limiting how much it takes for now, and anything else in the mandate changes only when the business signs a new one.",
+      "Books GPU capacity with one of your agent's suppliers, backed by a reserve in your business's own lock. Avow checks the booking against the mandate and what the lock holds before any money moves, the agent's machine runs the open verifier, and the supplier accepts on the lock. A refusal comes back with its reason code, the layer that refused it, the amounts and when the same booking could pass. A reserve that never landed with no reason given comes back as a failure. Held reserves come back as bookings end or are cancelled, the key's daily limit starts again each day, Avow's relay can be limiting how much it takes for now, and anything else in the mandate changes only when the business signs a new one.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -198,10 +198,14 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
       if (!(error instanceof Refusal)) throw error
       const dollars = (micros: bigint | null) =>
         micros === null ? null : Number(micros) / 1_000_000
+      // A reserve that never landed with no reason given is a failure, and nothing refused it.
+      const failed = error.layer === 'unknown'
       return {
-        text: `Refused by ${error.layer}, with reason code ${error.code}. ${error.message} ${whenRetryPasses(error)}`,
+        text: failed
+          ? `The booking failed, with reason code ${error.code}. ${error.message}`
+          : `Refused by ${error.layer === 'sdk' ? 'the SDK' : error.layer}, with reason code ${error.code}. ${error.message}`,
         structured: {
-          status: 'refused',
+          status: failed ? 'failed' : 'refused',
           code: error.code,
           layer: error.layer,
           sentence: error.message,
@@ -299,7 +303,7 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
             capabilities: { tools: { listChanged: false } },
             serverInfo: SERVER,
             instructions:
-              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. The agent commits the business only within the mandate the business signed. A refusal is the real answer from Avow, its relay, the lock or the account's keychain, and it says when the same booking could pass.",
+              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. The agent commits the business only within the mandate the business signed. A refusal comes from the SDK checking the mandate on this machine, from Avow, from Avow's relay, from the lock or from the account's keychain. It names which, gives the reason code and the amounts, and says when the same booking could pass. A reserve that never landed with no reason given comes back as a failure, and the same booking might pass on another try.",
           },
         })
         return

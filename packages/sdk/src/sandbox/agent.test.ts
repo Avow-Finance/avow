@@ -41,7 +41,7 @@ describe('Refusal', () => {
     expect(r).toBeInstanceOf(Error)
     expect(r).toMatchObject({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })
     expect(r.message).toBe(
-      "This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval, and your agent's key moves at most $500 a day, a limit your business set on chain.",
+      "This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval, and your agent's key moves at most $500 a day, a limit your business set on chain. The same booking can pass once enough of what the agent holds is released, when a booking ends or is cancelled, or once the business raises the authority.",
     )
   })
 
