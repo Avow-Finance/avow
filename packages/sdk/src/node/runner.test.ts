@@ -1,10 +1,12 @@
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { newSessionId } from '@avow-finance/spec'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  checkTerminal,
   childEnv,
   childrenAlive,
   ensureChildrenGone,
@@ -16,6 +18,18 @@ import {
 afterEach(() => {
   delete process.env.AVOW_ANYTHING
 })
+
+// The runner as a process in a terminal loads it, from the build.
+const RUNNER = join(
+  dirname(new URL(import.meta.url).pathname),
+  '..',
+  '..',
+  'dist',
+  'node',
+  'runner.js',
+)
+const canMakeTerminal =
+  process.platform === 'linux' && spawnSync('script', ['--version']).status === 0
 
 describe('the runner', () => {
   it("gives a child the runner's environment with every AVOW_ variable taken out", () => {
@@ -129,5 +143,51 @@ setTimeout(() => process.exit(0), 300)
     expect(await next).toBe('y')
     expect(shown).not.toContain('correct horse')
     expect(prompts.history()).toEqual([])
+  })
+
+  it.skipIf(!canMakeTerminal)(
+    "won't ask for the passphrase while a process that left its group holds the terminal",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'avow-terminal-'))
+      writeFileSync(
+        join(dir, 'check.mjs'),
+        `import { spawn } from 'node:child_process'
+import { readlinkSync } from 'node:fs'
+const { checkTerminal, otherTerminalHolders } = await import(${JSON.stringify(RUNNER)})
+const before = otherTerminalHolders()
+// A process the agent started in a session of its own, holding the terminal open to listen.
+const device = readlinkSync('/proc/self/fd/0')
+const listener = spawn(process.execPath, ['-e', "require('fs').openSync(process.argv[1], 'r'); setTimeout(() => {}, 30000)", device], { detached: true, stdio: 'ignore' })
+listener.unref()
+await new Promise((resolve) => setTimeout(resolve, 800))
+const after = otherTerminalHolders()
+let refused = null
+try { checkTerminal(() => {}) } catch (error) { refused = error.message }
+process.kill(listener.pid, 'SIGKILL')
+console.log(JSON.stringify({ before, after, refused, pid: listener.pid }))
+`,
+      )
+      const ran = spawnSync('script', ['-qec', `${process.execPath} check.mjs`, '/dev/null'], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 20_000,
+      })
+      const seen = JSON.parse(ran.stdout.trim().split('\n').pop() ?? '{}') as {
+        before: unknown[]
+        after: { pid: number }[]
+        refused: string | null
+        pid: number
+      }
+      expect(seen.before).toEqual([])
+      expect(seen.after.map((p) => p.pid)).toEqual([seen.pid])
+      expect(seen.refused).toMatch(`process ${seen.pid}) has this terminal open and could read`)
+    },
+    30_000,
+  )
+
+  it('says so before the passphrase when it has no terminal to look at', () => {
+    const lines: string[] = []
+    checkTerminal((line) => lines.push(line))
+    expect(lines.join('')).toMatch(/can't see what else has this terminal open/)
   })
 })

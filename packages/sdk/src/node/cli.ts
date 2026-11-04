@@ -11,7 +11,13 @@ import { prepareSandboxBusiness, type SandboxPrompts } from '../sandbox/setup.js
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
-import { ensureChildrenGone, readBusinessConfig, runAgent, terminalPrompts } from './runner.js'
+import {
+  checkTerminal,
+  ensureChildrenGone,
+  readBusinessConfig,
+  runAgent,
+  terminalPrompts,
+} from './runner.js'
 
 /**
  * `avow-sandbox` runs a sandbox agent the way a developer works on one, with the business and the
@@ -63,6 +69,7 @@ async function main(args: readonly string[]): Promise<void> {
   const prompts: SandboxPrompts = {
     async newPassphrase() {
       await ensureChildrenGone()
+      checkTerminal()
       for (;;) {
         const first = await input.ask(
           `Choose a passphrase for your business's key, at least ${MIN_PASSPHRASE} characters: `,
@@ -79,6 +86,7 @@ async function main(args: readonly string[]): Promise<void> {
     },
     async passphrase() {
       await ensureChildrenGone()
+      checkTerminal()
       const typed = await input.ask("Passphrase for your business's key: ", true)
       if (typed === null) throw new Error('No passphrase was typed.')
       return typed
