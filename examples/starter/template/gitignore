@@ -1,0 +1,4 @@
+node_modules/
+# Your business's sealed key and your agent's key live here. Never commit them.
+.avow/
+.avow-*/

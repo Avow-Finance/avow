@@ -1,0 +1,22 @@
+{
+  "name": "@avow-examples/starter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The terminal starter for Avow's sandbox: one command makes a folder holding agent.ts, and npm start gives its agent $500 of authority on Tempo's testnet",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "create-avow-agent": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "host": "node dist/pack.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@avow-finance/spec": "workspace:*",
+    "viem": "2.57.11"
+  }
+}

@@ -3,14 +3,22 @@ title: Run all four in an hour
 slug: docs/walkthroughs/overview
 ---
 
-These walkthroughs take one person through the four things Avow has to get right, using the buyer and supplier quickstarts on one machine against Avow's hosted testnet service. You play both sides. The buyer quickstart is a business and its agent, and the supplier quickstart is the business the agent books from. Every amount is test tUSD on Tempo's Moderato testnet, so nothing here moves real money.
+These walkthroughs take one person through the four things Avow has to get right. Start with the [agent starter](https://github.com/Avow-Finance/avow/tree/main/examples/starter), which shows limits holding in two minutes. Its sandbox registers your business and pays it test dollars, then your agent books within its authority, Avow refuses a booking past what's left, and the agent books again. The agent runs with only its own key, and the business's key stays sealed under your passphrase.
+
+```bash
+npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
+cd my-agent
+npm start
+```
+
+The rest run the buyer and supplier quickstarts on one machine against Avow's hosted testnet service, and you play both sides. The buyer quickstart is a business and its agent, and the supplier quickstart is the business the agent books from. Every amount is test tUSD on Tempo's Moderato testnet, so nothing here moves real money.
 
 | Walkthrough | What it shows |
 | --- | --- |
 | [A kept booking](/docs/walkthroughs/kept-booking) | The supplier accepts, and the whole reserve goes back to the business at its release date |
 | [A capped charge](/docs/walkthroughs/capped-charge) | The business cancels late, and the supplier is paid no more than the late-cancellation amount |
 | [A disputed charge](/docs/walkthroughs/dispute) | The business contests a charge, the lock pauses it, Avow rules, and the lock pays as ruled |
-| [Limits that hold](/docs/walkthroughs/limits) | A booking over the agent's limits is refused with a reason code |
+| [Limits that hold](/docs/walkthroughs/limits) | A booking over the agent's limits is refused with a reason code, which the starter shows first |
 
 ## Set up both sides once
 
@@ -23,7 +31,7 @@ export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
 (cd examples/supplier && node dist/main.js init)
 ```
 
-The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. Send all of them, with a name and country for each business, to the person at Avow who invited you to the testnet. Avow registers each business by hand, and nothing past this point works until it has. It sends each buyer's account enough test tUSD for three $500 reserves, and sends you these settings.
+The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. The quickstarts don't register through the sandbox yet, so send all of them, with a name and country for each business, to the person at Avow who invited you to the testnet. Nothing past this point works until Avow has registered them. Avow sends each buyer's account enough test tUSD for three $500 reserves, and sends you each business id. The other settings are the testnet's own, published at https://try.testnet.avow.finance/config.json.
 
 | Setting | Side | What it is |
 | --- | --- | --- |

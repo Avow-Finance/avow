@@ -10,11 +10,40 @@ layout: overview
 
 Avow runs on testnet today. Nothing here moves real money.
 
+## Get started
+
+<Steps>
+  <Step title="Make your agent">
+    You need Node 20 or later. One command makes a folder holding `business.ts`, your business, `agent.ts`, your agent, and a README.
+
+  ```bash
+  npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
+  ```
+
+  </Step>
+
+  <Step title="Set it up">
+    `npm start` makes your business's key on your machine and seals it under a passphrase you choose, in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, and creates the business's lock. It shows you the mandate it's about to sign from `business.ts`, asks you to confirm it and type the passphrase, and enrolls your agent. Then it opens a screen that shows each run as it happens.
+
+  ```bash
+  cd my-agent
+  npm start
+  ```
+
+  </Step>
+
+  <Step title="See what your agent can and can't commit you to">
+    Press Enter and the agent books 8 H100s with a $200 reserve, in a process that holds only the agent's key. Your machine runs the open verifier, which checks Avow's approval against your terms and mandate, and checks that a lock Avow's factory made holds the commitment and enforces your terms. Then the supplier accepts. Change the reserve to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The lock takes no reserve without Avow's approval, and your agent's key can't move more than the daily limit your business set on chain. A $250 booking then passes as a second commitment under the same authority.
+  </Step>
+</Steps>
+
+When you want both sides of a booking, with cancellations, charges and disputes, the [walkthroughs](/docs/walkthroughs/overview) run the buyer and supplier quickstarts.
+
 ## Build with Avow
 
 <CardGroup cols={2}>
   <Card title="How Avow works" icon="duotone book" href="/docs/get-started/introduction">
-    Authority, commitments, reserves and how one commitment can rely on another.
+    Authority, commitments, reserves, and how one commitment will rely on another next.
   </Card>
 
   <Card title="Avow explained simply" icon="duotone lightbulb" href="/docs/get-started/avow-explained-simply">
@@ -29,40 +58,3 @@ Avow runs on testnet today. Nothing here moves real money.
     Check an agent's authority and its reserve, then accept the booking.
   </Card>
 </CardGroup>
-
-## Get started
-
-<Steps>
-  <Step title="Build the quickstarts">
-    The SDK isn't on npm yet, so the quickstarts run from the repository. You need Node 22.12 or later and pnpm 10. Without pnpm, install it with `npm install -g pnpm@10`, adding `sudo` if npm asks for permission.
-
-  ```bash
-  git clone https://github.com/Avow-Finance/avow.git
-  cd avow
-  pnpm install
-  pnpm --filter "@avow-examples/buyer..." --filter "@avow-examples/supplier..." build
-  ```
-
-  </Step>
-
-  <Step title="Create your test businesses">
-    Make a buyer and a supplier, and send their addresses to the person at Avow who invited you to the testnet. Avow registers each business by hand and sends you the settings both quickstarts need. [Set up both sides once](/docs/walkthroughs/overview) gives every command and setting.
-
-  ```bash
-  export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
-  (cd examples/buyer && node dist/main.js init)
-  (cd examples/supplier && node dist/main.js init)
-  ```
-
-  </Step>
-
-  <Step title="Make your first booking">
-    With the supplier's `serve` running in its own terminal, authorize the agent from the buyer quickstart and book. The [walkthroughs](/docs/walkthroughs/overview) go on to cancelling, reporting a charge and contesting it.
-
-  ```bash
-  node dist/main.js enroll
-  node dist/main.js book --until-released
-  ```
-
-  </Step>
-</Steps>

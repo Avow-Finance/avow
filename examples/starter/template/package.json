@@ -1,0 +1,16 @@
+{
+  "name": "my-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "avow-sandbox start",
+    "fresh": "avow-sandbox fresh"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "https://try.testnet.avow.finance/avow-finance-sdk.tgz",
+    "tsx": "4.23.15"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -14,6 +14,7 @@ import {
   FACTORY_ABI,
   httpAvowApi,
   httpBusinessRecords,
+  httpSupplier,
   moderatoClient,
   moderatoUsdToken,
   postContestStatement,
@@ -46,7 +47,6 @@ import {
   initSettings,
 } from './settings.js'
 import { type BuyerSetup, BuyerStore } from './store.js'
-import { httpSupplier } from './supplier.js'
 
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`)
 
