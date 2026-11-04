@@ -14,7 +14,7 @@ Avow runs on testnet today. Nothing here moves real money.
 
 <Steps>
   <Step title="Make your agent">
-    You need Node 20 or later. One command makes a folder holding `agent.ts`, the only file you edit, and a README.
+    You need Node 20 or later. One command makes a folder holding `business.ts`, your business, `agent.ts`, your agent, and a README.
 
   ```bash
   npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
@@ -23,7 +23,7 @@ Avow runs on testnet today. Nothing here moves real money.
   </Step>
 
   <Step title="Set it up">
-    `npm start` makes your business's keys on your machine and keeps them in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, creates the business's lock, and signs and enrolls your agent's mandate. Then it opens a screen that shows each run as it happens.
+    `npm start` makes your business's key on your machine and seals it under a passphrase you choose, in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, and creates the business's lock. It shows you the mandate it's about to sign from `business.ts`, asks you to confirm it and type the passphrase, and enrolls your agent. Then it opens a screen that shows each run as it happens.
 
   ```bash
   cd my-agent
@@ -33,7 +33,7 @@ Avow runs on testnet today. Nothing here moves real money.
   </Step>
 
   <Step title="See what your agent can and can't commit you to">
-    Press Enter and the agent books 8 H100s with a $200 reserve. Your machine runs the open verifier, the same checks the supplier runs, and the supplier accepts. Change the reserve to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The lock takes no reserve without Avow's approval, and your agent's key can't move more than the daily limit your business set on chain. A $250 booking then passes as a second commitment under the same authority.
+    Press Enter and the agent books 8 H100s with a $200 reserve, in a process that holds only the agent's key. Your machine runs the open verifier, which checks Avow's approval against your terms and mandate, and checks that a lock Avow's factory made holds the commitment and enforces your terms. Then the supplier accepts. Change the reserve to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The lock takes no reserve without Avow's approval, and your agent's key can't move more than the daily limit your business set on chain. A $250 booking then passes as a second commitment under the same authority.
   </Step>
 </Steps>
 
