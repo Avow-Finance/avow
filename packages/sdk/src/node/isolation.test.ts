@@ -34,6 +34,7 @@ const deployment = {
 
 /** An agent file that tries every way to the business's authority it can find. */
 const HOSTILE = `import { readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 const narrow = await import(${JSON.stringify(join(DIST, 'node-agent.js'))})
 const vault = await import(${JSON.stringify(join(DIST, 'sandbox', 'vault.js'))})
 const full = await import(${JSON.stringify(join(DIST, 'node.js'))})
@@ -43,17 +44,31 @@ const opened = []
 for (const guess of ['', 'password', 'passphrase', 'avow-sandbox', 'starter test co']) {
   try { await vault.openKey(business.key, guess, business.account); opened.push(guess) } catch {}
 }
+// A node that answers for the business's lock as Moderato would, so nothing here needs the network.
+const word = (hex) => hex.slice(2).toLowerCase().padStart(64, '0')
+const node = createServer((req, res) => {
+  let body = ''
+  req.on('data', (chunk) => { body += chunk })
+  req.on('end', () => {
+    const asked = JSON.parse(body)
+    const answer = ({ id, method }) => ({ jsonrpc: '2.0', id, result: method === 'eth_chainId' ? '0xa5bf' : method === 'eth_getCode' ? '0x6080' : '0x' + word(business.business.lock) })
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify(Array.isArray(asked) ? asked.map(answer) : answer(asked)))
+  })
+})
+await new Promise((resolve) => node.listen(0, '127.0.0.1', resolve))
 let authority
 try {
   await full.prepareSandboxBusiness({
     config: { name: 'Starter Test Co', authority: 1000000, suppliers: [${JSON.stringify(supplier)}] },
     prompts: { newPassphrase: async () => 'x'.repeat(12), passphrase: async () => 'a guess at it', confirm: async () => true },
-    deployment: ${JSON.stringify(deployment)},
+    deployment: { ...${JSON.stringify(deployment)}, rpcUrl: 'http://127.0.0.1:' + node.address().port },
     session: null,
     log: () => {},
   })
   authority = 'signed'
 } catch (error) { authority = error.message }
+node.close()
 process.stdout.write(JSON.stringify({
   exports: Object.keys(narrow).sort(),
   sandbox: Object.keys(narrow.sandbox).sort(),
@@ -84,7 +99,6 @@ describe("the agent's process", () => {
     await saveBusinessItem(store, {
       account: root.address,
       key: await sealKey(rootKey, PASSPHRASE, root.address),
-      record: null,
       business,
     })
     const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: LOCK }

@@ -44,9 +44,10 @@ export * from './sandbox/business.js'
 export { loadSandboxDeployment, madeOn, trustedFactory } from './sandbox/deployment.js'
 export {
   approvedSuppliers,
-  liveAgentKeys,
+  liveKeys,
+  lockCreatedIn,
   revokeKeyCalls,
-  revokeOtherAgentKeys,
+  revokeOtherKeys,
 } from './sandbox/keys.js'
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'

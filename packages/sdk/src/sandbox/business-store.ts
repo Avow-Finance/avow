@@ -7,21 +7,18 @@ import {
   type StoredBusiness,
   write,
 } from './store.js'
-import { isSealedBlob, isSealedKey, type SealedBlob, type SealedKey } from './vault.js'
+import { isSealedKey, type SealedKey } from './vault.js'
 
 /**
  * The business's item, which only the runner reads: the business account, its root key sealed
- * under the passphrase, a record sealed under the same passphrase, and its registration. Nothing on
+ * under the passphrase, and its registration. The sealed key is bound to the account, so a changed
+ * account only stops the key from opening. The runner checks the registration against the chain
+ * before it relies on it, since anything running as the developer can write this file. Nothing on
  * the agent's side imports this module.
  */
 export interface BusinessItem {
   account: Address
   key: SealedKey
-  /**
-   * The block the business was set up from, sealed so nothing that can write the file can move it.
-   * The runner reads every agent key the account's keychain authorized since then from the chain.
-   */
-  record: SealedBlob | null
   business: StoredBusiness | null
 }
 
@@ -38,7 +35,6 @@ export async function loadBusinessItem(store: SandboxStore): Promise<BusinessIte
   return {
     account: json.account,
     key: json.key,
-    record: isSealedBlob(json.record) ? json.record : null,
     business: readBusiness(json.business),
   }
 }

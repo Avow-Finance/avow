@@ -86,7 +86,6 @@ describe("the sandbox's items", () => {
     await saveBusinessItem(store, {
       account: root.address,
       key: sealed,
-      record: null,
       business: null,
     })
     const text = (await store.read('business')) as string
