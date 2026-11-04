@@ -26,10 +26,12 @@ const reference: CommitmentReference = {
 
 /** One event of each type, as the starter posts them. */
 const events: SessionEvent[] = [
-  { type: 'run_started', run: 1 },
+  { type: 'run_started', run: 1, source: 'script', tool: null },
+  { type: 'run_started', run: 1, source: 'mcp', tool: 'book' },
   {
     type: 'authority_changed',
     run: 2,
+    source: 'business',
     authority: dollars(800),
     previous: dollars(500),
     suppliers: ['avow-demo-gpu'],
@@ -38,6 +40,7 @@ const events: SessionEvent[] = [
   {
     type: 'refused',
     run: 2,
+    source: 'mcp',
     code: 'mandate.over_open_reserves_cap',
     layer: 'avow',
     amounts: {
@@ -48,8 +51,8 @@ const events: SessionEvent[] = [
       dailyLeft: dollars(300),
     },
   },
-  { type: 'committed', run: 3, reference, amount: dollars(250) },
-  { type: 'accepted', run: 3, reference },
+  { type: 'committed', run: 3, source: 'script', reference, amount: dollars(250) },
+  { type: 'accepted', run: 3, source: 'script', reference },
 ]
 
 /** The event as it crosses JSON between the starter, Avow's API and the screen. */
@@ -85,18 +88,21 @@ describe('session events', () => {
   })
 
   it('refuses an unknown type, a field the schema lacks, or a value out of form', () => {
-    const refused = overJson(events[2]) as Record<string, unknown>
+    const refused = overJson(events[3]) as Record<string, unknown>
     const bad: unknown[] = [
-      { type: 'run_finished', run: 1 },
-      { type: 'run_started', run: 1, note: 'hello' },
-      { type: 'run_started', run: 0 },
+      { type: 'run_finished', run: 1, source: 'script', tool: null },
+      { type: 'run_started', run: 1, source: 'script', tool: null, note: 'hello' },
+      { type: 'run_started', run: 0, source: 'script', tool: null },
+      { type: 'run_started', run: 1, source: 'someone', tool: null },
+      { type: 'run_started', run: 1, source: 'mcp', tool: 'pay' },
+      { type: 'run_started', run: 1 },
       { ...refused, code: 'mandate.too_big' },
       { ...refused, layer: 'supplier' },
       {
         ...refused,
         amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null, dailyLeft: null },
       },
-      { ...(overJson(events[3]) as object), reference: { ...reference, kind: 'payment' } },
+      { ...(overJson(events[4]) as object), reference: { ...reference, kind: 'payment' } },
     ]
     for (const json of bad) expect(parseSessionEvent(json).ok).toBe(false)
     expect(parseSessionEventPost({ event: events[0], extra: 1 }).ok).toBe(false)
@@ -117,16 +123,16 @@ describe('refusalSentence', () => {
     dailyLeft: dollars(300),
   }
   const onChain =
-    "The lock takes no reserve without Avow's approval, and your agent's key can't move more than $500 a day, a limit your business set on chain."
+    "The lock takes no reserve without Avow's approval, and your agent's key moves at most $500 a day, a limit your business set on chain."
 
   it('says what the booking needs, what authority is left, who refused and what the chain holds', () => {
     expect(
       refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts }),
     ).toBe(
-      `This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. ${onChain}`,
+      `This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. ${onChain}`,
     )
     expect(refusalSentence({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
-      `This booking needs $400 and your agent's whole authority is $500, so the SDK refused the reserve and no money moved. ${onChain}`,
+      `This booking needs $400, more than your agent's $500 held at once, so the SDK refused the reserve and no money moved. ${onChain}`,
     )
     expect(
       refusalSentence({
@@ -135,7 +141,7 @@ describe('refusalSentence', () => {
         amounts: { ...amounts, dailyLimit: null },
       }),
     ).toBe(
-      "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval.",
+      "This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval.",
     )
   })
 
@@ -150,7 +156,7 @@ describe('refusalSentence', () => {
         amounts: { ...amounts, dailyLeft: dollars(200) },
       }),
     ).toBe(
-      "This booking needs $400 and your agent's key can move $200 more today, of its $500 daily limit, so your account's keychain refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.",
+      "This booking needs $400. Your agent had $300 left of its $500 held at once, so Avow approved it, but its key has $200 left of its $500 a day, so your account's keychain refused it and no money moved. Your business set that daily limit on chain, and no approval from Avow lifts it.",
     )
   })
 
@@ -164,7 +170,7 @@ describe('refusalSentence', () => {
     expect(
       refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'lock', amounts }),
     ).toBe(
-      'This booking needs $400 and your agent has $300 of authority left, so the lock refused the reserve and no money moved.',
+      'This booking needs $400 and your agent has $300 left of its $500 held at once, so the lock refused the reserve and no money moved.',
     )
     expect(refusalSentence({ code: 'sponsorship.simulation_failed', layer: 'lock', amounts })).toBe(
       "The lock refused this $400 booking and no money moved. The transaction fails when it runs on the latest block, so Avow's relay won't pay for it.",

@@ -1,9 +1,24 @@
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newSessionId } from '@avow-finance/spec'
 import { afterEach, describe, expect, it } from 'vitest'
-import { fileStore, nodePlatform, RUNNER_ENV } from './platform.js'
+import { fileStore, latestRun, nodePlatform, RUNNER_ENV, takeRun } from './platform.js'
+
+describe('takeRun', () => {
+  it('gives each run in a session its own number, whichever process takes it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'avow-runs-'))
+    const session = newSessionId()
+    expect(latestRun(dir, session)).toBe(0)
+    expect([takeRun(dir, session), takeRun(dir, session)]).toEqual([1, 2])
+    // Another process, such as the MCP server, takes run 3.
+    writeFileSync(join(dir, 'runs', session, '3'), '', { flag: 'wx' })
+    expect(takeRun(dir, session)).toBe(4)
+    expect(latestRun(dir, session)).toBe(4)
+    expect(takeRun(dir, newSessionId())).toBe(1)
+    expect(() => takeRun(dir, '../elsewhere')).toThrow(RangeError)
+  })
+})
 
 afterEach(() => {
   for (const name of Object.values(RUNNER_ENV)) delete process.env[name]

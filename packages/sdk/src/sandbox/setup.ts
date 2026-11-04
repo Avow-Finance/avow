@@ -4,11 +4,12 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { rootRequestKey } from '../http.js'
-import { FACTORY_ABI, removeSupplierCall } from '../lock.js'
+import { cancelFreeCall, FACTORY_ABI, removeSupplierCall } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { sendOwn } from '../send.js'
 import {
   checkSession,
+  dailyLimitOf,
   platformSession,
   platformStore,
   type SandboxSession,
@@ -39,8 +40,16 @@ export interface SandboxBusinessConfig {
   name: string
   /** Two capital letters, `US` when left out. */
   country?: string
-  /** The most the agent can hold in bookings at once, in dollars. Avow refuses a booking past it. */
+  /**
+   * The most the agent can hold in bookings at once, in dollars. Avow refuses a booking past it, and
+   * the lock checks each reserve against the caps in Avow's approval.
+   */
   authority: number
+  /**
+   * The most the agent's key can move in a day, in dollars, which the business sets on chain and the
+   * account's keychain holds whatever Avow approves. Twice the authority when left out.
+   */
+  dailyLimit?: number
   /** The suppliers the agent may book with, and no others. */
   suppliers: readonly SandboxSupplier[]
 }
@@ -105,8 +114,8 @@ const stepLine = (s: SandboxBusinessStep): string => {
   }
 }
 
-const authorityText = (cap: bigint, suppliers: readonly string[]) =>
-  `${formatUsd(cap)} at once, ${suppliers.join(', ')} only`
+const authorityText = (cap: bigint, daily: bigint | null, suppliers: readonly string[]) =>
+  `${formatUsd(cap)} held at once, ${daily === null ? 'no daily limit' : `${formatUsd(daily)} a day moved by the key`}, ${suppliers.join(', ')} only`
 
 /**
  * Whether the chain shows the agent's key live on the account and authorized for the mandate in
@@ -158,6 +167,8 @@ export async function prepareSandboxBusiness(
   const country = config.country ?? 'US'
   if (!/^[A-Z]{2}$/.test(country)) throw new RangeError('The country has to be two capital letters')
   const authority = micros(config.authority, 'authority')
+  const dailyLimit =
+    config.dailyLimit === undefined ? authority * 2n : micros(config.dailyLimit, 'daily limit')
   const suppliers = checkSuppliers(config.suppliers)
   const ids = suppliers.map((s) => s.id)
   const store = options.store ?? platformStore()
@@ -271,6 +282,7 @@ export async function prepareSandboxBusiness(
     !current ||
     current.capOpenReserves !== authority ||
     current.capPerCommitment !== authority ||
+    dailyLimitOf(current, deployment.token) !== dailyLimit ||
     [...current.suppliers].sort().join() !== [...ids].sort().join()
   const expiring = current !== undefined && current.expiry <= systemClock() + MANDATE_MARGIN
   const prepared = (a: AgentItem, signed: boolean): PreparedSandboxBusiness => ({
@@ -293,10 +305,12 @@ export async function prepareSandboxBusiness(
 
   const question = `${
     changed ? 'Sign a new mandate' : "Your agent's mandate expires within the hour. Sign a new one"
-  } as ${config.name}: ${authorityText(authority, ids)}? It revokes every other key on the account. y/N`
+  } as ${config.name}: ${authorityText(authority, dailyLimit, ids)}? It revokes every other key on the account. y/N`
   if (!(await prompts.confirm(question))) {
     if (agent && current) {
-      log(`Kept the current mandate: ${authorityText(current.capOpenReserves, current.suppliers)}.`)
+      log(
+        `Kept the current mandate: ${authorityText(current.capOpenReserves, dailyLimitOf(current, deployment.token), current.suppliers)}.`,
+      )
       return prepared(agent, false)
     }
     throw new Error(
@@ -335,6 +349,7 @@ export async function prepareSandboxBusiness(
     token: deployment.token,
     capPerCommitment: authority,
     capOpenReserves: authority,
+    dailyLimit,
     expiry: now + 7n * DAY,
   })
   const enrolled = await enrollSandboxAgent({
@@ -356,7 +371,7 @@ export async function prepareSandboxBusiness(
     suppliers,
   }
   await saveAgentItem(store, next)
-  log(`Signed and enrolled your agent's mandate: ${authorityText(authority, ids)}.`)
+  log(`Signed and enrolled your agent's mandate: ${authorityText(authority, dailyLimit, ids)}.`)
 
   // Each supplier the lock approves that the new mandate doesn't name comes off on its own, so one
   // that fails leaves the others done, and the person hears which.
@@ -390,6 +405,7 @@ export async function prepareSandboxBusiness(
       })({
         type: 'authority_changed',
         run: session.run,
+        source: 'business',
         authority,
         previous: current.capOpenReserves,
         suppliers: ids,
@@ -433,4 +449,45 @@ async function showHeldBookings(m: {
     const release = backing ? new Date(Number(backing.releaseDate) * 1000).toISOString() : 'unknown'
     m.log(`  ${formatUsd(c.amount)} with ${c.supplier}, ${backing?.state}, released at ${release}`)
   }
+}
+
+/**
+ * Cancels one of the agent's commitments on the lock before free cancellation ends, which gives
+ * the whole reserve back. It's the business's call, signed by its root key once the person types
+ * the passphrase, since the agent's key can't cancel on the lock.
+ */
+export async function cancelSandboxCommitment(options: {
+  commitmentId: Hex
+  prompts: Pick<SandboxPrompts, 'passphrase'>
+  store?: SandboxStore
+  screenUrl?: string
+  deployment?: SandboxDeployment
+  client?: SandboxClient
+  fetch?: typeof fetch
+}): Promise<Hex> {
+  const send = options.fetch ?? ((input, init) => fetch(input, init))
+  const store = options.store ?? platformStore()
+  if (!store) throw new Error('The business needs a store. In Node it uses the .avow folder.')
+  const item = await loadBusinessItem(store)
+  if (!item?.business) throw new Error('This folder has no business yet. Run npm start first.')
+  const deployment =
+    options.deployment ??
+    (await loadSandboxDeployment(options.screenUrl ?? SANDBOX_SCREEN_URL, send))
+  const client = options.client ?? moderatoClient(deployment.rpcUrl)
+  // The lock is the factory's for the account, read from the chain, whatever the file names.
+  const lock = await client.readContract({
+    address: deployment.factory,
+    abi: FACTORY_ABI,
+    functionName: 'lockAddress',
+    args: [item.account],
+  })
+  const root = Account.fromSecp256k1(
+    await openKey(item.key, await options.prompts.passphrase(), item.account),
+  )
+  const receipt = await sendOwn({
+    client,
+    account: root,
+    calls: [cancelFreeCall(lock, options.commitmentId)],
+  })
+  return receipt.transactionHash
 }

@@ -18,7 +18,12 @@ describe('create-avow-agent', () => {
     expect(read('.gitignore')).toMatch(/^\.avow-\*\/$/m)
     const manifest = JSON.parse(read('package.json'))
     expect(manifest.name).toBe('my-agent')
-    expect(manifest.scripts).toEqual({ start: 'avow-sandbox start', fresh: 'avow-sandbox fresh' })
+    expect(manifest.scripts).toEqual({
+      start: 'avow-sandbox start',
+      fresh: 'avow-sandbox fresh',
+      'mcp:claude-code': 'avow-sandbox-mcp add claude-code',
+      'mcp:claude-desktop': 'avow-sandbox-mcp add claude-desktop',
+    })
     expect(manifest.dependencies['@avow-finance/sdk']).toBe(
       'https://try.testnet.avow.finance/avow-finance-sdk.tgz',
     )

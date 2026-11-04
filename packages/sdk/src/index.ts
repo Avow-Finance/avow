@@ -53,6 +53,7 @@ export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
 export * from './sandbox/session.js'
 export {
+  cancelSandboxCommitment,
   type PreparedSandboxBusiness,
   type PrepareSandboxBusinessOptions,
   prepareSandboxBusiness,

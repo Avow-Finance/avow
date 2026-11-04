@@ -1,3 +1,4 @@
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isSessionId } from '@avow-finance/spec'
@@ -45,6 +46,40 @@ export const RUNNER_ENV = {
   session: 'AVOW_SANDBOX_SESSION',
   run: 'AVOW_SANDBOX_RUN',
 } as const
+
+function runsDir(dir: string, session: string): string {
+  if (!isSessionId(session)) throw new RangeError(`${session} isn't a session id`)
+  return join(dir, 'runs', session)
+}
+
+/** The highest run number taken in a session so far, or 0 when none is. */
+export function latestRun(dir: string, session: string): number {
+  try {
+    const taken = readdirSync(runsDir(dir, session)).map(Number).filter(Number.isSafeInteger)
+    return Math.max(0, ...taken)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Takes the next run number in a session, in the sandbox folder `dir`. The runner and the MCP
+ * server both start runs, and the screen tells runs apart by number, so each claims its number by
+ * creating a file named for it, which only one process can create. A restarted MCP server goes on
+ * from the numbers already taken.
+ */
+export function takeRun(dir: string, session: string): number {
+  const runs = runsDir(dir, session)
+  mkdirSync(runs, { recursive: true, mode: 0o700 })
+  for (let run = latestRun(dir, session) + 1; ; run += 1) {
+    try {
+      writeFileSync(join(runs, String(run)), '', { flag: 'wx', mode: 0o600 })
+      return run
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+  }
+}
 
 /**
  * The sandbox's defaults in Node. Everything goes in the working directory's `.avow` folder, and a

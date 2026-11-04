@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { formatUsd, newSessionId } from '@avow-finance/spec'
 import { moderatoClient } from '../moderato.js'
@@ -10,7 +10,7 @@ import { sessionUrl } from '../sandbox/session.js'
 import { prepareSandboxBusiness, type SandboxPrompts } from '../sandbox/setup.js'
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
-import { fileStore, SANDBOX_DIR } from './platform.js'
+import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   checkTerminal,
   ensureChildrenGone,
@@ -99,16 +99,20 @@ async function main(args: readonly string[]): Promise<void> {
   const store = fileStore(dir)
   const id = newSessionId()
   mkdirSync(dir, { recursive: true, mode: 0o700 })
+  rmSync(join(dir, 'runs'), { recursive: true, force: true })
   writeFileSync(join(dir, 'session.json'), `${JSON.stringify({ id, pid: process.pid })}\n`, {
     mode: 0o600,
   })
-  let run = 0
+  // Setup reports any authority change under the first run, and the first press of Enter runs
+  // under it too, unless a model's tool call has started a run since.
+  let run = takeRun(dir, id)
+  let first = true
   const prepare = async () =>
     prepareSandboxBusiness({
       config: await readBusinessConfig(BUSINESS_FILE),
       prompts,
       store,
-      session: { id, run: Math.max(run, 1) },
+      session: { id, run },
     })
 
   try {
@@ -124,7 +128,8 @@ async function main(args: readonly string[]): Promise<void> {
   for (;;) {
     console.log(`\nPress Enter to run ${AGENT_FILE}, or Ctrl+C to stop.`)
     if ((await input.ask('')) === null) break
-    run += 1
+    if (!first || latestRun(dir, id) !== run) run = takeRun(dir, id)
+    first = false
     console.log(`\nRun ${run}\n`)
     try {
       await prepare()
@@ -153,7 +158,7 @@ async function showKeyLeft(store: ReturnType<typeof fileStore>): Promise<void> {
     agent.business.token,
   )
   console.log(
-    `\nYour agent's key can move ${formatUsd(left)} more today, of its ${formatUsd(limit)} daily limit.`,
+    `\nYour agent's key can move ${formatUsd(left)} more today, of its ${formatUsd(limit)} a day, a limit your business set on chain.`,
   )
   if (left * 4n < limit) {
     console.log(

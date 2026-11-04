@@ -11,7 +11,9 @@ try {
     resource: { gpu: 'H100', count: 8, hours: 1 },
     reserve: 200,
   })
-  console.log(`Committed $${commitment.amount}, with $${commitment.left} of authority left.`)
+  console.log(
+    `Committed $${commitment.amount}, with $${commitment.left} left of its $${agent.authority} held at once.`,
+  )
   console.log('Commitment reference:', commitment.reference)
   console.log(`Anyone can check it at ${commitment.link}`)
 
