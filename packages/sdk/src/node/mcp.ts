@@ -12,7 +12,14 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { formatUsd, isSessionId, SANDBOX_TOOLS, type SandboxTool, toWire } from '@avow-finance/spec'
+import {
+  formatUsd,
+  isSessionId,
+  SANDBOX_TOOLS,
+  type SandboxTool,
+  toWire,
+  whenRetryPasses,
+} from '@avow-finance/spec'
 import { Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
 import { sessionUrl } from '../sandbox/session.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
@@ -49,7 +56,7 @@ export const MCP_TOOLS = [
   {
     name: 'book',
     description:
-      "Books GPU capacity with one of your agent's suppliers, backed by a reserve in your business's own lock. Avow checks the booking against the mandate and what the lock holds before any money moves, the agent's machine runs the open verifier, and the supplier accepts on the lock. A refusal comes back with its reason code, the layer that refused it and the amounts. It stands, and asking again gets the same answer until the business changes the limits.",
+      "Books GPU capacity with one of your agent's suppliers, backed by a reserve in your business's own lock. Avow checks the booking against the mandate and what the lock holds before any money moves, the agent's machine runs the open verifier, and the supplier accepts on the lock. A refusal comes back with its reason code, the layer that refused it, the amounts and when the same booking could pass. Held reserves come back as bookings end or are cancelled, the key's daily limit starts again each day, Avow's relay can be limiting how much it takes for now, and anything else in the mandate changes only when the business signs a new one.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -192,12 +199,13 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
       const dollars = (micros: bigint | null) =>
         micros === null ? null : Number(micros) / 1_000_000
       return {
-        text: `Refused by ${error.layer}, with reason code ${error.code}. ${error.message}`,
+        text: `Refused by ${error.layer}, with reason code ${error.code}. ${error.message} ${whenRetryPasses(error)}`,
         structured: {
           status: 'refused',
           code: error.code,
           layer: error.layer,
           sentence: error.message,
+          retry: whenRetryPasses(error),
           amounts: {
             needed: dollars(error.amounts.needed),
             left: dollars(error.amounts.left),
@@ -291,7 +299,7 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
             capabilities: { tools: { listChanged: false } },
             serverInfo: SERVER,
             instructions:
-              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. The agent commits the business only within the mandate the business signed. A refusal is the real answer from Avow, its relay, the lock or the account's keychain, and it stands.",
+              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. The agent commits the business only within the mandate the business signed. A refusal is the real answer from Avow, its relay, the lock or the account's keychain, and it says when the same booking could pass.",
           },
         })
         return

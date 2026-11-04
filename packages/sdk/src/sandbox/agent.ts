@@ -1,4 +1,5 @@
 import {
+  type AgentSource,
   type AvowDomain,
   approvalCaps,
   approvalDigest,
@@ -20,7 +21,6 @@ import {
   type SandboxDeployment,
   type SandboxTool,
   type SessionEvent,
-  type SessionSource,
   type Signed,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
@@ -368,7 +368,7 @@ function booker(m: {
   suppliers: SandboxSupplier[]
   screenUrl: string
   run: number
-  source: SessionSource
+  source: AgentSource
   report: (event: SessionEvent) => void
   send: typeof fetch
 }): SandboxAgent {

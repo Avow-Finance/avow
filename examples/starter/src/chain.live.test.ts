@@ -99,8 +99,8 @@ describe.skipIf(!live)('the chain, around the SDK and Avow', () => {
         calls: [createLockCall(deployment.factory, root.address)],
       })
 
-      // The agent's key goes on the account under a sandbox mandate with $500 of authority, which
-      // sets its daily spending limit to $500, and the root key approves the demo supplier.
+      // The agent's key goes on the account under a sandbox mandate with $500 of authority and a
+      // daily limit of $500, and the root key approves the demo supplier.
       const supplier = (await httpSupplier(deployment.supplierUrl)).profile
       const now = BigInt(Math.floor(Date.now() / 1000))
       const limit = dollars(500)
@@ -113,6 +113,7 @@ describe.skipIf(!live)('the chain, around the SDK and Avow', () => {
         token: deployment.token,
         capPerCommitment: limit,
         capOpenReserves: limit,
+        dailyLimit: limit,
         expiry: now + 3600n,
       })
       const d = { chainId: deployment.chainId, verifyingContract: lock }

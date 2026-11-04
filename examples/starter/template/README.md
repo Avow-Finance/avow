@@ -41,7 +41,7 @@ npm run mcp:claude-code      # then run claude in this folder
 npm run mcp:claude-desktop   # then restart Claude Desktop
 ```
 
-With nothing else held, ask Claude to book $200 of GPU compute, and it's reserved and accepted. Ask it to book another $400, and Avow refuses it with $300 left of your $500 held at once. Claude gets the same reason code, layer and sentence you'd see, and asking again gets the same answer.
+With nothing else held, ask Claude to book $200 of GPU compute, and it's reserved and accepted. Ask it to book another $400, and Avow refuses it with $300 left of your $500 held at once. Claude gets the same reason code, layer and sentence you'd see, and it's told when the same booking could pass, here once a held booking ends or is cancelled, or once your business raises the authority.
 
 ## What holds
 

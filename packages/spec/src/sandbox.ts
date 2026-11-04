@@ -123,11 +123,17 @@ export interface RefusalAmounts {
 
 /**
  * Who made an event. `business` is the runner, which alone holds the business's root key and
- * changes the authority. `script` is the developer's agent file, and `mcp` is the agent a model
- * drives through the sandbox's MCP server. Both act with only the agent's key.
+ * changes the authority, so it marks `authority_changed` and no other event. `script` is the
+ * developer's agent file, and `mcp` is the agent a model drives through the sandbox's MCP server.
+ * Both act with only the agent's key, and every other event names one of them. So the source
+ * follows from the event's type, and no event the agent's key signs can claim the business.
  */
 export const SESSION_SOURCES = ['business', 'script', 'mcp'] as const
 export type SessionSource = (typeof SESSION_SOURCES)[number]
+
+/** The sources that act with only the agent's key. */
+export const AGENT_SOURCES = ['script', 'mcp'] as const
+export type AgentSource = (typeof AGENT_SOURCES)[number]
 
 /** The tools the sandbox's MCP server gives a model. */
 export const SANDBOX_TOOLS = ['authority', 'book', 'commitments'] as const
@@ -137,7 +143,7 @@ export type SandboxTool = (typeof SANDBOX_TOOLS)[number]
 export interface RunStarted {
   type: 'run_started'
   run: number
-  source: SessionSource
+  source: AgentSource
   /** The tool the model called, or null for a run of the agent's file. */
   tool: SandboxTool | null
 }
@@ -146,7 +152,7 @@ export interface RunStarted {
 export interface AuthorityChanged {
   type: 'authority_changed'
   run: number
-  source: SessionSource
+  source: 'business'
   /** The new mandate's cap on open reserves, in micros. */
   authority: bigint
   /** The previous mandate's cap, or null when the agent had no mandate before. */
@@ -161,7 +167,7 @@ export interface AuthorityChanged {
 export interface Refused {
   type: 'refused'
   run: number
-  source: SessionSource
+  source: AgentSource
   code: ReasonCode
   layer: RefusalLayer
   amounts: RefusalAmounts
@@ -171,7 +177,7 @@ export interface Refused {
 export interface Committed {
   type: 'committed'
   run: number
-  source: SessionSource
+  source: AgentSource
   reference: CommitmentReference
   /** The reserve, in micros. */
   amount: bigint
@@ -181,7 +187,7 @@ export interface Committed {
 export interface Accepted {
   type: 'accepted'
   run: number
-  source: SessionSource
+  source: AgentSource
   reference: CommitmentReference
 }
 
@@ -207,7 +213,7 @@ export interface SessionEventAnswer {
 }
 
 const run = z.number().int().positive().max(1_000_000)
-const source = z.enum(SESSION_SOURCES)
+const agentSource = z.enum(AGENT_SOURCES)
 const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const businessId = z.string().min(1).max(100)
 
@@ -215,13 +221,13 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('run_started'),
     run,
-    source,
+    source: agentSource,
     tool: z.enum(SANDBOX_TOOLS).nullable(),
   }),
   z.strictObject({
     type: z.literal('authority_changed'),
     run,
-    source,
+    source: z.literal('business'),
     authority: u256,
     previous: u256.nullable(),
     suppliers: z.array(businessId).min(1).max(20),
@@ -230,7 +236,7 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('refused'),
     run,
-    source,
+    source: agentSource,
     code: reasonCode,
     layer: z.enum(REFUSAL_LAYERS),
     amounts: z.strictObject({
@@ -244,14 +250,14 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('committed'),
     run,
-    source,
+    source: agentSource,
     reference: commitmentReferenceJson,
     amount: u256,
   }),
   z.strictObject({
     type: z.literal('accepted'),
     run,
-    source,
+    source: agentSource,
     reference: commitmentReferenceJson,
   }),
 ])
@@ -340,4 +346,42 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }
+}
+
+/** The codes Avow's relay gives when it's only short of time or budget for now. */
+const RELAY_FOR_NOW: readonly ReasonCode[] = [
+  'sponsorship.rate_limited',
+  'sponsorship.budget_spent',
+  'service.unavailable',
+  'request.in_progress',
+]
+
+/**
+ * When the same booking could pass, said as plainly as the refusal. Held reserves come back as
+ * their bookings release or are cancelled, the key's daily limit starts again each day, and the
+ * relay can be short of time or budget for a while. Anything else in the mandate changes only when
+ * the business signs a new one, and a refusal nothing explained might not come again.
+ */
+export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
+  if (r.layer === 'unknown') {
+    return 'Nothing said why it failed, so the same booking might pass if you try again.'
+  }
+  if (r.layer === 'keychain') {
+    return "The same booking can pass once the key's day starts again, or once the business raises the daily limit on chain. Reserves cancelled today still count until then."
+  }
+  if (r.layer === 'relay') {
+    return RELAY_FOR_NOW.includes(r.code)
+      ? "Avow's relay was only limiting how much it takes for now, so the same booking can pass when you try again later."
+      : "Avow's relay refuses the same transaction again, so the same booking can pass only once what it checked changes."
+  }
+  if (RELAY_FOR_NOW.includes(r.code)) {
+    return 'Avow was busy or out of reach, so the same booking can pass when you try again later.'
+  }
+  if (r.code === 'mandate.over_open_reserves_cap') {
+    return 'The same booking can pass once enough of what the agent holds is released, when a booking ends or is cancelled, or once the business raises the authority.'
+  }
+  if (r.code.startsWith('mandate.')) {
+    return 'The same booking can pass only once the business signs a new mandate that allows it.'
+  }
+  return 'The same booking gets the same answer until what was checked changes.'
 }

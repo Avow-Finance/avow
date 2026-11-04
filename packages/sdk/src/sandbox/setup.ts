@@ -19,7 +19,7 @@ import { createSandboxBusiness, type SandboxBusinessStep, type SandboxClient } f
 import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { loadSandboxDeployment, madeOn } from './deployment.js'
 import { approvedSuppliers, lockCreatedIn, revokeOtherKeys } from './keys.js'
-import { enrollSandboxAgent, sandboxMandate } from './mandate.js'
+import { enrollSandboxAgent, SANDBOX_DAILY_LIMIT, sandboxMandate } from './mandate.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import {
   type AgentItem,
@@ -47,7 +47,7 @@ export interface SandboxBusinessConfig {
   authority: number
   /**
    * The most the agent's key can move in a day, in dollars, which the business sets on chain and the
-   * account's keychain holds whatever Avow approves. Twice the authority when left out.
+   * account's keychain holds whatever Avow approves. $1,000 when left out.
    */
   dailyLimit?: number
   /** The suppliers the agent may book with, and no others. */
@@ -168,7 +168,7 @@ export async function prepareSandboxBusiness(
   if (!/^[A-Z]{2}$/.test(country)) throw new RangeError('The country has to be two capital letters')
   const authority = micros(config.authority, 'authority')
   const dailyLimit =
-    config.dailyLimit === undefined ? authority * 2n : micros(config.dailyLimit, 'daily limit')
+    config.dailyLimit === undefined ? SANDBOX_DAILY_LIMIT : micros(config.dailyLimit, 'daily limit')
   const suppliers = checkSuppliers(config.suppliers)
   const ids = suppliers.map((s) => s.id)
   const store = options.store ?? platformStore()

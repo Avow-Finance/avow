@@ -12,6 +12,7 @@ import {
   SANDBOX_PATHS,
   SESSION_EVENT_TYPES,
   type SessionEvent,
+  whenRetryPasses,
 } from './sandbox.js'
 import { toWire } from './wire.js'
 
@@ -108,9 +109,44 @@ describe('session events', () => {
     expect(parseSessionEventPost({ event: events[0], extra: 1 }).ok).toBe(false)
   })
 
+  it('takes business on an authority change and on nothing else', () => {
+    const changed = overJson(events[2]) as Record<string, unknown>
+    for (const source of ['script', 'mcp']) {
+      expect(parseSessionEvent({ ...changed, source }).ok).toBe(false)
+    }
+    for (const event of events.filter((e) => e.type !== 'authority_changed')) {
+      expect(parseSessionEvent({ ...(overJson(event) as object), source: 'business' }).ok).toBe(
+        false,
+      )
+    }
+  })
+
   it("reads Avow's answer as the event's place in the session", () => {
     expect(parseSessionEventAnswer({ sequence: 3 })).toEqual({ ok: true, value: { sequence: 3 } })
     expect(parseSessionEventAnswer({ sequence: 0 }).ok).toBe(false)
+  })
+})
+
+describe('whenRetryPasses', () => {
+  it('says when the same booking could pass, for each way it was refused', () => {
+    expect(whenRetryPasses({ code: 'mandate.over_open_reserves_cap', layer: 'avow' })).toMatch(
+      /once enough of what the agent holds is released, .* or once the business raises the authority/,
+    )
+    expect(whenRetryPasses({ code: 'keychain.over_daily_limit', layer: 'keychain' })).toMatch(
+      /once the key's day starts again, or once the business raises the daily limit/,
+    )
+    expect(whenRetryPasses({ code: 'sponsorship.rate_limited', layer: 'relay' })).toMatch(
+      /only limiting .* can pass when you try again later/,
+    )
+    expect(whenRetryPasses({ code: 'sponsorship.refused', layer: 'relay' })).toMatch(
+      /only once what it checked changes/,
+    )
+    expect(whenRetryPasses({ code: 'mandate.supplier_not_allowed', layer: 'sdk' })).toMatch(
+      /only once the business signs a new mandate/,
+    )
+    expect(whenRetryPasses({ code: 'chain.reserve_missing', layer: 'unknown' })).toMatch(
+      /might pass if you try again/,
+    )
   })
 })
 
