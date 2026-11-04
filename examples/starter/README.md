@@ -36,3 +36,5 @@ AVOW_LIVE_TEMPO=1 pnpm --filter @avow-examples/starter test
 ```
 
 The second line also runs the whole loop on Moderato from keys made for the run. A $200 booking passes, a $400 booking is refused by Avow with $300 of authority left, and a $250 booking passes as a second commitment. Raising the authority then enrolls a new mandate. Avow's sandbox pays the run's business its test dollars, so it needs no secrets.
+
+The same line runs a check that goes around the SDK and Avow. The agent's key sends `reserve` straight to the lock with an approval Avow never signed, and it lands and reverts with `BadSignature`. Then the key tries to let the lock pull more than its daily limit, and the account's keychain refuses with `SpendingLimitExceeded`. It needs no registration, so it runs even when the sandbox has no test dollars to pay.

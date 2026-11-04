@@ -15,7 +15,7 @@ Each time you press Enter, it runs `agent.ts` once.
 ## What to try
 
 1. Press Enter. The agent books 8 H100s for an hour with a $200 reserve. It prints the commitment's reference and a link anyone can open to check it. Your machine then runs the open verifier, the same checks the supplier runs, and the supplier accepts.
-2. Change `reserve` to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve. You see the reason code, the layer that refused it and the amounts, and no money moves.
+2. Change `reserve` to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The SDK checks nothing past the mandate, so the refusal comes from Avow, the same one an agent that skipped every check of its own would meet. Under Avow, the lock takes no reserve without Avow's approval, and your agent's key can't move more than the daily limit your business set on chain.
 3. Change `reserve` to 250 and press Enter. It fits, so the agent makes a second commitment under the same authority.
 4. Change `authority` and press Enter. Your business signs a new mandate for a new agent key and enrolls it, and the run says so.
 

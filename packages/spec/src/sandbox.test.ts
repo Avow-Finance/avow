@@ -40,7 +40,12 @@ const events: SessionEvent[] = [
     run: 2,
     code: 'mandate.over_open_reserves_cap',
     layer: 'avow',
-    amounts: { needed: dollars(400), left: dollars(300), authority: dollars(500) },
+    amounts: {
+      needed: dollars(400),
+      left: dollars(300),
+      authority: dollars(500),
+      dailyLimit: dollars(500),
+    },
   },
   { type: 'committed', run: 3, reference, amount: dollars(250) },
   { type: 'accepted', run: 3, reference },
@@ -86,7 +91,7 @@ describe('session events', () => {
       { type: 'run_started', run: 0 },
       { ...refused, code: 'mandate.too_big' },
       { ...refused, layer: 'supplier' },
-      { ...refused, amounts: { needed: '-1', left: '0', authority: '0' } },
+      { ...refused, amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null } },
       { ...(overJson(events[3]) as object), reference: { ...reference, kind: 'payment' } },
     ]
     for (const json of bad) expect(parseSessionEvent(json).ok).toBe(false)
@@ -100,20 +105,49 @@ describe('session events', () => {
 })
 
 describe('refusalSentence', () => {
-  const amounts = { needed: dollars(400), left: dollars(300), authority: dollars(500) }
+  const amounts = {
+    needed: dollars(400),
+    left: dollars(300),
+    authority: dollars(500),
+    dailyLimit: dollars(500),
+  }
+  const onChain =
+    "The lock takes no reserve without Avow's approval, and your agent's key can't move more than $500 a day, a limit your business set on chain."
 
-  it('says what the booking needs, what authority is left and who refused', () => {
+  it('says what the booking needs, what authority is left, who refused and what the chain holds', () => {
     expect(
       refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts }),
     ).toBe(
-      'This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved.',
+      `This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. ${onChain}`,
     )
     expect(refusalSentence({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
-      "This booking needs $400 and your agent's whole authority is $500, so the SDK refused the reserve and no money moved.",
+      `This booking needs $400 and your agent's whole authority is $500, so the SDK refused the reserve and no money moved. ${onChain}`,
+    )
+    expect(
+      refusalSentence({
+        code: 'mandate.over_open_reserves_cap',
+        layer: 'avow',
+        amounts: { ...amounts, dailyLimit: null },
+      }),
+    ).toBe(
+      "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval.",
+    )
+  })
+
+  it("says the lock refused when it did, and nothing it can't back", () => {
+    expect(
+      refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'lock', amounts }),
+    ).toBe(
+      'This booking needs $400 and your agent has $300 of authority left, so the lock refused the reserve and no money moved.',
     )
     expect(refusalSentence({ code: 'sponsorship.simulation_failed', layer: 'lock', amounts })).toBe(
       "The lock refused this $400 booking and no money moved. The transaction fails when it runs on the latest block, so Avow's relay won't pay for it.",
     )
+    for (const layer of ['sdk', 'avow', 'lock'] as const) {
+      expect(refusalSentence({ code: 'mandate.expired', layer, amounts })).not.toMatch(
+        /would refuse|even with/,
+      )
+    }
   })
 
   it('writes dollars with cents only when there are some', () => {

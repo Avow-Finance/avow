@@ -48,10 +48,15 @@ describe.skipIf(!live)('the starter on Moderato', () => {
       expect(refused).toMatchObject({
         code: 'mandate.over_open_reserves_cap',
         layer: 'avow',
-        amounts: { needed: 400_000_000n, left: 300_000_000n, authority: 500_000_000n },
+        amounts: {
+          needed: 400_000_000n,
+          left: 300_000_000n,
+          authority: 500_000_000n,
+          dailyLimit: 500_000_000n,
+        },
       })
       expect((refused as Refusal).message).toBe(
-        'This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved.',
+        "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval, and your agent's key can't move more than $500 a day, a limit your business set on chain.",
       )
 
       const second = await agent.book(booking(250))

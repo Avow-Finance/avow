@@ -603,6 +603,11 @@ function sandboxBooker(m: {
   const { lock } = m.business
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
   const cap = mandate.message.capOpenReserves
+  // The spending limit the root key set on the agent's key for the lock's token, each day.
+  const dailyLimit =
+    mandate.message.paymentLimits.find(
+      (l) => isAddressEqual(l.token, deployment.token) && l.period === DAY,
+    )?.amount ?? null
 
   /** The authority left, read from the lock, which Avow's reserve check reads too. */
   async function leftNow(): Promise<bigint> {
@@ -622,7 +627,7 @@ function sandboxBooker(m: {
     extra: { decisionId?: string | null; cause?: unknown },
   ): Promise<Refusal> {
     const left = await leftNow().catch(() => r.leftBefore)
-    const amounts = { needed: r.needed, left, authority: cap }
+    const amounts = { needed: r.needed, left, authority: cap, dailyLimit }
     report({ type: 'refused', run, code: r.code, layer: r.layer, amounts })
     return new Refusal(
       { code: r.code, layer: r.layer, amounts, decisionId: extra.decisionId ?? null },

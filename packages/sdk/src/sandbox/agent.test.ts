@@ -24,12 +24,17 @@ const supplier = { id: 'avow-demo-gpu', url: 'https://supplier.testnet.avow.fina
 
 describe('Refusal', () => {
   it('reads as the sentence the screen shows, with the code, layer and amounts apart', () => {
-    const amounts = { needed: dollars(400), left: dollars(300), authority: dollars(500) }
+    const amounts = {
+      needed: dollars(400),
+      left: dollars(300),
+      authority: dollars(500),
+      dailyLimit: dollars(500),
+    }
     const r = new Refusal({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })
     expect(r).toBeInstanceOf(Error)
     expect(r).toMatchObject({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })
     expect(r.message).toBe(
-      'This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved.',
+      "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval, and your agent's key can't move more than $500 a day, a limit your business set on chain.",
     )
   })
 

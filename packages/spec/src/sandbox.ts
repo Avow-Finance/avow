@@ -109,6 +109,11 @@ export interface RefusalAmounts {
   left: bigint
   /** The agent's whole authority, the most it can hold in bookings at once. */
   authority: bigint
+  /**
+   * The most the agent's key can move in a day, the spending limit the business's root key set on
+   * the account's keychain, or null when the key has no daily limit on the lock's token.
+   */
+  dailyLimit: bigint | null
 }
 
 /** A run starting, once each time the developer runs their agent. */
@@ -196,7 +201,12 @@ export const sessionEventJson = z.discriminatedUnion('type', [
     run,
     code: reasonCode,
     layer: z.enum(REFUSAL_LAYERS),
-    amounts: z.strictObject({ needed: u256, left: u256, authority: u256 }),
+    amounts: z.strictObject({
+      needed: u256,
+      left: u256,
+      authority: u256,
+      dailyLimit: u256.nullable(),
+    }),
   }),
   z.strictObject({
     type: z.literal('committed'),
@@ -251,18 +261,28 @@ export function formatUsd(micros: bigint): string {
 const WHO: Record<RefusalLayer, string> = { sdk: 'the SDK', avow: 'Avow', lock: 'the lock' }
 
 /**
- * A refusal in one plain sentence with its amounts, so the developer's terminal and the session's
- * screen say the same thing from the same event.
+ * A refusal in plain words with its amounts, so the developer's terminal and the session's screen
+ * say the same thing from the same event. A refusal by the SDK or by Avow goes on to say what the
+ * chain holds without trusting either. The lock takes no reserve without Avow's approval, and the
+ * account's keychain holds the agent's key to the daily limit the business set. The caps the lock
+ * checks are the ones Avow's approval carries, so the sentence never says the lock would refuse
+ * what Avow approved.
  */
 export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
-  const { needed, left, authority } = r.amounts
+  const { needed, left, authority, dailyLimit } = r.amounts
+  const onChain =
+    r.layer === 'lock'
+      ? ''
+      : dailyLimit === null
+        ? " The lock takes no reserve without Avow's approval."
+        : ` The lock takes no reserve without Avow's approval, and your agent's key can't move more than ${formatUsd(dailyLimit)} a day, a limit your business set on chain.`
   switch (r.code) {
     case 'mandate.over_open_reserves_cap':
-      return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} of authority left, so ${who} refused the reserve and no money moved.`
+      return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} of authority left, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
-      return `This booking needs ${formatUsd(needed)} and your agent's whole authority is ${formatUsd(authority)}, so ${who} refused the reserve and no money moved.`
+      return `This booking needs ${formatUsd(needed)} and your agent's whole authority is ${formatUsd(authority)}, so ${who} refused the reserve and no money moved.${onChain}`
     default:
-      return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.`
+      return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }
 }
