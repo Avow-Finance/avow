@@ -27,6 +27,7 @@ When funding fails, `book` settles the booking against the lock. Avow's approval
 Every failure is an `AvowApiError` with the status, the reason Avow gave and the request id. A refusal by Avow's relay also carries what the relay added in `sponsorship`, such as when the key can ask again, as [relay refusals](../../fern/docs/pages/relay-refusals.mdx) sets out. Its `definite` says whether Avow answered definitely. When it's false the client gave up with no definite answer, so Avow may still have recorded the request, and a caller shouldn't treat it as refused. `retryFor` sets how long the client keeps trying, ten minutes by default, and `onResend` hears about each resend so a long run of them never goes unseen.
 - **The supplier.** `SupplierConnection` is the agent's channel to one supplier, which the supplier's own integration implements.
 - **The chain.** The agent's client reads the lock and sends the funding transaction.
+- **The sandbox's screen.** On testnet, `sessionRelay` posts a sandbox business's events to a session through Avow's API, each signed by the business's root key under its lock, so Avow relays only what a registered sandbox business sent. `sessionUrl` links to the screen that shows the session, and `verifyUrl` links to the page that checks a commitment against its lock.
 
 ## Fees
 
