@@ -115,8 +115,15 @@ describe('a booking that relies on the supplier’s accepted booking', () => {
     const seen = JSON.stringify(json(input))
     expect(seen).not.toContain(UPSTREAM_RATE)
     expect(seen).toContain(UPSTREAM_HASH)
-    const { result } = await check(input)
+    const { result, calls } = await check(input)
     expect(result.ok).toBe(true)
+    // The only thing it reads beyond the terms and the shown section is the chain, at one block.
+    expect(new Set(calls.map((c) => c.call))).toEqual(
+      new Set(['head', 'isLock', 'lockFields', 'commitment', 'blockHash']),
+    )
+    // Without the shown section, nothing passes.
+    const unshown = await check({ ...input, disclosed: [] })
+    expect(unshown.result).toMatchObject({ ok: false, reason: 'dependency.disclosure_invalid' })
   })
 
   it('checks terms Avow checks for the buyer exactly as it checks the buyer’s own', async () => {

@@ -37,6 +37,7 @@ import {
   signAcceptance,
 } from './accept.js'
 import type { LockedBacking, MemoryChain } from './chain.js'
+import { verifyDependencies } from './dependency.js'
 import { disclosureId, formatDuration, formatTime } from './disclosure.js'
 import {
   ARBITER,
@@ -845,5 +846,73 @@ describe('a booking that relies on the supplier’s own booking', () => {
     const prepared = await prepare({ deps: { ...deps, dependencies: { readers: [reader] } } })
     expect(prepared.ok && prepared.dependencies).toEqual([])
     expect(calls).toEqual([])
+  })
+
+  describe('an upstream cancellation raced against every step after it', () => {
+    // Each step reads the chain one block after the last. The buyer checks the booking relied on
+    // at block 100, Avow checks it at 101 before it approves, and the seller accepts at 102.
+    const block = (n: bigint) => ({ number: n, hash: id(`block ${n}`) })
+    const AT = { buyer: 100n, avow: 101n, seller: 102n } as const
+    const STEPS = ['buyer', 'avow', 'seller'] as const
+
+    /** Every step, each on a chain where the booking relied on is released from `cancelled` on. */
+    async function race(cancelled: bigint) {
+      const from = { block: cancelled, state: 'released' as const }
+      const check = (setting: 'buyer' | 'avow', at: bigint) =>
+        verifyDependencies(
+          {
+            terms: chainedTerms(terms, [dependencyOn()], setting),
+            supplier: supplierAccount.address,
+            disclosed: [shownUpstream],
+          },
+          { readers: [scriptedLocks({ head: block(at), from }).reader] },
+        )
+      return {
+        buyer: await check('buyer', AT.buyer),
+        avow: await check('avow', AT.avow),
+        seller: (await prepareChained({ script: { head: block(AT.seller), from } })).prepared,
+      }
+    }
+
+    for (const cancelled of [100n, 101n, 102n, 103n]) {
+      it(`refuses every step that reads at block ${cancelled} or later, and passes each before it as of its own block`, async () => {
+        const results = await race(cancelled)
+        for (const step of STEPS) {
+          const at = block(AT[step])
+          if (AT[step] >= cancelled) {
+            expect(results[step], step).toEqual({
+              ok: false,
+              reason: 'dependency.ended',
+              index: 0,
+              block: at,
+            })
+          } else {
+            const passed = results[step]
+            if (!passed.ok) throw new Error(`${step} refused with ${passed.reason}`)
+            const read = 'checked' in passed ? passed.checked : passed.dependencies
+            expect(read, step).toEqual([{ on: dependencyOn().on, block: at }])
+          }
+        }
+      })
+    }
+
+    it('passes a step as of the block it pinned when the cancellation lands while it reads', async () => {
+      // The chain moves to block 101, where the booking is released, after the check pinned 100.
+      const from = { block: 101n, state: 'released' as const }
+      const { reader, calls } = scriptedLocks({ heads: [block(100n), block(101n)], from })
+      const result = await verifyDependencies(
+        {
+          terms: chainedTerms(terms, [dependencyOn()]),
+          supplier: supplierAccount.address,
+          disclosed: [shownUpstream],
+        },
+        { readers: [reader] },
+      )
+      expect(result.ok && result.checked).toEqual([{ on: dependencyOn().on, block: block(100n) }])
+      for (const c of calls) expect(c.at, c.call).toBe(100n)
+      // The next step pins the later block and refuses.
+      const next = await prepareChained({ script: { head: block(101n), from } })
+      expect(next.prepared).toMatchObject({ ok: false, reason: 'dependency.ended' })
+    })
   })
 })

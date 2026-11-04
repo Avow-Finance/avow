@@ -13,6 +13,7 @@ import {
   type Mandate,
   mandateHash,
   mandateTypedData,
+  type RailState,
   type RailToken,
   type Side,
   type SupplierAuthorization,
@@ -410,6 +411,11 @@ export interface LockScript {
   fails?: ReaderCall
   /** A call that never answers. */
   hangs?: ReaderCall
+  /**
+   * A state every booking takes from one block on, as when the booking relied on is cancelled
+   * there. A read at that block or later sees it in place of the scripted state.
+   */
+  from?: { block: bigint; state: RailState }
 }
 
 /**
@@ -461,7 +467,11 @@ export function scriptedLocks(script: LockScript = {}): {
         return { factory, account }
       }),
     commitment: (lock, commitmentId, side, at) =>
-      answer('commitment', at, () => lockAt(lock).records[recordKey(commitmentId, side)] ?? null),
+      answer('commitment', at, () => {
+        const record = lockAt(lock).records[recordKey(commitmentId, side)] ?? null
+        const later = script.from
+        return record && later && at >= later.block ? { ...record, state: later.state } : record
+      }),
   }
   return { reader, calls }
 }
