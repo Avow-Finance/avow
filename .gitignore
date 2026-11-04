@@ -9,3 +9,7 @@ coverage/
 .DS_Store
 # The quickstarts' state directories, which hold their keys
 .avow-*/
+# The sandbox's state directory, which holds its keys
+.avow/
+# The tarballs the starter's build writes for the host
+examples/starter/host/

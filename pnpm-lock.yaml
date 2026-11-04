@@ -57,6 +57,12 @@ importers:
         specifier: 2.57.11
         version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
 
+  examples/starter:
+    dependencies:
+      '@avow-finance/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   examples/supplier:
     dependencies:
       '@avow-finance/sdk':

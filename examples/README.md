@@ -1,7 +1,8 @@
 # Examples
 
-Two quickstarts run Avow's flow on Tempo's Moderato testnet against Avow's hosted API. A buyer and a supplier each run one on their own machine, so the flow is proven between two parties Avow doesn't operate. A keeper sends the steps the locks' deadlines bring due on recent commitments, so those don't wait on Avow either.
+The starter gives an agent $500 of authority on Tempo's Moderato testnet in two commands, and the sandbox registers its business itself. Two quickstarts run Avow's flow on Moderato against Avow's hosted API. A buyer and a supplier each run one on their own machine, so the flow is proven between two parties Avow doesn't operate. A keeper sends the steps the locks' deadlines bring due on recent commitments, so those don't wait on Avow either.
 
+- [starter](starter) is where a developer starts. One command makes a folder holding `agent.ts`, and `npm start` registers a sandbox business, enrolls its agent's mandate and runs the agent against Avow's demo supplier, refusals included.
 - [supplier](supplier) is a minimal supplier adapter. It signs terms agreements for agents, asks Avow to authorize each funded reserve, checks Avow's authorization, the buyer's mandate and the lock with the verifier, and sends its acceptance to the lock. It reports a charge on a booking cancelled late or never used.
 - [buyer](buyer) takes a business from an empty account to a reserve the supplier accepts. It creates the business's lock, signs its agent's mandate, puts the agent's key on the account, enrolls the agent with Avow and books. It cancels a booking too, and contests a charge the supplier reports.
 - [keeper](keeper) finds every lock a factory created and sends each step that has come due on a side reserved within its lookback, two weeks by default, such as returning a kept reserve at its release date. It sends from a key made for the run, with no Avow credentials, and a scheduled workflow runs it every 10 minutes.
