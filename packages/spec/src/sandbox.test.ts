@@ -45,6 +45,7 @@ const events: SessionEvent[] = [
       left: dollars(300),
       authority: dollars(500),
       dailyLimit: dollars(500),
+      dailyLeft: dollars(300),
     },
   },
   { type: 'committed', run: 3, reference, amount: dollars(250) },
@@ -91,7 +92,10 @@ describe('session events', () => {
       { type: 'run_started', run: 0 },
       { ...refused, code: 'mandate.too_big' },
       { ...refused, layer: 'supplier' },
-      { ...refused, amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null } },
+      {
+        ...refused,
+        amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null, dailyLeft: null },
+      },
       { ...(overJson(events[3]) as object), reference: { ...reference, kind: 'payment' } },
     ]
     for (const json of bad) expect(parseSessionEvent(json).ok).toBe(false)
@@ -110,6 +114,7 @@ describe('refusalSentence', () => {
     left: dollars(300),
     authority: dollars(500),
     dailyLimit: dollars(500),
+    dailyLeft: dollars(300),
   }
   const onChain =
     "The lock takes no reserve without Avow's approval, and your agent's key can't move more than $500 a day, a limit your business set on chain."
@@ -131,6 +136,21 @@ describe('refusalSentence', () => {
       }),
     ).toBe(
       "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval.",
+    )
+  })
+
+  it("says Avow's relay and the account's keychain refused when they did", () => {
+    expect(refusalSentence({ code: 'sponsorship.rate_limited', layer: 'relay', amounts })).toMatch(
+      /^Avow's relay refused this \$400 booking and no money moved\./,
+    )
+    expect(
+      refusalSentence({
+        code: 'keychain.over_daily_limit',
+        layer: 'keychain',
+        amounts: { ...amounts, dailyLeft: dollars(200) },
+      }),
+    ).toBe(
+      "This booking needs $400 and your agent's key can move $200 more today, of its $500 daily limit, so your account's keychain refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.",
     )
   })
 

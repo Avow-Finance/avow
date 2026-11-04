@@ -95,10 +95,12 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
 /**
  * Who refused a booking. `sdk` is the agent's own SDK, which checks the mandate before anyone
  * signs. `avow` is Avow's API, which checks the mandate against what the lock holds before it
- * approves a reserve. `lock` is the business's lock on-chain, which takes a reserve only within the
- * approval and the mandate's caps.
+ * approves a reserve. `relay` is Avow's relay, which refuses to pay the fee for a transaction it
+ * won't sponsor. `lock` is the business's lock on-chain, which reverts a reserve that breaks Avow's
+ * approval, including the caps the approval carries. `keychain` is the business account's keychain,
+ * which holds the agent's key to the daily limit the business's root key set.
  */
-export const REFUSAL_LAYERS = ['sdk', 'avow', 'lock'] as const
+export const REFUSAL_LAYERS = ['sdk', 'avow', 'relay', 'lock', 'keychain'] as const
 export type RefusalLayer = (typeof REFUSAL_LAYERS)[number]
 
 /** The amounts behind a refusal, each in micros of a dollar. */
@@ -114,6 +116,8 @@ export interface RefusalAmounts {
    * the account's keychain, or null when the key has no daily limit on the lock's token.
    */
   dailyLimit: bigint | null
+  /** What the agent's key could still move that day when it was refused, or null when unread. */
+  dailyLeft: bigint | null
 }
 
 /** A run starting, once each time the developer runs their agent. */
@@ -206,6 +210,7 @@ export const sessionEventJson = z.discriminatedUnion('type', [
       left: u256,
       authority: u256,
       dailyLimit: u256.nullable(),
+      dailyLeft: u256.nullable(),
     }),
   }),
   z.strictObject({
@@ -258,7 +263,13 @@ export function formatUsd(micros: bigint): string {
   return `${sign}$${whole}.${digits}`
 }
 
-const WHO: Record<RefusalLayer, string> = { sdk: 'the SDK', avow: 'Avow', lock: 'the lock' }
+const WHO: Record<RefusalLayer, string> = {
+  sdk: 'the SDK',
+  avow: 'Avow',
+  relay: "Avow's relay",
+  lock: 'the lock',
+  keychain: "your account's keychain",
+}
 
 /**
  * A refusal in plain words with its amounts, so the developer's terminal and the session's screen
@@ -270,14 +281,18 @@ const WHO: Record<RefusalLayer, string> = { sdk: 'the SDK', avow: 'Avow', lock: 
  */
 export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
-  const { needed, left, authority, dailyLimit } = r.amounts
+  const { needed, left, authority, dailyLimit, dailyLeft } = r.amounts
   const onChain =
-    r.layer === 'lock'
+    r.layer !== 'sdk' && r.layer !== 'avow'
       ? ''
       : dailyLimit === null
         ? " The lock takes no reserve without Avow's approval."
         : ` The lock takes no reserve without Avow's approval, and your agent's key can't move more than ${formatUsd(dailyLimit)} a day, a limit your business set on chain.`
   switch (r.code) {
+    case 'keychain.over_daily_limit':
+      return dailyLimit === null || dailyLeft === null
+        ? `This booking needs ${formatUsd(needed)}, more than your agent's key can still move today, so ${who} refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.`
+        : `This booking needs ${formatUsd(needed)} and your agent's key can move ${formatUsd(dailyLeft)} more today, of its ${formatUsd(dailyLimit)} daily limit, so ${who} refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.`
     case 'mandate.over_open_reserves_cap':
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} of authority left, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':

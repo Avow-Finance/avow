@@ -142,6 +142,8 @@ export const REASON_CODES = {
   'contest.statement_mismatch':
     "The statement's reason or hash differs from what the lock recorded for the contest",
   'chain.reserve_missing': 'No reserve for this commitment is on-chain',
+  'keychain.over_daily_limit':
+    "The agent's key would move more than its daily limit, which the business account's keychain holds",
   'chain.reserve_mismatch':
     'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',
   'chain.reserve_accepted': 'The reserve has already been accepted',
