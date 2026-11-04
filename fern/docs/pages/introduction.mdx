@@ -9,7 +9,7 @@ Autonomous commerce is trade in which software agents act on behalf of businesse
 
 Businesses trade through commitments: reservations, bookings, purchase orders, and agreements to pay or deliver later. These promises allow one party to act before the other has completed its obligations. Agents need a way to make those promises with clear authority, backing, and consequences.
 
-Avow represents each commitment as a record of its parties, terms, backing, deadlines, and outcome. Developers can create and verify individual commitments, then connect them to the other commitments they depend on.
+Avow represents each commitment as a record of its parties, terms, backing, deadlines, and outcome. Developers can create and verify individual commitments today. Connecting a commitment to the ones it depends on comes next.
 
 Avow is currently in development on testnet. The initial implementation supports buyer-funded reserves; other forms of backing are planned.
 
@@ -27,9 +27,9 @@ Revoking an agent stops new commitments. Obligations already made remain in plac
 
 A business’s promise often depends on another business keeping its own. A compute reseller, for example, may accept a customer’s booking using capacity reserved from a GPU provider. The customer needs to know whether that upstream reservation exists and has been accepted.
 
-Avow lets one commitment reference another, identifying the exact commitment and its agreed terms. This allows approval and acceptance to depend on checks of the upstream booking. The reseller can provide evidence of the reservation behind its offer, with disclosure settings controlling what the customer sees and whether it verifies the dependency directly or relies on Avow’s check.
+Chained commitments come next. One commitment will reference another, naming the exact commitment and its agreed terms, so approval and acceptance can depend on checks of the upstream booking. The reseller will be able to show evidence of the reservation behind its offer, with disclosure settings that control what the customer sees and whether it verifies the dependency directly or relies on Avow’s check.
 
-Each link remains a separate agreement. The reseller remains responsible to its customer under their terms, and each reserve covers only its own commitment. Dependency checks gate approval and acceptance; reserve contracts do not enforce relationships between commitments or move funds across them. Evidence of an upstream booking shows its state when it was checked, and promises nothing about later delivery.
+Each link will stay a separate agreement. The reseller stays responsible to its customer under their terms, and each reserve backs only its own commitment. Dependency checks will gate approval and acceptance, while reserve contracts won’t enforce relationships between commitments or move funds across them. Evidence of an upstream booking will show its state when it was checked, and promise nothing about later delivery.
 
 ## Verification and settlement
 
@@ -41,6 +41,6 @@ Settlement follows the commitment’s rules. Funds are released when the supplie
 
 Avow’s role is to make those promises verifiable and financially backed. A business can delegate purchasing decisions within defined limits, while a supplier can assess an unfamiliar agent’s commitment before accepting it.
 
-As commitments connect across suppliers, agents can coordinate more than individual purchases: they can arrange the services and resources a business needs to fulfill its own obligations.
+Once commitments connect across suppliers, agents will coordinate more than individual purchases, and arrange the services and resources a business needs to fulfill its own obligations.
 
 That is the foundation Avow is building for autonomous commerce, businesses trading through agents, with explicit authority, agreed terms, and clear accountability.
