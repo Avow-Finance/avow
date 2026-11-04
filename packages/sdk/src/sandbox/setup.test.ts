@@ -59,6 +59,7 @@ async function enrolledBusiness() {
     token: TOKEN,
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(500),
+    dailyLimit: dollars(1000),
     expiry: BigInt(Math.floor(Date.now() / 1000)) + 86_400n,
   })
   await saveAgentItem(store, {
@@ -94,7 +95,7 @@ function recordingPrompts(answer = false) {
   }
 }
 
-const config = { name: 'Starter Test Co', authority: 500, suppliers: [supplier] }
+const config = { name: 'Starter Test Co', authority: 500, dailyLimit: 1000, suppliers: [supplier] }
 
 describe("the business's side, when the agent writes to .avow", () => {
   it('stands on a mandate the chain holds, and asks nothing', async () => {

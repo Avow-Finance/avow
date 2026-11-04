@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "avow-sandbox start",
-    "fresh": "avow-sandbox fresh"
+    "fresh": "avow-sandbox fresh",
+    "mcp:claude-code": "avow-sandbox-mcp add claude-code",
+    "mcp:claude-desktop": "avow-sandbox-mcp add claude-desktop"
   },
   "dependencies": {
     "@avow-finance/sdk": "https://try.testnet.avow.finance/avow-finance-sdk.tgz",

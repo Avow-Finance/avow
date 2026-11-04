@@ -31,7 +31,13 @@ const reference: CommitmentReference = {
   side: 'buyer',
   termsHash: `0x${'cd'.repeat(32)}`,
 }
-const committed: SessionEvent = { type: 'committed', run: 1, reference, amount: dollars(200) }
+const committed: SessionEvent = {
+  type: 'committed',
+  run: 1,
+  source: 'script',
+  reference,
+  amount: dollars(200),
+}
 
 interface Seen {
   url: string

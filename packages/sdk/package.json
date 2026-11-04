@@ -18,7 +18,8 @@
     }
   },
   "bin": {
-    "avow-sandbox": "./dist/node/cli.js"
+    "avow-sandbox": "./dist/node/cli.js",
+    "avow-sandbox-mcp": "./dist/node/mcp.js"
   },
   "files": [
     "dist"
@@ -38,5 +39,8 @@
     "@avow-finance/verifier": "workspace:*",
     "ox": "0.14.57",
     "viem": "2.57.11"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
   }
 }

@@ -19,12 +19,15 @@ import type { SandboxClient } from './business.js'
 
 const DAY = 86_400n
 
+/** What the agent's key can move in a day when the business names no daily limit, $1,000. */
+export const SANDBOX_DAILY_LIMIT = 1_000_000_000n
+
 /**
  * The mandate a sandbox business's root key signs for its agent. The agent may reserve, cancel and
  * start jobs for compute with the named suppliers, up to `capPerCommitment` for one booking and
- * `capOpenReserves` across the bookings it holds at once, until `expiry`. Its key can spend no more
- * than the open reserves cap in a day. Every booking goes ahead without a person's approval, which
- * a real business would set to fit its own rules.
+ * `capOpenReserves` across the bookings it holds at once, until `expiry`. Its key can move at most
+ * `dailyLimit` in a day, which the account's keychain holds whatever Avow approves. Every booking
+ * goes ahead without a person's approval, which a real business would set to fit its own rules.
  */
 export function sandboxMandate(m: {
   businessId: string
@@ -36,6 +39,8 @@ export function sandboxMandate(m: {
   token: Address
   capPerCommitment: bigint
   capOpenReserves: bigint
+  /** The most the agent's key can move in a day, `SANDBOX_DAILY_LIMIT` when left out. */
+  dailyLimit?: bigint
   /** Unix seconds. */
   expiry: bigint
 }): Mandate {
@@ -51,7 +56,7 @@ export function sandboxMandate(m: {
     capOpenReserves: m.capOpenReserves,
     suppliers: [...m.suppliers],
     categories: ['compute'],
-    paymentLimits: [{ token: m.token, amount: m.capOpenReserves, period: DAY }],
+    paymentLimits: [{ token: m.token, amount: m.dailyLimit ?? SANDBOX_DAILY_LIMIT, period: DAY }],
     approvalRule: { kind: 'never' },
     expiry: m.expiry,
     nonce: 1n,

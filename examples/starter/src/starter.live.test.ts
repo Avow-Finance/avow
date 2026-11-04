@@ -31,7 +31,7 @@ describe.skipIf(!live)('the starter on Moderato', () => {
       const log = (l: string) => lines.push(l)
       const business = (authority: number) =>
         sandbox.business({
-          config: { name: 'Starter Live Test', authority, suppliers: [supplier] },
+          config: { name: 'Starter Live Test', authority, dailyLimit: 1000, suppliers: [supplier] },
           prompts,
           store,
           session: null,
@@ -60,7 +60,7 @@ describe.skipIf(!live)('the starter on Moderato', () => {
         amounts: { needed: 400_000_000n, left: 300_000_000n, authority: 500_000_000n },
       })
       expect((refused as Refusal).message).toMatch(
-        /^This booking needs \$400 and your agent has \$300 of authority left, so Avow refused the reserve and no money moved\./,
+        /^This booking needs \$400 and your agent has \$300 left of its \$500 held at once, so Avow refused the reserve and no money moved\./,
       )
 
       const second = await agent.book(booking(250))

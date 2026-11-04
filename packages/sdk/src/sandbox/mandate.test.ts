@@ -54,7 +54,8 @@ describe('sandboxMandate', () => {
       suppliers: ['avow-demo-gpu'],
       categories: ['compute'],
       actions: ['reserve', 'cancel', 'start'],
-      paymentLimits: [{ token: TOKEN, amount: dollars(500), period: 86_400n }],
+      // The key moves $1,000 a day when the business names no daily limit.
+      paymentLimits: [{ token: TOKEN, amount: dollars(1000), period: 86_400n }],
       approvalRule: { kind: 'never' },
     })
     expect(moderatoUsdToken(TOKEN).chainId).toBe(TEMPO_MODERATO)
@@ -64,8 +65,10 @@ describe('sandboxMandate', () => {
     expect(check(200, 0).result).toBe('approved')
     expect(check(400, 200).reason).toBe('mandate.over_open_reserves_cap')
     expect(check(250, 200).result).toBe('approved')
-    // Above the whole authority, the key's daily limit is the first rule the booking breaks.
-    expect(check(600, 0).reason).toBe('mandate.over_payment_limit')
+    // Above the whole authority, the cap per commitment refuses it, and above the key's $1,000 a
+    // day, the daily limit is the first rule the booking breaks.
+    expect(check(600, 0).reason).toBe('mandate.over_commitment_cap')
+    expect(check(1200, 0).reason).toBe('mandate.over_payment_limit')
     expect(check(200, 0, 'another-supplier').reason).toBe('mandate.supplier_not_allowed')
   })
 })

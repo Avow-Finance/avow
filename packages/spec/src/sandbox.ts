@@ -121,16 +121,38 @@ export interface RefusalAmounts {
   dailyLeft: bigint | null
 }
 
-/** A run starting, once each time the developer runs their agent. */
+/**
+ * Who made an event. `business` is the runner, which alone holds the business's root key and
+ * changes the authority, so it marks `authority_changed` and no other event. `script` is the
+ * developer's agent file, and `mcp` is the agent a model drives through the sandbox's MCP server.
+ * Both act with only the agent's key, and every other event names one of them. So the source
+ * follows from the event's type, and no event the agent's key signs can claim the business.
+ */
+export const SESSION_SOURCES = ['business', 'script', 'mcp'] as const
+export type SessionSource = (typeof SESSION_SOURCES)[number]
+
+/** The sources that act with only the agent's key. */
+export const AGENT_SOURCES = ['script', 'mcp'] as const
+export type AgentSource = (typeof AGENT_SOURCES)[number]
+
+/** The tools the sandbox's MCP server gives a model. */
+export const SANDBOX_TOOLS = ['authority', 'book', 'commitments'] as const
+export type SandboxTool = (typeof SANDBOX_TOOLS)[number]
+
+/** A run starting, once each time the developer runs their agent or a model calls a tool. */
 export interface RunStarted {
   type: 'run_started'
   run: number
+  source: AgentSource
+  /** The tool the model called, or null for a run of the agent's file. */
+  tool: SandboxTool | null
 }
 
 /** The agent's authority changed, so the business signed and enrolled a new mandate. */
 export interface AuthorityChanged {
   type: 'authority_changed'
   run: number
+  source: 'business'
   /** The new mandate's cap on open reserves, in micros. */
   authority: bigint
   /** The previous mandate's cap, or null when the agent had no mandate before. */
@@ -145,6 +167,7 @@ export interface AuthorityChanged {
 export interface Refused {
   type: 'refused'
   run: number
+  source: AgentSource
   code: ReasonCode
   layer: RefusalLayer
   amounts: RefusalAmounts
@@ -154,6 +177,7 @@ export interface Refused {
 export interface Committed {
   type: 'committed'
   run: number
+  source: AgentSource
   reference: CommitmentReference
   /** The reserve, in micros. */
   amount: bigint
@@ -163,6 +187,7 @@ export interface Committed {
 export interface Accepted {
   type: 'accepted'
   run: number
+  source: AgentSource
   reference: CommitmentReference
 }
 
@@ -188,14 +213,21 @@ export interface SessionEventAnswer {
 }
 
 const run = z.number().int().positive().max(1_000_000)
+const agentSource = z.enum(AGENT_SOURCES)
 const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const businessId = z.string().min(1).max(100)
 
 export const sessionEventJson = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('run_started'), run }),
+  z.strictObject({
+    type: z.literal('run_started'),
+    run,
+    source: agentSource,
+    tool: z.enum(SANDBOX_TOOLS).nullable(),
+  }),
   z.strictObject({
     type: z.literal('authority_changed'),
     run,
+    source: z.literal('business'),
     authority: u256,
     previous: u256.nullable(),
     suppliers: z.array(businessId).min(1).max(20),
@@ -204,6 +236,7 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('refused'),
     run,
+    source: agentSource,
     code: reasonCode,
     layer: z.enum(REFUSAL_LAYERS),
     amounts: z.strictObject({
@@ -217,10 +250,16 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('committed'),
     run,
+    source: agentSource,
     reference: commitmentReferenceJson,
     amount: u256,
   }),
-  z.strictObject({ type: z.literal('accepted'), run, reference: commitmentReferenceJson }),
+  z.strictObject({
+    type: z.literal('accepted'),
+    run,
+    source: agentSource,
+    reference: commitmentReferenceJson,
+  }),
 ])
 
 export const sessionEventPostJson = z.strictObject({ event: sessionEventJson })
@@ -274,14 +313,22 @@ const WHO: Record<RefusalLayer, string> = {
 }
 
 /**
- * A refusal in plain words with its amounts, so the developer's terminal and the session's screen
- * say the same thing from the same event. A refusal by the SDK or by Avow goes on to say what the
- * chain holds without trusting either. The lock takes no reserve without Avow's approval, and the
- * account's keychain holds the agent's key to the daily limit the business set. The caps the lock
- * checks are the ones Avow's approval carries, so the sentence never says the lock would refuse
- * what Avow approved.
+ * A refusal in plain words with its amounts, then when the same booking could pass, so the
+ * developer's terminal, a model's MCP tools and the session's screen say the same thing from the
+ * same event.
  */
 export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
+  return `${refusalReason(r)} ${whenRetryPasses(r)}`
+}
+
+/**
+ * The first part of `refusalSentence`, the refusal and its amounts. A refusal by the SDK or by
+ * Avow goes on to say what the chain holds without trusting either. The lock takes no reserve
+ * without Avow's approval, and the account's keychain holds the agent's key to the daily limit the
+ * business set. The caps the lock checks are the ones Avow's approval carries, so the sentence
+ * never says the lock would refuse what Avow approved.
+ */
+export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
   const { needed, left, authority, dailyLimit, dailyLeft } = r.amounts
   const onChain =
@@ -289,20 +336,60 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
       ? ''
       : dailyLimit === null
         ? " The lock takes no reserve without Avow's approval."
-        : ` The lock takes no reserve without Avow's approval, and your agent's key can't move more than ${formatUsd(dailyLimit)} a day, a limit your business set on chain.`
+        : ` The lock takes no reserve without Avow's approval, and your agent's key moves at most ${formatUsd(dailyLimit)} a day, a limit your business set on chain.`
   if (r.layer === 'unknown') {
     return `The reserve for this ${formatUsd(needed)} booking never landed, and nothing on the way said why, so no money moved.`
   }
   switch (r.code) {
     case 'keychain.over_daily_limit':
-      return dailyLimit === null || dailyLeft === null
-        ? `This booking needs ${formatUsd(needed)}, more than your agent's key can still move today, so ${who} refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.`
-        : `This booking needs ${formatUsd(needed)} and your agent's key can move ${formatUsd(dailyLeft)} more today, of its ${formatUsd(dailyLimit)} daily limit, so ${who} refused it and no money moved. Your business set that limit on chain, and no approval from Avow lifts it.`
+      return `This booking needs ${formatUsd(needed)}. Your agent had ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so Avow approved it, but ${
+        dailyLimit === null || dailyLeft === null
+          ? 'that is more than its key can still move today'
+          : `its key has ${formatUsd(dailyLeft)} left of its ${formatUsd(dailyLimit)} a day`
+      }, so ${who} refused it and no money moved. Your business set that daily limit on chain, and no approval from Avow lifts it.`
     case 'mandate.over_open_reserves_cap':
-      return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} of authority left, so ${who} refused the reserve and no money moved.${onChain}`
+      return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
-      return `This booking needs ${formatUsd(needed)} and your agent's whole authority is ${formatUsd(authority)}, so ${who} refused the reserve and no money moved.${onChain}`
+      return `This booking needs ${formatUsd(needed)}, more than your agent's ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }
+}
+
+/** The codes Avow's relay gives when it's only short of time or budget for now. */
+const RELAY_FOR_NOW: readonly ReasonCode[] = [
+  'sponsorship.rate_limited',
+  'sponsorship.budget_spent',
+  'service.unavailable',
+  'request.in_progress',
+]
+
+/**
+ * When the same booking could pass, said as plainly as the refusal. Held reserves come back as
+ * their bookings release or are cancelled, the key's daily limit starts again each day, and the
+ * relay can be short of time or budget for a while. Anything else in the mandate changes only when
+ * the business signs a new one, and a refusal nothing explained might not come again.
+ */
+export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
+  if (r.layer === 'unknown') {
+    return 'The same booking might pass if you try again.'
+  }
+  if (r.layer === 'keychain') {
+    return "The same booking can pass once the key's day starts again, or once the business raises the daily limit on chain. Reserves cancelled today still count until then."
+  }
+  if (r.layer === 'relay') {
+    return RELAY_FOR_NOW.includes(r.code)
+      ? "Avow's relay was only limiting how much it takes for now, so the same booking can pass when you try again later."
+      : "Avow's relay refuses the same transaction again, so the same booking can pass only once what it checked changes."
+  }
+  if (RELAY_FOR_NOW.includes(r.code)) {
+    return 'Avow was busy or out of reach, so the same booking can pass when you try again later.'
+  }
+  if (r.code === 'mandate.over_open_reserves_cap') {
+    return 'The same booking can pass once enough of what the agent holds is released, when a booking ends or is cancelled, or once the business raises the authority.'
+  }
+  if (r.code.startsWith('mandate.')) {
+    return 'The same booking can pass only once the business signs a new mandate that allows it.'
+  }
+  return 'The same booking gets the same answer until what was checked changes.'
 }

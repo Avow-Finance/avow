@@ -1,4 +1,5 @@
 import {
+  type AgentSource,
   type AvowDomain,
   approvalCaps,
   approvalDigest,
@@ -18,6 +19,7 @@ import {
   type RequestKey,
   refusalSentence,
   type SandboxDeployment,
+  type SandboxTool,
   type SessionEvent,
   type Signed,
   TESTNET_DEMO_PROFILE,
@@ -118,6 +120,10 @@ export interface SandboxAgentOptions {
   deployment?: SandboxDeployment
   /** The session to report to, or null for none. In Node, the one the runner opened. */
   session?: SandboxSession | null
+  /** Who drives the agent, the developer's file by default, or a model through the MCP server. */
+  source?: 'script' | 'mcp'
+  /** The MCP tool this run answers, when a model called one. */
+  tool?: SandboxTool | null
   /** Where warnings go, a line at a time. `console.log` by default. */
   log?: (line: string) => void
   fetch?: typeof fetch
@@ -325,7 +331,8 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
       })
     : () => {}
   const run = session?.run ?? 0
-  report({ type: 'run_started', run })
+  const source = options.source ?? 'script'
+  report({ type: 'run_started', run, source, tool: options.tool ?? null })
   return booker({
     deployment,
     client,
@@ -342,6 +349,7 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
     suppliers: item.suppliers,
     screenUrl,
     run,
+    source,
     report,
     send,
   })
@@ -360,10 +368,11 @@ function booker(m: {
   suppliers: SandboxSupplier[]
   screenUrl: string
   run: number
+  source: AgentSource
   report: (event: SessionEvent) => void
   send: typeof fetch
 }): SandboxAgent {
-  const { deployment, client, mandate, run, report, send } = m
+  const { deployment, client, mandate, run, source, report, send } = m
   const { lock, account } = m.business
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
   const cap = mandate.message.capOpenReserves
@@ -395,7 +404,7 @@ function booker(m: {
     const left = await leftNow().catch(() => r.leftBefore)
     const dailyLeft = await dailyLeftNow().catch(() => null)
     const amounts = { needed: r.needed, left, authority: cap, dailyLimit, dailyLeft }
-    report({ type: 'refused', run, code: r.code, layer: r.layer, amounts })
+    report({ type: 'refused', run, source, code: r.code, layer: r.layer, amounts })
     return new Refusal(
       { code: r.code, layer: r.layer, amounts, decisionId: extra.decisionId ?? null },
       extra.cause === undefined ? undefined : { cause: extra.cause },
@@ -522,7 +531,7 @@ function booker(m: {
         madeAt: systemClock(),
       })
       const left = await leftNow().catch(() => (leftBefore > reserve ? leftBefore - reserve : 0n))
-      report({ type: 'committed', run, reference, amount: reserve })
+      report({ type: 'committed', run, source, reference, amount: reserve })
       let acceptance: Promise<boolean> | null = null
       return {
         reference,
@@ -545,7 +554,7 @@ function booker(m: {
           }),
         accepted() {
           acceptance ??= waitForAcceptance(client, lock, commitment).then((accepted) => {
-            if (accepted) report({ type: 'accepted', run, reference })
+            if (accepted) report({ type: 'accepted', run, source, reference })
             return accepted
           })
           return acceptance

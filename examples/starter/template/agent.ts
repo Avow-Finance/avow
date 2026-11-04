@@ -11,7 +11,9 @@ try {
     resource: { gpu: 'H100', count: 8, hours: 1 },
     reserve: 200,
   })
-  console.log(`Committed $${commitment.amount}, with $${commitment.left} of authority left.`)
+  console.log(
+    `Committed $${commitment.amount}, with $${commitment.left} left of its $${agent.authority} held at once.`,
+  )
   console.log('Commitment reference:', commitment.reference)
   console.log(`Anyone can check it at ${commitment.link}`)
 
@@ -29,6 +31,12 @@ try {
   )
 } catch (error) {
   if (!(error instanceof Refusal)) throw error
-  console.log(`Refused by ${error.layer}: ${error.code}`)
+  // A refusal names who refused, and a reserve that never landed with no reason given failed.
+  console.log(
+    error.layer === 'unknown'
+      ? `Failed: ${error.code}`
+      : `Refused by ${error.layer}: ${error.code}`,
+  )
+  // What was refused and why, then when the same booking could pass.
   console.log(error.message)
 }
