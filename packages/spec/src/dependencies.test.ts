@@ -13,6 +13,7 @@ import {
   subjectFits,
   subjectProblem,
 } from './dependencies.js'
+import { elideDependencies } from './elided-terms.js'
 import { type GpuSubject, gpuReservationTerms, gpuSubjectFits } from './gpu-reservation.js'
 import { checkMandate } from './mandate.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
@@ -23,6 +24,7 @@ import {
   chainedTermsShapeProblem,
   checkSectionDisclosure,
   discloseSection,
+  enforceableTerms,
   lockTerms,
   plainTermsOf,
   sectionHash,
@@ -157,11 +159,55 @@ describe('version 3 terms', () => {
   })
 })
 
-describe('every check a plain booking goes through', () => {
+describe('the reserve approval request Avow takes', () => {
   const agent = newKey()
   const mandate = demoMandate(newKey().address, agent.address)
-  const request = { ...demoRequest(agent.address), terms: chained as never }
+  const plainRequest = demoRequest(agent.address)
+  const request = { ...plainRequest, terms: chained }
+  const decide = (terms: typeof request.terms | typeof plainRequest.terms, openReserves = 0n) =>
+    checkMandate({
+      mandate,
+      request: { ...plainRequest, terms },
+      token: TOKEN,
+      openReserves,
+      revoked: false,
+      now: NOW,
+      profile: TESTNET_DEMO_PROFILE,
+    })
 
+  it('reads version 3 terms whole, with the bookings they rely on, and version 2 as before', () => {
+    expect(parseReserveRequest(roundTrip(request)).terms).toEqual(chained)
+    expect(parseReserveRequest(roundTrip(plainRequest)).terms).toEqual(plain)
+    const view = elideDependencies(chainedTerms(plain, [entry()], 'avow'), SALT)
+    expect(() => parseReserveRequest(roundTrip({ ...request, terms: view }))).toThrow()
+  })
+
+  it('has the mandate check read version 3 terms as the plain booking they make', () => {
+    expect(decide(chained)).toEqual(decide(plainTermsOf(chained)))
+    expect(decide(chained).result).toBe('approved')
+    const full = enforceableTerms(plain).reserve
+    expect(decide(chained, mandate.capOpenReserves - full + 1n)).toEqual({
+      result: 'denied',
+      reason: 'mandate.over_open_reserves_cap',
+    })
+  })
+
+  it('refuses version 3 terms whose dependencies break the rules, before any cap', () => {
+    const twice = chainedTerms(plain, [entry(), entry()])
+    expect(decide(twice)).toEqual({
+      result: 'denied',
+      reason: dependenciesProblem(twice.dependencies),
+    })
+    expect(dependenciesProblem(twice.dependencies)).not.toBeNull()
+  })
+
+  it('gives the lock the same terms as the plain booking, since the lock knows no dependencies', () => {
+    expect(enforceableTerms(chained)).toEqual(enforceableTerms(plain))
+    expect(lockTerms(chained, 6)).toEqual(lockTerms(plain, 6))
+  })
+})
+
+describe('every check a plain booking goes through', () => {
   it('refuses version 3 terms as a version it does not read, as before version 3 existed', () => {
     expect(termsShapeProblem(chained)).toBe('terms.version_unknown')
     expect(validateTerms(chained as never, TESTNET_DEMO_PROFILE)).toBe('terms.version_unknown')
@@ -169,30 +215,6 @@ describe('every check a plain booking goes through', () => {
       ok: false,
       reason: 'terms.version_unknown',
     })
-    expect(() => parseReserveRequest(roundTrip(request))).toThrow()
-  })
-
-  it('so the mandate check never approves a booking whose dependencies nobody read', () => {
-    const decision = checkMandate({
-      mandate,
-      request,
-      token: TOKEN,
-      openReserves: 0n,
-      revoked: false,
-      now: NOW,
-      profile: TESTNET_DEMO_PROFILE,
-    })
-    expect(decision).toEqual({ result: 'denied', reason: 'terms.version_unknown' })
-    const plainDecision = checkMandate({
-      mandate,
-      request: demoRequest(agent.address),
-      token: TOKEN,
-      openReserves: 0n,
-      revoked: false,
-      now: NOW,
-      profile: TESTNET_DEMO_PROFILE,
-    })
-    expect(plainDecision.result).not.toBe('denied')
   })
 
   it('keeps a commitment record from holding version 3 terms', () => {

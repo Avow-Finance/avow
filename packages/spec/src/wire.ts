@@ -227,7 +227,7 @@ export const reserveRequestJson = z.strictObject({
   supplier: z.string().min(1),
   payee: address,
   category: z.string().min(1),
-  terms: termsJson,
+  terms: z.union([termsJson, chainedTermsJson]),
 })
 
 export const termsAgreementJson = z.strictObject({
@@ -597,7 +597,7 @@ export function parseMandate(json: unknown): Mandate {
   return mandateJson.parse(json)
 }
 
-/** Parses a reserve request, whose terms have to be version 2. Throws on anything else. */
+/** Parses a reserve request, whose terms are version 2 or version 3. Throws on anything else. */
 export function parseReserveRequest(json: unknown): ReserveRequest {
   return reserveRequestJson.parse(json)
 }

@@ -16,6 +16,7 @@ import {
 } from './api.js'
 import { encodeApiBody, newRequestId, signApiRequest } from './api-request.js'
 import { testnetDemoTerms } from './demo.js'
+import { chainedTerms } from './dependencies.js'
 import type {
   Approval,
   HumanApproval,
@@ -89,6 +90,26 @@ const request = {
 }
 
 describe('reserve approval requests', () => {
+  it('take version 3 terms, which name the bookings the reserve relies on', () => {
+    const chained = chainedTerms(terms, [
+      {
+        on: {
+          kind: 'commitment',
+          chainId: CHAIN_ID,
+          lock: LOCK,
+          commitmentId: id('upstream'),
+          side: 'buyer',
+          termsHash: id('upstream terms'),
+        },
+        condition: 'accepted',
+        disclosed: 'subject',
+      },
+    ])
+    const v3 = { ...request, request: { ...request.request, terms: chained } }
+    const parsed = parseReserveApprovalRequest(roundTrip(v3), { chainId: CHAIN_ID, lock: LOCK })
+    expect(parsed.ok && parsed.value.request.terms).toEqual(chained)
+  })
+
   it('round-trip with and without a human approval', () => {
     const plain = parseReserveApprovalRequest(roundTrip(request), { chainId: CHAIN_ID, lock: LOCK })
     expect(plain.ok).toBe(true)

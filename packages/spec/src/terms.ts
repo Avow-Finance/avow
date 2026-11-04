@@ -608,7 +608,12 @@ export interface EnforceableTerms {
   day90SupplierShareBps: number
 }
 
-export function enforceableTerms(terms: AnyTerms): EnforceableTerms {
+/**
+ * What the lock enforces of these terms. Version 3 terms are read as the version 2 terms they
+ * make, since the lock knows nothing of the bookings they rely on.
+ */
+export function enforceableTerms(given: AnyTerms | ChainedTerms): EnforceableTerms {
+  const terms = isChainedTerms(given) ? plainTermsOf(given) : given
   if (isTermsV1(terms)) {
     const charges: RemedyCharge[] = []
     if (terms.lateCancellation > 0n) {
@@ -672,7 +677,8 @@ export interface LockTerms {
  * The enforceable fields in a token's base units, as Avow's approval carries them and the lock
  * stores them. Throws when an amount can't be paid exactly in a token with these decimals.
  */
-export function lockTerms(terms: AnyTerms, decimals: number): LockTerms {
+export function lockTerms(given: AnyTerms | ChainedTerms, decimals: number): LockTerms {
+  const terms = isChainedTerms(given) ? plainTermsOf(given) : given
   const e = enforceableTerms(terms)
   const units = (micros: bigint) => toTokenUnits(micros, decimals)
   return {

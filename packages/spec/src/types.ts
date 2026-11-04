@@ -255,7 +255,11 @@ export interface ReserveRequest {
   /** The supplier's payout address on the rail, which receives any charge. */
   payee: Address
   category: string
-  terms: Terms
+  /**
+   * The terms, version 2 or version 3. Version 3 terms name the bookings this one relies on, and
+   * Avow checks each of them on its lock before it approves.
+   */
+  terms: Terms | ChainedTerms
 }
 
 export type DecisionResult = 'approved' | 'denied' | 'needs_human'
