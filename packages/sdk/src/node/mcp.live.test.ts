@@ -43,18 +43,25 @@ describe.skipIf(!live)('the MCP agent on Moderato', () => {
         new StdioClientTransport({
           command: process.execPath,
           args: [SERVER, '--dir', dir],
+          // The server gets this process's environment, as Claude Code passes its own, so a proxy
+          // the machine needs reaches it too.
+          env: Object.fromEntries(
+            Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+          ),
           stderr: 'ignore',
         }),
       )
       try {
+        const said = (r: unknown) => JSON.stringify((r as { content?: unknown }).content)
         const authority = await client.callTool({ name: 'authority', arguments: {} })
+        expect(authority.isError, said(authority)).toBe(false)
         expect(authority.structuredContent).toMatchObject({
           canCommitNow: 500,
           heldAtOnce: { limit: 500, left: 500 },
           movedPerDay: { limit: 1000, left: 1000 },
         })
         const first = await client.callTool({ name: 'book', arguments: { reserve: 200 } })
-        expect(first.isError).toBe(false)
+        expect(first.isError, said(first)).toBe(false)
         expect(first.structuredContent).toMatchObject({
           status: 'committed',
           reserve: 200,
@@ -69,6 +76,7 @@ describe.skipIf(!live)('the MCP agent on Moderato', () => {
           code: 'mandate.over_open_reserves_cap',
           layer: 'avow',
           amounts: { needed: 400, left: 300, heldAtOnce: 500 },
+          retry: expect.stringMatching(/released, .* or once the business raises the authority/),
         })
         const listed = await client.callTool({ name: 'commitments', arguments: {} })
         expect((listed.structuredContent as { commitments: unknown[] }).commitments).toHaveLength(1)
