@@ -30,7 +30,7 @@ pnpm build
 pnpm --filter @avow-examples/starter host
 ```
 
-This writes `host/create-avow-agent.tgz` and `host/avow-finance-sdk.tgz`. Serve both from the root of https://try.testnet.avow.finance with `Cache-Control: no-cache`, since each new build replaces the files at the same URLs. The SDK tarball carries the spec and the verifier inside it, so npm fetches nothing else from the host. It packs each module the sources make and nothing else a build left behind. Every package inside stays private, so neither tarball can be published to npm. To try a build before it's served, pass `--host http://localhost:8080`, serve `host/` there, and run `npx` against that origin.
+This writes `host/create-avow-agent.tgz` and `host/avow-finance-sdk.tgz`. Serve both from the root of https://try.testnet.avow.finance with `Cache-Control: no-cache`, since each new build replaces the files at the same URLs. The SDK tarball carries the spec and the verifier inside it, so npm fetches nothing else from the host. It packs each module the sources make and nothing else a build left behind. Every package inside stays private, so neither tarball can be published to npm. To try a build before it's served, pass `--host http://localhost:8080`, serve `host/` there, and run `npx` against that origin. npx also takes the create tarball from disk with a `file:` prefix, as in `npx file:$PWD/host/create-avow-agent.tgz my-agent`, and the SDK inside it still comes from the origin you passed. A bare path makes npx run the tarball as a script.
 
 ## Test
 
