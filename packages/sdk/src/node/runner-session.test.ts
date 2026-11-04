@@ -82,8 +82,8 @@ function folderWithSession(id: string): string {
   return dir
 }
 
-async function business() {
-  const b = await enrolledBusiness()
+async function business(authority = 500) {
+  const b = await enrolledBusiness(authority)
   const chain = fakeChain({
     factory: MODERATO_FACTORY,
     account: b.root.address,
@@ -192,6 +192,44 @@ describe("the runner's session", () => {
       authorization: post.authorization,
     })
     expect(verified.ok && verified.value.credentials.signer).toBe(b.root.address.toLowerCase())
+  })
+
+  it("signs the hash of the mandate the chain holds, whatever hash the agent's file names", async () => {
+    // The business lowered the authority from $500 to $100. The agent writes the $500 mandate's
+    // hash into its file and deletes the kept session, so the next start announces again.
+    const b = await business(100)
+    const before = await enrolledBusiness(500)
+    const file = JSON.parse((await b.store.read('agent')) as string)
+    file.mandateHash = before.witness
+    await b.store.write('agent', JSON.stringify(file))
+    const dir = join(mkdtempSync(join(tmpdir(), 'avow-session-')), '.avow')
+    const relay = fakeRelay({})
+    const session = await keepSession({
+      dir,
+      apiUrl: API,
+      account: b.root.address,
+      fetch: relay.fetcher,
+      now: () => NOW,
+    })
+    expect(session.fresh).toBe(true)
+    const { asked, prompts } = recordingPrompts()
+    const prepared = await prepareSandboxBusiness({
+      config: { ...config, authority: 100 },
+      prompts,
+      store: b.store,
+      deployment,
+      client: b.chain.client,
+      fetch: relay.fetcher,
+      session: { id: session.id, run: 1 },
+      announce: session.fresh,
+      log: () => {},
+    })
+    expect(asked).toEqual(['passphrase'])
+    expect(prepared).toMatchObject({ announced: true, authority: 100, mandateHash: b.witness })
+    const post = relay.posts[0] as (typeof relay.posts)[number]
+    const { event } = JSON.parse(new TextDecoder().decode(post.body))
+    expect(event).toMatchObject({ authority: '100000000', mandateHash: b.witness })
+    expect(event.mandateHash).not.toBe(before.witness)
   })
 
   it('never keeps a session another business holds, or one no event reached', async () => {

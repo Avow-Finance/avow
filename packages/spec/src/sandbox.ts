@@ -148,18 +148,25 @@ export interface RunStarted {
   tool: SandboxTool | null
 }
 
-/** The agent's authority changed, so the business signed and enrolled a new mandate. */
+/**
+ * The agent's authority, signed by the business's root key. The business posts it whenever it
+ * signs and enrolls a new mandate, and again for the mandate the agent already holds when a
+ * session hasn't had it, as on a first run, after a fresh business or once a session closed.
+ */
 export interface AuthorityChanged {
   type: 'authority_changed'
   run: number
   source: 'business'
-  /** The new mandate's cap on open reserves, in micros. */
+  /** The mandate's cap on open reserves, in micros. */
   authority: bigint
-  /** The previous mandate's cap, or null when the agent had no mandate before. */
+  /**
+   * The cap before a new mandate replaced it, or null when there was none before, or when the
+   * business is announcing the mandate the agent already holds to a session new to it.
+   */
   previous: bigint | null
-  /** The business ids of the suppliers the new mandate allows. */
+  /** The business ids of the suppliers the mandate allows. */
   suppliers: string[]
-  /** The new mandate's hash under the business's lock, which its agent key carries on-chain. */
+  /** The mandate's hash under the business's lock, which its agent key carries on-chain. */
   mandateHash: Hex
 }
 

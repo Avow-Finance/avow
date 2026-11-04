@@ -27,8 +27,8 @@ export const deployment = {
 }
 export const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: LOCK }
 
-/** A business with its agent enrolled under a $500 mandate, as the runner leaves it. */
-export async function enrolledBusiness() {
+/** A business with its agent enrolled under a mandate, $500 by default, as the runner leaves it. */
+export async function enrolledBusiness(authority = 500) {
   const store = memoryStore()
   const rootKey = generatePrivateKey()
   const root = Account.fromSecp256k1(rootKey)
@@ -54,8 +54,8 @@ export async function enrolledBusiness() {
     agentKey: agent.accessKeyAddress,
     suppliers: [supplier.id],
     token: TOKEN,
-    capPerCommitment: dollars(500),
-    capOpenReserves: dollars(500),
+    capPerCommitment: dollars(authority),
+    capOpenReserves: dollars(authority),
     dailyLimit: dollars(1000),
     expiry: BigInt(Math.floor(Date.now() / 1000)) + 86_400n,
   })

@@ -305,7 +305,7 @@ export async function prepareSandboxBusiness(
     lock,
     authority: toDollars(a.mandate.message.capOpenReserves),
     suppliers: [...a.mandate.message.suppliers],
-    mandateHash: a.mandateHash,
+    mandateHash: mandateHash(a.mandate.message, domain),
     signed,
     announced,
   })
@@ -335,7 +335,9 @@ export async function prepareSandboxBusiness(
         authority: a.mandate.message.capOpenReserves,
         previous,
         suppliers: [...a.mandate.message.suppliers],
-        mandateHash: a.mandateHash,
+        // The hash comes from the mandate the chain bound the agent's key to, and never from the
+        // agent's file, which the agent can write.
+        mandateHash: mandateHash(a.mandate.message, domain),
       })
       return true
     } catch (error) {

@@ -66,10 +66,14 @@ function newSession(dir: string): RunnerSession {
 /**
  * The session the runner reports to, kept in the sandbox folder with the business, so the screen
  * a developer has open keeps working across restarts. A restart keeps it while Avow's relay holds
- * it for this business's account and takes its events for more than `SESSION_MARGIN`. The account
- * is the one the business's sealed key is bound to, so a session another business holds is never
- * kept. On a first run, after `npm run fresh`, or once a session has ended, it's a new session, and
- * the runner announces the agent's authority to it.
+ * it for the business's account and takes its events for more than `SESSION_MARGIN`. On a first
+ * run, after `npm run fresh`, or once a session has closed, it's a new session, and the runner
+ * announces the agent's authority to it.
+ *
+ * The account comes from business.json, and nothing checks it here, since that takes the
+ * passphrase. The sealed key opens only for the account it was sealed for, so a file that names
+ * another business's account can make the runner keep that business's session, but nothing the
+ * runner signs can reach it, and Avow's relay refuses this business's agent's events there.
  */
 export async function keepSession(
   m: SessionOptions & { account: Address | null },
