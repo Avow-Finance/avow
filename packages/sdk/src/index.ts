@@ -24,7 +24,28 @@ export * from './contest.js'
 export * from './http.js'
 export * from './lock.js'
 export * from './moderato.js'
+export {
+  loadSandboxDeployment,
+  memoryStore,
+  Refusal,
+  type SandboxAgent,
+  type SandboxAgentOptions,
+  type SandboxBooking,
+  type SandboxCheck,
+  type SandboxCommitment,
+  type SandboxPlatform,
+  type SandboxSession,
+  type SandboxStore,
+  type SandboxStoreItem,
+  type SandboxSupplier,
+  sandbox,
+  sandboxAgent,
+  setSandboxPlatform,
+} from './sandbox/agent.js'
+export * from './sandbox/business.js'
+export * from './sandbox/mandate.js'
 export * from './sandbox/session.js'
+export * from './sandbox/terms.js'
 export * from './send.js'
 export * from './sign.js'
 export * from './supplier.js'

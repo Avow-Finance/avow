@@ -8,8 +8,12 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "node": "./dist/node.js",
       "default": "./dist/index.js"
     }
+  },
+  "bin": {
+    "avow-sandbox": "./dist/node/cli.js"
   },
   "files": [
     "dist"

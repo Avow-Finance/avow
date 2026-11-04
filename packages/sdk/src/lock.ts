@@ -10,7 +10,16 @@ import {
   type Signed,
 } from '@avow-finance/spec'
 import { FACTORY_ABI, type LockedBacking } from '@avow-finance/verifier'
-import { type Address, encodeFunctionData, type Hex, toFunctionSelector } from 'viem'
+import {
+  type Address,
+  type Chain,
+  type Client,
+  encodeFunctionData,
+  type Hex,
+  type Transport,
+  toFunctionSelector,
+} from 'viem'
+import { readContract } from 'viem/actions'
 import { Abis } from 'viem/tempo'
 
 /**
@@ -117,6 +126,35 @@ export const ADMINISTRATOR_ABI = [
  * definition on, so an agent and a supplier never read the factory through two different ABIs.
  */
 export { FACTORY_ABI }
+
+/**
+ * The lock's running total of what each mandate's open reserves hold. The lock refuses a reserve
+ * that would take it above the mandate's cap on open reserves, and Avow's reserve check reads the
+ * same total before it approves one.
+ */
+export const OPEN_RESERVES_ABI = [
+  {
+    type: 'function',
+    name: 'openReserves',
+    inputs: [{ name: 'mandateHash', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
+
+/** What the lock holds in open reserves under one mandate, in the token's base units. */
+export function readOpenReserves(
+  client: Client<Transport, Chain>,
+  lock: Address,
+  mandateHash: Hex,
+): Promise<bigint> {
+  return readContract(client, {
+    address: lock,
+    abi: OPEN_RESERVES_ABI,
+    functionName: 'openReserves',
+    args: [mandateHash],
+  })
+}
 
 /** One call in a Tempo transaction. */
 export interface Call {

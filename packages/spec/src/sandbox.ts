@@ -1,6 +1,8 @@
-import type { Hex } from 'viem'
+import type { Address, Hex } from 'viem'
 import { z } from 'zod'
-import { bytes32, u256 } from './json-fields.js'
+import { isApiAudience } from './api-request.js'
+import { address, bytes32, u256 } from './json-fields.js'
+import { isTestnetChain } from './networks.js'
 import { describeReason, REASON_CODES, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
 import { commitmentReferenceJson, type Parsed } from './wire.js'
@@ -33,6 +35,62 @@ export const SANDBOX_PATHS = {
     return `/v1/sandbox/sessions/${sessionId}/events`
   },
 } as const
+
+/** Where the sandbox's screen publishes the facts of the deployment it runs against. */
+export const SANDBOX_DEPLOYMENT_PATH = '/config.json'
+
+/** What a sandbox client needs to know about the testnet deployment it registers and books on. */
+export interface SandboxDeployment {
+  /** The chain every message is signed for. The sandbox runs only on a testnet. */
+  chainId: number
+  rpcUrl: string
+  /** Avow's API, the audience every request names. */
+  apiUrl: string
+  /** Avow's demo supplier's adapter. */
+  supplierUrl: string
+  /** The factory that makes each business's lock. */
+  factory: Address
+  /** The token reserves are held in, which the sandbox pays its test dollars in. */
+  token: Address
+  /** The fallback arbiter Avow's approvals name, which a booking's terms have to name too. */
+  arbiter: Address
+  /** The supplier's share of a disputed charge at day 90, which Avow's approvals name. */
+  day90SupplierShareBps: number
+}
+
+const origin = z.string().refine(isApiAudience, 'an http or https origin, with no path')
+
+/** The deployment's facts as the screen publishes them. Fields a client doesn't use are left out. */
+export const sandboxDeploymentJson = z.object({
+  chainId: z.number().int().refine(isTestnetChain, 'a testnet chain'),
+  rpcUrl: z.url({ protocol: /^https?$/ }),
+  apiUrl: origin,
+  supplierUrl: origin,
+  factory: address,
+  token: address,
+  arbiter: address,
+  day90SupplierShareBps: z.number().int().min(0).max(10_000),
+})
+
+/** Reads the deployment's facts, refusing any chain that isn't a testnet. */
+export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment> {
+  const parsed = sandboxDeploymentJson.safeParse(json)
+  return parsed.success
+    ? {
+        ok: true,
+        value: {
+          chainId: parsed.data.chainId,
+          rpcUrl: parsed.data.rpcUrl,
+          apiUrl: parsed.data.apiUrl,
+          supplierUrl: parsed.data.supplierUrl,
+          factory: parsed.data.factory,
+          token: parsed.data.token,
+          arbiter: parsed.data.arbiter,
+          day90SupplierShareBps: parsed.data.day90SupplierShareBps,
+        },
+      }
+    : { ok: false, reason: 'message.invalid' }
+}
 
 /**
  * Who refused a booking. `sdk` is the agent's own SDK, which checks the mandate before anyone

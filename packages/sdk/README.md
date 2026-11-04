@@ -59,6 +59,34 @@ The contest stands whether or not Avow takes the statement, so the result says w
 
 Every Avow deployment so far runs on Moderato, Tempo's testnet. `moderatoClient` gives a client for it that pays fees in AlphaUSD, `MODERATO_FEE_TOKEN`, through `MODERATO_RPC_URL` unless you pass another RPC, and `createAgent`, `sendOwn` and the verifier's `tempoChainReader` all take it. `moderatoUsdToken` describes a USD token on Moderato as the `RailToken` the agent and the verifier take, with the 6 decimals every USD token on Tempo has. Both quickstarts use these.
 
+## The sandbox
+
+On testnet, `sandbox.agent` gives an agent the authority to commit a sandbox business, with every key made where it runs. The first time, it makes the business's root key, registers the business with Avow's sandbox, waits for its test dollars and creates its lock. It reads the deployment's factory, token and arbiter from the sandbox's screen at `https://try.testnet.avow.finance/config.json`, and refuses any chain that isn't a testnet. The authority is the most the agent can hold in bookings at once, with the suppliers it names. Whenever either differs from the agent's mandate, the business signs a new mandate for a new agent key, puts the key on its account, enrolls it with Avow and says so, since the account binds each key to one mandate's hash.
+
+```ts
+import { Refusal, sandbox } from '@avow-finance/sdk'
+
+const supplier = { id: 'avow-demo-gpu', url: 'https://supplier.testnet.avow.finance' }
+const agent = await sandbox.agent({ authority: 500, suppliers: [supplier] })
+try {
+  const commitment = await agent.book({
+    supplier: supplier.id,
+    resource: { gpu: 'H100', count: 8, hours: 1 },
+    reserve: 200,
+  })
+  console.log(commitment.reference, commitment.link)
+  console.log(await commitment.verify(), await commitment.accepted())
+} catch (error) {
+  if (error instanceof Refusal) console.log(error.layer, error.code, error.message)
+}
+```
+
+`book` returns the commitment once the reserve is funded, with its `CommitmentReference` and a link to the screen's `#verify=` page, which carries the reference and nothing private. It throws a `Refusal` when the booking is refused before any money moves. The refusal names the reason code, the layer that refused it and the amounts. `sdk` is the SDK's own mandate check, `avow` is Avow's reserve check, which counts what the lock already holds under the mandate, and `lock` is a reserve the lock wouldn't take after Avow approved it. Its message is `refusalSentence` from the spec, such as "This booking needs $400 and your agent has $300 of authority left, so Avow refused the reserve and no money moved." `verify` runs the open verifier on the developer's machine. It reports the SDK's check of Avow's approval against the terms and the mandate, which passed before any money moved, and checks with `verifyCommitmentReference` that a lock Avow's factory made holds the commitment. `accepted` waits for the supplier's acceptance on the lock.
+
+In Node, the sandbox keeps the business's keys and setup in the working directory's `.avow` folder, which ignores itself in git, and nothing prints or logs a key. Node loads the SDK through its `node` export, which sets that store. A browser loads the same SDK without it, so a page passes its own `store`. The setup's steps are exported on their own, so the playground and the starter share one copy. `createSandboxBusiness` funds the fees, creates the lock, registers the business and waits for its test dollars. `sandboxMandate` and `enrollSandboxAgent` sign the mandate, put the agent's key on the account and enroll it, and `sandboxTerms` builds a booking's GPU reservation terms.
+
+`avow-sandbox agent.ts` is the runner the starter's `npm start` uses. It runs the file once to set up, which ends as soon as the mandate is enrolled, opens the screen for a new session, and runs the file again at each press of Enter. Each run posts its events to the session through `sessionRelay`, without ever holding up the agent.
+
 ## Use
 
 ```ts
