@@ -13,14 +13,13 @@ import {
   platformSession,
   platformStore,
   type SandboxSession,
-  sessionReporter,
 } from './agent.js'
 import { createSandboxBusiness, type SandboxBusinessStep, type SandboxClient } from './business.js'
 import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { loadSandboxDeployment, madeOn } from './deployment.js'
 import { approvedSuppliers, lockCreatedIn, revokeOtherKeys } from './keys.js'
 import { enrollSandboxAgent, SANDBOX_DAILY_LIMIT, sandboxMandate } from './mandate.js'
-import { SANDBOX_SCREEN_URL } from './session.js'
+import { SANDBOX_SCREEN_URL, sessionRelay } from './session.js'
 import {
   type AgentItem,
   loadAgentItem,
@@ -75,6 +74,12 @@ export interface PrepareSandboxBusinessOptions {
   client?: SandboxClient
   /** The session an authority change is reported to, signed by the business's root key. */
   session?: SandboxSession | null
+  /**
+   * Whether the session hasn't had the agent's authority yet, as on a first run, after `npm run
+   * fresh` or once a session has ended. Then the business's key signs the current authority into
+   * it even when nothing changed, which takes the passphrase once.
+   */
+  announce?: boolean
   log?: (line: string) => void
   fetch?: typeof fetch
 }
@@ -90,6 +95,11 @@ export interface PreparedSandboxBusiness {
   mandateHash: Hex
   /** Whether this call signed a new mandate. */
   signed: boolean
+  /**
+   * Whether this call gave the session the agent's authority, as it does whenever it signs a
+   * mandate, and with `announce` when nothing changed.
+   */
+  announced: boolean
 }
 
 const DAY = 86_400n
@@ -285,7 +295,11 @@ export async function prepareSandboxBusiness(
     dailyLimitOf(current, deployment.token) !== dailyLimit ||
     [...current.suppliers].sort().join() !== [...ids].sort().join()
   const expiring = current !== undefined && current.expiry <= systemClock() + MANDATE_MARGIN
-  const prepared = (a: AgentItem, signed: boolean): PreparedSandboxBusiness => ({
+  const prepared = (
+    a: AgentItem,
+    signed: boolean,
+    announced: boolean,
+  ): PreparedSandboxBusiness => ({
     businessId: a.business.businessId,
     account: a.business.account,
     lock,
@@ -293,14 +307,62 @@ export async function prepareSandboxBusiness(
     suppliers: [...a.mandate.message.suppliers],
     mandateHash: a.mandateHash,
     signed,
+    announced,
   })
+
+  // An authority change goes to the session signed by the root key, and the runner waits for it,
+  // so it can tell whether the screen has the agent's authority.
+  const session = checkSession(options.session !== undefined ? options.session : platformSession())
+  const postAuthority = async (
+    root: Awaited<ReturnType<typeof openRoot>>,
+    a: AgentItem,
+    previous: bigint | null,
+  ): Promise<boolean> => {
+    if (!session) return false
+    try {
+      await sessionRelay({
+        baseUrl: deployment.apiUrl,
+        sessionId: session.id,
+        key: rootRequestKey(root),
+        domain,
+        fetch: send,
+        retryFor: 15n,
+        attemptTimeout: 10_000,
+      }).post({
+        type: 'authority_changed',
+        run: session.run,
+        source: 'business',
+        authority: a.mandate.message.capOpenReserves,
+        previous,
+        suppliers: [...a.mandate.message.suppliers],
+        mandateHash: a.mandateHash,
+      })
+      return true
+    } catch (error) {
+      log(
+        `The screen didn't get your agent's authority: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return false
+    }
+  }
+  // A session new to the authority gets the mandate the agent holds now, which takes the key.
+  const announceCurrent = async (a: AgentItem): Promise<boolean> => {
+    if (!options.announce || !session) return false
+    log(
+      "Your screen has a new session, so your business's key signs your agent's current authority for it. The passphrase opens the key for that one signature.",
+    )
+    const done = await postAuthority(await openRoot(), a, null)
+    opened = null
+    return done
+  }
+
   if (agent && !changed && !expiring) {
     // Supplier URLs aren't in the mandate, so a changed URL needs no new signature.
     if (JSON.stringify(agent.suppliers) !== JSON.stringify(suppliers)) {
       agent = { ...agent, suppliers }
       await saveAgentItem(store, agent)
     }
-    return prepared(agent, false)
+    return prepared(agent, false, await announceCurrent(agent))
   }
 
   const question = `${
@@ -311,7 +373,7 @@ export async function prepareSandboxBusiness(
       log(
         `Kept the current mandate: ${authorityText(current.capOpenReserves, dailyLimitOf(current, deployment.token), current.suppliers)}.`,
       )
-      return prepared(agent, false)
+      return prepared(agent, false, await announceCurrent(agent))
     }
     throw new Error(
       "No mandate was signed, so your agent can't book yet. Run npm start again to sign one.",
@@ -390,31 +452,9 @@ export async function prepareSandboxBusiness(
     }
   }
   await showHeldBookings({ store, client, current: enrolled.mandateHash, log })
-  if (current) {
-    const session = checkSession(
-      options.session !== undefined ? options.session : platformSession(),
-    )
-    if (session) {
-      sessionReporter({
-        session,
-        key: rootRequestKey(root),
-        domain,
-        apiUrl: deployment.apiUrl,
-        fetch: send,
-        log,
-      })({
-        type: 'authority_changed',
-        run: session.run,
-        source: 'business',
-        authority,
-        previous: current.capOpenReserves,
-        suppliers: ids,
-        mandateHash: enrolled.mandateHash,
-      })
-    }
-  }
+  const announced = await postAuthority(root, next, current?.capOpenReserves ?? null)
   opened = null
-  return prepared(next, true)
+  return prepared(next, true, announced)
 }
 
 /** Lists what the lock still holds under an earlier authority, which stays until its release. */
