@@ -53,8 +53,8 @@ Each code names the limit that refused the booking, so an agent can tell its bus
 | `mandate.supplier_not_allowed` | The supplier isn't on the mandate's list |
 | `mandate.expired` | The mandate has expired |
 
-The chain holds its own copy of two of them. The lock refuses a reserve past the open bookings cap even with Avow's approval, and the business account's keychain refuses a transfer from the agent's key past its daily spending limit. A reserve sent without Avow's approval reverts on the lock.
+The chain holds what it can without trusting Avow. The lock takes no reserve without Avow's approval, so a reserve sent without one reverts with `BadSignature`, and it pulls only from the business's own account. It counts what it holds under each mandate, and reserves only for suppliers the business approved on chain. The caps it checks are the ones Avow's approval carries, so the cap on open bookings rests on Avow signing the mandate's own caps. The business account's keychain holds the agent's key to the daily spending limit the business's root key set, whatever Avow does.
 
 ## What it proves
 
-The agent's authority is the mandate, and nothing the agent does widens it. The limit is checked by the agent's SDK, by Avow before it approves, by the supplier before it accepts, and by the chain for the caps that guard money, so a broken or hostile agent meets the same refusal as a careful one.
+The agent's authority is the mandate, and nothing the agent does widens it. The limit is checked by the agent's SDK, by Avow before it approves, by the supplier before it accepts, and by the chain, which takes no reserve without Avow's approval and holds the agent's key to its daily limit, so a broken or hostile agent meets the same refusal as a careful one.
