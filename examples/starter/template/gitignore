@@ -1,3 +1,4 @@
 node_modules/
-# The sandbox keeps your business's keys here. Never commit them.
+# Your business's sealed key and your agent's key live here. Never commit them.
 .avow/
+.avow-*/

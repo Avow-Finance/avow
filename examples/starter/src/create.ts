@@ -19,6 +19,7 @@ export const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 
  */
 const COPIED: Record<string, string> = {
   'agent.ts': 'agent.ts',
+  'business.ts': 'business.ts',
   'README.md': 'README.md',
   'tsconfig.json': 'tsconfig.json',
   gitignore: '.gitignore',
@@ -84,7 +85,7 @@ export function main(args: readonly string[]): number {
     console.error(error instanceof Error ? error.message : String(error))
     return 1
   }
-  console.log(`Made ${folder}, with agent.ts and a README.`)
+  console.log(`Made ${folder}, with business.ts, agent.ts and a README.`)
   if (!args.includes('--no-install')) {
     console.log('Installing its packages.\n')
     if (!install(target)) {

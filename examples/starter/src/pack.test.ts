@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
@@ -63,6 +63,7 @@ describe('the host tarballs', () => {
       readFileSync(join(STARTER, 'template', 'agent.ts')),
     )
     expect(files.has('package/template/gitignore')).toBe(true)
+    expect(files.has('package/template/business.ts')).toBe(true)
     expect(manifest(files, 'package/template/package.json').dependencies['@avow-finance/sdk']).toBe(
       'http://localhost:8080/avow-finance-sdk.tgz',
     )
@@ -97,5 +98,18 @@ describe('the host tarballs', () => {
       expect(files.has(path), path).toBe(true)
     }
     expect([...files.keys()].some((p) => p.endsWith('.test.js'))).toBe(false)
+    // Only what the sources make ships, so a stale file in a build never reaches the tarball.
+    for (const path of files.keys()) {
+      const module =
+        /^package\/(?:node_modules\/@avow-finance\/(\w+)\/)?dist\/(.+?)(?:\.d)?\.(?:js|ts)(?:\.map)?$/.exec(
+          path,
+        )
+      if (!module) continue
+      const pkg = module[1] ?? 'sdk'
+      expect(
+        existsSync(join(STARTER, '..', '..', 'packages', pkg, 'src', `${module[2]}.ts`)),
+        path,
+      ).toBe(true)
+    }
   })
 })

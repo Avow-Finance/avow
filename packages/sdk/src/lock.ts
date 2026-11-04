@@ -98,6 +98,20 @@ export const ADMINISTRATOR_ABI = [
   },
   {
     type: 'function',
+    name: 'removeSupplier',
+    inputs: [{ name: 'supplier', type: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'approvedSupplier',
+    inputs: [{ name: 'supplier', type: 'address' }],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'cancelFree',
     inputs: [
       { name: 'commitmentId', type: 'bytes32' },
@@ -129,8 +143,8 @@ export { FACTORY_ABI }
 
 /**
  * The lock's running total of what each mandate's open reserves hold. The lock refuses a reserve
- * that would take it above the mandate's cap on open reserves, and Avow's reserve check reads the
- * same total before it approves one.
+ * that would take it above the cap on open reserves that Avow's approval carries, and Avow's
+ * reserve check reads the same total before it approves one.
  */
 export const OPEN_RESERVES_ABI = [
   {
@@ -204,6 +218,21 @@ export function approveSupplierCall(lock: Address, supplier: Address): Call {
     data: encodeFunctionData({
       abi: ADMINISTRATOR_ABI,
       functionName: 'approveSupplier',
+      args: [supplier],
+    }),
+  }
+}
+
+/**
+ * The call, from the business account's root key, that stops its agents reserving for a supplier.
+ * A commitment already reserved for that supplier stays as it is.
+ */
+export function removeSupplierCall(lock: Address, supplier: Address): Call {
+  return {
+    to: lock,
+    data: encodeFunctionData({
+      abi: ADMINISTRATOR_ABI,
+      functionName: 'removeSupplier',
       args: [supplier],
     }),
   }

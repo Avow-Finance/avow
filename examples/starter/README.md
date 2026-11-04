@@ -1,6 +1,6 @@
 # Starter
 
-One command makes a folder holding `agent.ts` and a README, and `npm start` in that folder gives its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
+One command makes a folder holding `business.ts`, `agent.ts` and a README, and `npm start` in that folder gives its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
 
 ```sh
 npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
@@ -13,10 +13,12 @@ You need Node 20 or later.
 ## How it fits together
 
 - `create-avow-agent` copies the template into a new folder and runs `npm install` there.
-- The folder depends on `@avow-finance/sdk` and `tsx`. Until the SDK is on npm, the SDK comes from a tarball on the same host, and `agent.ts` imports it exactly as it will after the release.
-- `npm start` runs the SDK's `avow-sandbox` command. It runs `agent.ts` once to set up, which ends as soon as the agent's mandate is enrolled, then opens the screen for a new session and runs `agent.ts` again at each press of Enter.
-- `sandbox.agent` does the setup. In Node it keeps the business's keys in `.avow` in the working folder, makes the root key there, registers a sandbox business with Avow's API, waits for its test dollars, creates the lock, and signs and enrolls the mandate. When the authority in `agent.ts` changes, the next run signs a new mandate for a new agent key and enrolls it.
-- Each run reports to the session through Avow's API, signed by the business's root key. The screen at `https://try.testnet.avow.finance/#session=<id>` shows a run starting, the authority changing, each refusal with its reason code, layer and amounts, each commitment, and each acceptance.
+- The folder depends on `@avow-finance/sdk` and `tsx`. Until the SDK is on npm, the SDK comes from a tarball on the same host, and the folder imports it exactly as it will after the release.
+- `npm start` runs the SDK's `avow-sandbox` command, which is the business. It reads `business.ts` in a process of its own and holds the business's root key, sealed under a passphrase the developer chooses. It registers a sandbox business with Avow's API, waits for its test dollars and creates the lock. Before it signs a mandate it shows it, asks for a yes and asks for the passphrase, and it opens the key only for that signature.
+- When the authority in `business.ts` changes, one transaction from the root key revokes the old agent key in the account's keychain, takes the suppliers the new mandate drops off the lock, and puts a new agent key on the account. Bookings made under the old authority stay held until their release.
+- `agent.ts` runs in a process of its own at each press of Enter, with only the agent's key, through `@avow-finance/sdk/agent`. Its environment carries the session and nothing of the business's.
+- Each run reports to the session through Avow's API. The agent's key signs a run's events, and the root key signs an authority change. The screen at `https://try.testnet.avow.finance/#session=<id>` shows a run starting, the authority changing, each refusal with its reason code, layer and amounts, each commitment, and each acceptance.
+- After each run the runner shows what the agent's key can still move today, and `npm run fresh` moves a worn business aside for a fresh one.
 
 ## Build the tarballs
 
@@ -26,7 +28,7 @@ pnpm build
 pnpm --filter @avow-examples/starter host
 ```
 
-This writes `host/create-avow-agent.tgz` and `host/avow-finance-sdk.tgz`. Serve both from the root of https://try.testnet.avow.finance with `Cache-Control: no-cache`, since each new build replaces the files at the same URLs. The SDK tarball carries the spec and the verifier inside it, so npm fetches nothing else from the host. Every package inside stays private, so neither tarball can be published to npm. To try a build before it's served, pass `--host http://localhost:8080`, serve `host/` there, and run `npx` against that origin.
+This writes `host/create-avow-agent.tgz` and `host/avow-finance-sdk.tgz`. Serve both from the root of https://try.testnet.avow.finance with `Cache-Control: no-cache`, since each new build replaces the files at the same URLs. The SDK tarball carries the spec and the verifier inside it, so npm fetches nothing else from the host. It packs each module the sources make and nothing else a build left behind. Every package inside stays private, so neither tarball can be published to npm. To try a build before it's served, pass `--host http://localhost:8080`, serve `host/` there, and run `npx` against that origin.
 
 ## Test
 
@@ -35,6 +37,6 @@ pnpm --filter @avow-examples/starter test
 AVOW_LIVE_TEMPO=1 pnpm --filter @avow-examples/starter test
 ```
 
-The second line also runs the whole loop on Moderato from keys made for the run. A $200 booking passes, a $400 booking is refused by Avow with $300 of authority left, and a $250 booking passes as a second commitment. Raising the authority then enrolls a new mandate. Avow's sandbox pays the run's business its test dollars, so it needs no secrets.
+The second line also runs the whole loop on Moderato from keys made for the run. A $200 booking passes and every verifier check passes, a $400 booking is refused by Avow with $300 of authority left, and a $250 booking passes as a second commitment. Lowering the authority then revokes the old key on chain. Avow's sandbox pays the run's business its test dollars, so it needs no secrets.
 
-The same line runs a check that goes around the SDK and Avow. The agent's key sends `reserve` straight to the lock with an approval Avow never signed, and it lands and reverts with `BadSignature`. Then the key tries to let the lock pull more than its daily limit, and the account's keychain refuses with `SpendingLimitExceeded`. It needs no registration, so it runs even when the sandbox has no test dollars to pay.
+The same line runs two checks that go around the SDK and Avow. In the first, the agent's key sends `reserve` straight to the lock with an approval Avow never signed, and it lands and reverts with `BadSignature`. Then the key tries to let the lock pull more than its daily limit, and the account's keychain refuses with `SpendingLimitExceeded`. In the second, the authority goes down, the node refuses anything the old key signs because the keychain revoked it, the dropped supplier is off the lock, and the new key's calls to the keychain and the lock's supplier list are refused. Neither needs registration, so both run even when the sandbox has no test dollars to pay.

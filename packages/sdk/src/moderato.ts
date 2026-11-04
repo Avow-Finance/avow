@@ -13,6 +13,12 @@ import { tempoModerato } from 'viem/chains'
 /** Moderato's public RPC. Moderato is Tempo's testnet, where every Avow deployment so far runs. */
 export const MODERATO_RPC_URL = 'https://rpc.moderato.tempo.xyz'
 
+/**
+ * Avow's lock factory on Moderato. The SDK trusts a lock as Avow's only when this factory made it,
+ * whatever a deployment's published settings say.
+ */
+export const MODERATO_FACTORY: Address = '0x8fa7177c84BE069df2a51F096ED28d5D661B8283'
+
 /** AlphaUSD, which pays Moderato's fees and comes from its faucet. */
 export const MODERATO_FEE_TOKEN: Address = '0x20C0000000000000000000000000000000000001'
 

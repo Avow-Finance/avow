@@ -1,16 +1,13 @@
-import { Refusal, sandbox } from '@avow-finance/sdk'
+import { Refusal, sandbox } from '@avow-finance/sdk/agent'
 
-// The supplier: Avow's demo GPU supplier, which runs on Tempo's Moderato testnet.
-const supplier = { id: 'avow-demo-gpu', url: 'https://supplier.testnet.avow.finance' }
-
-// The authority: your agent can hold up to $500 in bookings at once, with that supplier only.
-// Change it, and the next run signs and enrolls a new mandate.
-const agent = await sandbox.agent({ authority: 500, suppliers: [supplier] })
+// Your agent, under the mandate your business signed from business.ts. It holds only its own key,
+// so nothing here can change what it's allowed to commit you to.
+const agent = await sandbox.agent()
 
 try {
-  // The booking: 8 H100s for an hour, backed by a $200 reserve in your business's own lock.
+  // The booking: 8 H100s for an hour from Avow's demo GPU supplier, backed by a $200 reserve.
   const commitment = await agent.book({
-    supplier: supplier.id,
+    supplier: 'avow-demo-gpu',
     resource: { gpu: 'H100', count: 8, hours: 1 },
     reserve: 200,
   })
@@ -18,12 +15,12 @@ try {
   console.log('Commitment reference:', commitment.reference)
   console.log(`Anyone can check it at ${commitment.link}`)
 
-  // The open verifier, on your machine: what the supplier checks before it holds the GPUs.
+  // The open verifier, on your machine: Avow's approval against your terms and mandate, then the lock.
   for (const check of await commitment.verify()) {
     console.log(`${check.passed ? 'Passed' : `Failed (${check.reason})`}: ${check.name}`)
   }
 
-  // The supplier runs the same checks, then accepts on your lock.
+  // The supplier checks the commitment too, then accepts on your lock.
   const accepted = await commitment.accepted()
   console.log(
     accepted

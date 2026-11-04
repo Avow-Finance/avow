@@ -92,18 +92,63 @@ function filesUnder(path: string, base: string, at: string): TarEntry[] {
   return readdirSync(path).flatMap((name) => filesUnder(join(path, name), base, at))
 }
 
-/** A package's published files, as npm packs them: its `files`, with its README and license. */
+/**
+ * What the build makes from a package's sources: each module's JavaScript and declarations, with
+ * their maps. It names every file from the sources, so a file the build left behind from a module
+ * since deleted never ships, and a module the build hasn't made yet fails here.
+ */
+function built(dir: string, at: string): TarEntry[] {
+  const src = join(dir, 'src')
+  const excluded = buildExcludes(dir)
+  const modules = filesUnder(src, src, '')
+    .map((f) => f.path)
+    .filter((p) => p.endsWith('.ts') && !excluded(`src/${p}`))
+  return modules.flatMap((module) => {
+    const base = module.replace(/\.ts$/, '')
+    return ['.js', '.d.ts', '.js.map', '.d.ts.map'].flatMap((ext) => {
+      const path = join(dir, 'dist', `${base}${ext}`)
+      if (statSync(path, { throwIfNoEntry: false })) {
+        return [{ path: `${at}dist/${base}${ext}`, data: readFileSync(path) }]
+      }
+      if (ext === '.js' || ext === '.d.ts') {
+        throw new Error(`${dir} has no dist/${base}${ext}. Run pnpm build first.`)
+      }
+      return []
+    })
+  })
+}
+
+/**
+ * What a package's build leaves out, from the `exclude` list of its `tsconfig.build.json`. Each
+ * entry is a file, a folder, or a pattern with `**` and `*`.
+ */
+function buildExcludes(dir: string): (path: string) => boolean {
+  const config = JSON.parse(readFileSync(join(dir, 'tsconfig.build.json'), 'utf8')) as {
+    exclude?: string[]
+  }
+  const patterns = (config.exclude ?? []).map((entry) => {
+    const pattern = entry
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*\//g, '(?:.*/)?')
+      .replace(/\*/g, '[^/]*')
+    return new RegExp(`^${pattern}(?:/.*)?$`)
+  })
+  return (path) => patterns.some((p) => p.test(path))
+}
+
+/** A package's published files, as npm packs them: the build, its other `files`, a README and the license. */
 function published(dir: string, manifest: Manifest, at: string): TarEntry[] {
-  const listed = manifest.files ?? []
+  const listed = (manifest.files ?? []).filter((f) => f !== 'dist')
   for (const f of listed) {
     if (!statSync(join(dir, f), { throwIfNoEntry: false })) {
-      throw new Error(`${manifest.name} has no ${f}. Run pnpm build first.`)
+      throw new Error(`${manifest.name} has no ${f}.`)
     }
   }
   const readme = statSync(join(dir, 'README.md'), { throwIfNoEntry: false }) ? ['README.md'] : []
   // Each package is under the repository's license, which sits at the root.
   const license = join(PACKAGES, '..', 'LICENSE')
   return [
+    ...built(dir, at),
     ...[...listed, ...readme].flatMap((f) => filesUnder(join(dir, f), dir, at)),
     { path: `${at}LICENSE`, data: readFileSync(license) },
   ]
@@ -184,7 +229,7 @@ export function createTarball(host: string = DEFAULT_HOST): Buffer {
     { path: 'package.json', data: json(manifest) },
     { path: 'dist/bin.js', data: file('dist/bin.js'), mode: 0o755 },
     { path: 'dist/create.js', data: file('dist/create.js') },
-    ...['agent.ts', 'README.md', 'tsconfig.json', 'gitignore'].map((f) => ({
+    ...['agent.ts', 'business.ts', 'README.md', 'tsconfig.json', 'gitignore'].map((f) => ({
       path: `template/${f}`,
       data: file(`template/${f}`),
     })),

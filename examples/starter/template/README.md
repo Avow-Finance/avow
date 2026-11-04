@@ -8,33 +8,39 @@ This folder gives an AI agent $500 of authority to commit a business, and shows 
 npm start
 ```
 
-The first time, `npm start` sets everything up on your machine. It makes your business's keys and keeps them in `.avow`, a folder git ignores. It registers a sandbox business with Avow, waits for its $1,500 of test dollars, creates the business's lock, and signs and enrolls your agent's mandate. Then it opens a screen that shows each run as it happens, and waits for you.
+The first time, `npm start` sets up your business on your machine. You choose a passphrase, and your business's key is sealed under it in `.avow`, a folder git ignores. The business registers with Avow's sandbox, waits for its $1,500 of test dollars and creates its lock. Then `npm start` shows you the mandate it's about to sign for your agent, asks you to confirm it and type the passphrase, and signs. It opens a screen that shows each run as it happens, and waits for you.
 
-Each time you press Enter, it runs `agent.ts` once.
+Each time you press Enter, it runs `agent.ts` once. Afterwards it shows what your agent's key can still move today.
+
+## Two files, two sides
+
+`business.ts` is your business. It names the authority, the most your agent can hold in bookings at once, and the suppliers it can book with. Only `npm start` reads it, and it asks you before it signs anything new from it.
+
+`agent.ts` is your agent. It names the booking, the supplier and the terms, and it runs in a process of its own that holds only the agent's key. It imports `@avow-finance/sdk/agent`, which has no way to open the business's key, sign a mandate or change the authority.
 
 ## What to try
 
-1. Press Enter. The agent books 8 H100s for an hour with a $200 reserve. It prints the commitment's reference and a link anyone can open to check it. Your machine then runs the open verifier, the same checks the supplier runs, and the supplier accepts.
-2. Change `reserve` to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The SDK checks nothing past the mandate, so the refusal comes from Avow, the same one an agent that skipped every check of its own would meet. Under Avow, the lock takes no reserve without Avow's approval, and your agent's key can't move more than the daily limit your business set on chain.
+1. Press Enter. The agent books 8 H100s for an hour with a $200 reserve. It prints the commitment's reference and a link anyone can open to check it. Your machine then runs the open verifier. It checks Avow's approval against your terms and your mandate, checks that a lock Avow's factory made holds the commitment and enforces your terms, and checks that your agent's key is on your account under your mandate. Then the supplier accepts.
+2. Change `reserve` in `agent.ts` to 400 and press Enter. Your agent has $300 of authority left, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The SDK checks nothing past the mandate, so the refusal comes from Avow.
 3. Change `reserve` to 250 and press Enter. It fits, so the agent makes a second commitment under the same authority.
-4. Change `authority` and press Enter. Your business signs a new mandate for a new agent key and enrolls it, and the run says so.
+4. Change `authority` in `business.ts` and press Enter. `npm start` asks you to confirm the new mandate and type the passphrase. It revokes the old agent key on your account, so that key can't sign for you again, and enrolls a new one. Bookings made under the old authority stay held in the lock until their release, and it lists them.
 
 Each reserve sits in your business's own lock, for one named supplier, until the booking's window ends. Then it goes back to the business.
 
-## What's in agent.ts
+## What holds
 
-`agent.ts` is the only file you edit, and it says three things.
+An agent that skips every check in its own code meets the same refusal from Avow, and the same daily limit on its key, as long as it never holds your business's key. The lock takes no reserve without Avow's approval, and your account's keychain holds the agent's key to the daily limit your business set on chain. Here only `npm start` uses your business's key, sealed under your passphrase, and in production it stays with the business, away from the agent. Both run as you on this machine, so keep your passphrase to yourself.
 
-- **The supplier** is `avow-demo-gpu`, Avow's demo GPU supplier at https://supplier.testnet.avow.finance.
-- **The authority** is the most your agent can hold in bookings at once, $500 by default, with that supplier only.
-- **The booking** is 8 H100s for an hour, backed by a $200 reserve.
+## A fresh business
 
-The booking is a few calls to `@avow-finance/sdk`, which you can lift into your own agent. `sandbox.agent` gives the agent its authority, `agent.book` makes a commitment or throws a `Refusal`, `commitment.verify` runs the open verifier, and `commitment.accepted` waits for the supplier.
+Your agent's key can move only so much a day. When it runs low, `npm start` says so.
 
-## Your keys
+```sh
+npm run fresh
+```
 
-Your keys are made on this machine and stay in `.avow`. Nothing prints or logs them, and the folder ignores itself in git. Delete `.avow` to start again with a new business.
+That moves your business aside, keys and all, to a folder named `.avow-` and the time, and sets up a fresh one with a full day.
 
 ## Without the screen
 
-`npx tsx agent.ts` runs the agent once without the screen, and sets up the business first when `.avow` holds none.
+`npx tsx agent.ts` runs your agent once without the screen, once `npm start` has set up your business.

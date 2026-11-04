@@ -12,10 +12,13 @@ describe('create-avow-agent', () => {
     const read = (f: string) => readFileSync(join(target, f), 'utf8')
     expect(read('agent.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'agent.ts'), 'utf8'))
     expect(read('README.md')).toContain('npm start')
+    expect(read('business.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'business.ts'), 'utf8'))
+    expect(read('agent.ts')).toContain("from '@avow-finance/sdk/agent'")
     expect(read('.gitignore')).toMatch(/^\.avow\/$/m)
+    expect(read('.gitignore')).toMatch(/^\.avow-\*\/$/m)
     const manifest = JSON.parse(read('package.json'))
     expect(manifest.name).toBe('my-agent')
-    expect(manifest.scripts.start).toBe('avow-sandbox agent.ts')
+    expect(manifest.scripts).toEqual({ start: 'avow-sandbox start', fresh: 'avow-sandbox fresh' })
     expect(manifest.dependencies['@avow-finance/sdk']).toBe(
       'https://try.testnet.avow.finance/avow-finance-sdk.tgz',
     )

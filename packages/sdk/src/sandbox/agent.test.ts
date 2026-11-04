@@ -5,22 +5,29 @@ import { describe, expect, it } from 'vitest'
 import { AvowApiError } from '../http.js'
 import { SendError } from '../send.js'
 import { accountSigner, signMandate } from '../sign.js'
-import {
-  checkSuppliers,
-  loadKeys,
-  loadState,
-  memoryStore,
-  Refusal,
-  relayReason,
-  type SandboxStore,
-  sandboxAgent,
-  saveState,
-  setSandboxPlatform,
-} from './agent.js'
+import { fundingRefusal, Refusal, relayReason, sandboxAgent, setSandboxPlatform } from './agent.js'
 import { sandboxMandate } from './mandate.js'
+import {
+  addCommitment,
+  loadAgentItem,
+  loadBusinessItem,
+  loadCommitments,
+  memoryStore,
+  saveAgentItem,
+  saveBusinessItem,
+} from './store.js'
+import { checkSuppliers } from './suppliers.js'
+import { openKey, sealKey } from './vault.js'
 
 // Every key is generated for the run and held only in memory.
 const supplier = { id: 'avow-demo-gpu', url: 'https://supplier.testnet.avow.finance' }
+const relayError = (reason: 'sponsorship.rate_limited' | 'sponsorship.budget_spent') =>
+  new AvowApiError('refused', {
+    status: 429,
+    reason,
+    requestId: `0x${'00'.repeat(32)}`,
+    definite: true,
+  })
 
 describe('Refusal', () => {
   it('reads as the sentence the screen shows, with the code, layer and amounts apart', () => {
@@ -29,6 +36,7 @@ describe('Refusal', () => {
       left: dollars(300),
       authority: dollars(500),
       dailyLimit: dollars(500),
+      dailyLeft: dollars(300),
     }
     const r = new Refusal({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })
     expect(r).toBeInstanceOf(Error)
@@ -38,60 +46,72 @@ describe('Refusal', () => {
     )
   })
 
-  it("finds the relay's reason under the error that carried it", () => {
-    const relay = new AvowApiError('refused', {
-      status: 422,
-      reason: 'sponsorship.simulation_failed',
-      requestId: `0x${'00'.repeat(32)}`,
-      definite: true,
+  it('blames a refused funding on whoever refused it', () => {
+    const sent = (cause: unknown) =>
+      new Error('funding failed', {
+        cause: new SendError('send failed', 'failed', { hashes: [], signings: 1 }, { cause }),
+      })
+    expect(relayReason(sent(relayError('sponsorship.rate_limited')))).toBe(
+      'sponsorship.rate_limited',
+    )
+    expect(fundingRefusal(sent(relayError('sponsorship.budget_spent')))).toEqual({
+      code: 'sponsorship.budget_spent',
+      layer: 'relay',
     })
-    const sent = new SendError(
-      'send failed',
-      'failed',
-      { hashes: [], signings: 1 },
-      { cause: relay },
+    const keychain = new Error(
+      'Execution reverted with reason: Account keychain error: SpendingLimitExceeded(SpendingLimitExceeded).',
     )
-    expect(relayReason(new Error('funding failed', { cause: sent }))).toBe(
-      'sponsorship.simulation_failed',
-    )
-    expect(relayReason(new Error('no reason here'))).toBeNull()
+    expect(fundingRefusal(sent(keychain))).toEqual({
+      code: 'keychain.over_daily_limit',
+      layer: 'keychain',
+    })
+    expect(fundingRefusal(sent(new Error('reverted')))).toEqual({
+      code: 'chain.reserve_missing',
+      layer: 'lock',
+    })
   })
 })
 
-describe("the sandbox's keys and state", () => {
-  it('makes the keys once and keeps them, and never puts a key in an error', async () => {
+describe("the sandbox's items", () => {
+  it("keeps the business's key sealed, and opens it only with the passphrase", async () => {
+    const root = Account.fromSecp256k1(generatePrivateKey())
+    const privateKey = generatePrivateKey()
+    const sealed = await sealKey(privateKey, 'correct horse battery', root.address)
     const store = memoryStore()
-    const keys = await loadKeys(store)
-    expect(await loadKeys(store)).toEqual(keys)
-    await store.write('keys', '{"root":"0x1234"}')
-    const refused = await loadKeys(store).catch((e: Error) => e.message)
-    expect(refused).toMatch(/form it writes/)
-    await store.write('keys', `{"root":"${keys.root}",`)
-    const unreadable = await loadKeys(store).catch((e: Error) => e.message)
-    expect(unreadable).toMatch(/isn't readable/)
-    expect(unreadable).not.toContain(keys.root.slice(2))
+    await saveBusinessItem(store, { account: root.address, key: sealed, business: null })
+    const text = (await store.read('business')) as string
+    expect(text).not.toContain(privateKey.slice(2))
+    const item = await loadBusinessItem(store)
+    expect(await openKey(item?.key ?? sealed, 'correct horse battery', root.address)).toBe(
+      privateKey,
+    )
+    await expect(openKey(sealed, 'wrong horse battery', root.address)).rejects.toThrow(
+      "doesn't open",
+    )
+    // A sealed key opens only for the account it was sealed for.
+    const other = Account.fromSecp256k1(generatePrivateKey()).address
+    await expect(openKey(sealed, 'correct horse battery', other)).rejects.toThrow("doesn't open")
+    await expect(sealKey(privateKey, 'short', root.address)).rejects.toThrow(RangeError)
   })
 
-  it('reads back the business and the signed mandate it saved', async () => {
+  it("reads back the agent's item and the commitments it made", async () => {
     const root = Account.fromSecp256k1(generatePrivateKey())
-    const agent = Account.fromSecp256k1(generatePrivateKey(), { access: root.address })
+    const agentKey = generatePrivateKey()
+    const agent = Account.fromSecp256k1(agentKey, { access: root.address })
     const lock = '0x00000000000000000000000000000000000010c4'
     const domain: AvowDomain = { chainId: 42431, verifyingContract: lock }
-    const mandate = await signMandate(
-      sandboxMandate({
-        businessId: 'sandbox-business',
-        agentId: 'agt_test',
-        account: root.address,
-        agentKey: agent.accessKeyAddress,
-        suppliers: [supplier.id],
-        token: '0x20c00000000000000000000058fbf8a39a171185',
-        capPerCommitment: dollars(500),
-        capOpenReserves: dollars(500),
-        expiry: 1_800_000_000n,
-      }),
-      domain,
-      accountSigner(root.address, root),
-    )
+    const message = sandboxMandate({
+      businessId: 'sandbox-business',
+      agentId: 'agt_test',
+      account: root.address,
+      agentKey: agent.accessKeyAddress,
+      suppliers: [supplier.id],
+      token: '0x20c00000000000000000000058fbf8a39a171185',
+      capPerCommitment: dollars(500),
+      capOpenReserves: dollars(500),
+      expiry: 1_800_000_000n,
+    })
+    const mandate = await signMandate(message, domain, accountSigner(root.address, root))
     const business = {
       chainId: 42431,
       apiUrl: 'https://api.testnet.avow.finance',
@@ -102,28 +122,48 @@ describe("the sandbox's keys and state", () => {
       businessId: 'sandbox-business',
     } as const
     const store = memoryStore()
-    const agentState = {
-      key: agent.accessKeyAddress,
+    const hash = mandateHash(message, domain)
+    await saveAgentItem(store, {
+      agentKey,
+      business,
       mandate,
+      mandateHash: hash,
       keyAuthorizedIn: `0x${'ab'.repeat(32)}`,
-    } as const
-    await saveState(store, { business, agent: agentState })
-    const state = await loadState(store)
-    expect(state.business).toEqual(business)
-    const read = state.agent?.mandate.message
-    expect(read && mandateHash(read, domain)).toBe(mandateHash(mandate.message, domain))
-    expect(state.agent?.mandate.signature).toBe(mandate.signature.toLowerCase())
-    // A mandate signed for another lock doesn't parse as this business's.
-    await saveState(store, {
-      business: { ...business, lock: `0x${'0'.repeat(39)}1` },
-      agent: agentState,
+      suppliers: [supplier],
     })
-    expect((await loadState(store)).agent).toBeNull()
+    const item = await loadAgentItem(store)
+    expect(item?.agentKey).toBe(agentKey)
+    expect(item && mandateHash(item.mandate.message, domain)).toBe(hash)
+    expect(item?.suppliers).toEqual([supplier])
+    const reference = {
+      kind: 'commitment',
+      chainId: 42431,
+      lock,
+      commitmentId: `0x${'11'.repeat(32)}`,
+      side: 'buyer',
+      termsHash: `0x${'22'.repeat(32)}`,
+    } as const
+    await addCommitment(store, {
+      reference,
+      amount: dollars(200),
+      supplier: supplier.id,
+      mandateHash: hash,
+      madeAt: 1_800_000_000n,
+    })
+    expect(await loadCommitments(store)).toEqual([
+      {
+        reference,
+        amount: dollars(200),
+        supplier: supplier.id,
+        mandateHash: hash,
+        madeAt: 1_800_000_000n,
+      },
+    ])
   })
 })
 
 describe('sandboxAgent', () => {
-  it('checks the suppliers it names', () => {
+  it('checks the suppliers a business names', () => {
     expect(checkSuppliers([supplier])).toEqual([supplier])
     expect(() => checkSuppliers([])).toThrow(RangeError)
     expect(() => checkSuppliers([supplier, supplier])).toThrow(RangeError)
@@ -131,14 +171,9 @@ describe('sandboxAgent', () => {
     expect(() => checkSuppliers([{ id: 'x', url: 'ftp://example.com' }])).toThrow(RangeError)
   })
 
-  it('needs a store where no platform gives one, and refuses an authority out of form', async () => {
+  it('needs a store, and an agent its business enrolled', async () => {
     setSandboxPlatform({})
-    await expect(sandboxAgent({ authority: 500, suppliers: [supplier] })).rejects.toThrow(
-      /somewhere to keep/,
-    )
-    const store: SandboxStore = memoryStore()
-    await expect(sandboxAgent({ authority: 0, suppliers: [supplier], store })).rejects.toThrow(
-      RangeError,
-    )
+    await expect(sandboxAgent()).rejects.toThrow(/folder its business set up/)
+    await expect(sandboxAgent({ store: memoryStore() })).rejects.toThrow(/no agent yet/)
   })
 })

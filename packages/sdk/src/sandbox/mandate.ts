@@ -7,12 +7,12 @@ import {
   type Signed,
   type SupplierProfile,
 } from '@avow-finance/spec'
-import { type Address, type Hex, toHex } from 'viem'
-import { Account } from 'viem/tempo'
+import { type Address, encodeFunctionData, type Hex, toHex } from 'viem'
+import { Abis, Account, Addresses } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
 import { agentKeyTerms } from '../agent-key.js'
 import { agentRequestKey, enrollAgent } from '../http.js'
-import { approveSupplierCall, RESERVE_SELECTOR } from '../lock.js'
+import { approveSupplierCall, RESERVE_SELECTOR, removeSupplierCall } from '../lock.js'
 import { sendOwn } from '../send.js'
 import { accountSigner, signMandate } from '../sign.js'
 import type { SandboxClient } from './business.js'
@@ -58,17 +58,21 @@ export function sandboxMandate(m: {
   }
 }
 
-/** The agent, enrolled under the mandate the root key signed. */
-export interface EnrolledSandboxAgent {
+/** The agent's key on the account, under the mandate the root key signed. */
+export interface AuthorizedSandboxKey {
   mandate: Signed<Mandate>
   mandateHash: Hex
-  /** The transaction that put the agent's key on the account and approved the suppliers. */
+  /** The transaction that put the agent's key on the account. */
   keyAuthorizedIn: Hex
+}
+
+/** The agent, enrolled with Avow under the mandate the root key signed. */
+export interface EnrolledSandboxAgent extends AuthorizedSandboxKey {
   enrollment: Enrollment
 }
 
-export interface SandboxEnrollDeps {
-  deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl'>
+export interface SandboxAuthorizeDeps {
+  deployment: Pick<SandboxDeployment, 'chainId'>
   client: SandboxClient
   root: Account.RootAccount
   /** The agent's access key on the account, which the mandate names. */
@@ -77,18 +81,25 @@ export interface SandboxEnrollDeps {
   mandate: Mandate
   /** The suppliers the mandate names, each approved on the lock. */
   suppliers: readonly SupplierProfile[]
+  /** The agent key this one replaces, revoked in the account's keychain in the same transaction. */
+  revoke?: Address
+  /** Supplier accounts the previous mandate allowed and this one doesn't, removed from the lock. */
+  remove?: readonly Address[]
   onSigned?: (mandate: Signed<Mandate>) => void
-  fetch?: typeof fetch
 }
 
 /**
- * Signs the mandate with the root key and enrolls the agent. One transaction from the root key
- * puts the agent's key on the account, bound to the mandate's hash with the mandate's limits and
- * expiry, and approves each supplier on the lock. Then the agent enrolls with Avow, which checks
- * the mandate against that transaction. A new mandate needs a new agent key, since the account
- * holds each key's limits once.
+ * Signs the mandate with the root key and puts the agent's key on the account, in one transaction
+ * from the root key. The key is bound to the mandate's hash with the mandate's limits and expiry,
+ * and each supplier the mandate names is approved on the lock. When the key replaces another, the
+ * same transaction revokes the old key in the account's keychain, so the old key can't sign for the
+ * account again, and removes from the lock each supplier the new mandate drops. Bookings the old key
+ * made stay in the lock until their release. A new mandate needs a new key, since the account binds
+ * each key to one mandate's hash.
  */
-export async function enrollSandboxAgent(deps: SandboxEnrollDeps): Promise<EnrolledSandboxAgent> {
+export async function authorizeSandboxKey(
+  deps: SandboxAuthorizeDeps,
+): Promise<AuthorizedSandboxKey> {
   const { deployment, client, root, agent, lock, mandate } = deps
   const d: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
   const signed = await signMandate(mandate, d, accountSigner(root.address, root))
@@ -98,25 +109,49 @@ export async function enrollSandboxAgent(deps: SandboxEnrollDeps): Promise<Enrol
     chainId: BigInt(deployment.chainId),
     ...agentKeyTerms(mandate, d, { lock, lockSelectors: [RESERVE_SELECTOR] }),
   })
-  const receipt = await sendOwn({
-    client,
-    account: root,
-    calls: deps.suppliers.map((s) => approveSupplierCall(lock, s.account)),
-    keyAuthorization,
-  })
-  const enrollment = await enrollAgent(
-    {
-      baseUrl: deployment.apiUrl,
-      key: agentRequestKey(agent),
-      retryFor: 120n,
-      ...(deps.fetch ? { fetch: deps.fetch } : {}),
-    },
-    { mandate: signed, keyAuthorizedIn: receipt.transactionHash },
-  )
+  const calls = [
+    ...(deps.revoke
+      ? [
+          {
+            to: Addresses.accountKeychain as Address,
+            data: encodeFunctionData({
+              abi: Abis.accountKeychain,
+              functionName: 'revokeKey',
+              args: [deps.revoke],
+            }),
+          },
+        ]
+      : []),
+    ...(deps.remove ?? []).map((s) => removeSupplierCall(lock, s)),
+    ...deps.suppliers.map((s) => approveSupplierCall(lock, s.account)),
+  ]
+  const receipt = await sendOwn({ client, account: root, calls, keyAuthorization })
   return {
     mandate: signed,
     mandateHash: mandateHash(mandate, d),
     keyAuthorizedIn: receipt.transactionHash,
-    enrollment,
   }
+}
+
+/**
+ * Puts the agent's key on the account as `authorizeSandboxKey` does, then enrolls the agent with
+ * Avow, which checks the mandate against that transaction.
+ */
+export async function enrollSandboxAgent(
+  deps: SandboxAuthorizeDeps & {
+    deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl'>
+    fetch?: typeof fetch
+  },
+): Promise<EnrolledSandboxAgent> {
+  const authorized = await authorizeSandboxKey(deps)
+  const enrollment = await enrollAgent(
+    {
+      baseUrl: deps.deployment.apiUrl,
+      key: agentRequestKey(deps.agent),
+      retryFor: 120n,
+      ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    },
+    { mandate: authorized.mandate, keyAuthorizedIn: authorized.keyAuthorizedIn },
+  )
+  return { ...authorized, enrollment }
 }

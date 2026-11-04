@@ -12,7 +12,7 @@ import {
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { AvowApiError } from '../http.js'
+import { AvowApiError, rootRequestKey } from '../http.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, sessionUrl, verifyUrl } from './session.js'
 
 // Every key is generated for the run and held only in memory.
@@ -65,7 +65,7 @@ const relay = (sessionId: string, fetcher: typeof fetch) =>
   sessionRelay({
     baseUrl: AUDIENCE,
     sessionId,
-    root,
+    key: rootRequestKey(root),
     domain,
     fetch: fetcher,
     now: () => NOW,

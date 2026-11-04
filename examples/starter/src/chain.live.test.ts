@@ -1,6 +1,8 @@
 import {
+  ADMINISTRATOR_ABI,
   agentKeyTerms,
   approveSupplierCall,
+  authorizeSandboxKey,
   createLockCall,
   FACTORY_ABI,
   httpSupplier,
@@ -28,6 +30,7 @@ import {
 } from '@avow-finance/spec'
 import {
   type Address,
+  BaseError,
   ContractFunctionRevertedError,
   encodeFunctionData,
   type Hex,
@@ -227,6 +230,145 @@ describe.skipIf(!live)('the chain, around the SDK and Avow', () => {
       // With the day's limit spent, even one more micro is refused.
       expect((await send(0n)).status).toBe('success')
       await expect(send(1n)).rejects.toThrow(/SpendingLimitExceeded/)
+    },
+    10 * 60_000,
+  )
+
+  it(
+    'revokes the old key when the authority goes down, and the old key can sign nothing',
+    async () => {
+      const deployment = await sandbox.deployment()
+      const client = moderatoClient(deployment.rpcUrl)
+      const root = Account.fromSecp256k1(generatePrivateKey())
+      await Actions.faucet.fundSync(client, { account: root.address, timeout: 60_000 })
+      const lock: Address = await client.readContract({
+        address: deployment.factory,
+        abi: FACTORY_ABI,
+        functionName: 'lockAddress',
+        args: [root.address],
+      })
+      await sendOwn({
+        client,
+        account: root,
+        calls: [createLockCall(deployment.factory, root.address)],
+      })
+      const demo = (await httpSupplier(deployment.supplierUrl)).profile
+      // A second supplier the first mandate allows and the second drops.
+      const other = {
+        ...demo,
+        businessId: 'other-supplier',
+        account: privateKeyToAccount(generatePrivateKey()).address,
+      }
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      const authorize = async (authority: number, suppliers: (typeof demo)[], revoke?: Address) => {
+        const key = Account.fromSecp256k1(generatePrivateKey(), { access: root.address })
+        const mandate = sandboxMandate({
+          businessId: 'chain-check',
+          agentId: `agt_${key.accessKeyAddress.slice(2, 12).toLowerCase()}`,
+          account: root.address,
+          agentKey: key.accessKeyAddress,
+          suppliers: suppliers.map((s) => s.businessId),
+          token: deployment.token,
+          capPerCommitment: dollars(authority),
+          capOpenReserves: dollars(authority),
+          expiry: now + 3600n,
+        })
+        await authorizeSandboxKey({
+          deployment,
+          client,
+          root,
+          agent: key,
+          lock,
+          mandate,
+          suppliers,
+          ...(revoke ? { revoke, remove: [other.account] } : {}),
+        })
+        return key
+      }
+      const approved = (supplier: Address) =>
+        client.readContract({
+          address: lock,
+          abi: ADMINISTRATOR_ABI,
+          functionName: 'approvedSupplier',
+          args: [supplier],
+        })
+      const old = await authorize(500, [demo, other])
+      expect(await approved(other.account)).toBe(true)
+      // The authority goes down to $100 with the demo supplier only, in one transaction from the root
+      // key, which revokes the old key and takes the dropped supplier off the lock.
+      const next = await authorize(100, [demo], old.accessKeyAddress)
+      const keyOf = (key: Address) =>
+        client.readContract({
+          address: Addresses.accountKeychain,
+          abi: Abis.accountKeychain,
+          functionName: 'getKey',
+          args: [root.address, key],
+        })
+      expect((await keyOf(old.accessKeyAddress)).isRevoked).toBe(true)
+      expect((await keyOf(next.accessKeyAddress)).isRevoked).toBe(false)
+      expect(await approved(other.account)).toBe(false)
+      expect(await approved(demo.account)).toBe(true)
+
+      const payer = privateKeyToAccount(generatePrivateKey())
+      await Actions.faucet.fundSync(client, { account: payer.address, timeout: 60_000 })
+      const relay = Relay.create({ client, plugins: [Relay.feePayer({ account: payer })] })
+      const sponsor = (transaction: Hex) =>
+        relay.request(
+          { method: 'eth_signRawTransaction', params: [transaction] },
+          { chainId: deployment.chainId },
+        ) as Promise<Hex>
+      const approve = {
+        to: deployment.token,
+        data: encodeFunctionData({
+          abi: Abis.tip20,
+          functionName: 'approve',
+          args: [lock, dollars(1)],
+        }),
+      }
+      // The old key tries what its old permissions allowed, signed and sent straight to the node.
+      let hash: Hex | null = null
+      const refused = await (async () => {
+        const request = await prepareTransactionRequest(client, {
+          account: old,
+          calls: [approve],
+          feePayer: true,
+          nonceKey: 'expiring',
+          gas: 300_000n,
+        } as never)
+        const bytes = await sponsor(
+          await signTransaction(client, { ...request, account: old } as never),
+        )
+        hash = keccak256(bytes)
+        await client.request({ method: 'eth_sendRawTransaction', params: [bytes] })
+        return 'accepted'
+      })().catch((error: unknown) =>
+        error instanceof BaseError ? `${error.shortMessage} ${error.details}` : String(error),
+      )
+      expect(refused).toMatch(/access key is not authorized/i)
+      if (hash) expect(await client.getTransaction({ hash }).catch(() => null)).toBeNull()
+      // The new key works within its own permissions, and has none of the business's authority.
+      expect(
+        (await sendSponsored({ client, account: next, calls: [approve], sponsor })).status,
+      ).toBe('success')
+      const revokeItself = {
+        to: Addresses.accountKeychain as Address,
+        data: encodeFunctionData({
+          abi: Abis.accountKeychain,
+          functionName: 'revokeKey',
+          args: [next.accessKeyAddress],
+        }),
+      }
+      await expect(
+        sendSponsored({ client, account: next, calls: [revokeItself], sponsor }),
+      ).rejects.toThrow(/CallNotAllowed/)
+      await expect(
+        sendSponsored({
+          client,
+          account: next,
+          calls: [approveSupplierCall(lock, other.account)],
+          sponsor,
+        }),
+      ).rejects.toThrow(/CallNotAllowed/)
     },
     10 * 60_000,
   )
