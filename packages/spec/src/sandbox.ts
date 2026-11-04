@@ -98,9 +98,10 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
  * approves a reserve. `relay` is Avow's relay, which refuses to pay the fee for a transaction it
  * won't sponsor. `lock` is the business's lock on-chain, which reverts a reserve that breaks Avow's
  * approval, including the caps the approval carries. `keychain` is the business account's keychain,
- * which holds the agent's key to the daily limit the business's root key set.
+ * which holds the agent's key to the daily limit the business's root key set. `unknown` is a
+ * reserve that never landed when nothing on the way gave a reason.
  */
-export const REFUSAL_LAYERS = ['sdk', 'avow', 'relay', 'lock', 'keychain'] as const
+export const REFUSAL_LAYERS = ['sdk', 'avow', 'relay', 'lock', 'keychain', 'unknown'] as const
 export type RefusalLayer = (typeof REFUSAL_LAYERS)[number]
 
 /** The amounts behind a refusal, each in micros of a dollar. */
@@ -269,6 +270,7 @@ const WHO: Record<RefusalLayer, string> = {
   relay: "Avow's relay",
   lock: 'the lock',
   keychain: "your account's keychain",
+  unknown: 'nothing on the way',
 }
 
 /**
@@ -288,6 +290,9 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
       : dailyLimit === null
         ? " The lock takes no reserve without Avow's approval."
         : ` The lock takes no reserve without Avow's approval, and your agent's key can't move more than ${formatUsd(dailyLimit)} a day, a limit your business set on chain.`
+  if (r.layer === 'unknown') {
+    return `The reserve for this ${formatUsd(needed)} booking never landed, and nothing on the way said why, so no money moved.`
+  }
   switch (r.code) {
     case 'keychain.over_daily_limit':
       return dailyLimit === null || dailyLeft === null

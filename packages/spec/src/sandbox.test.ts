@@ -154,6 +154,12 @@ describe('refusalSentence', () => {
     )
   })
 
+  it('says so when nothing gave a reason', () => {
+    expect(refusalSentence({ code: 'chain.reserve_missing', layer: 'unknown', amounts })).toBe(
+      'The reserve for this $400 booking never landed, and nothing on the way said why, so no money moved.',
+    )
+  })
+
   it("says the lock refused when it did, and nothing it can't back", () => {
     expect(
       refusalSentence({ code: 'mandate.over_open_reserves_cap', layer: 'lock', amounts }),
