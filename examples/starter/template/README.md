@@ -29,7 +29,7 @@ Each reserve sits in your business's own lock, for one named supplier, until the
 
 ## What holds
 
-An agent that skips every check in its own code meets the same refusal from Avow, and the same daily limit on its key, as long as it never holds your business's key. The lock takes no reserve without Avow's approval, and your account's keychain holds the agent's key to the daily limit your business set on chain. Here only `npm start` uses your business's key, sealed under your passphrase. Your agent gets no key, environment variable or signing function from it, but a program running as you can read what you type, so before each passphrase `npm start` refuses while anything else has your terminal open. In production the business key stays off the agent's machine.
+An agent that skips every check in its own code meets the same refusal from Avow, and the same daily limit on its key, as long as it never holds your business's key. The lock takes no reserve without Avow's approval, and your account's keychain holds the agent's key to the daily limit your business set on chain. Here only `npm start` uses your business's key, sealed under your passphrase. Your agent gets no key, environment variable or signing function from it, but a program running as you can read what you type. Before each passphrase `npm start` refuses when it finds another program holding your terminal open, and it can't find every such program, so in production the business key stays off the agent's machine.
 
 ## A fresh business
 

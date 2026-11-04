@@ -183,10 +183,11 @@ export function otherTerminalHolders(): TerminalHolder[] | null {
 }
 
 /**
- * Checks the terminal before the runner asks for the passphrase. It refuses while any process apart
- * from the runner and the ones that started it has the terminal open, and says so plainly where it
- * can't look. Nothing stops a program running as the developer from opening the terminal later, so
- * this closes what it can, and the business's key stays off the agent's machine in production.
+ * Checks the terminal before the runner asks for the passphrase. It refuses when it finds a process,
+ * apart from the runner and the ones that started it, holding the terminal open, and says so plainly
+ * where it can't look. It skips processes whose open files it can't read, and nothing stops a program
+ * running as the developer from opening the terminal later, so this closes what it can, and the
+ * business's key stays off the agent's machine in production.
  */
 export function checkTerminal(log: (line: string) => void = console.log): void {
   const others = otherTerminalHolders()
