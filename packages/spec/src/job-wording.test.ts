@@ -10,6 +10,8 @@ import {
   REFUSAL_INSTRUCTION,
   reserveLine,
   SEPARATE_RESERVES,
+  SIMULATED_LINE,
+  SIMULATED_RESULT_LABEL,
 } from './job-wording.js'
 import { describeReason } from './reasons.js'
 import { JOB_EVENTS, READ_BLOCK } from './test-helpers.js'
@@ -28,6 +30,8 @@ const everything = [
   REFUSAL_CHALLENGE,
   REFUSAL_INSTRUCTION,
   reserveLine(charges),
+  SIMULATED_LINE,
+  SIMULATED_RESULT_LABEL,
   ...JOB_EVENTS.map(jobEventSentence),
 ]
 
@@ -39,6 +43,21 @@ describe('the words a job’s terminal and screen share', () => {
     const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
     if (!checked) throw new Error('The fixtures check a commitment')
     expect(jobEventSentence(checked)).toBe(DECISIVE_SENTENCE)
+  })
+
+  it('give what the customer says it verified as the customer’s statement, at its block', () => {
+    const verified = JOB_EVENTS.find((e) => e.type === 'job_customer_verified')
+    if (!verified) throw new Error('The fixtures verify the compute')
+    expect(jobEventSentence(verified)).toBe(
+      `Avow's test customer says it verified your compute booking at block ${READ_BLOCK.number}.`,
+    )
+  })
+
+  it('say plainly what is simulated wherever the work appears', () => {
+    expect(SIMULATED_LINE).toBe(
+      'The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.',
+    )
+    expect(SIMULATED_RESULT_LABEL).toMatch(/^Simulated/)
   })
 
   it('say what the customer’s reserve backs, with each cap, and that it never secures the price', () => {

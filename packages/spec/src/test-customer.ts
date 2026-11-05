@@ -11,6 +11,7 @@ import {
   pinnedBlockJson,
 } from './dependencies.js'
 import type { TermsAgreement } from './eip712.js'
+import { type FactBody, factBodyShape } from './facts.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
 import type { ChainedJobTerms, JobTerms } from './job.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
@@ -78,7 +79,7 @@ export const TEST_CUSTOMER_PATHS = {
   order: (orderId: string) => pathOf(orderId),
   /** POST, signed. Sends the quote, answered with 202 while the customer verifies it. */
   quote: (orderId: string) => pathOf(orderId, '/quote'),
-  /** POST, signed, with an empty object as the body. Reports delivery, answered with 202. */
+  /** POST, signed, with a `DeliveryReport` as the body. Reports delivery, answered with 202. */
   delivery: (orderId: string) => pathOf(orderId, '/delivery'),
 } as const
 
@@ -188,6 +189,48 @@ export interface CustomerReserve {
   reference: CommitmentReference
   /** In micros. */
   amount: bigint
+  /** The transaction that funded the reserve, which the customer's reserve fact names. */
+  fundedIn: Hex
+}
+
+/**
+ * Something the customer said about an order, as a message, numbered from 0 in the order said. The
+ * developer's session posts each one once, by its index, as the customer's speech, and never as
+ * evidence.
+ */
+export interface CustomerSaid {
+  index: number
+  text: string
+}
+
+/**
+ * A fact the customer's verifier stated about an order, numbered from 0, with what it rests on. The
+ * developer's session posts each one once, by its index, as the customer's statement, and a reader
+ * checks it from the chain before showing it as verified.
+ */
+export interface CustomerFact extends FactBody {
+  index: number
+  verifiedBy: 'customer'
+}
+
+/** The longest message the customer says. */
+export const CUSTOMER_SAID_MAX = 500
+
+/** The most messages or facts one order carries. */
+export const ORDER_STATEMENTS_MAX = 32
+
+/**
+ * The result a delivery hands over. The work is simulated, so it's a placeholder whose label says
+ * so plainly, with the hash of its content.
+ */
+export interface DeliveryResult {
+  label: string
+  hash: Hex
+}
+
+/** The body of POST `/v1/orders/{orderId}/delivery`. */
+export interface DeliveryReport {
+  result: DeliveryResult
 }
 
 /** Where an order stands, in the order it moves. */
@@ -208,6 +251,10 @@ interface OrderBase {
   customer: JobCustomer
   /** The supplier the order was offered to. */
   supplierBusinessId: string
+  /** What the customer has said about the order so far, in order. */
+  said: CustomerSaid[]
+  /** The facts the customer's verifier has stated about the order so far, in order. */
+  facts: CustomerFact[]
 }
 
 /**
@@ -312,14 +359,51 @@ export const customerRefusalJson = z.strictObject({
   index: dependencyIndexJson,
 })
 
-const reserveJson = z.strictObject({ reference: commitmentReferenceJson, amount: u256 })
+const reserveJson = z.strictObject({
+  reference: commitmentReferenceJson,
+  amount: u256,
+  fundedIn: bytes32,
+})
 const checks = z.array(checkedDependencyJson).max(MAX_DEPENDENCIES)
+
+/** Statements numbered from 0, each index once and in order, so a reader posts each exactly once. */
+const numbered = <T extends { index: number }>(item: z.ZodType<T>) =>
+  z
+    .array(item)
+    .max(ORDER_STATEMENTS_MAX)
+    .refine((list) => list.every((s, i) => s.index === i), 'indexes 0, 1, 2 and so on, in order')
+
+export const customerSaidJson = z.strictObject({
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .max(ORDER_STATEMENTS_MAX - 1),
+  text: z.string().min(1).max(CUSTOMER_SAID_MAX),
+})
+
+export const customerFactJson = z.strictObject({
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .max(ORDER_STATEMENTS_MAX - 1),
+  ...factBodyShape,
+  verifiedBy: z.literal('customer'),
+})
+
 const base = {
   orderId: orderIdJson,
   commitmentId: bytes32,
   customer: jobCustomerJson,
   supplierBusinessId: businessIdJson,
+  said: numbered(customerSaidJson),
+  facts: numbered(customerFactJson),
 }
+
+export const deliveryReportJson = z.strictObject({
+  result: z.strictObject({ label: z.string().min(1).max(200), hash: bytes32 }),
+})
 
 export const orderStateJson = z.discriminatedUnion('status', [
   z.strictObject({ ...base, status: z.literal('offered') }),
@@ -383,3 +467,5 @@ export const parseQuoteRequest = reader<QuoteRequest>(quoteRequestJson)
 export const parseOrderState = reader<OrderState>(orderStateJson)
 /** Reads the answer to a quote or a delivery report. */
 export const parseOrderAnswer = reader<OrderAnswer>(orderAnswerJson)
+/** Reads the body of a delivery report, as the customer takes it. */
+export const parseDeliveryReport = reader<DeliveryReport>(deliveryReportJson)

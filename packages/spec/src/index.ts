@@ -5,17 +5,20 @@
  *
  * Pre-release. Every interface may change before 1.0.
  */
+export * from './agent-session.js'
 export * from './ap2.js'
 export * from './api.js'
 export * from './api-request.js'
 export * from './canonical.js'
 export * from './commitment.js'
+export * from './compute-offers.js'
 export * from './contest.js'
 export * from './demo.js'
 export * from './dependencies.js'
 export * from './eip712.js'
 export * from './elided-terms.js'
 export * from './erc8183.js'
+export * from './facts.js'
 export * from './gpu-reservation.js'
 export * from './job.js'
 export * from './job-session.js'
