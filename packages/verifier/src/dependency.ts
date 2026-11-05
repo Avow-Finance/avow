@@ -476,6 +476,16 @@ export type JobVerificationCheck =
   | DependencyRefusal
 
 /**
+ * What a read of the job's own commitment that stopped means, in the job's terms. The reasons a
+ * read of a booking relied on stops with name that booking, so these name the job's lock and the
+ * job's reference instead. A stale block means the same for either, so it stays.
+ */
+const JOB_READ_REASONS: Partial<Record<ReasonCode, ReasonCode>> = {
+  'dependency.lock_unknown': 'chain.lock_unknown',
+  'dependency.unreadable': 'reference.unreadable',
+}
+
+/**
  * The check a page runs on a link to verify a job, reading the chain at one pinned finalized
  * block. It works out the job's terms hash from what the link carries, reads the job commitment
  * from the customer's lock with its state and free-cancellation deadline, and takes the supplier
@@ -487,9 +497,9 @@ export type JobVerificationCheck =
  * `StandingBooking` marked with fit unchecked.
  *
  * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
- * customer's lock no supported factory created is `chain.lock_unknown`, and a lock that holds no
- * job commitment under that terms hash is `reference.commitment_mismatch`, each before any
- * compute booking is read.
+ * customer's lock no supported factory created is `chain.lock_unknown`, a read of the job that
+ * fails is `reference.unreadable`, and a lock that holds no job commitment under that terms hash is
+ * `reference.commitment_mismatch`, each before any compute booking is read.
  */
 export async function verifyJobVerification(
   input: JobVerificationInput,
@@ -504,10 +514,8 @@ export async function verifyJobVerification(
   const { timeoutMs, fresh } = readLimits(deps, input.now)
   const pins: Pins = new Map()
   const job = await readThrough(v.commitment, deps.readers, pins, timeoutMs, fresh)
-  if (!('reader' in job)) {
-    const reason = job.reason === 'dependency.lock_unknown' ? 'chain.lock_unknown' : job.reason
-    return refusal(reason, null, job.block)
-  }
+  if (!('reader' in job))
+    return refusal(JOB_READ_REASONS[job.reason] ?? job.reason, null, job.block)
   if (!madeByFactory(job)) return refusal('chain.lock_unknown', null, job.block)
   if (!job.record || !heldUnder(job, v.commitment.termsHash)) {
     return refusal('reference.commitment_mismatch', null, job.block)

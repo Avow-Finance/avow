@@ -172,6 +172,8 @@ export const REASON_CODES = {
     "The commitment on the lock names another supplier account or signing key than this supplier's",
   'reference.commitment_mismatch':
     "The lock holds no commitment for this reference, holds it under another terms hash, or the reference names a side the terms' backing doesn't secure",
+  'reference.unreadable':
+    "A read of the commitment the reference names failed, timed out or couldn't be pinned to one block, so nothing was decided",
   'payment.not_found': 'No transfer is at that chain, transaction and log index',
   'payment.failed': 'The transaction that holds the payment failed',
   'payment.not_final': "The payment's block isn't finalized yet",

@@ -584,6 +584,17 @@ describe('a link to verify a job', () => {
     expect(elsewhere.calls).toEqual([])
   })
 
+  it('names the job, never a booking relied on, when the read of the job fails', async () => {
+    const locks = { [LOCK]: customerLock(), [SUPPLIER_LOCK]: supplierLock() }
+    for (const call of ['commitment', 'head'] as const) {
+      const { reader } = scriptedLocks({ locks, fails: call })
+      const result = await verifyJobVerification({ verification, now: NOW }, { readers: [reader] })
+      expect(result, call).toEqual(
+        refused('reference.unreadable', call === 'head' ? null : PINNED, null),
+      )
+    }
+  })
+
   it('refuses a reference to the supplier side before reading anything', async () => {
     const seller = { ...verification, commitment: { ...reference, side: 'supplier' as const } }
     const { result, calls } = await read({ v: seller })
