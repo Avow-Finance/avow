@@ -157,11 +157,20 @@ export type DependencyCheck =
   | { ok: true; terms: CheckedChainedTerms; checked: readonly CheckedDependency[] }
   | DependencyRefusal
 
+/**
+ * A commitment's state as every check reads it. An accepted commitment with a report filed has a
+ * charge pending in all but name, so it counts as `charge_pending`. The check of a booking relied
+ * on and the check of a job's link both read states through this, so they can't disagree.
+ */
+export function standingState(record: Pick<DependencyRecord, 'state' | 'hasReport'>): RailState {
+  return record.state === 'accepted' && record.hasReport ? 'charge_pending' : record.state
+}
+
 /** What the state test makes of each state the lock has. The build fails when one is missing. */
 const STATE_REASONS: { readonly [S in RailState]: ReasonCode | null } = {
   none: 'dependency.not_found',
   reserved: 'dependency.not_accepted',
-  // Accepted passes only with no report filed, which `stateProblem` checks.
+  // Accepted passes only with no report filed, which `standingState` counts as a pending charge.
   accepted: null,
   charge_pending: 'dependency.charge_pending',
   paused: 'dependency.charge_pending',
@@ -178,8 +187,7 @@ function stateProblem(
   if (!record) return 'dependency.not_found'
   // A booking the seller supplied from its own account shows no one else accepted it.
   if (isAddressEqual(record.supplier, seller)) return 'dependency.self_supplied'
-  if (record.state === 'accepted' && record.hasReport) return 'dependency.charge_pending'
-  const reason = STATE_REASONS[record.state]
+  const reason = STATE_REASONS[standingState(record)]
   if (reason) return reason
   // The lock lets the seller's account cancel an accepted booking at no charge in any block before
   // its free-cancellation deadline, and block timestamps never go back, so this one has to be at or
@@ -433,14 +441,19 @@ export interface JobVerificationInput {
   now: bigint
 }
 
-/**
- * The job commitment as the customer's lock held it at the pinned block. A link names a job in any
- * state, so its state comes back as read, and a page says what that state means: reserved before
- * the developer's business accepted, accepted while the job stands, and released, charged or
- * resolved once it ended.
- */
-export interface CheckedJob {
-  state: RailState
+/** A job's states once it no longer stands: a charge pending or paused, or its reserve released, charged or resolved. */
+export const ENDED_JOB_STATES = [
+  'charge_pending',
+  'paused',
+  'released',
+  'charged',
+  'resolved',
+] as const satisfies readonly RailState[]
+export type EndedJobState = (typeof ENDED_JOB_STATES)[number]
+
+/** The job commitment as the customer's lock held it at the pinned block, in one state. */
+export interface CheckedJob<S extends RailState> {
+  state: S
   /** The customer's free-cancellation deadline as the lock holds it, which is when work starts. */
   freeCancelBy: bigint
   /** The block the job commitment was read at, which every read on its chain shares. */
@@ -448,32 +461,73 @@ export interface CheckedJob {
 }
 
 /**
- * A booking a job's link names, as the link's check read it. The link carries the job's subject
- * only as its hash, so the check couldn't test whether the job fits inside the booking. A
- * `CheckedDependency` comes only from a check that tested fit, as the customer's check and the
- * developer's acceptance do, so this one has fields of its own and neither can stand for the other.
+ * A booking a job's link names, as the link's check read it: standing, or with the reason it
+ * doesn't stand at the block it was read at. The link carries the job's subject only as its hash,
+ * so the check never tests whether the job fits inside the booking. A `CheckedDependency` comes only
+ * from a check that tested fit, as the customer's check and the developer's acceptance do, so this
+ * has fields of its own and neither can stand for the other.
  */
-export interface StandingBooking {
-  booking: CommitmentReference
-  /** The block the booking was read at. */
-  readAt: PinnedBlock
-  fit: 'unchecked'
+export type LinkedBooking =
+  | { booking: CommitmentReference; readAt: PinnedBlock; fit: 'unchecked'; standing: true }
+  | {
+      booking: CommitmentReference
+      /** The block the booking was read at, or null when its read stopped before one was pinned. */
+      readAt: PinnedBlock | null
+      fit: 'unchecked'
+      standing: false
+      reason: ReasonCode
+    }
+
+/** A booking that stood when the link's check read it. */
+export type StandingBooking = Extract<LinkedBooking, { standing: true }>
+
+/**
+ * What a link to verify a job shows, as the chain held it at one pinned block. A page switches on
+ * the outcome, and only `stands` is a job a page can show as standing.
+ *
+ * - `refused`: the link doesn't match the chain, or a booking a reserved job relies on doesn't
+ *   stand, with the reason, the booking by its place and the block.
+ * - `awaiting_acceptance`: the customer reserved and the developer's business hasn't accepted, and
+ *   every booking the job relies on stands.
+ * - `stands`: the job is accepted with no report filed. Each booking comes back as read, since a
+ *   booking cancelled or failed after the customer accepted leaves the job standing.
+ * - `ended`: a charge is pending or paused, or the reserve was released, charged or resolved. Each
+ *   booking comes back as read.
+ */
+export type JobVerificationCheck =
+  | { outcome: 'refused'; reason: ReasonCode; index: number | null; block: PinnedBlock | null }
+  | (JobLinkParties & {
+      outcome: 'awaiting_acceptance'
+      job: CheckedJob<'reserved'>
+      bookings: readonly StandingBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'stands'
+      job: CheckedJob<'accepted'>
+      bookings: readonly LinkedBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'ended'
+      job: CheckedJob<EndedJobState>
+      bookings: readonly LinkedBooking[]
+    })
+
+interface JobLinkParties {
+  /**
+   * The supplier the customer's lock names for the job, copied there from Avow's approval, whose
+   * own lock has to hold each compute booking.
+   */
+  supplier: Address
 }
 
-/** What a link to verify a job shows, as the chain held it at one pinned block. */
-export type JobVerificationCheck =
-  | {
-      ok: true
-      job: CheckedJob
-      /**
-       * The supplier the customer's lock names for the job, copied there from Avow's approval,
-       * whose own lock has to hold each compute booking.
-       */
-      supplier: Address
-      /** Each compute booking the job names, with the block it was read at. */
-      bookings: readonly StandingBooking[]
-    }
-  | DependencyRefusal
+const jobRefusal = (
+  reason: ReasonCode,
+  index: number | null,
+  block: PinnedBlock | null,
+): JobVerificationCheck => ({ outcome: 'refused', reason, index, block })
+
+const isEnded = (state: RailState): state is EndedJobState =>
+  (ENDED_JOB_STATES as readonly RailState[]).includes(state)
 
 /**
  * What a read of the job's own commitment that stopped means, in the job's terms. The reasons a
@@ -489,12 +543,15 @@ const JOB_READ_REASONS: Partial<Record<ReasonCode, ReasonCode>> = {
  * The check a page runs on a link to verify a job, reading the chain at one pinned finalized
  * block. It works out the job's terms hash from what the link carries, reads the job commitment
  * from the customer's lock with its state and free-cancellation deadline, and takes the supplier
- * from the lock's record of it, which the lock copied from Avow's approval. A pass says the link
- * matches the chain, and the job's state says whether the job stands. Then it runs the tests `verifyDependencies` runs on each compute
- * booking the job names that need only the chain: provenance, ownership by that supplier, state
- * with free cancellation, the terms hash the lock holds and a fresh block. It skips the shown
- * section and fit, which need the job's terms in full, so each booking comes back as a
- * `StandingBooking` marked with fit unchecked.
+ * from the lock's record of it, which the lock copied from Avow's approval. Then it runs the tests
+ * `verifyDependencies` runs on each compute booking the job names that need only the chain:
+ * provenance, ownership by that supplier, state with free cancellation, the terms hash the lock
+ * holds and a fresh block. It skips the shown section and fit, which need the job's terms in full.
+ *
+ * The job's state, read through `standingState`, decides the outcome. While the job is reserved the
+ * bookings gate it, as they gate the developer's acceptance, so a booking that doesn't stand refuses.
+ * Once the job is accepted or has ended, each booking is reported as read and the outcome stays the
+ * job's, since a booking cancelled or failed after the customer accepted leaves the job standing.
  *
  * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
  * customer's lock no supported factory created is `chain.lock_unknown`, a read of the job that
@@ -507,37 +564,56 @@ export async function verifyJobVerification(
 ): Promise<JobVerificationCheck> {
   const v = input.verification
   const hashed = jobVerificationProblem(v)
-  if (hashed) return refusal(hashed, null, null)
+  if (hashed) return jobRefusal(hashed, null, null)
   const rules = dependenciesProblem(v.dependencies)
-  if (rules) return refusal(rules, null, null)
-  if (v.commitment.side !== 'buyer') return refusal('reference.commitment_mismatch', null, null)
+  if (rules) return jobRefusal(rules, null, null)
+  if (v.commitment.side !== 'buyer') return jobRefusal('reference.commitment_mismatch', null, null)
   const { timeoutMs, fresh } = readLimits(deps, input.now)
   const pins: Pins = new Map()
   const job = await readThrough(v.commitment, deps.readers, pins, timeoutMs, fresh)
-  if (!('reader' in job))
-    return refusal(JOB_READ_REASONS[job.reason] ?? job.reason, null, job.block)
-  if (!madeByFactory(job)) return refusal('chain.lock_unknown', null, job.block)
-  if (!job.record || !heldUnder(job, v.commitment.termsHash)) {
-    return refusal('reference.commitment_mismatch', null, job.block)
+  if (!('reader' in job)) {
+    return jobRefusal(JOB_READ_REASONS[job.reason] ?? job.reason, null, job.block)
+  }
+  if (!madeByFactory(job)) return jobRefusal('chain.lock_unknown', null, job.block)
+  const state = job.record ? standingState(job.record) : 'none'
+  if (!job.record || state === 'none' || !heldUnder(job, v.commitment.termsHash)) {
+    return jobRefusal('reference.commitment_mismatch', null, job.block)
   }
   const supplier = job.record.supplier
-  const bookings: StandingBooking[] = []
+  const gated = state === 'reserved'
+  const bookings: LinkedBooking[] = []
   for (const [index, dependency] of v.dependencies.entries()) {
     const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
-    if (!('reader' in seen)) return refusal(seen.reason, index, seen.block)
+    const booking = { ...dependency.on }
+    if (!('reader' in seen)) {
+      if (gated) return jobRefusal(seen.reason, index, seen.block)
+      const readAt = seen.block ? copied(dependency.on, seen.block).block : null
+      bookings.push({ booking, readAt, fit: 'unchecked', standing: false, reason: seen.reason })
+      continue
+    }
     const problem = standingProblem(dependency.on, seen, supplier)
-    if (problem) return refusal(problem, index, seen.block)
-    const { on, block } = copied(dependency.on, seen.block)
-    bookings.push({ booking: on, readAt: block, fit: 'unchecked' })
+    if (problem && gated) return jobRefusal(problem, index, seen.block)
+    const readAt = copied(dependency.on, seen.block).block
+    bookings.push(
+      problem
+        ? { booking, readAt, fit: 'unchecked', standing: false, reason: problem }
+        : { booking, readAt, fit: 'unchecked', standing: true },
+    )
   }
-  return {
-    ok: true,
-    job: {
-      state: job.record.state,
-      freeCancelBy: job.record.freeCancelBy,
-      block: copied(v.commitment, job.block).block,
-    },
-    supplier,
-    bookings,
+  const at = {
+    freeCancelBy: job.record.freeCancelBy,
+    block: copied(v.commitment, job.block).block,
   }
+  if (state === 'reserved') {
+    const standing = bookings.filter((b): b is StandingBooking => b.standing)
+    return {
+      outcome: 'awaiting_acceptance',
+      job: { state, ...at },
+      supplier,
+      bookings: standing,
+    }
+  }
+  if (state === 'accepted') return { outcome: 'stands', job: { state, ...at }, supplier, bookings }
+  if (isEnded(state)) return { outcome: 'ended', job: { state, ...at }, supplier, bookings }
+  return jobRefusal('reference.commitment_mismatch', null, job.block)
 }
