@@ -93,6 +93,12 @@ export function sendErrorIn(error: unknown): SendError | null {
   return null
 }
 
+/** Whether a transaction a sender sent landed and reverted, somewhere in an error's causes. */
+export function landedReverted(error: unknown): boolean {
+  const stopped = sendErrorIn(error)
+  return stopped?.stage === 'landed' && stopped.outcome === 'failed'
+}
+
 /** What a send has done so far, which every error it throws carries. */
 interface Sent {
   hashes: Hex[]

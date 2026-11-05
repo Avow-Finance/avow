@@ -2,10 +2,10 @@ import { type AvowDomain, dollars, mandateHash } from '@avow-finance/spec'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { AvowApiError } from '../http.js'
+import { AvowApiError, relayReason } from '../http.js'
 import { SendError } from '../send.js'
 import { accountSigner, signMandate } from '../sign.js'
-import { fundingRefusal, Refusal, relayReason, sandboxAgent, setSandboxPlatform } from './agent.js'
+import { fundingRefusal, Refusal, sandboxAgent, setSandboxPlatform } from './agent.js'
 import { loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { sandboxMandate } from './mandate.js'
 import {
@@ -65,9 +65,13 @@ describe('Refusal', () => {
       code: 'keychain.over_daily_limit',
       layer: 'keychain',
     })
-    expect(
-      fundingRefusal(sent(new Error(`The transaction 0x${'ab'.repeat(32)} reverted`))),
-    ).toEqual({
+    const landed = new SendError(
+      `The transaction 0x${'ab'.repeat(32)} reverted`,
+      'failed',
+      { hashes: [`0x${'ab'.repeat(32)}`], signings: 1 },
+      { stage: 'landed' },
+    )
+    expect(fundingRefusal(new Error('funding failed', { cause: landed }))).toEqual({
       code: 'chain.reserve_missing',
       layer: 'lock',
     })

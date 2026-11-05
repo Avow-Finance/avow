@@ -35,10 +35,10 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { Abis, Account, Addresses } from 'viem/tempo'
 import { type AgentKey, BookingError, type Commitment, createAgent } from '../agent.js'
 import type { AvowApi } from '../avow-api.js'
-import { AvowApiError, agentRequestKey, httpAvowApi } from '../http.js'
+import { agentRequestKey, httpAvowApi, relayReason } from '../http.js'
 import { readOpenReserves } from '../lock.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
-import { sendErrorIn, sendSponsored } from '../send.js'
+import { landedReverted, sendErrorIn, sendSponsored } from '../send.js'
 import { SupplierDeclined } from '../supplier.js'
 import type { SandboxClient } from './business.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
@@ -578,31 +578,11 @@ function booker(m: {
   }
 }
 
-/** The reason Avow gave somewhere in an error's causes, such as its relay's refusal. */
-export function relayReason(error: unknown): ReasonCode | null {
-  let e: unknown = error
-  for (let i = 0; i < 6 && e instanceof Error; i++) {
-    if (e instanceof AvowApiError && e.reason) return e.reason
-    e = e.cause
-  }
-  return null
-}
-
 /** Whether the account's keychain refused somewhere in an error's causes, over the daily limit. */
 function keychainRefused(error: unknown): boolean {
   let e: unknown = error
   for (let i = 0; i < 6 && e instanceof Error; i++) {
     if (/SpendingLimitExceeded/.test(e.message)) return true
-    e = e.cause
-  }
-  return false
-}
-
-/** Whether the funding transaction landed and reverted, somewhere in an error's causes. */
-function reverted(error: unknown): boolean {
-  let e: unknown = error
-  for (let i = 0; i < 6 && e instanceof Error; i++) {
-    if (/The transaction 0x[0-9a-fA-F]{64} reverted/.test(e.message)) return true
     e = e.cause
   }
   return false
@@ -622,7 +602,7 @@ export function fundingRefusal(error: unknown): { code: ReasonCode; layer: Refus
   if (reason) return { code: reason, layer: 'relay' }
   const stopped = sendErrorIn(error)
   if (stopped?.stage === 'relay') return { code: 'service.unavailable', layer: 'relay' }
-  if (reverted(error) || (stopped?.stage === 'prepare' && /revert/i.test(stopped.message))) {
+  if (landedReverted(error) || (stopped?.stage === 'prepare' && /revert/i.test(stopped.message))) {
     return { code: 'chain.reserve_missing', layer: 'lock' }
   }
   return { code: 'chain.reserve_missing', layer: 'unknown' }

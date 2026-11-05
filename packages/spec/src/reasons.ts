@@ -162,6 +162,7 @@ export const REASON_CODES = {
   'chain.reserve_mismatch':
     'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',
   'chain.reserve_accepted': 'The reserve has already been accepted',
+  'chain.acceptance_reverted': 'The lock reverted the acceptance, so the reserve stays unaccepted',
   'chain.lock_unknown': "The lock isn't running the code Avow's factory deploys",
   'chain.agent_key_inactive':
     "The agent's key isn't on the chain, is revoked, or expires before the commitment's release date",
