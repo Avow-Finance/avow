@@ -42,7 +42,7 @@ Avow's test customer is a sandbox business on testnet, labelled as Avow's test c
 | --- | --- |
 | `GET /v1/profile` | The customer's label, business id, account, lock, chain, mandate hash and limits |
 | `POST /v1/orders` | Takes your supplier profile and answers with an offer, which names the commitment id, the proposed job terms, the compute the quote has to rely on and the offer's expiry |
-| `POST /v1/orders/{orderId}/quote` | Takes the version 3 terms, their salt, the terms agreement your signing key signed, its signature and the subject section of each booking relied on, and answers 202 while the customer verifies |
+| `POST /v1/orders/{orderId}/quote` | Takes the version 3 terms, their salt, the terms agreement your signing key signed, its signature and the subject section of each booking relied on, and answers 202 while the customer verifies. The customer's agent [commits to the quote](/docs/composable-commitments/commit-to-quote) once it passes |
 | `GET /v1/orders/{orderId}` | Where the order stands, from `offered` through `verifying`, `refused`, `reserved`, `accepted` and `delivered` to `paid`, with each check's block, the reason and who refused, the reserve and the payment |
 | `POST /v1/orders/{orderId}/delivery` | Takes an empty object and answers 202, and the customer then pays |
 
