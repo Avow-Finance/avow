@@ -13,7 +13,8 @@ import {
 
 const still = (width = 80): Look => ({ colors: 0, live: false, width })
 const LOCK = '0x8684fEd14dC5733751C46640Db293c93f810AF31'
-const COMMITMENT = `0x9f3c${'0'.repeat(56)}a1e2`
+const COMMITMENT: `0x${string}` = `0x9f3c${'0'.repeat(56)}a1e2`
+const REFERENCE = { chain: 42431, lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' } as const
 const recorder = () => {
   let out = ''
   return {
@@ -144,9 +145,9 @@ describe('the three kinds of line a job run shows', () => {
     rail.returned(false, 'service.over_budget: the offer costs $180 and your budget is $150.')
     rail.fact({
       text: 'The compute booking is accepted and its free cancellation has ended.',
-      checkedBy: 'service.ts',
+      verifiedBy: 'service',
       block: 1204331n,
-      reference: { lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' },
+      reference: REFERENCE,
     })
     expect(out.text()).toBe(
       [
@@ -155,9 +156,9 @@ describe('the three kinds of line a job run shows', () => {
         '│    ✓ Booked $180 with avow-demo-gpu.',
         '│  ↳ book_compute h100x8-spot',
         '│    ✗ service.over_budget: the offer costs $180 and your budget is $150.',
-        '│  ∎ At block 1204331, checked by service.ts. The compute booking is accepted',
-        '│    and its free cancellation has ended.',
-        '│    lock 0x8684…AF31, commitment 0x9f3c…a1e2, buyer side',
+        '│  ∎ At block 1204331, checked by your service.ts. The compute booking is',
+        '│    accepted and its free cancellation has ended.',
+        '│    chain 42431, lock 0x8684…AF31, commitment 0x9f3c…a1e2, buyer side',
         '',
       ].join('\n'),
     )
@@ -192,9 +193,9 @@ describe('the three kinds of line a job run shows', () => {
         { name: 'delivered', reached: false },
       ],
       evidence: {
-        checkedBy: 'service.ts',
-        block: 1204340,
-        reference: { lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' },
+        verifiedBy: 'service',
+        block: 1204340n,
+        reference: REFERENCE,
         transactionHash: `0x${'ab'.repeat(32)}`,
       },
       link: 'https://try.testnet.avow.finance/verify#abc',
@@ -205,12 +206,94 @@ describe('the three kinds of line a job run shows', () => {
         '│  Job commitment 0x9f3c…a1e2',
         "│  $300 reserved by Avow's test customer, for a late cancellation or a no-show.",
         '│  ● reserved  ● accepted  ○ delivered',
-        '│  Read at block 1204340 by service.ts, lock 0x8684…AF31, commitment',
-        '│  0x9f3c…a1e2, buyer side, transaction 0xabab…abab',
+        '│  At block 1204340, checked by your service.ts, chain 42431, lock 0x8684…AF31,',
+        '│  commitment 0x9f3c…a1e2, buyer side, transaction 0xabab…abab',
         '│  https://try.testnet.avow.finance/verify#abc',
         '',
       ].join('\n'),
     )
+  })
+})
+
+describe('evidence the rail will draw', () => {
+  const fact = {
+    text: 'The booking is accepted.',
+    verifiedBy: 'service',
+    block: 1n,
+    reference: REFERENCE,
+  } as const
+
+  it('takes only a source, a whole block and a full chain reference, in the types', () => {
+    const rail = new Rail(still(), () => {})
+    // @ts-expect-error a model is never a source of evidence
+    expect(() => rail.fact({ ...fact, verifiedBy: 'qwen3:8b' })).toThrow(/who verified it/)
+    // @ts-expect-error a block is a whole number, so NaN can't pass
+    expect(() => rail.fact({ ...fact, block: Number.NaN })).toThrow(/block/)
+    // @ts-expect-error a side is buyer or supplier
+    expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, side: 'sideways' } })).toThrow(
+      /side/,
+    )
+    // @ts-expect-error a lock is a 0x address
+    expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, lock: 'abc' } })).toThrow(/lock/)
+    const noChain = { lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' } as const
+    // @ts-expect-error the reference names its chain
+    expect(() => rail.fact({ ...fact, reference: noChain })).toThrow(/chain/)
+  })
+
+  it('refuses at run time what a cast would let past the types', () => {
+    const rail = new Rail(still(), () => {})
+    expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, lock: '0x' } })).toThrow(/lock/)
+    expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, commitmentId: '0xzz' } })).toThrow(
+      /commitment/,
+    )
+    expect(() => rail.fact({ ...fact, transactionHash: '0x12' })).toThrow(/transaction/)
+  })
+
+  it("draws the customer's check as its own statement", () => {
+    const out = recorder()
+    new Rail(still(100), out.write).fact({ ...fact, verifiedBy: 'customer' })
+    expect(out.text()).toContain(
+      "At block 1, Avow's test customer says it checked. The booking is accepted.",
+    )
+  })
+})
+
+describe('a table of recorded results', () => {
+  const offers = {
+    title: 'The offers it compared, listed at 16:02 by avow-demo-gpu',
+    columns: ['offer', 'GPUs', 'starts', 'per GPU-hour', 'free cancellation'],
+    rows: [
+      ['h100-firm', '1 to 16', 'now', '$2.40', 'ended'],
+      ['h100-flex', '1 to 16', 'now', '$1.60', 'until 17:30'],
+      ['h100-later', '1 to 16', '18:30', '$1.90', 'ended'],
+    ],
+    marked: 0,
+    notes: ['Your budget was $3.00 per GPU-hour, with $500 of authority left.'],
+  }
+
+  it('aligns its columns, marks the chosen row and puts the limits under it', () => {
+    const out = recorder()
+    new Rail(still(), out.write).table(offers)
+    expect(out.text()).toBe(
+      [
+        '│',
+        '│  The offers it compared, listed at 16:02 by avow-demo-gpu',
+        '│    offer       GPUs     starts  per GPU-hour  free cancellation',
+        '│  › h100-firm   1 to 16  now     $2.40         ended',
+        '│    h100-flex   1 to 16  now     $1.60         until 17:30',
+        '│    h100-later  1 to 16  18:30   $1.90         ended',
+        '│  Your budget was $3.00 per GPU-hour, with $500 of authority left.',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('narrows its widest columns to fit a narrow terminal, so no row wraps', () => {
+    const out = recorder()
+    new Rail(still(44), out.write).table(offers)
+    const rows = out.text().split('\n').slice(2, 6)
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(44)
+    expect(out.text()).toContain('…')
   })
 })
 

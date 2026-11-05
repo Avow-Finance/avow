@@ -3,21 +3,60 @@ import { type Look, type Paint, type Styles, stylesOf, wrap } from './look.js'
 /** Where a rail draws, which in the tools is the terminal's output. */
 export type Write = (text: string) => void
 
+/** An address, an id or a hash as the chain writes it. */
+export type Hex = `0x${string}`
+
+/** Who verified a fact, of the three sources a fact can have. A model is never one. */
+export type VerifiedBy = 'service' | 'customer' | 'avow'
+
 /**
  * Where a fact or a receipt comes from, since a signed line only says who published it. It names
- * who checked, what they read on chain and at which block, and the transaction where there is one.
+ * who verified it, the commitment read on which chain, the block, and the transaction if any.
  */
 export interface Evidence {
-  /** Who checked, such as "service.ts", "Avow's test customer" or "Avow's API". */
-  readonly checkedBy: string
-  readonly block: bigint | number
-  /** The commitment it was read from: its lock, its id and the side read. */
+  readonly verifiedBy: VerifiedBy
+  readonly block: bigint
   readonly reference: {
-    readonly lock: string
-    readonly commitmentId: string
-    readonly side: string
+    readonly chain: number
+    readonly lock: Hex
+    readonly commitmentId: Hex
+    readonly side: 'buyer' | 'supplier'
   }
-  readonly transactionHash?: string
+  readonly transactionHash?: Hex
+}
+
+/** How each source's check reads on the rail. The customer's is its own statement. */
+const VERIFIED: Record<VerifiedBy, string> = {
+  service: 'checked by your service.ts',
+  avow: "checked by Avow's API",
+  customer: "Avow's test customer says it checked",
+}
+
+/**
+ * Refuses evidence the types would let through from a cast or plain JavaScript: an unknown
+ * source, a block that isn't a whole number, or a reference that isn't a lock, a commitment id and
+ * a side on a chain.
+ */
+function checkEvidence(e: Evidence): void {
+  const hex = (value: unknown, length: number) =>
+    typeof value === 'string' && new RegExp(`^0x[0-9a-fA-F]{${length}}$`).test(value)
+  const r = e.reference
+  const problem = !(e.verifiedBy in VERIFIED)
+    ? `who verified it, ${String(e.verifiedBy)}, isn't one of ${Object.keys(VERIFIED).join(', ')}`
+    : typeof e.block !== 'bigint' || e.block < 0n
+      ? 'its block is not a whole number'
+      : !r || !Number.isInteger(r.chain) || r.chain <= 0
+        ? 'its reference names no chain'
+        : !hex(r.lock, 40)
+          ? 'its reference names no lock address'
+          : !hex(r.commitmentId, 64)
+            ? 'its reference names no commitment id'
+            : r.side !== 'buyer' && r.side !== 'supplier'
+              ? 'its reference names no side'
+              : e.transactionHash !== undefined && !hex(e.transactionHash, 64)
+                ? 'its transaction hash is malformed'
+                : null
+  if (problem) throw new TypeError(`The rail won't draw this as evidence, because ${problem}.`)
 }
 
 /** A fact code outside the model checked, with where it comes from. */
@@ -39,12 +78,30 @@ export interface Receipt {
   readonly link?: string
 }
 
+/**
+ * A small table of recorded results, such as the offers a model compared, with the row it chose
+ * marked and quiet notes under it, such as the limits that applied then. Cells are plain text.
+ */
+export interface Table {
+  readonly title: string
+  readonly columns: readonly string[]
+  readonly rows: readonly (readonly string[])[]
+  /** The row to mark, such as the offer booked. */
+  readonly marked?: number
+  readonly notes?: readonly string[]
+}
+
+/** A cell cut to `width`, ending in an ellipsis when it had to be cut. */
+const fit = (cell: string, width: number) =>
+  cell.length <= width ? cell.padEnd(width) : `${cell.slice(0, Math.max(0, width - 1))}…`
+
 /** An address or a hash as the terminal shortens it, with enough of each end to tell it apart. */
 const short = (hex: string) => (hex.length > 14 ? `${hex.slice(0, 6)}…${hex.slice(-4)}` : hex)
 
 /** The chain reference under a fact or a receipt, in one quiet line. */
 const referenceLine = (e: Evidence) =>
   [
+    `chain ${e.reference.chain}`,
     `lock ${short(e.reference.lock)}`,
     `commitment ${short(e.reference.commitmentId)}`,
     `${e.reference.side} side`,
@@ -235,16 +292,59 @@ export class Rail {
    * proves the state at that block and nothing after it, with the chain reference under it.
    */
   fact(fact: Fact): void {
+    checkEvidence(fact)
     this.#item(
       this.#s.ok('∎'),
-      `${this.#s.dim(`At block ${fact.block}, checked by ${fact.checkedBy}.`)} ${fact.text}`,
+      `${this.#s.dim(`At block ${fact.block}, ${VERIFIED[fact.verifiedBy]}.`)} ${fact.text}`,
     )
     this.#emit(`${this.prefix}  ${this.#s.dim(referenceLine(fact))}`)
     this.#spaced = false
   }
 
+  /**
+   * A table of recorded results under the rail, its columns sized to fit the terminal. A column
+   * too wide to fit is narrowed, its longest cells cut with an ellipsis, so no row ever wraps.
+   */
+  table(table: Table): void {
+    const gap = 2
+    const room = Math.max(MIN_TEXT, this.#look.width - 5)
+    const widths = table.columns.map((name, i) =>
+      Math.max(name.length, ...table.rows.map((row) => (row[i] ?? '').length)),
+    )
+    const total = () => widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1)
+    while (total() > room) {
+      const widest = widths.indexOf(Math.max(...widths))
+      if ((widths[widest] as number) <= 4) break
+      widths[widest] = (widths[widest] as number) - 1
+    }
+    const line = (cells: readonly string[]) =>
+      widths
+        .map((w, i) => fit(cells[i] ?? '', w))
+        .join(' '.repeat(gap))
+        .trimEnd()
+    this.#space()
+    this.#emit(
+      [
+        `${this.prefix}${this.#s.bold(table.title)}`,
+        `${this.prefix}  ${this.#s.dim(line(table.columns))}`,
+        ...table.rows.map((row, i) =>
+          i === table.marked
+            ? `${this.prefix}${this.#s.accent('›')} ${this.#s.bold(line(row))}`
+            : `${this.prefix}  ${line(row)}`,
+        ),
+        ...(table.notes ?? []).flatMap((note) =>
+          wrap(note, Math.max(MIN_TEXT, this.#look.width - 3)).map(
+            (part) => `${this.prefix}${this.#s.dim(part)}`,
+          ),
+        ),
+      ].join('\n'),
+    )
+    this.#spaced = false
+  }
+
   /** A commitment as a compact receipt: what it is, its states so far, and where to check it. */
   receipt(receipt: Receipt): void {
+    checkEvidence(receipt.evidence)
     const states = receipt.states
       .map((s) => (s.reached ? `${this.#s.ok('●')} ${s.name}` : this.#s.dim(`○ ${s.name}`)))
       .join('  ')
@@ -259,7 +359,7 @@ export class Rail {
         ),
         `${this.prefix}${states}`,
         ...wrap(
-          `Read at block ${receipt.evidence.block} by ${receipt.evidence.checkedBy}, ${referenceLine(receipt.evidence)}`,
+          `At block ${receipt.evidence.block}, ${VERIFIED[receipt.evidence.verifiedBy]}, ${referenceLine(receipt.evidence)}`,
           Math.max(MIN_TEXT, this.#look.width - 3),
         ).map((part) => `${this.prefix}${this.#s.dim(part)}`),
         ...(receipt.link ? [`${this.prefix}${this.#s.dim(receipt.link)}`] : []),

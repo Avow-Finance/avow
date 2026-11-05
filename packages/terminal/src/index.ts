@@ -10,4 +10,14 @@ export {
   visible,
   wrap,
 } from './look.js'
-export { type Evidence, type Fact, Rail, type Receipt, setApart, type Write } from './rail.js'
+export {
+  type Evidence,
+  type Fact,
+  type Hex,
+  Rail,
+  type Receipt,
+  setApart,
+  type Table,
+  type VerifiedBy,
+  type Write,
+} from './rail.js'
