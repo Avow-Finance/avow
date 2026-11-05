@@ -42,9 +42,9 @@ import type { LockedBacking } from './chain.js'
  *    seller shows hashes to that terms hash.
  * 5. Fit. The booking asks for no more than the booking it relies on, by its template's rule.
  *
- * Each reader pins the latest finalized block once per check, so every booking read through it is
- * read at that one block, named by number, and the result records that block's number, hash and
- * timestamp. A finalized block older than the read age limit by the caller's clock refuses with
+ * The first read on each chain pins that chain's latest finalized block once per check, so every
+ * booking on that chain is read at that one block, named by number, through whichever reader reads
+ * it, and the result records that block's number, hash and timestamp. A finalized block older than the read age limit by the caller's clock refuses with
  * `dependency.stale`, since a node that has fallen behind would show a state the chain has left. A
  * read that fails, times out or can't be pinned refuses with `dependency.unreadable`, never as not
  * found and never as a pass.
@@ -224,13 +224,17 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, late]).finally(() => clearTimeout(timer))
 }
 
-/** The block each reader pinned in one check, by reader. */
-type Pins = Map<PinnedLockReader, PinnedBlock>
+/**
+ * The block each chain was pinned at in one check, by chain id, so two readers on one chain, such
+ * as two factories there, read at the same block.
+ */
+type Pins = Map<number, PinnedBlock>
 
 /**
- * Reads one booking relied on through one reader, every read at the block the reader pinned for
- * this check. The first read through a reader pins the latest finalized block, and every later one
- * in the same check reads at that block too. A pinned block older than the freshness limit stops
+ * Reads one booking relied on through one reader, every read at the block pinned for its chain in
+ * this check. The first read on a chain pins the latest finalized block through the reader making
+ * it, and every later read on that chain in the same check, through any reader, reads at that
+ * block too. A pinned block older than the freshness limit stops
  * the check before the lock is read. A lock the reader's factory doesn't list is never read from.
  * Whatever was read stands only once the block at that height still has the hash it had when it
  * was pinned, a lock no factory lists included.
@@ -243,10 +247,10 @@ async function observe(
   fresh: Freshness,
 ): Promise<Observed> {
   const work = async (): Promise<Observed> => {
-    let block = pins.get(reader)
+    let block = pins.get(reader.chainId)
     if (!block) {
       block = await reader.head()
-      pins.set(reader, block)
+      pins.set(reader.chainId, block)
     }
     if (fresh.now - block.timestamp > fresh.maxAge) throw new Unreadable(block, 'dependency.stale')
     const listed = await reader.isLock(on.lock, block.number)
@@ -261,7 +265,7 @@ async function observe(
   try {
     return await within(work(), timeoutMs)
   } catch (error) {
-    throw error instanceof Unreadable ? error : new Unreadable(pins.get(reader) ?? null)
+    throw error instanceof Unreadable ? error : new Unreadable(pins.get(reader.chainId) ?? null)
   }
 }
 

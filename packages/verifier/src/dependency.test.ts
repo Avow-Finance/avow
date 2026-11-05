@@ -372,9 +372,12 @@ describe('provenance', () => {
       locks: {},
       head: blockAt(9n),
     })
-    const supported = scriptedLocks({ head: blockAt(10n) })
+    // Its node is a block ahead, and knows block 9 too, as any node past finality does.
+    const supported = scriptedLocks({ heads: [blockAt(10n), blockAt(9n)] })
     const { result } = await check({ readers: [other.reader, supported.reader] })
-    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(10n) }]))
+    // The chain was pinned at block 9 by its first read, so the second reader reads there too.
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(9n) }]))
+    expect(supported.calls.map((c) => c.call)).not.toContain('head')
     const elsewhere = scriptedLocks({ chainId: CHAIN_ID + 1 })
     expect((await check({ readers: [elsewhere.reader] })).result).toEqual(
       refused('dependency.lock_unknown', null),
@@ -391,11 +394,16 @@ describe('provenance', () => {
     expect(other.calls).toEqual([])
   })
 
-  it('records the block of the last factory read when none lists the lock', async () => {
+  it('records the block the chain was pinned at when no factory lists the lock', async () => {
     const first = scriptedLocks({ locks: {}, head: blockAt(9n) })
-    const second = scriptedLocks({ factory: OTHER_FACTORY, locks: {} })
+    const second = scriptedLocks({
+      factory: OTHER_FACTORY,
+      locks: {},
+      heads: [PINNED, blockAt(9n)],
+    })
     const { result } = await check({ readers: [first.reader, second.reader] })
-    expect(result).toEqual(refused('dependency.lock_unknown'))
+    expect(result).toEqual(refused('dependency.lock_unknown', blockAt(9n)))
+    for (const c of second.calls) expect(c.at, c.call).toBe(9n)
   })
 })
 
@@ -859,6 +867,54 @@ describe('reads pinned to one block', () => {
   it('gives dependency.unreadable when the node no longer has the block', async () => {
     const { result } = await check({ script: { rehash: null } })
     expect(result).toEqual(refused('dependency.unreadable'))
+  })
+
+  it('reads every booking on one chain at one block, even through two readers there', async () => {
+    // Two factories on one chain: the job sits in the first's lock, the compute in the second's.
+    const JOB_COMMITMENT = id('the job')
+    const job = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+    const reference = {
+      kind: 'commitment',
+      chainId: CHAIN_ID,
+      lock: LOCK,
+      commitmentId: JOB_COMMITMENT,
+      side: 'buyer',
+      termsHash: termsHash(job, SALT),
+    } as const
+    const first = scriptedLocks({
+      locks: {
+        [LOCK]: {
+          ...supplierLock(null),
+          account: buyer.address,
+          records: {
+            [recordKey(JOB_COMMITMENT, 'buyer')]: {
+              state: 'accepted',
+              hasReport: false,
+              termsHash: reference.termsHash,
+              supplier: supplierAccount.address,
+              freeCancelBy: START,
+            },
+          },
+        },
+      },
+    })
+    // The second reader's node is a few blocks ahead, so pinning on its own would pick 4326.
+    const second = scriptedLocks({
+      factory: OTHER_FACTORY,
+      heads: [blockAt(4326n), PINNED],
+      locks: { [SUPPLIER_LOCK]: { ...supplierLock(), factory: OTHER_FACTORY } },
+    })
+    const result = await verifyJobVerification(
+      { verification: jobVerificationOf(job, SALT, reference), now: NOW },
+      { readers: [first.reader, second.reader] },
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      job: { block: PINNED },
+      bookings: [{ readAt: PINNED }],
+    })
+    for (const c of [...first.calls, ...second.calls]) expect(c.at, c.call).toBe(PINNED.number)
+    expect(second.calls.map((c) => c.call)).not.toContain('head')
   })
 
   it('gives dependency.unreadable, never lock_unknown, when an unlisted lock’s block moved', async () => {
