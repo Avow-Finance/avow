@@ -443,6 +443,19 @@ export interface CheckedJob {
   block: PinnedBlock
 }
 
+/**
+ * A booking a job's link names, as the link's check read it. The link carries the job's subject
+ * only as its hash, so the check couldn't test whether the job fits inside the booking. A
+ * `CheckedDependency` comes only from a check that tested fit, as the customer's check and the
+ * developer's acceptance do, so this one has fields of its own and neither can stand for the other.
+ */
+export interface StandingBooking {
+  booking: CommitmentReference
+  /** The block the booking was read at. */
+  readAt: PinnedBlock
+  fit: 'unchecked'
+}
+
 /** What a link to verify a job shows, as the chain held it at one pinned block. */
 export type JobVerificationCheck =
   | {
@@ -454,12 +467,7 @@ export type JobVerificationCheck =
        */
       supplier: Address
       /** Each compute booking the job names, with the block it was read at. */
-      checked: readonly CheckedDependency[]
-      /**
-       * The link carries the job's subject only as its hash, so whether the job fits inside each
-       * booking wasn't checked.
-       */
-      fitChecked: false
+      bookings: readonly StandingBooking[]
     }
   | DependencyRefusal
 
@@ -471,7 +479,8 @@ export type JobVerificationCheck =
  * matches the chain, and the job's state says whether the job stands. Then it runs the tests `verifyDependencies` runs on each compute
  * booking the job names that need only the chain: provenance, ownership by that supplier, state
  * with free cancellation, the terms hash the lock holds and a fresh block. It skips the shown
- * section and fit, which need the job's terms in full, and the result says fit wasn't checked.
+ * section and fit, which need the job's terms in full, so each booking comes back as a
+ * `StandingBooking` marked with fit unchecked.
  *
  * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
  * customer's lock no supported factory created is `chain.lock_unknown`, and a lock that holds no
@@ -500,13 +509,14 @@ export async function verifyJobVerification(
     return refusal('reference.commitment_mismatch', null, job.block)
   }
   const supplier = job.record.supplier
-  const checked: CheckedDependency[] = []
+  const bookings: StandingBooking[] = []
   for (const [index, dependency] of v.dependencies.entries()) {
     const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
     if (!('reader' in seen)) return refusal(seen.reason, index, seen.block)
     const problem = standingProblem(dependency.on, seen, supplier)
     if (problem) return refusal(problem, index, seen.block)
-    checked.push(copied(dependency.on, seen.block))
+    const { on, block } = copied(dependency.on, seen.block)
+    bookings.push({ booking: on, readAt: block, fit: 'unchecked' })
   }
   return {
     ok: true,
@@ -516,7 +526,6 @@ export async function verifyJobVerification(
       block: copied(v.commitment, job.block).block,
     },
     supplier,
-    checked,
-    fitChecked: false,
+    bookings,
   }
 }

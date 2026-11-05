@@ -522,8 +522,7 @@ describe('a link to verify a job', () => {
       ok: true,
       job: { state: 'accepted', freeCancelBy: START, block: PINNED },
       supplier: supplierAccount.address,
-      checked: [{ on: dependencyOn().on, block: PINNED }],
-      fitChecked: false,
+      bookings: [{ booking: dependencyOn().on, readAt: PINNED, fit: 'unchecked' }],
     })
     for (const c of calls) expect(c.at, c.call).toBe(PINNED.number)
   })
@@ -580,7 +579,20 @@ describe('a link to verify a job', () => {
     const hash = termsHash(terms, SALT)
     const v = jobVerificationOf(terms, SALT, { ...reference, termsHash: hash })
     const { result } = await read({ v, job: { termsHash: hash } })
-    expect(result).toMatchObject({ ok: true, fitChecked: false })
+    expect(result).toMatchObject({
+      ok: true,
+      bookings: [{ booking: dependencyOn().on, readAt: PINNED, fit: 'unchecked' }],
+    })
+  })
+
+  it('gives entries that can’t pass for the full check’s, which tested fit', async () => {
+    const { result } = await read()
+    if (!result.ok) throw new Error('expected a pass')
+    // A CheckedDependency has `on` and `block`, which a booking the link names never carries.
+    for (const b of result.bookings) {
+      expect(b).not.toHaveProperty('on')
+      expect(b).not.toHaveProperty('block')
+    }
   })
 })
 
