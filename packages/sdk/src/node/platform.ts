@@ -63,6 +63,17 @@ export function latestRun(dir: string, session: string): number {
 }
 
 /**
+ * Marks every run number up to `run` as taken in a session, so a session kept across a restart
+ * goes on from the last run Avow's relay holds, even when this folder lost its own count.
+ */
+export function takenUpTo(dir: string, session: string, run: number): void {
+  if (run < 1 || latestRun(dir, session) >= run) return
+  const runs = runsDir(dir, session)
+  mkdirSync(runs, { recursive: true, mode: 0o700 })
+  writeFileSync(join(runs, String(run)), '', { mode: 0o600 })
+}
+
+/**
  * Takes the next run number in a session, in the sandbox folder `dir`. The runner and the MCP
  * server both start runs, and the screen tells runs apart by number, so each claims its number by
  * creating a file named for it, which only one process can create. A restarted MCP server goes on

@@ -8,7 +8,7 @@ This folder gives an AI agent $500 of authority to commit a business, and shows 
 npm start
 ```
 
-The first time, `npm start` sets up your business on your machine. You choose a passphrase, and your business's key is sealed under it in `.avow`, a folder git ignores. The business registers with Avow's sandbox, waits for its $1,500 of test dollars and creates its lock. Then `npm start` shows you the mandate it's about to sign for your agent, asks you to confirm it and type the passphrase, and signs. It opens a screen that shows each run as it happens, and waits for you.
+The first time, `npm start` sets up your business on your machine. You choose a passphrase, and your business's key is sealed under it in `.avow`, a folder git ignores. The business registers with Avow's sandbox, waits for its $1,500 of test dollars and creates its lock. Then `npm start` shows you the mandate it's about to sign for your agent, asks you to confirm it and type the passphrase, and signs. It opens a screen that shows each run as it happens, and waits for you. The screen stays the same when you restart `npm start`. A day later, or for a fresh business, it opens a new one and asks for your passphrase once, so your business's key can sign your agent's authority there.
 
 Each time you press Enter, it runs `agent.ts` once. Afterwards it shows what your agent's key can still move today, of its $1,000 a day.
 
