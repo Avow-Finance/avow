@@ -33,8 +33,9 @@ import { type Parsed, toWire } from './wire.js'
  * and reads the booking the dependencies section names at a block it pins.
  *
  * Only the dependencies section is shown. Each section's salt comes from the terms' salt, and one
- * section's salt reveals neither the terms' salt nor any other section. So the job's subject, with
- * its work, compute and deadline, and its price stay behind their hashes. The lock already shows
+ * section's salt reveals neither the terms' salt nor any other section. So the link doesn't show
+ * the job's subject, with its work, compute and deadline, or its price. Once the job is paid, the
+ * payment transfer shows the price, since its memo is the commitment id. The lock already shows
  * anyone what it enforces for the job: the reserve, each charge's cap and the moment it becomes
  * chargeable, the deadlines, the contest window and the release date. Free cancellation ends when
  * work starts, so the lock shows the start too.
