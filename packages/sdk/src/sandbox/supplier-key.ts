@@ -117,8 +117,9 @@ export async function registerSandboxSupplier(deps: {
  * The business's supplier item, registering the business as a supplier first when this folder has
  * none for it. A key already made for the same account is registered again, since Avow answers a
  * repeat with the supplier it holds, and anything else gets a new key. Registering takes the root
- * key, which `openRoot` opens. A newly registered signing key gets its fees from Moderato's faucet,
- * since it sends the business's acceptances itself.
+ * key, which `openRoot` opens. The signing key sends the business's acceptances itself, so whenever
+ * it holds too little for its fees Moderato's faucet funds them, which costs one balance read once
+ * it's funded. A registration Avow refuses says plainly why.
  */
 export async function ensureSandboxSupplier(m: {
   store: SandboxStore
@@ -130,24 +131,40 @@ export async function ensureSandboxSupplier(m: {
   fetch?: typeof fetch
 }): Promise<SupplierItem> {
   const held = await loadSupplierItem(m.store)
-  if (held && madeFor(held, m.business)) return held
+  if (held && madeFor(held, m.business)) {
+    await fundFees(m.client, held.profile.signingKey)
+    return held
+  }
   m.log(
-    'Your business needs a signing key of its own to quote and accept jobs. It stays on this machine and can move no money.',
+    "Your business needs a signing key of its own to quote and accept jobs. It's made on this machine and stays here. It accepts jobs and reports charges for your business, and it can't move your business's own money or change its authority.",
   )
   const sameAccount = held !== null && isAddressEqual(held.business.account, m.business.account)
   const signingKey = sameAccount ? held.signingKey : generatePrivateKey()
-  const profile = await registerSandboxSupplier({
-    deployment: m.deployment,
-    root: await m.openRoot(),
-    signingKey: privateKeyToAccount(signingKey),
-    payee: m.business.account,
-    ...(m.fetch ? { fetch: m.fetch } : {}),
-  })
+  let profile: SupplierProfile
+  try {
+    profile = await registerSandboxSupplier({
+      deployment: m.deployment,
+      root: await m.openRoot(),
+      signingKey: privateKeyToAccount(signingKey),
+      payee: m.business.account,
+      ...(m.fetch ? { fetch: m.fetch } : {}),
+    })
+  } catch (error) {
+    const taken =
+      error instanceof Error &&
+      error.cause instanceof AvowApiError &&
+      error.cause.reason === 'sandbox.taken'
+    if (!taken) throw error
+    throw new Error(
+      "Avow already holds another signing key for your business as a supplier, and .avow/supplier.json doesn't hold that key, so your business can't take jobs. Put back the supplier.json that holds it, or set up a fresh business with npm run fresh, which registers a key of its own.",
+      { cause: error },
+    )
+  }
   const item: SupplierItem = { signingKey, profile, business: m.business }
   await saveSupplierItem(m.store, item)
   m.log(`Registered your business as a sandbox supplier, signing with ${profile.signingKey}.`)
   // The signing key sends the business's acceptances and pays their fees itself, so Moderato's
-  // faucet funds its fees as it funds the account's.
+  // faucet funds its fees as it funds the account's, and tops them up whenever they run low.
   await fundFees(m.client, profile.signingKey)
   return item
 }

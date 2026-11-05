@@ -136,6 +136,86 @@ describe("the business's side, when the agent writes to .avow", () => {
   })
 })
 
+describe('the business as a supplier of jobs', () => {
+  /** A business whose mandate the chain holds, so setup asks nothing of its own. */
+  async function standing() {
+    const b = await enrolledBusiness()
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: b.root.address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      keys: [{ key: b.agentKey, block: LOCK_BLOCK + 5n, witness: b.witness }],
+    })
+    const held = JSON.parse((await b.store.read('supplier')) as string)
+    // A profile reads addresses in lower case.
+    return { b, chain, signingKey: (held.profile.signingKey as string).toLowerCase() as Address }
+  }
+
+  it('is left alone unless the job chapter asks for it', async () => {
+    const { b, chain } = await standing()
+    const prepared = await prepareSandboxBusiness({
+      config,
+      prompts: recordingPrompts().prompts,
+      store: b.store,
+      deployment,
+      client: chain.client,
+      session: null,
+      log: () => {},
+    })
+    expect(prepared.supplier).toBeNull()
+    expect(chain.feeReads).toEqual([])
+  })
+
+  it('names the signing key it holds, and checks that key still has its fees', async () => {
+    const { b, chain, signingKey } = await standing()
+    const prepared = await prepareSandboxBusiness({
+      config,
+      prompts: recordingPrompts().prompts,
+      store: b.store,
+      deployment,
+      client: chain.client,
+      session: null,
+      supplier: true,
+      log: () => {},
+    })
+    expect(prepared.supplier).toEqual({ ok: true, signingKey })
+    expect(chain.feeReads.map((a) => a.toLowerCase())).toEqual([signingKey])
+  })
+
+  it('finishes setting up the business when Avow refuses the registration, and says why', async () => {
+    const { b, chain } = await standing()
+    // The supplier's file is gone, and Avow holds another signing key for the account.
+    await b.store.write('supplier', '{}')
+    const refusing = (async () =>
+      new Response(
+        JSON.stringify({ error: { reason: 'sandbox.taken', message: 'That account is taken' } }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch
+    const prepared = await prepareSandboxBusiness({
+      config,
+      prompts: recordingPrompts().prompts,
+      store: b.store,
+      deployment,
+      client: chain.client,
+      session: null,
+      supplier: true,
+      log: () => {},
+      fetch: refusing,
+    })
+    expect(prepared).toMatchObject({ lock: LOCK, authority: 500, signed: false })
+    expect(prepared.supplier).toEqual({
+      ok: false,
+      why: expect.stringContaining(
+        "Avow already holds another signing key for your business as a supplier, and .avow/supplier.json doesn't hold that key",
+      ),
+    })
+    expect(await b.store.read('supplier')).toBe('{}')
+    expect(chain.writes).toEqual([])
+  })
+})
+
 describe('the keys the runner revokes', () => {
   it('start where the factory created the lock, read back from the latest block', async () => {
     const account = Account.fromSecp256k1(generatePrivateKey()).address

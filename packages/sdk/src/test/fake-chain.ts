@@ -7,6 +7,7 @@ import {
   encodeAbiParameters,
   encodeEventTopics,
   encodeFunctionResult,
+  erc20Abi,
   type Hex,
   hexToBigInt,
   isAddressEqual,
@@ -16,12 +17,15 @@ import {
 } from 'viem'
 import { Abis, Addresses } from 'viem/tempo'
 import { FACTORY_ABI } from '../lock.js'
+import { MODERATO_FEE_TOKEN } from '../moderato.js'
 import type { SandboxClient } from '../sandbox/business.js'
 
 const KEYCHAIN = Addresses.accountKeychain as Address
 const LOCK_CREATED = parseAbiItem('event LockCreated(address indexed account, address lock)')
 const NO_EXPIRY = 2n ** 64n - 1n
 const HASH = `0x${'ab'.repeat(32)}` as Hex
+/** The fee balance every account holds, enough that the faucet is never asked. */
+const AMPLE = 10n ** 12n
 
 /** A key as the fake keychain holds it. */
 export interface FakeKey {
@@ -48,8 +52,8 @@ const log = (address: Address, topics: Hex[], data: Hex, block: bigint) => ({
 
 /**
  * A stand-in for Moderato's node that holds one business: its lock, made by the factory at
- * `lockBlock`, and the keys on its account. It records every method it was asked that isn't a
- * read, so a test can tell nothing was sent.
+ * `lockBlock`, and the keys on its account. Every account holds ample fees. It records every method
+ * it was asked that isn't a read, so a test can tell nothing was sent.
  */
 export function fakeChain(c: {
   factory: Address
@@ -58,10 +62,17 @@ export function fakeChain(c: {
   lockBlock: bigint
   latest: bigint
   keys?: FakeKey[]
-}): { client: SandboxClient; writes: string[]; ranges: [bigint, bigint][] } {
+}): {
+  client: SandboxClient
+  writes: string[]
+  ranges: [bigint, bigint][]
+  /** Each account whose fee balance was read, in order. */
+  feeReads: Address[]
+} {
   const keys = c.keys ?? []
   const writes: string[] = []
   const ranges: [bigint, bigint][] = []
+  const feeReads: Address[] = []
   const keyAuthorized = (k: FakeKey) =>
     log(
       KEYCHAIN,
@@ -115,6 +126,11 @@ export function fakeChain(c: {
         return isAddressEqual(p[0] as unknown as Address, c.lock) ? '0x6080' : '0x'
       case 'eth_call': {
         const { to, data } = p[0] as { to: Address; data: Hex }
+        if (isAddressEqual(to, MODERATO_FEE_TOKEN)) {
+          const read = decodeFunctionData({ abi: erc20Abi, data })
+          feeReads.push((read.args as readonly [Address])[0])
+          return encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: AMPLE })
+        }
         if (isAddressEqual(to, c.factory)) {
           return encodeFunctionResult({
             abi: FACTORY_ABI,
@@ -195,5 +211,5 @@ export function fakeChain(c: {
   const client: SandboxClient = createClient({ chain, transport: custom({ request }) }).extend(
     publicActions,
   )
-  return { client, writes, ranges }
+  return { client, writes, ranges, feeReads }
 }

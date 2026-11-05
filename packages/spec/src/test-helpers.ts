@@ -161,7 +161,7 @@ export const JOB_EVENTS: JobEvent[] = (() => {
       ...base,
       type: 'job_commitment_refused',
       code: 'approval.parties_mismatch',
-      layer: 'supplier',
+      layer: 'service',
       block: null,
       index: null,
     },
