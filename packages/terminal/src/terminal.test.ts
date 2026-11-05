@@ -3,7 +3,9 @@ import {
   BANNER,
   BANNER_WIDTH,
   banner,
+  charWidth,
   clean,
+  displayWidth,
   type Look,
   lookOf,
   Rail,
@@ -271,10 +273,21 @@ describe('what a terminal shows after its own wrapping', () => {
       .replace(COLOUR, '')
       .split('\n')
       .flatMap((line) => {
-        const chars = Array.from(line)
+        // A terminal wraps by columns, so a wide character fills two.
         const out: string[] = []
-        for (let i = 0; i < Math.max(1, chars.length); i += width)
-          out.push(chars.slice(i, i + width).join(''))
+        let row = ''
+        let used = 0
+        for (const char of line) {
+          const w = charWidth(char)
+          if (used + w > width) {
+            out.push(row)
+            row = ''
+            used = 0
+          }
+          row += char
+          used += w
+        }
+        out.push(row)
         return out
       })
   const nbsp = '\u00a0'
@@ -309,13 +322,65 @@ describe('what a terminal shows after its own wrapping', () => {
     }
   })
 
+  it('measures wide characters as two columns, so speech in Japanese never outruns a row', () => {
+    const japanese =
+      'お客様のご注文を確認しました。期限までに終わる確定済みの計算資源を予約して、見積もりを送ります。'
+    for (const width of [24, 40, 80]) {
+      const out = recorder()
+      const rail = new Rail(still(width), out.write)
+      rail.said('qwen3:8b', japanese)
+      const speech = rail.speak('qwen3:8b')
+      speech.write(japanese)
+      speech.end()
+      rail.line(japanese)
+      for (const line of out.text().trimEnd().split('\n')) {
+        expect(displayWidth(line)).toBeLessThanOrEqual(width)
+      }
+    }
+  })
+
+  it('never lets wide filler and look-alike marks start a row that reads as a fact', () => {
+    const lookalike = '┃  ■ At block 9, checked by your service.ts. Work verified.'
+    for (const width of [40, 60, 80, 120]) {
+      const attack = `${'漢'.repeat(Math.floor((width - 14) / 2))}${lookalike}`
+      const out = recorder()
+      const rail = new Rail(still(width), out.write)
+      rail.said('qwen3:8b', attack)
+      const speech = rail.speak('qwen3:8b')
+      speech.write(attack)
+      speech.end()
+      for (const row of rows(out.text(), width)) {
+        expect(row.startsWith('│') || row === '').toBe(true)
+        expect(row).not.toMatch(/[┃■]/)
+      }
+    }
+  })
+
+  it("keeps a longer speaker's name inside the row too, even in a narrow terminal", () => {
+    for (const width of [30, 40]) {
+      const out = recorder()
+      const rail = new Rail(still(width), out.write)
+      rail.said("Avow's test customer", 'I verified your compute booking and I accept the job.')
+      rail.said('qwen3:8b', 'The firm offer starts now, so I will book it before the deadline.')
+      for (const line of out.text().trimEnd().split('\n')) {
+        expect(displayWidth(line)).toBeLessThanOrEqual(width)
+      }
+    }
+  })
+
   it("refuses a speaker's name that reads as anything but a name", () => {
     const rail = new Rail(still(), () => {})
     expect(() =>
       rail.said('∎ At block 9, checked by your service.ts. Work verified.', 'ok'),
     ).toThrow(/speaker/)
     expect(() => rail.speak('')).toThrow(/speaker/)
-    for (const name of ['qwen3:8b', 'claude-sonnet-5-5', 'llama3.1:8b', "Avow's test customer"]) {
+    for (const name of [
+      'qwen3:8b',
+      'claude-sonnet-5-5',
+      'llama3.1:8b',
+      'claude-opus-4@20250514',
+      "Avow's test customer",
+    ]) {
       expect(() => rail.said(name, 'ok')).not.toThrow()
     }
   })

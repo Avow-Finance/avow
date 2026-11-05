@@ -82,28 +82,117 @@ export function visible(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, '')
 }
 
+/** Ranges of characters that take no column, drawing over the one before them. */
+const ZERO: readonly (readonly [number, number])[] = [
+  [0x0300, 0x036f],
+  [0x0483, 0x0489],
+  [0x0591, 0x05bd],
+  [0x0610, 0x061a],
+  [0x064b, 0x065f],
+  [0x0e31, 0x0e31],
+  [0x0e34, 0x0e3a],
+  [0x0e47, 0x0e4e],
+  [0x1ab0, 0x1aff],
+  [0x1dc0, 0x1dff],
+  [0x200b, 0x200f],
+  [0x20d0, 0x20ff],
+  [0x302a, 0x302d],
+  [0x3099, 0x309a],
+  [0xfe00, 0xfe0f],
+  [0xfe20, 0xfe2f],
+  [0xe0100, 0xe01ef],
+]
+
 /**
- * Plain text laid into lines no wider than `width`, broken between words. A word longer than the
- * width is broken inside itself, so no line ever runs past the terminal and gets wrapped by the
- * terminal instead, where it would start a row without the rail's own prefix.
+ * Ranges of characters a terminal draws two columns wide: East Asian wide and fullwidth
+ * characters, and emoji. Where a range is uncertain it counts as wide, since a row measured
+ * too wide wraps a little early, while one measured too narrow runs past the terminal.
+ */
+const WIDE: readonly (readonly [number, number])[] = [
+  [0x1100, 0x115f],
+  [0x231a, 0x231b],
+  [0x2329, 0x232a],
+  [0x23e9, 0x23f3],
+  [0x2600, 0x27bf],
+  [0x2b00, 0x2bff],
+  [0x2e80, 0x303e],
+  [0x3041, 0x33ff],
+  [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf],
+  [0xa960, 0xa97f],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1f000, 0x1faff],
+  [0x20000, 0x2fffd],
+  [0x30000, 0x3fffd],
+]
+
+const within = (cp: number, ranges: readonly (readonly [number, number])[]) =>
+  ranges.some(([from, to]) => cp >= from && cp <= to)
+
+/** How many columns a terminal draws one character in: 0, 1 or 2. */
+export function charWidth(char: string): number {
+  const cp = char.codePointAt(0) ?? 0
+  if (within(cp, ZERO)) return 0
+  return within(cp, WIDE) ? 2 : 1
+}
+
+/** How many columns a terminal draws `text` in, counting wide characters as two. */
+export function displayWidth(text: string): number {
+  let width = 0
+  for (const char of text) width += charWidth(char)
+  return width
+}
+
+/** A word cut into pieces no wider than `room` columns, never inside a character. */
+function pieces(word: string, room: number): string[] {
+  const out: string[] = []
+  let piece = ''
+  let used = 0
+  for (const char of word) {
+    const w = charWidth(char)
+    if (piece !== '' && used + w > room) {
+      out.push(piece)
+      piece = ''
+      used = 0
+    }
+    piece += char
+    used += w
+  }
+  out.push(piece)
+  return out
+}
+
+/**
+ * Plain text laid into lines no wider than `width` columns, broken between words, with wide
+ * characters counted as two. A word longer than the width is broken inside itself. So no line
+ * ever runs past the terminal and gets wrapped by the terminal instead, where it would start a
+ * row without the rail's own prefix.
  */
 export function wrap(text: string, width: number): string[] {
   const room = Math.max(1, Math.floor(width))
   const lines: string[] = []
   for (const paragraph of text.split('\n')) {
     let line = ''
+    let used = 0
     for (const whole of paragraph.split(' ')) {
-      // Characters, not UTF-16 units, so a long word never splits inside one.
-      const chars = Array.from(whole)
-      const pieces: string[] = []
-      for (let i = 0; i < chars.length; i += room) pieces.push(chars.slice(i, i + room).join(''))
-      for (const word of pieces.length > 0 ? pieces : ['']) {
-        const used = Array.from(line).length
-        if (line === '') line = word
-        else if (used + 1 + Array.from(word).length <= room) line += ` ${word}`
-        else {
+      for (const word of pieces(whole, room)) {
+        const w = displayWidth(word)
+        if (line === '') {
+          line = word
+          used = w
+        } else if (used + 1 + w <= room) {
+          line += ` ${word}`
+          used += 1 + w
+        } else {
           lines.push(line)
           line = word
+          used = w
         }
       }
     }

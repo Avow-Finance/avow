@@ -1,4 +1,4 @@
-import { type Look, type Paint, type Styles, stylesOf, wrap } from './look.js'
+import { displayWidth, type Look, type Paint, type Styles, stylesOf, wrap } from './look.js'
 
 /** Where a rail draws, which in the tools is the terminal's output. */
 export type Write = (text: string) => void
@@ -30,11 +30,15 @@ const SPACES = /[\r\n\t\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u20
 /** Control characters, zero-width characters and bidirectional overrides. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what clean removes
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2060\ufeff\u202a-\u202e\u2066-\u2069]/g
-/** The rail's own marks, which never come from outside, so nothing outside can draw its lines. */
-const MARKS = /[│┌└◇◆✓✗∎↳●○▌›]/g
+/**
+ * Drawing characters, which never come from outside, so nothing outside can draw one of the
+ * rail's lines or a look-alike: arrows, box drawing, blocks, geometric shapes, dingbats, the
+ * single angle quotes, and the end-of-proof mark a fact begins with.
+ */
+const MARKS = /[\u2190-\u21ff\u220e\u2500-\u25ff\u2700-\u27bf\u2039\u203a]/g
 
 /** A speaker's name as the rail draws it: a model id or a party's name, never a sentence. */
-const SPEAKER = /^[A-Za-z0-9][A-Za-z0-9 ._:'/-]{0,47}$/
+const SPEAKER = /^[A-Za-z0-9][A-Za-z0-9 ._:'/@+-]{0,63}$/
 
 /** Refuses a speaker's name that isn't shaped like a model id or a name. */
 function checkSpeaker(name: string): string {
@@ -150,9 +154,6 @@ const referenceLine = (e: Evidence) =>
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 const FRAME_MS = 80
 
-/** The narrowest the rail lays its text, however narrow the terminal. */
-const MIN_TEXT = 24
-
 const plain: Paint = (text) => text
 
 /** A model's words still arriving: the indent under its name, the column reached and a part word. */
@@ -251,7 +252,12 @@ export class Rail {
   answered(text: string, tone: 'plain' | 'quiet' | 'bad' = 'plain'): void {
     this.settle()
     const paint = tone === 'quiet' ? this.#s.dim : tone === 'bad' ? this.#s.bad : plain
-    if (this.#look.live) this.#write(`\u001b[1A\r\u001b[2K${this.prefix}${paint(clean(text))}\n`)
+    if (this.#look.live) {
+      const lines = wrap(clean(text), Math.max(1, this.#look.width - 3))
+      this.#write(
+        `\u001b[1A\r\u001b[2K${lines.map((l) => `${this.prefix}${paint(l)}`).join('\n')}\n`,
+      )
+    }
     this.#spaced = false
   }
 
@@ -269,7 +275,7 @@ export class Rail {
     const speaker = checkSpeaker(who)
     const text = clean(words)
     const lead = `${speaker} › `
-    const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 3 - lead.length))
+    const [first = '', ...more] = wrap(text, Math.max(1, this.#look.width - 3 - lead.length))
     const hang = ' '.repeat(lead.length)
     this.#emit(
       [
@@ -327,7 +333,7 @@ export class Rail {
   /** What the tool just called gave back, under it, ticked or refused. */
   returned(ok: boolean, result: string): void {
     const mark = ok ? this.#s.ok('✓') : this.#s.bad('✗')
-    const [first = '', ...more] = wrap(clean(result), Math.max(MIN_TEXT, this.#look.width - 7))
+    const [first = '', ...more] = wrap(clean(result), Math.max(1, this.#look.width - 7))
     this.#emit(
       [`${this.prefix}  ${mark} ${first}`, ...more.map((line) => `${this.prefix}    ${line}`)].join(
         '\n',
@@ -374,13 +380,15 @@ export class Rail {
     }
     const gap = 2
     const widths = columns.map((name, i) =>
-      Math.max(name.length, ...rows.map((row) => (row[i] as string).length)),
+      Math.max(displayWidth(name), ...rows.map((row) => displayWidth(row[i] as string))),
     )
     const room = this.#look.width - 5
     const fits = widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1) <= room
     const aligned = (cells: readonly string[]) =>
       cells
-        .map((cell, i) => cell.padEnd(widths[i] as number))
+        .map(
+          (cell, i) => cell + ' '.repeat(Math.max(0, (widths[i] as number) - displayWidth(cell))),
+        )
         .join(' '.repeat(gap))
         .trimEnd()
     const mark = (i: number) => (i === marked ? `${this.#s.accent('›')} ` : '  ')
@@ -407,12 +415,12 @@ export class Rail {
     this.#space()
     this.#emit(
       [
-        ...wrap(clean(table.title), Math.max(MIN_TEXT, this.#look.width - 3)).map(
+        ...wrap(clean(table.title), Math.max(1, this.#look.width - 3)).map(
           (part) => `${this.prefix}${this.#s.bold(part)}`,
         ),
         ...body,
         ...(table.notes ?? []).flatMap((note) =>
-          wrap(clean(note), Math.max(MIN_TEXT, this.#look.width - 3)).map(
+          wrap(clean(note), Math.max(1, this.#look.width - 3)).map(
             (part) => `${this.prefix}${this.#s.dim(part)}`,
           ),
         ),
@@ -434,14 +442,14 @@ export class Rail {
       [
         `${this.prefix}${this.#s.bold(clean(receipt.title))}`,
         ...receipt.lines.flatMap((line) =>
-          wrap(clean(line), Math.max(MIN_TEXT, this.#look.width - 3)).map(
+          wrap(clean(line), Math.max(1, this.#look.width - 3)).map(
             (part) => `${this.prefix}${part}`,
           ),
         ),
         `${this.prefix}${states}`,
         ...wrap(
           `At block ${receipt.evidence.block}, ${VERIFIED[receipt.evidence.verifiedBy]}, ${referenceLine(receipt.evidence)}`,
-          Math.max(MIN_TEXT, this.#look.width - 3),
+          Math.max(1, this.#look.width - 3),
         ).map((part) => `${this.prefix}${this.#s.dim(part)}`),
         ...(receipt.link
           ? wrap(clean(receipt.link), Math.max(1, this.#look.width - 3)).map(
@@ -477,7 +485,7 @@ export class Rail {
 
   /** Text after a mark, laid to the terminal's width, its later lines carrying the rail on. */
   #block(mark: string, text: string, paint: Paint, rest: string = this.prefix): void {
-    const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 3))
+    const [first = '', ...more] = wrap(text, Math.max(1, this.#look.width - 3))
     this.#emit(
       [`${mark}  ${paint(first)}`, ...more.map((line) => `${rest}${paint(line)}`)].join('\n'),
     )
@@ -486,7 +494,7 @@ export class Rail {
 
   /** A ticked or failed item on the rail, its later lines hanging under its text. */
   #item(mark: string, text: string): void {
-    const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 5))
+    const [first = '', ...more] = wrap(text, Math.max(1, this.#look.width - 5))
     this.#emit(
       [`${this.prefix}${mark} ${first}`, ...more.map((line) => `${this.prefix}  ${line}`)].join(
         '\n',
@@ -514,11 +522,11 @@ export class Rail {
   }
 
   #placeWord(speech: Speech, whole: string): void {
-    const width = Math.max(MIN_TEXT + 3, this.#look.width)
+    const width = this.#look.width
     // A word longer than a whole line under the name is broken inside itself, so no row outruns
     // the terminal and gets wrapped by it.
-    for (const word of wrap(whole, width - 3 - speech.hang.length)) {
-      const size = Array.from(word).length
+    for (const word of wrap(whole, Math.max(1, width - 3 - speech.hang.length))) {
+      const size = displayWidth(word)
       const room = speech.column + (speech.started ? 1 : 0) + size <= width
       if (speech.started && !room) {
         this.#write(`\n${this.prefix}${speech.hang}${word}`)
@@ -547,7 +555,7 @@ export class Rail {
 export function setApart(look: Look, lines: readonly string[]): string {
   const s = stylesOf(look)
   const bar = s.accent('▌')
-  const width = Math.max(MIN_TEXT, look.width - 4)
+  const width = Math.max(1, look.width - 3)
   const body = lines.flatMap((line, i) =>
     wrap(clean(line), width).map((part) => `${bar}  ${i === 0 ? s.bold(part) : part}`),
   )
