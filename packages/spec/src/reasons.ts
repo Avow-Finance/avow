@@ -87,6 +87,13 @@ export const REASON_CODES = {
   'supplier.unknown': 'Avow has no profile for this supplier',
   'order.supplier_mismatch':
     "The order was offered to another supplier, so only that supplier's signing key can quote it or report its delivery",
+  'order.limit_reached':
+    'The supplier already holds as many open orders as the test customer allows, or the customer has reached its own total or daily limit',
+  'order.unknown': 'The test customer has no order with that id',
+  'order.out_of_step':
+    "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
+  'order.terms_changed':
+    "The quote's terms differ from the offer's beyond the compute bookings they add",
   'agreement.parties_mismatch':
     "The terms agreement names another buyer, mandate or supplier than the agent's business, its mandate and the supplier it deals with",
   'commitment.unknown': 'Avow has no record of this commitment',

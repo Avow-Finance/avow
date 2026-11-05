@@ -13,6 +13,7 @@ import {
   parseQuoteRequest,
   parseTestCustomerProfile,
   type QuoteRequest,
+  quoteTermsProblem,
   TEST_CUSTOMER_LABEL,
   TEST_CUSTOMER_PATHS,
   type TestCustomerProfile,
@@ -161,6 +162,17 @@ describe('the test customer’s routes', () => {
     const unbound = { ...order, status: 'offered' }
     const { supplierBusinessId: _, ...anyone } = unbound
     expect(parseOrderState(overJson(anyone)).ok).toBe(false)
+  })
+
+  it('take a quote whose terms only add the compute the job relies on', () => {
+    expect(quoteTermsProblem(job, chained)).toBeNull()
+    expect(quoteTermsProblem(job, job)).toBeNull()
+    const pricier = { ...job, consideration: { kind: 'fixed', amount: dollars(41) } } as const
+    expect(quoteTermsProblem(job, chainedJobTerms(pricier, chained.dependencies))).toBe(
+      'order.terms_changed',
+    )
+    const later = { ...job.subject, deliverBy: job.subject.deliverBy + 1n }
+    expect(quoteTermsProblem(job, { ...job, subject: later })).toBe('order.terms_changed')
   })
 
   it('answer a quote and a delivery report with where the order moved', () => {

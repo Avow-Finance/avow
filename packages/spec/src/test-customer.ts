@@ -1,9 +1,11 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
+import { canonicalJson } from './canonical.js'
 import {
   type CheckedDependency,
   checkedDependencyJson,
   dependencyIndexJson,
+  isChainedTerms,
   MAX_DEPENDENCIES,
   type PinnedBlock,
   pinnedBlockJson,
@@ -20,6 +22,7 @@ import {
 } from './references.js'
 import { reasonCodeJson } from './session-fields.js'
 import { supplierProfileJson } from './supplier-adapter.js'
+import { plainTermsOf } from './terms.js'
 import type { SupplierProfile } from './types.js'
 import {
   chainedJobTermsJson,
@@ -27,6 +30,7 @@ import {
   type Parsed,
   paymentReferenceJson,
   termsAgreementJson,
+  toWire,
 } from './wire.js'
 
 /**
@@ -334,6 +338,25 @@ export const orderAnswerJson = z.strictObject({
   orderId: orderIdJson,
   status: z.enum(['verifying', 'delivered']),
 })
+
+/**
+ * Why a quote's terms aren't the offer's, or null when they are. A quote may add the bookings the
+ * job relies on, which makes its terms version 3 with a setting for who checks them, and may change
+ * nothing else. Anything more is `order.terms_changed`.
+ */
+export function quoteTermsProblem(
+  offered: JobTerms,
+  quoted: ChainedJobTerms | JobTerms,
+): ReasonCode | null {
+  const plain = isChainedTerms(quoted) ? plainTermsOf(quoted) : quoted
+  try {
+    return canonicalJson(toWire(plain)) === canonicalJson(toWire(offered))
+      ? null
+      : 'order.terms_changed'
+  } catch {
+    return 'order.terms_changed'
+  }
+}
 
 /** Reads a JSON body with a schema, refusing anything else as `message.invalid`. */
 function reader<T>(schema: z.ZodType<T>) {
