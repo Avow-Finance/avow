@@ -71,6 +71,16 @@ export class SendError extends Error {
   }
 }
 
+/** Whether a transaction a sender sent landed and reverted, somewhere in an error's causes. */
+export function landedReverted(error: unknown): boolean {
+  let e: unknown = error
+  for (let i = 0; i < 6 && e instanceof Error; i++) {
+    if (/The transaction 0x[0-9a-fA-F]{64} reverted/.test(e.message)) return true
+    e = e.cause
+  }
+  return false
+}
+
 /** What a send has done so far, which every error it throws carries. */
 interface Sent {
   hashes: Hex[]
