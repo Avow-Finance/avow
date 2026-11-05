@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, renameSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { formatUsd, newSessionId } from '@avow-finance/spec'
+import { formatUsd, type SandboxDeployment } from '@avow-finance/spec'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
+import { loadBusinessItem } from '../sandbox/business-store.js'
 import { loadSandboxDeployment } from '../sandbox/deployment.js'
 import { sessionUrl } from '../sandbox/session.js'
 import { prepareSandboxBusiness, type SandboxPrompts } from '../sandbox/setup.js'
@@ -18,6 +19,7 @@ import {
   runAgent,
   terminalPrompts,
 } from './runner.js'
+import { keepSession, sessionForNextRun } from './runner-session.js'
 
 /**
  * `avow-sandbox` runs a sandbox agent the way a developer works on one, with the business and the
@@ -97,23 +99,34 @@ async function main(args: readonly string[]): Promise<void> {
   }
 
   const store = fileStore(dir)
-  const id = newSessionId()
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  rmSync(join(dir, 'runs'), { recursive: true, force: true })
-  writeFileSync(join(dir, 'session.json'), `${JSON.stringify({ id, pid: process.pid })}\n`, {
-    mode: 0o600,
+  const deployment = await loadSandboxDeployment()
+  // The session stays with the business across restarts, so the screen a developer has open
+  // keeps working. A new one gets the agent's authority, signed by the business's key.
+  const sessionOptions = {
+    dir,
+    apiUrl: deployment.apiUrl,
+    log: (line: string) => console.log(line),
+  }
+  let session = await keepSession({
+    ...sessionOptions,
+    account: (await loadBusinessItem(store))?.account ?? null,
   })
   // Setup reports any authority change under the first run, and the first press of Enter runs
   // under it too, unless a model's tool call has started a run since.
-  let run = takeRun(dir, id)
+  let run = takeRun(dir, session.id)
   let first = true
-  const prepare = async () =>
-    prepareSandboxBusiness({
+  const prepare = async () => {
+    const done = await prepareSandboxBusiness({
       config: await readBusinessConfig(BUSINESS_FILE),
       prompts,
       store,
-      session: { id, run },
+      deployment,
+      session: { id: session.id, run },
+      announce: session.fresh,
     })
+    if (done.announced) session = { ...session, fresh: false }
+    return done
+  }
 
   try {
     await prepare()
@@ -121,14 +134,25 @@ async function main(args: readonly string[]): Promise<void> {
     console.log(`\n${error instanceof Error ? error.message : String(error)}`)
     console.log('Fix that and press Enter to try again.')
   }
-  const screen = sessionUrl(id)
+  const screen = sessionUrl(session.id)
   console.log(`\nWatch your agent at ${screen}`)
   openInBrowser(screen)
 
   for (;;) {
     console.log(`\nPress Enter to run ${AGENT_FILE}, or Ctrl+C to stop.`)
     if ((await input.ask('')) === null) break
-    if (!first || latestRun(dir, id) !== run) run = takeRun(dir, id)
+    const next = await sessionForNextRun(session, sessionOptions)
+    if (next.id !== session.id) {
+      session = next
+      first = false
+      run = takeRun(dir, session.id)
+      console.log(
+        `\nAvow's relay closes your session within ten minutes, so the runner opened a new one. Watch your agent at ${sessionUrl(session.id)}`,
+      )
+    } else {
+      session = next
+      if (!first || latestRun(dir, session.id) !== run) run = takeRun(dir, session.id)
+    }
     first = false
     console.log(`\nRun ${run}\n`)
     try {
@@ -137,20 +161,22 @@ async function main(args: readonly string[]): Promise<void> {
       console.log(`${error instanceof Error ? error.message : String(error)}\n`)
       continue
     }
-    const { code } = await runAgent(AGENT_FILE, { id, run })
+    const { code } = await runAgent(AGENT_FILE, { id: session.id, run })
     if (code !== 0) console.log(`\n${AGENT_FILE} stopped with an error.`)
-    await showKeyLeft(store).catch(() => {})
+    await showKeyLeft(store, deployment).catch(() => {})
   }
   process.exit(0)
 }
 
 /** What the agent's key can still move today, and a fresh business when that runs low. */
-async function showKeyLeft(store: ReturnType<typeof fileStore>): Promise<void> {
+async function showKeyLeft(
+  store: ReturnType<typeof fileStore>,
+  deployment: SandboxDeployment,
+): Promise<void> {
   const agent = await loadAgentItem(store)
   if (!agent) return
   const limit = dailyLimitOf(agent.mandate.message, agent.business.token)
   if (limit === null) return
-  const deployment = await loadSandboxDeployment()
   const left = await keyLeftToday(
     moderatoClient(deployment.rpcUrl),
     agent.business.account,
