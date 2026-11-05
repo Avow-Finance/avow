@@ -37,8 +37,8 @@ import { jobSubjectJson, paymentReferenceJson } from './wire.js'
  * refused, work started, delivered, the payment received and each reserve released.
  *
  * An event about the customer reports what the customer's order said, with each check's block, so
- * the screen can read the chain at that block itself. Every claim names the block it rests on and
- * says nothing beyond it.
+ * the screen can read the chain at that block itself. Every statement names the block it rests on
+ * and says nothing beyond it.
  */
 
 interface JobEventBase {

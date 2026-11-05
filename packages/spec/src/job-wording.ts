@@ -7,8 +7,8 @@ import { type CustomerRefusalLayer, TEST_CUSTOMER_LABEL } from './test-customer.
 
 /**
  * The words a job's terminal and its screen both say, so the two never tell the story
- * differently. Every claim matches a check that ran, and a check's claim names the block it read
- * and says nothing beyond it.
+ * differently. Every statement matches a check that ran, and a check's statement names the block
+ * it read and says nothing beyond it.
  */
 
 /**
@@ -59,7 +59,7 @@ export function reserveLine(charges: readonly JobCharge[]): string {
   return `The customer's reserve backs what the job's terms let you charge if the customer walks away. That's ${named.join(', or ')}. The job's price arrives as a separate transfer on delivery, and the reserve doesn't secure it.`
 }
 
-/** A block as a claim names it. */
+/** A block as a statement names it. */
 export const atBlock = (block: Pick<PinnedBlock, 'number'>) => `at block ${block.number}`
 
 const CUSTOMER_WHO: Record<CustomerRefusalLayer, string> = {

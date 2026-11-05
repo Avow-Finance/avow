@@ -129,7 +129,7 @@ export interface DependencyInput {
    * Avow's approval of this booking's reserve, or for Avow's own check the approval it is about to
    * sign. A buyer passes the approval it is about to fund, and `prepareAcceptance` passes the
    * approval the lock holds, which its later checks confirm. The supplier is taken from it and
-   * from nowhere else, so neither a seller's claim nor a caller's setting can name the owner.
+   * from nowhere else, so neither what a seller says nor a caller's setting can name the owner.
    */
   approval: DependencyApproval
   /**
