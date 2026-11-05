@@ -6,6 +6,7 @@ import {
   COMPUTE_PROVES,
   DECISIVE_SENTENCE,
   jobEventSentence,
+  RECOVERED_DECISIVE_SENTENCE,
   REFUSAL_CHALLENGE,
   REFUSAL_INSTRUCTION,
   reserveLine,
@@ -23,6 +24,7 @@ const charges = [
 
 const everything = [
   DECISIVE_SENTENCE,
+  RECOVERED_DECISIVE_SENTENCE,
   COMPUTE_PROVES,
   SEPARATE_RESERVES,
   CHECK_BOUNDARY,
@@ -43,6 +45,8 @@ describe('the words a job’s terminal and screen share', () => {
     const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
     if (!checked) throw new Error('The fixtures check a commitment')
     expect(jobEventSentence(checked)).toBe(DECISIVE_SENTENCE)
+    // An acceptance an earlier attempt sent says so, since this run didn't repeat its checks.
+    expect(jobEventSentence({ ...checked, acceptedIn: null })).toBe(RECOVERED_DECISIVE_SENTENCE)
   })
 
   it('give what the customer says it verified as the customer’s statement, at its block', () => {

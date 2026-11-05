@@ -24,7 +24,7 @@ import {
 import { type Address, type Hex, isAddressEqual } from 'viem'
 import type { Landed } from '../agent.js'
 import { AvowApiError, relayReason } from '../http.js'
-import { landedReverted, SendError } from '../send.js'
+import { landedReverted, SendError, sendErrorIn } from '../send.js'
 
 /** What accepting a job's commitment needs, which the job process wires once. */
 export interface JobAcceptanceDeps {
@@ -224,6 +224,8 @@ export function acceptanceSendRefusal(
 ): { code: ReasonCode; layer: 'relay' | 'lock' } | null {
   if (!(error instanceof SendError) || error.outcome !== 'failed') return null
   if (landedReverted(error)) return { code: 'chain.acceptance_reverted', layer: 'lock' }
+  if (sendErrorIn(error)?.stage === 'altered')
+    return { code: 'sponsorship.altered', layer: 'relay' }
   const relay = relayReason(error)
   return relay ? { code: relay, layer: 'relay' } : null
 }

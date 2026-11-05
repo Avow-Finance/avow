@@ -76,12 +76,12 @@ export class SendError extends Error {
 
 /**
  * Where a send stopped. `prepare` is the node refusing to prepare it, a revert there included.
- * `head` is the node not giving its latest block, and `relay` Avow's relay not co-signing or
- * changing the bytes. `submit` is the node never taking it, and `expired` a transaction that
- * expired in no block. `landed` is one that landed and reverted, or whose outcome after landing
- * the chain didn't show in time.
+ * `head` is the node not giving its latest block, `relay` Avow's relay not co-signing, and
+ * `altered` the relay handing back other bytes than the transaction the key signed. `submit` is
+ * the node never taking it, and `expired` a transaction that expired in no block. `landed` is one
+ * that landed and reverted, or whose outcome after landing the chain didn't show in time.
  */
-export type SendStage = 'prepare' | 'head' | 'relay' | 'submit' | 'expired' | 'landed'
+export type SendStage = 'prepare' | 'head' | 'relay' | 'altered' | 'submit' | 'expired' | 'landed'
 
 /** The send error somewhere in an error's causes, such as inside a booking's error. */
 export function sendErrorIn(error: unknown): SendError | null {
@@ -392,7 +392,7 @@ export function sendSponsored(args: {
           `The relay's bytes aren't the transaction the key signed: ${problem}`,
           'failed',
           sent,
-          { stage: 'relay' },
+          { stage: 'altered' },
         )
       }
       return bytes

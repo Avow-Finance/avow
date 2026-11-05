@@ -18,6 +18,14 @@ import { type CustomerRefusalLayer, TEST_CUSTOMER_LABEL } from './test-customer.
 export const DECISIVE_SENTENCE =
   "Your code verified the customer's commitment and checked its reserve. Work can now begin. The customer accepted after verifying your compute booking."
 
+/**
+ * The decisive sentence when the lock already showed the acceptance an earlier attempt sent. This
+ * run read the commitment, its reserve and the compute booking again, and it didn't ask Avow for
+ * its authorization again, so the sentence says the acceptance rests on the earlier attempt.
+ */
+export const RECOVERED_DECISIVE_SENTENCE =
+  "Your code verified the customer's commitment and checked its reserve. The acceptance on the customer's lock came from an earlier attempt's checks. Work can now begin. The customer accepted after verifying your compute booking."
+
 /** What a compute booking proves, and what it doesn't. */
 export const COMPUTE_PROVES =
   "Your compute booking proves a required input is committed. It doesn't prove your agent will finish the job."
@@ -118,7 +126,7 @@ export function jobEventSentence(event: JobEvent): string {
     case 'job_customer_refused':
       return `${CUSTOMER_WHO[event.refusal.layer]}. ${refusalTail(event.refusal.code, event.refusal.block)}`
     case 'job_commitment_checked':
-      return DECISIVE_SENTENCE
+      return event.acceptedIn === null ? RECOVERED_DECISIVE_SENTENCE : DECISIVE_SENTENCE
     case 'job_commitment_refused':
       return `${SUPPLIER_WHO[event.layer]}. ${refusalTail(event.code, event.block)}`
     case 'job_work_started':

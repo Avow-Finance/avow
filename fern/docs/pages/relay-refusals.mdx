@@ -74,6 +74,8 @@ The agent has three ways forward. It can wait, it can sign the transaction again
 
 `httpAvowApi` throws an `AvowApiError` for every refusal, with the code in `reason` and the fields the relay added in `sponsorship`. `sendSponsored` wraps that error in a `SendError` as its `cause`. `parseSponsorshipRefusal` in `@avow-finance/spec` reads the same fields from any error body.
 
+The SDK also checks the bytes the relay hands back against the transaction the key signed, and sends nothing when they differ. That `SendError` has the stage `altered`, and the sandbox names it `sponsorship.altered`, a refusal by the relay that the relay itself never sends. Nothing reached the chain, so the agent can sign and send the same reserve again.
+
 ```ts
 import { AvowApiError, SendError } from '@avow-finance/sdk'
 

@@ -51,17 +51,22 @@ export type JobTool = (typeof JOB_TOOLS)[number]
 export type Speaker = { kind: 'model'; model: string } | { kind: 'customer'; index: number }
 
 /**
- * The form a model's name takes wherever it's drawn: up to 64 letters, digits, spaces and
- * `._:'/@+-`, as `speakerName` makes one from any model id.
+ * The form a model's name takes wherever it's drawn: a letter or a digit, then up to 63 more
+ * letters, digits, spaces and `._:'/@+-`, as `speakerName` makes one from any model id. The
+ * terminal draws a speaker's name by the same rule.
  */
-export const SPEAKER_NAME = /^[A-Za-z0-9 ._:'/@+-]{1,64}$/
+export const SPEAKER_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._:'/@+-]{0,63}$/
 
-/** A model id in the form `SPEAKER_NAME` takes, any other character replaced and cut to 64. */
+/**
+ * A model id in the form `SPEAKER_NAME` takes: any other character replaced, anything before its
+ * first letter or digit dropped, and cut to 64.
+ */
 export function speakerName(model: string): string {
   const named = model
     .replace(/[^A-Za-z0-9 ._:'/@+-]/g, '-')
-    .trim()
+    .replace(/^[^A-Za-z0-9]+/, '')
     .slice(0, 64)
+    .trimEnd()
   return named === '' ? 'model' : named
 }
 
@@ -163,6 +168,23 @@ export interface CommitmentReceipt extends SessionEventBase {
 
 /** One event of the agent session. */
 export type AgentSessionEvent = Said | ToolCall | ToolResult | SessionFact | CommitmentReceipt
+
+/**
+ * Why a result can't be the one a call got, or null when it can. A call and its result name the
+ * same run, call number and tool, and a result shown again pairs with the call that first made it,
+ * never with this one. A booking call whose input wasn't in the tool's form names no offer, so its
+ * result is a refusal by `service`, and a reader refuses a pair that shows one booked.
+ */
+export function toolResultProblem(call: ToolCall, result: ToolResult): ReasonCode | null {
+  if (call.run !== result.run || call.call !== result.call || call.tool !== result.tool) {
+    return 'message.invalid'
+  }
+  if (result.recalled !== null) return 'message.invalid'
+  if (call.tool === 'book_compute' && call.offer === null) {
+    return !result.ok && result.layer === 'service' ? null : 'message.invalid'
+  }
+  return null
+}
 
 /** The longest speech one event carries. A longer answer goes in several. */
 export const SAID_TEXT_MAX = 4000

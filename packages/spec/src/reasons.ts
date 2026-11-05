@@ -81,6 +81,8 @@ export const REASON_CODES = {
     "The signing key has asked Avow's relay to pay more times in the last minute than the relay allows",
   'sponsorship.simulation_failed':
     "The transaction fails when it runs on the latest block, so Avow's relay won't pay for it",
+  'sponsorship.altered':
+    "Avow's relay handed back another transaction than the one the key signed, so nothing was sent",
   'sponsorship.budget_spent':
     "Paying for the transaction would take one of Avow's relay budgets past the gas it allows in 24 hours",
   'business.unknown': 'Avow has no record of this business',

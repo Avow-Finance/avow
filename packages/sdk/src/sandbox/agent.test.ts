@@ -82,12 +82,20 @@ describe('Refusal', () => {
   })
 
   it('blames a relay that gave no reason on the relay, and a revert while preparing on the lock', () => {
-    const at = (stage: 'relay' | 'prepare' | 'expired' | 'submit' | 'head', message: string) =>
+    const at = (
+      stage: 'relay' | 'altered' | 'prepare' | 'expired' | 'submit' | 'head',
+      message: string,
+    ) =>
       new Error('funding failed', {
         cause: new SendError(message, 'failed', { hashes: [], signings: 1 }, { stage }),
       })
     expect(fundingRefusal(at('relay', "The relay didn't co-sign: fetch failed"))).toEqual({
       code: 'service.unavailable',
+      layer: 'relay',
+    })
+    // Bytes the relay changed are its own refusal, which trying again can get past.
+    expect(fundingRefusal(at('altered', "The relay's bytes aren't the transaction"))).toEqual({
+      code: 'sponsorship.altered',
       layer: 'relay',
     })
     expect(
