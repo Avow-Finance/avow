@@ -1,6 +1,6 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
-import { type ComputeOffer, computeOfferJson, MAX_COMPUTE_OFFERS } from './compute-offers.js'
+import { type ComputeOffers, computeOffersJson } from './compute-offers.js'
 import { type PinnedBlock, pinnedBlockJson } from './dependencies.js'
 import { type FactBody, factBodyShape, VERIFIERS, type VerifiedBy } from './facts.js'
 import { type JobVerification, jobVerificationJson } from './job-verification.js'
@@ -80,10 +80,12 @@ export interface ToolLimits {
   budgetPerGpuHour: bigint
   /** Whether `service.ts` books compute at all. */
   computeSwitch: 'on' | 'off'
-  /** The agent's authority, the most it can hold in bookings at once. */
-  authority: bigint
-  /** What the agent had left of it. */
-  authorityLeft: bigint
+  /** The most the agent's mandate allows for one commitment. */
+  capPerCommitment: bigint
+  /** The most the agent can hold in bookings at once. */
+  capOpenReserves: bigint
+  /** What the agent had left of its open-reserves cap. */
+  openReservesLeft: bigint
 }
 
 /**
@@ -99,9 +101,12 @@ export type ToolResult = SessionEventBase & {
   summary: string
   /** For a result shown again, the run and call that made it. */
   recalled: { run: number; call: number } | null
-  /** For `compute_offers`, the offers the model saw. */
-  offers: ComputeOffer[] | null
-  /** For `compute_offers`, the limits that applied to them. */
+  /**
+   * For `compute_offers`, the listing the model saw, with the moment it was listed, which says
+   * whether each offer was firm.
+   */
+  listing: ComputeOffers | null
+  /** For `compute_offers`, the limits that applied to it. */
   limits: ToolLimits | null
 } & ({ ok: true } | { ok: false; code: ReasonCode; layer: RefusalLayer })
 
@@ -149,8 +154,9 @@ const otherTools = JOB_TOOLS.filter((t) => t !== 'book_compute') as [
 const limitsJson = z.strictObject({
   budgetPerGpuHour: u256,
   computeSwitch: z.enum(['on', 'off']),
-  authority: u256,
-  authorityLeft: u256,
+  capPerCommitment: u256,
+  capOpenReserves: u256,
+  openReservesLeft: u256,
 })
 
 const toolResultFields = {
@@ -160,13 +166,14 @@ const toolResultFields = {
   tool: z.enum(JOB_TOOLS),
   summary,
   recalled: z.strictObject({ run: runJson, call }).nullable(),
-  offers: z.array(computeOfferJson).min(1).max(MAX_COMPUTE_OFFERS).nullable(),
+  listing: computeOffersJson.nullable(),
   limits: limitsJson.nullable(),
 }
 
-/** Offers and limits come only with a listing of offers. */
-const listingOnly = (r: { tool: JobTool; offers: unknown; limits: unknown }) =>
-  r.tool === 'compute_offers' || (r.offers === null && r.limits === null)
+/** A listing and its limits come with a successful `compute_offers` result, and with no other. */
+const listingOnly = (r: { tool: JobTool; ok: boolean; listing: unknown; limits: unknown }) =>
+  (r.tool === 'compute_offers' && r.ok) === (r.listing !== null) &&
+  (r.listing !== null) === (r.limits !== null)
 
 /** Each agent session event's JSON form, which the session's event schema takes beside its own. */
 export const AGENT_SESSION_EVENT_SCHEMAS = [

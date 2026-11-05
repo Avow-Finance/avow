@@ -50,9 +50,13 @@ describe('the agent session’s events', () => {
     expect(reads({ ...other, offer: 'h100-firm', quantity: 1 })).toBe(false)
   })
 
-  it('carry offers and limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
+  it('carry the listing and its limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
     const listing = kind('tool_result', (e) => e.tool === 'compute_offers' && e.recalled === null)
     expect(reads({ ...listing, tool: 'authority' })).toBe(false)
+    expect(reads({ ...listing, listing: null })).toBe(false)
+    expect(reads({ ...listing, limits: null })).toBe(false)
+    // The listing says when it was listed, so whether each offer was firm reads from the event.
+    expect(listing.listing).toMatchObject({ listedAt: expect.any(String) })
     const refused = kind('tool_result', (e) => e.ok === false)
     expect(reads({ ...refused, layer: 'model' })).toBe(false)
     expect(reads({ ...refused, ok: true })).toBe(false)
@@ -89,6 +93,7 @@ describe('a refusal by the developer’s service.ts or the customer’s verifier
     needed: 40_000_000n,
     left: 500_000_000n,
     authority: 500_000_000n,
+    capPerCommitment: 500_000_000n,
     dailyLimit: null,
     dailyLeft: null,
   }

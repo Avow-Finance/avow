@@ -403,7 +403,14 @@ function booker(m: {
   ): Promise<Refusal> {
     const left = await leftNow().catch(() => r.leftBefore)
     const dailyLeft = await dailyLeftNow().catch(() => null)
-    const amounts = { needed: r.needed, left, authority: cap, dailyLimit, dailyLeft }
+    const amounts = {
+      needed: r.needed,
+      left,
+      authority: cap,
+      capPerCommitment: mandate.message.capPerCommitment,
+      dailyLimit,
+      dailyLeft,
+    }
     report({ type: 'refused', run, source, code: r.code, layer: r.layer, amounts })
     return new Refusal(
       { code: r.code, layer: r.layer, amounts, decisionId: extra.decisionId ?? null },

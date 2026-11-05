@@ -123,8 +123,10 @@ export interface RefusalAmounts {
   needed: bigint
   /** The authority the agent had left: its cap on open reserves, less what its bookings hold. */
   left: bigint
-  /** The agent's whole authority, the most it can hold in bookings at once. */
+  /** The agent's whole authority, the most it can hold in bookings at once, its open-reserves cap. */
   authority: bigint
+  /** The most the agent's mandate allows for one commitment, its cap per commitment. */
+  capPerCommitment: bigint
   /**
    * The most the agent's key can move in a day, the spending limit the business's root key set on
    * the account's keychain, or null when the key has no daily limit on the lock's token.
@@ -266,6 +268,7 @@ const sandboxEventJson = z.discriminatedUnion('type', [
       needed: u256,
       left: u256,
       authority: u256,
+      capPerCommitment: u256,
       dailyLimit: u256.nullable(),
       dailyLeft: u256.nullable(),
     }),
@@ -359,7 +362,7 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
  */
 export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
-  const { needed, left, authority, dailyLimit, dailyLeft } = r.amounts
+  const { needed, left, authority, capPerCommitment, dailyLimit, dailyLeft } = r.amounts
   const onChain =
     r.layer !== 'sdk' && r.layer !== 'avow'
       ? ''
@@ -379,7 +382,7 @@ export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): s
     case 'mandate.over_open_reserves_cap':
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
-      return `This booking needs ${formatUsd(needed)}, more than your agent's ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
+      return `This booking needs ${formatUsd(needed)}, more than the ${formatUsd(capPerCommitment)} your mandate allows for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }

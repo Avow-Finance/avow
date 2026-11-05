@@ -215,8 +215,9 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
   const limits = {
     budgetPerGpuHour: dollars(3),
     computeSwitch: 'on',
-    authority: dollars(500),
-    authorityLeft: dollars(500),
+    capPerCommitment: dollars(500),
+    capOpenReserves: dollars(500),
+    openReservesLeft: dollars(500),
   } as const
   return [
     {
@@ -248,7 +249,7 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
       tool: 'compute_offers',
       summary: 'Four offers from avow-demo-gpu',
       recalled: null,
-      offers: listing.offers,
+      listing,
       limits,
       ok: true,
     },
@@ -259,7 +260,7 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
       tool: 'book_compute',
       summary: 'Refused by the SDK, over the authority for one commitment',
       recalled: null,
-      offers: null,
+      listing: null,
       limits: null,
       ok: false,
       code: 'mandate.over_commitment_cap',
@@ -272,7 +273,7 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
       tool: 'compute_offers',
       summary: 'The offers the agent compared for the order',
       recalled: { run: 3, call: 1 },
-      offers: listing.offers,
+      listing,
       limits,
       ok: true,
     },

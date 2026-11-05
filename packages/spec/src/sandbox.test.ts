@@ -50,6 +50,7 @@ const events: SessionEvent[] = [
       needed: dollars(400),
       left: dollars(300),
       authority: dollars(500),
+      capPerCommitment: dollars(500),
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     },
@@ -105,7 +106,14 @@ describe('session events', () => {
       { ...refused, layer: 'supplier' },
       {
         ...refused,
-        amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null, dailyLeft: null },
+        amounts: {
+          needed: '-1',
+          left: '0',
+          authority: '0',
+          capPerCommitment: '0',
+          dailyLimit: null,
+          dailyLeft: null,
+        },
       },
       { ...(overJson(events[4]) as object), reference: { ...reference, kind: 'payment' } },
     ]
@@ -137,6 +145,7 @@ describe('refusalSentence', () => {
       needed: dollars(400),
       left: dollars(300),
       authority: dollars(500),
+      capPerCommitment: dollars(500),
       dailyLimit: dollars(1000),
       dailyLeft: dollars(800),
     }
@@ -176,6 +185,7 @@ describe('refusalReason', () => {
     needed: dollars(400),
     left: dollars(300),
     authority: dollars(500),
+    capPerCommitment: dollars(350),
     dailyLimit: dollars(500),
     dailyLeft: dollars(300),
   }
@@ -186,8 +196,9 @@ describe('refusalReason', () => {
     expect(refusalReason({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })).toBe(
       `This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. ${onChain}`,
     )
+    // The per-commitment cap is its own number, never the held-at-once one.
     expect(refusalReason({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
-      `This booking needs $400, more than your agent's $500 held at once, so the SDK refused the reserve and no money moved. ${onChain}`,
+      `This booking needs $400, more than the $350 your mandate allows for one commitment, so the SDK refused the reserve and no money moved. ${onChain}`,
     )
     expect(
       refusalReason({
