@@ -27,7 +27,7 @@ describe('a link to verify a job', () => {
     expect(jobVerificationProblem(verification)).toBeNull()
   })
 
-  it('names the compute booking in clear and hides the work, the price and the charges', () => {
+  it('names the compute booking in clear and keeps the work and the price behind their hashes', () => {
     const json = atob(encodeJobVerification(verification).replace(/-/g, '+').replace(/_/g, '/'))
     expect(json).toContain(COMPUTE_REFERENCE.commitmentId)
     expect(json).not.toContain('fine-tuning')
