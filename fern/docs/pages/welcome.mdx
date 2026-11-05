@@ -14,7 +14,7 @@ Avow runs on testnet today. Nothing here moves real money.
 
 <Steps>
   <Step title="Make your agent">
-    You need Node 20 or later. One command makes a folder holding `business.ts`, your business, `agent.ts`, your agent, and a README.
+    You need Node 20 or later. One command asks for your business's name and makes a folder holding `business.ts`, your business, `agent.ts`, your agent, and a README. Then it sets the business up in the same terminal.
 
   ```bash
   npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
@@ -23,7 +23,7 @@ Avow runs on testnet today. Nothing here moves real money.
   </Step>
 
   <Step title="Set it up">
-    `npm start` makes your business's key on your machine and seals it under a passphrase you choose, in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, and creates the business's lock. It shows you the mandate it's about to sign from `business.ts`, asks you to confirm it and type the passphrase, and enrolls your agent. Then it opens a screen that shows each run as it happens.
+    Setup makes your business's key on your machine and seals it under a passphrase you choose, in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, and creates the business's lock. It shows you the mandate it's about to sign from `business.ts`, asks you to confirm it and type the passphrase, and enrolls your agent. Then it opens a screen that shows each run as it happens. When you come back later, `npm start` in the folder picks the business up again.
 
   ```bash
   cd my-agent

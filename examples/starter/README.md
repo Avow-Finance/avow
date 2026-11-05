@@ -1,18 +1,17 @@
 # Starter
 
-One command makes a folder holding `business.ts`, `agent.ts` and a README, and `npm start` in that folder gives its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
+One command makes a folder holding `business.ts`, `agent.ts` and a README, then sets up its business in the same terminal, giving its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
 
 ```sh
 npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
-cd my-agent
-npm start
 ```
 
-You need Node 20 or later.
+You need Node 20 or later. Later, `npm start` in the folder picks the business up again.
 
 ## How it fits together
 
-- `create-avow-agent` copies the template into a new folder and runs `npm install` there.
+- `create-avow-agent` draws Avow's banner, copies the template into a new folder and starts `npm install` there quietly. While that runs it asks for the business's name and writes it into `business.ts`, then once the install is done it runs `npm start` in the folder. `--name` gives the name without the question, `--no-start` stops after the install, and `--no-install` stops after the copy.
+- Both commands draw their steps as one rail down the left of the terminal, from `@avow-finance/terminal`, which travels inside both tarballs. Colour follows `NO_COLOR` and `FORCE_COLOR`, and a pipe gets plain text.
 - The folder depends on `@avow-finance/sdk` and `tsx`. Until the SDK is on npm, the SDK comes from a tarball on the same host, and the folder imports it exactly as it will after the release.
 - `npm start` runs the SDK's `avow-sandbox` command, which is the business. It reads `business.ts` in a process of its own and holds the business's root key, sealed under a passphrase the developer chooses. It registers a sandbox business with Avow's API, waits for its test dollars and creates the lock. Before it signs a mandate it shows it, asks for a yes and asks for the passphrase, and it opens the key only for that signature.
 - The runner takes whether the business is set up, and which mandate the agent holds, from the chain, since the agent runs as the developer and can write `.avow`. It sets a business up again only after a yes to a question that says what that replaces.

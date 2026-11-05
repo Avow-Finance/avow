@@ -102,8 +102,8 @@ export function recordingPrompts(answer = false) {
         asked.push('passphrase')
         return PASSPHRASE
       },
-      confirm: async (question: string) => {
-        asked.push(question)
+      confirm: async (question: string, details: readonly string[] = []) => {
+        asked.push([question, ...details].join(' '))
         return answer
       },
     },
