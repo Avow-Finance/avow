@@ -212,6 +212,8 @@ class Unreadable extends Error {
   constructor(
     readonly block: PinnedBlock | null,
     readonly reason: 'dependency.unreadable' | 'dependency.stale' = 'dependency.unreadable',
+    /** Whether the chain gave another hash for the pinned block, so the block itself moved. */
+    readonly moved = false,
   ) {
     super('The booking relied on could not be read at one recent block')
   }
@@ -267,7 +269,9 @@ async function observe(
       ? await reader.commitment(on.lock, on.commitmentId, on.side, block.number)
       : null
     const still = await reader.blockHash(block.number)
-    if (still?.toLowerCase() !== block.hash.toLowerCase()) throw new Unreadable(block)
+    if (still?.toLowerCase() !== block.hash.toLowerCase()) {
+      throw new Unreadable(block, 'dependency.unreadable', still !== null)
+    }
     return { reader, block, fields, record }
   }
   try {
@@ -407,6 +411,8 @@ function copied(on: CommitmentReference, block: PinnedBlock): CheckedDependency 
 interface Stopped {
   reason: ReasonCode
   block: PinnedBlock | null
+  /** Whether the chain gave another hash for the pinned block, so the block itself moved. */
+  moved: boolean
 }
 
 /**
@@ -426,12 +432,14 @@ async function readThrough(
     try {
       seen = await observe(on, reader, pins, timeoutMs, fresh)
     } catch (error) {
-      if (error instanceof Unreadable) return { reason: error.reason, block: error.block }
-      return { reason: 'dependency.unreadable', block: null }
+      if (error instanceof Unreadable) {
+        return { reason: error.reason, block: error.block, moved: error.moved }
+      }
+      return { reason: 'dependency.unreadable', block: null, moved: false }
     }
     if (seen.fields) break
   }
-  return seen ?? { reason: 'dependency.lock_unknown', block: null }
+  return seen ?? { reason: 'dependency.lock_unknown', block: null, moved: false }
 }
 
 export interface JobVerificationInput {
@@ -441,10 +449,18 @@ export interface JobVerificationInput {
   now: bigint
 }
 
-/** A job's states once it no longer stands: a charge pending or paused, or its reserve released, charged or resolved. */
-export const ENDED_JOB_STATES = [
+/**
+ * A job's states while a charge is open: reported and pending, or paused while the customer
+ * contests it. The reserve is still held.
+ */
+export const CHARGE_OPEN_JOB_STATES = [
   'charge_pending',
   'paused',
+] as const satisfies readonly RailState[]
+export type ChargeOpenJobState = (typeof CHARGE_OPEN_JOB_STATES)[number]
+
+/** A job's states once it ended: its reserve released, charged or resolved, and gone from the lock. */
+export const ENDED_JOB_STATES = [
   'released',
   'charged',
   'resolved',
@@ -485,14 +501,15 @@ export type StandingBooking = Extract<LinkedBooking, { standing: true }>
  * What a link to verify a job shows, as the chain held it at one pinned block. A page switches on
  * the outcome, and only `stands` is a job a page can show as standing.
  *
- * - `refused`: the link doesn't match the chain, or a booking a reserved job relies on doesn't
- *   stand, with the reason, the booking by its place and the block.
+ * - `refused`: the link doesn't match the chain or couldn't be read, or a booking a reserved job
+ *   relies on doesn't stand, with the reason, the booking by its place and the block.
  * - `awaiting_acceptance`: the customer reserved and the developer's business hasn't accepted, and
  *   every booking the job relies on stands.
  * - `stands`: the job is accepted with no report filed. Each booking comes back as read, since a
  *   booking cancelled or failed after the customer accepted leaves the job standing.
- * - `ended`: a charge is pending or paused, or the reserve was released, charged or resolved. Each
- *   booking comes back as read.
+ * - `charge_pending`: a charge is reported and pending, or paused while it's contested, and the
+ *   reserve is still held. Each booking comes back as read.
+ * - `ended`: the reserve was released, charged or resolved. Each booking comes back as read.
  */
 export type JobVerificationCheck =
   | { outcome: 'refused'; reason: ReasonCode; index: number | null; block: PinnedBlock | null }
@@ -504,6 +521,11 @@ export type JobVerificationCheck =
   | (JobLinkParties & {
       outcome: 'stands'
       job: CheckedJob<'accepted'>
+      bookings: readonly LinkedBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'charge_pending'
+      job: CheckedJob<ChargeOpenJobState>
       bookings: readonly LinkedBooking[]
     })
   | (JobLinkParties & {
@@ -525,6 +547,9 @@ const jobRefusal = (
   index: number | null,
   block: PinnedBlock | null,
 ): JobVerificationCheck => ({ outcome: 'refused', reason, index, block })
+
+const isChargeOpen = (state: RailState): state is ChargeOpenJobState =>
+  (CHARGE_OPEN_JOB_STATES as readonly RailState[]).includes(state)
 
 const isEnded = (state: RailState): state is EndedJobState =>
   (ENDED_JOB_STATES as readonly RailState[]).includes(state)
@@ -550,8 +575,10 @@ const JOB_READ_REASONS: Partial<Record<ReasonCode, ReasonCode>> = {
  *
  * The job's state, read through `standingState`, decides the outcome. While the job is reserved the
  * bookings gate it, as they gate the developer's acceptance, so a booking that doesn't stand refuses.
- * Once the job is accepted or has ended, each booking is reported as read and the outcome stays the
- * job's, since a booking cancelled or failed after the customer accepted leaves the job standing.
+ * Once the job is accepted, has a charge open or has ended, each booking is reported as read and the
+ * outcome stays the job's, since a booking cancelled or failed after the customer accepted leaves
+ * the job standing. A read on the job's own chain that finds the pinned block's hash changed refuses
+ * the whole link as `reference.unreadable` in every state, since the job was read at that block.
  *
  * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
  * customer's lock no supported factory created is `chain.lock_unknown`, a read of the job that
@@ -586,6 +613,11 @@ export async function verifyJobVerification(
     const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
     const booking = { ...dependency.on }
     if (!('reader' in seen)) {
+      // The job was read at the same block on its chain, so a block that moved there leaves
+      // nothing about the job standing either.
+      if (seen.moved && dependency.on.chainId === v.commitment.chainId) {
+        return jobRefusal('reference.unreadable', null, seen.block)
+      }
       if (gated) return jobRefusal(seen.reason, index, seen.block)
       const readAt = seen.block ? copied(dependency.on, seen.block).block : null
       bookings.push({ booking, readAt, fit: 'unchecked', standing: false, reason: seen.reason })
@@ -614,6 +646,9 @@ export async function verifyJobVerification(
     }
   }
   if (state === 'accepted') return { outcome: 'stands', job: { state, ...at }, supplier, bookings }
+  if (isChargeOpen(state)) {
+    return { outcome: 'charge_pending', job: { state, ...at }, supplier, bookings }
+  }
   if (isEnded(state)) return { outcome: 'ended', job: { state, ...at }, supplier, bookings }
   return jobRefusal('reference.commitment_mismatch', null, job.block)
 }

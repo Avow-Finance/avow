@@ -74,9 +74,10 @@ The result is an outcome a page has to switch on, with the job's state as the lo
 
 | Outcome | The job | Its bookings |
 | --- | --- | --- |
-| `refused` | The link doesn't match the chain, or a booking a reserved job relies on doesn't stand | The one that failed, by its place, with the reason and the block |
+| `refused` | The link doesn't match the chain or couldn't be read, or a booking a reserved job relies on doesn't stand | The one that failed, by its place, with the reason and the block |
 | `awaiting_acceptance` | Reserved, and your business hasn't accepted | Every one stands, since they gate the acceptance |
 | `stands` | Accepted, with no report filed | Each as read, standing or with its reason at its block |
-| `ended` | A charge pending or paused, or its reserve released, charged or resolved | Each as read |
+| `charge_pending` | A charge reported and pending, or paused while the customer contests it, with the reserve still held | Each as read |
+| `ended` | Its reserve released, charged or resolved | Each as read |
 
-An accepted job with a report filed counts as a charge pending, by the same rule the dependency check applies to a booking relied on. Once the customer has accepted, a compute booking cancelled or failed after that leaves the job standing, so the job keeps its outcome and the booking shows why it no longer stands.
+An accepted job with a report filed counts as a charge pending, by the same rule the dependency check applies to a booking relied on. Once the customer has accepted, a compute booking cancelled or failed after that leaves the job standing, so the job keeps its outcome and the booking shows why it doesn't stand at that block. A read on the job's own chain that finds the pinned block's hash changed refuses the whole link as `reference.unreadable`, since the job was read at that same block.
