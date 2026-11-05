@@ -1,5 +1,5 @@
 import { isAddressEqual } from 'viem'
-import { isChainedTerms } from './dependencies.js'
+import { type CheckedChainedTerms, isChainedTerms } from './dependencies.js'
 import type { TermsProfile } from './profiles.js'
 import { type RailToken, toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -11,16 +11,16 @@ import {
   validateChainedTerms,
   validateTerms,
 } from './terms.js'
-import type { ChainedTerms, Mandate, ReserveRequest } from './types.js'
+import type { Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
   mandate: Mandate
   /**
    * The reserve request. A verifier checking a commitment made under version 1 terms passes those.
-   * Version 3 terms are checked as the plain booking they make, with their dependencies section
-   * checked for form only, so a caller that approves them runs the dependency check too.
+   * Version 3 terms come only as `CheckedChainedTerms`, which only `verifyDependencies` gives, and
+   * are checked as the plain booking they make, with their dependencies section checked for form.
    */
-  request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms | ChainedTerms }
+  request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms | CheckedChainedTerms }
   /** The token the buyer's lock holds reserves in. */
   token: RailToken
   /** Micros already reserved and still open under this mandate, as the lock reports them. */
@@ -63,8 +63,9 @@ export function mandateEndsBeforeWindow(
 /**
  * The mandate check Avow runs before it signs an approval. It's pure, so the SDK and a supplier
  * can run the same check on the signed mandate. The caller checks the mandate's signature first.
- * It reads version 3 terms as the plain booking they make, and it can't read a lock, so whether
- * each booking they rely on stands is for the dependency check, which Avow runs before this.
+ * It reads version 3 terms as the plain booking they make, and it can't read a lock, so it takes
+ * them only once the dependency check has read each booking they rely on, as the checked terms
+ * that check gives.
  */
 export function checkMandate(input: MandateCheckInput): MandateCheck {
   const { mandate: m, request: r, token } = input

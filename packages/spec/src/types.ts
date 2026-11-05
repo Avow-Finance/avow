@@ -256,8 +256,9 @@ export interface ReserveRequest {
   payee: Address
   category: string
   /**
-   * The terms, version 2 or version 3. Version 3 terms name the bookings this one relies on, and
-   * Avow checks each of them on its lock before it approves.
+   * The terms, version 2 or version 3. Version 3 terms name the bookings this one relies on. A
+   * caller approves them only once a check has read each of those bookings on its lock, and Avow's
+   * API doesn't run that check yet, so it refuses version 3 requests for now.
    */
   terms: Terms | ChainedTerms
 }

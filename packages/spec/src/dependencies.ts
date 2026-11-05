@@ -67,6 +67,15 @@ export type Dependencies =
   | readonly [Dependency, Dependency, Dependency]
   | readonly [Dependency, Dependency, Dependency, Dependency]
 
+declare const dependenciesChecked: unique symbol
+
+/**
+ * Version 3 terms every booking of which passed a check that read its lock. Only the verifier's
+ * `verifyDependencies` gives one, so code that takes these in place of `ChainedTerms`, such as
+ * `checkMandate`, can't be reached with terms whose bookings were never read.
+ */
+export type CheckedChainedTerms = ChainedTerms & { readonly [dependenciesChecked]: true }
+
 /** Whether terms are version 3, the version that names the bookings it relies on. */
 export function isChainedTerms(terms: unknown): terms is ChainedTerms {
   return (

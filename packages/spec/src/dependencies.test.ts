@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { canonicalJson } from './canonical.js'
 import { dollars, testnetDemoTerms } from './demo.js'
 import {
+  type CheckedChainedTerms,
   chainedTerms,
   type Dependencies,
   type Dependency,
@@ -15,7 +16,7 @@ import {
 } from './dependencies.js'
 import { elideDependencies } from './elided-terms.js'
 import { type GpuSubject, gpuReservationTerms, gpuSubjectFits } from './gpu-reservation.js'
-import { checkMandate } from './mandate.js'
+import { checkMandate, type MandateCheckInput } from './mandate.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import { describeReason, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
@@ -164,7 +165,9 @@ describe('the reserve approval request Avow takes', () => {
   const mandate = demoMandate(newKey().address, agent.address)
   const plainRequest = demoRequest(agent.address)
   const request = { ...plainRequest, terms: chained }
-  const decide = (terms: typeof request.terms | typeof plainRequest.terms, openReserves = 0n) =>
+  /** Terms as the verifier's dependency check gives them once every booking they name passed. */
+  const checked = (terms: typeof chained) => terms as CheckedChainedTerms
+  const decide = (terms: MandateCheckInput['request']['terms'], openReserves = 0n) =>
     checkMandate({
       mandate,
       request: { ...plainRequest, terms },
@@ -182,11 +185,19 @@ describe('the reserve approval request Avow takes', () => {
     expect(() => parseReserveRequest(roundTrip({ ...request, terms: view }))).toThrow()
   })
 
+  it('takes version 3 terms only as the checked terms the dependency check gives', () => {
+    const takes = (terms: MandateCheckInput['request']['terms']) => terms
+    // @ts-expect-error Unchecked version 3 terms never reach the mandate check.
+    takes(chained)
+    expect(takes(checked(chained))).toBe(chained)
+    expect(takes(plain)).toBe(plain)
+  })
+
   it('has the mandate check read version 3 terms as the plain booking they make', () => {
-    expect(decide(chained)).toEqual(decide(plainTermsOf(chained)))
-    expect(decide(chained).result).toBe('approved')
+    expect(decide(checked(chained))).toEqual(decide(plainTermsOf(chained)))
+    expect(decide(checked(chained)).result).toBe('approved')
     const full = enforceableTerms(plain).reserve
-    expect(decide(chained, mandate.capOpenReserves - full + 1n)).toEqual({
+    expect(decide(checked(chained), mandate.capOpenReserves - full + 1n)).toEqual({
       result: 'denied',
       reason: 'mandate.over_open_reserves_cap',
     })
@@ -194,7 +205,7 @@ describe('the reserve approval request Avow takes', () => {
 
   it('refuses version 3 terms whose dependencies break the rules, before any cap', () => {
     const twice = chainedTerms(plain, [entry(), entry()])
-    expect(decide(twice)).toEqual({
+    expect(decide(checked(twice))).toEqual({
       result: 'denied',
       reason: dependenciesProblem(twice.dependencies),
     })

@@ -1,6 +1,7 @@
 import {
   type Approval,
   type ChainedTerms,
+  type CheckedChainedTerms,
   type CommitmentReference,
   chainedTermsShapeProblem,
   checkSectionDisclosure,
@@ -149,13 +150,7 @@ export interface CheckedDependency {
   block: PinnedBlock
 }
 
-declare const dependenciesPassed: unique symbol
-
-/**
- * Version 3 terms every booking of which passed `verifyDependencies`. Only that check gives one,
- * so code that takes these instead of `ChainedTerms` can't be reached without the check.
- */
-export type CheckedChainedTerms = ChainedTerms & { readonly [dependenciesPassed]: true }
+export type { CheckedChainedTerms } from '@avow-finance/spec'
 
 /** Why a check refused, with where and as of which block. */
 export interface DependencyRefusal {
