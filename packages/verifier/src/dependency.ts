@@ -2,11 +2,13 @@ import {
   type Approval,
   type ChainedTerms,
   type CheckedChainedTerms,
+  type CheckedDependency,
   type CommitmentReference,
   chainedTermsShapeProblem,
   checkSectionDisclosure,
   type Dependency,
   dependenciesProblem,
+  type PinnedBlock,
   parseSectionDisclosure,
   type RailState,
   type ReasonCode,
@@ -19,7 +21,7 @@ import type { LockedBacking } from './chain.js'
 
 /**
  * The check of a booking another booking relies on. A version 3 booking names each one in its
- * dependencies section, and before a buyer signs or a seller accepts, this reads each one's lock
+ * dependencies section, and before a buyer funds or a seller accepts, this reads each one's lock
  * directly and runs five tests. Any failure stops the step. It runs the same whoever the terms say
  * checks for the buyer, since it needs the terms in full, and terms carrying the dependencies
  * section only as its digest are refused with `dependency.elided` before anything is read.
@@ -51,13 +53,7 @@ import type { LockedBacking } from './chain.js'
  * leave the accepted state right after the read.
  */
 
-/** A block a check's reads were pinned to, by number, with the hash and timestamp it had. */
-export interface PinnedBlock {
-  number: bigint
-  hash: Hex
-  /** The block's timestamp in seconds, which the lock's deadlines are held against. */
-  timestamp: bigint
-}
+export type { CheckedChainedTerms, CheckedDependency, PinnedBlock } from '@avow-finance/spec'
 
 /** What a lock's record of one side of a commitment says, as far as this check reads it. */
 export type DependencyRecord = Pick<
@@ -143,14 +139,6 @@ export interface DependencyInput {
   /** The caller's clock, in seconds, which the pinned block's timestamp is held against. */
   now: bigint
 }
-
-/** A booking relied on that passed, with the block every read of it was pinned to. */
-export interface CheckedDependency {
-  on: CommitmentReference
-  block: PinnedBlock
-}
-
-export type { CheckedChainedTerms } from '@avow-finance/spec'
 
 /** Why a check refused, with where and as of which block. */
 export interface DependencyRefusal {

@@ -4,6 +4,7 @@ import { dollars, testnetDemoTerms } from './demo.js'
 import { chainedTerms, type Dependency } from './dependencies.js'
 import { type Approval, approvalDigest } from './eip712.js'
 import { type ElidedTerms, elideDependencies, elidedTermsHash } from './elided-terms.js'
+import type { GpuSubject } from './gpu-reservation.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import {
   chainedTermsHashFromSections,
@@ -122,7 +123,8 @@ describe('the buyer’s view of terms Avow checks', () => {
   })
 
   it('hashes no view that parseElidedTerms refuses, giving the same reason', () => {
-    const resource = { ...view.subject.resource, count: 0 }
+    // The demo view is a GPU reservation's.
+    const resource = { ...(view.subject as GpuSubject).resource, count: 0 }
     const refused: [unknown, string][] = [
       [{ ...view, template: 'freight/1' }, 'terms.template_unknown'],
       [

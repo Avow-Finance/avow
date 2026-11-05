@@ -1,11 +1,13 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import { isApiAudience } from './api-request.js'
+import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
 import { address, bytes32, u256 } from './json-fields.js'
 import { isTestnetChain } from './networks.js'
-import { describeReason, REASON_CODES, type ReasonCode } from './reasons.js'
+import { describeReason, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
 import { commitmentReferenceJson } from './references.js'
+import { type AgentSource, agentSourceJson, reasonCodeJson, runJson } from './session-fields.js'
 import type { Parsed } from './wire.js'
 
 /**
@@ -49,6 +51,11 @@ export interface SandboxDeployment {
   apiUrl: string
   /** Avow's demo supplier's adapter. */
   supplierUrl: string
+  /**
+   * Avow's test customer, which offers the developer's business jobs. A deployment without one
+   * offers none.
+   */
+  customerUrl?: string
   /** The factory that makes each business's lock. */
   factory: Address
   /** The token reserves are held in, which the sandbox pays its test dollars in. */
@@ -67,6 +74,7 @@ export const sandboxDeploymentJson = z.object({
   rpcUrl: z.url({ protocol: /^https?$/ }),
   apiUrl: origin,
   supplierUrl: origin,
+  customerUrl: origin.optional(),
   factory: address,
   token: address,
   arbiter: address,
@@ -84,6 +92,9 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
           rpcUrl: parsed.data.rpcUrl,
           apiUrl: parsed.data.apiUrl,
           supplierUrl: parsed.data.supplierUrl,
+          ...(parsed.data.customerUrl === undefined
+            ? {}
+            : { customerUrl: parsed.data.customerUrl }),
           factory: parsed.data.factory,
           token: parsed.data.token,
           arbiter: parsed.data.arbiter,
@@ -131,10 +142,6 @@ export interface RefusalAmounts {
  */
 export const SESSION_SOURCES = ['business', 'script', 'mcp'] as const
 export type SessionSource = (typeof SESSION_SOURCES)[number]
-
-/** The sources that act with only the agent's key. */
-export const AGENT_SOURCES = ['script', 'mcp'] as const
-export type AgentSource = (typeof AGENT_SOURCES)[number]
 
 /** The tools the sandbox's MCP server gives a model. */
 export const SANDBOX_TOOLS = ['authority', 'book', 'commitments'] as const
@@ -193,7 +200,7 @@ export interface Accepted {
 }
 
 /** One thing a sandbox business's agent did, as its session's screen shows it. */
-export type SessionEvent = RunStarted | AuthorityChanged | Refused | Committed | Accepted
+export type SessionEvent = RunStarted | AuthorityChanged | Refused | Committed | Accepted | JobEvent
 
 export const SESSION_EVENT_TYPES = [
   'run_started',
@@ -201,6 +208,7 @@ export const SESSION_EVENT_TYPES = [
   'refused',
   'committed',
   'accepted',
+  ...JOB_EVENT_TYPES,
 ] as const satisfies readonly SessionEvent['type'][]
 
 /** The request body that posts one event to a session. */
@@ -213,21 +221,18 @@ export interface SessionEventAnswer {
   sequence: number
 }
 
-const run = z.number().int().positive().max(1_000_000)
-const agentSource = z.enum(AGENT_SOURCES)
-const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const businessId = z.string().min(1).max(100)
 
 export const sessionEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('run_started'),
-    run,
-    source: agentSource,
+    run: runJson,
+    source: agentSourceJson,
     tool: z.enum(SANDBOX_TOOLS).nullable(),
   }),
   z.strictObject({
     type: z.literal('authority_changed'),
-    run,
+    run: runJson,
     source: z.literal('business'),
     authority: u256,
     previous: u256.nullable(),
@@ -236,9 +241,9 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('refused'),
-    run,
-    source: agentSource,
-    code: reasonCode,
+    run: runJson,
+    source: agentSourceJson,
+    code: reasonCodeJson,
     layer: z.enum(REFUSAL_LAYERS),
     amounts: z.strictObject({
       needed: u256,
@@ -250,17 +255,18 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('committed'),
-    run,
-    source: agentSource,
+    run: runJson,
+    source: agentSourceJson,
     reference: commitmentReferenceJson,
     amount: u256,
   }),
   z.strictObject({
     type: z.literal('accepted'),
-    run,
-    source: agentSource,
+    run: runJson,
+    source: agentSourceJson,
     reference: commitmentReferenceJson,
   }),
+  ...JOB_EVENT_SCHEMAS,
 ])
 
 export const sessionEventPostJson = z.strictObject({ event: sessionEventJson })

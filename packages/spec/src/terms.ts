@@ -28,6 +28,7 @@ import {
   type SupplierAuthorization,
 } from './eip712.js'
 import { validateGpuReservation } from './gpu-reservation.js'
+import { validateJob } from './job.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -489,8 +490,20 @@ export function checkSectionDisclosure(d: SectionDisclosure, expected: Hex): Rea
 }
 
 /** Each template's own rules, which run after the core's. */
-const TEMPLATE_RULES: { readonly [T in TemplateId]: (t: Terms) => ReasonCode | null } = {
+const TEMPLATE_RULES: {
+  readonly [T in TemplateId]: (t: Extract<Terms, { template: T }>) => ReasonCode | null
+} = {
   'gpu-reservation/1': (t) => validateGpuReservation(t),
+  'job/1': (t) => validateJob(t),
+}
+
+/**
+ * Whether a template's bookings always rely on another booking, so they commit only under version
+ * 3, which names it. The build fails when a template is missing here.
+ */
+const RELIES_ON_A_BOOKING: { readonly [T in TemplateId]: boolean } = {
+  'gpu-reservation/1': false,
+  'job/1': true,
 }
 
 /** Charges come in the order of the lock's codes, at most one of each kind, each with an amount. */
@@ -510,7 +523,8 @@ function checkCharges(charges: readonly RemedyCharge[]): ReasonCode | null {
 /**
  * Checks terms on their own, before any mandate, and returns null when they're sound. Version 1
  * terms keep the checks they were made under. Version 2 terms pass the core's checks of what a
- * lock enforces, then their template's rules. The core refuses a backing, side or charge a lock
+ * lock enforces, then their template's rules. A template whose bookings always rely on another,
+ * such as a job, is refused as `dependency.required`. The core refuses a backing, side or charge a lock
  * can't enforce, and a template it doesn't know. Version 3 terms are refused as a version this
  * reads, and `validateChainedTerms` checks them.
  */
@@ -518,6 +532,10 @@ export function validateTerms(terms: AnyTerms, profile: TermsProfile): ReasonCod
   const shape = termsShapeProblem(terms)
   if (shape) return shape
   if (isTermsV1(terms)) return validateTermsV1(terms, profile)
+  // A job names the compute it runs on, so job terms that name no booking never commit.
+  if (Object.hasOwn(RELIES_ON_A_BOOKING, terms.template) && RELIES_ON_A_BOOKING[terms.template]) {
+    return 'dependency.required'
+  }
   return sectionRulesProblem(terms, profile)
 }
 
@@ -551,7 +569,8 @@ export function plainTermsOf(terms: ChainedTerms): Terms {
 /** The core's checks of version 2 terms, then their template's rules. */
 function sectionRulesProblem(terms: Terms, profile: TermsProfile): ReasonCode | null {
   if (!Object.hasOwn(TEMPLATE_RULES, terms.template)) return 'terms.template_unknown'
-  const rules = TEMPLATE_RULES[terms.template]
+  // The table gives each template the rules for its own terms, and the key is this terms' template.
+  const rules = TEMPLATE_RULES[terms.template] as (t: Terms) => ReasonCode | null
   if (terms.amountDecimals !== AMOUNT_DECIMALS) return 'terms.invalid'
   const { remedies: r, resolution: res, backing: b } = terms
   if ((b.kind as string) !== 'reserve' || (b.side as string) !== 'buyer') {

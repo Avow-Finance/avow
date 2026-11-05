@@ -21,6 +21,7 @@ import {
 } from './eip712.js'
 import type { ElidedTerms } from './elided-terms.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
+import { JOB, JOB_KIND_MAX, JOB_SUMMARY_MAX } from './job.js'
 import { address, bytes32, hexBytes, side, u64, u256 } from './json-fields.js'
 import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -138,8 +139,38 @@ export const gpuReservationTermsJson = z.strictObject({
   backing: backingJson,
 })
 
+/** What a job promises, the subject of the `job/1` template. */
+export const jobSubjectJson = z.strictObject({
+  work: z.strictObject({
+    kind: z.string().min(1).max(JOB_KIND_MAX),
+    summary: z.string().min(1).max(JOB_SUMMARY_MAX),
+  }),
+  compute: z.strictObject({
+    gpu: z.string().min(1).max(JOB_KIND_MAX),
+    count: z.number().int().positive(),
+    region: z.string().min(1).max(JOB_KIND_MAX),
+  }),
+  startsAt: u64,
+  deliverBy: u64,
+})
+
+/**
+ * Job terms in version 2's shape, as a customer proposes them before compute is named. They read
+ * here so a check can refuse them with `dependency.required`, since a job commits only under
+ * version 3.
+ */
+export const jobTermsJson = z.strictObject({
+  ...termsHeaderShape,
+  template: z.literal(JOB),
+  subject: jobSubjectJson,
+  consideration: considerationJson,
+  remedies: remediesJson,
+  resolution: resolutionJson,
+  backing: backingJson,
+})
+
 /** Version 2 terms under any template this code knows. */
-export const termsJson = z.discriminatedUnion('template', [gpuReservationTermsJson])
+export const termsJson = z.discriminatedUnion('template', [gpuReservationTermsJson, jobTermsJson])
 
 /**
  * Version 3 terms under the GPU reservation template, version 2's with the setting for who checks
@@ -152,8 +183,19 @@ export const chainedGpuReservationTermsJson = z.strictObject({
   dependencies: dependenciesJson,
 })
 
+/** Version 3 job terms, which name the booking of the compute the job runs on. */
+export const chainedJobTermsJson = z.strictObject({
+  ...jobTermsJson.shape,
+  version: z.literal(CHAINED_TERMS_VERSION),
+  dependencyCheck: z.enum(DEPENDENCY_CHECKS),
+  dependencies: dependenciesJson,
+})
+
 /** Version 3 terms under any template this code knows. */
-export const chainedTermsJson = z.discriminatedUnion('template', [chainedGpuReservationTermsJson])
+export const chainedTermsJson = z.discriminatedUnion('template', [
+  chainedGpuReservationTermsJson,
+  chainedJobTermsJson,
+])
 
 /**
  * The buyer's view of version 3 GPU reservation terms Avow checks. The header says Avow checks,
@@ -174,11 +216,24 @@ export const elidedGpuReservationTermsJson = z.strictObject({
   }),
 })
 
+/** The buyer's view of version 3 job terms Avow checks, shaped as the GPU reservation's view. */
+export const elidedJobTermsJson = z.strictObject({
+  ...elidedGpuReservationTermsJson.shape,
+  template: z.literal(JOB),
+  subject: jobSubjectJson,
+})
+
 /** The buyer's view of version 3 terms under any template this code knows. */
-export const elidedTermsJson = z.discriminatedUnion('template', [elidedGpuReservationTermsJson])
+export const elidedTermsJson = z.discriminatedUnion('template', [
+  elidedGpuReservationTermsJson,
+  elidedJobTermsJson,
+])
 
 /** Each template's subject, for reading a section shown on its own. */
-const SUBJECTS: Record<string, z.ZodType> = { [GPU_RESERVATION]: gpuSubjectJson }
+const SUBJECTS: Record<string, z.ZodType> = {
+  [GPU_RESERVATION]: gpuSubjectJson,
+  [JOB]: jobSubjectJson,
+}
 
 function sectionSchema(section: ChainedTermsSection, template: string): z.ZodType | undefined {
   switch (section) {

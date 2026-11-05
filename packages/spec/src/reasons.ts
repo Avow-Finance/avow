@@ -196,6 +196,8 @@ export const REASON_CODES = {
     "A read of the booking relied on failed, timed out or couldn't be pinned to one block, so nothing was decided",
   'dependency.stale':
     "The latest finalized block the node gave was older than the check's limit by the caller's clock, so nothing was decided",
+  'dependency.required':
+    'These terms name no booking they rely on, and their template commits only on a booking it relies on, such as the compute a job runs on',
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
 } as const

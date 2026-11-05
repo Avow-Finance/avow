@@ -7,6 +7,7 @@ import {
   RAIL_STATES,
   type RailState,
   type ReasonCode,
+  testnetDemoJobTerms,
   testnetDemoTerms,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
@@ -425,6 +426,24 @@ describe('ownership', () => {
     const { result, calls } = await check({ approval })
     expect(result).toEqual(refused('approval.terms_mismatch', null, null))
     expect(calls).toEqual([])
+  })
+})
+
+describe('a job that relies on the compute it runs on', () => {
+  const job = chainedTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+
+  it('passes when the supplier’s accepted GPU booking holds the job’s compute for its whole run', async () => {
+    const { result } = await check({ terms: job })
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: PINNED }], job))
+  })
+
+  it('refuses compute that ends before the job’s deadline, and compute still freely cancellable', async () => {
+    const tooLate = chainedTerms(testnetDemoJobTerms(START + 3500n, ARBITER), [dependencyOn()])
+    expect((await check({ terms: tooLate })).result).toEqual(refused('dependency.does_not_fit'))
+    const open = withRecord({ freeCancelBy: PINNED.timestamp + 5n })
+    expect((await check({ terms: job, script: open })).result).toEqual(
+      refused('dependency.cancellable'),
+    )
   })
 })
 

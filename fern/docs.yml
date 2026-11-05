@@ -36,6 +36,8 @@ navigation:
         path: ./docs/pages/terms-v3.mdx
       - page: Checking dependencies
         path: ./docs/pages/dependency-check.mdx
+      - page: Jobs
+        path: ./docs/pages/jobs.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

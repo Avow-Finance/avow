@@ -1,0 +1,53 @@
+---
+title: Jobs that rely on compute
+slug: docs/composable-commitments/jobs
+---
+
+A job is a piece of work your business does for a customer by a deadline, on GPU capacity your business booked from someone else. The `job/1` template in `@avow-finance/spec` describes one, and its terms are always [version 3](/docs/composable-commitments/terms-v3), since a job names the compute booking it runs on. The customer checks that booking before it commits, and your code checks the customer's commitment before work starts.
+
+## The template
+
+The subject holds the work, the compute and two times. `work` has a short `kind`, such as `fine-tuning`, and a one-sentence `summary`. `compute` names the GPU, how many and the region. Work starts at `startsAt` and is delivered by `deliverBy`. `jobTerms` builds the terms, and `testnetDemoJobTerms` gives the job Avow's test customer offers on testnet.
+
+The template's rules are fixed.
+
+- Free cancellation ends exactly when work starts, and your business accepts the customer's reserve by then.
+- A late cancellation is chargeable from the start, and a no-show once the grace period after the start has passed without the customer handing over the work's inputs.
+- The deadline falls by the charge deadline.
+- The consideration is one fixed price above zero.
+
+Job terms in version 2's shape name no compute. They read, so a check can say why it refuses them, and every check refuses them as `dependency.required`. The customer and Avow's API run the same check, so they refuse with the same code.
+
+A job fits inside a GPU reservation that holds the same GPU in the same region, at least as many of them, from the job's start until its deadline. The dependency check refuses anything else as `dependency.does_not_fit`, and a booking still inside its free cancellation as `dependency.cancellable`.
+
+## What the customer's reserve backs
+
+The lock knows two charge kinds, late cancellation and no-show, and the customer's reserve backs only those. It backs what the job's terms let your business charge if the customer walks away, a late cancellation after work has started or a no-show, each up to the cap the terms name. Your business reports a charge, Avow confirms it only when its own records support it or refers it to a ruling, and the customer can contest it before the contest window closes.
+
+The job's price arrives as a separate transfer on delivery, with the job's commitment id as its memo. Avow records that transfer as evidence, and the reserve doesn't secure it. Nothing backs your own delivery promise with money in this version.
+
+## What each check proves
+
+Each check proves the state at the block it read, and names that block. The customer's check reads your compute booking at a recent finalized block, and your acceptance check reads it again. Nothing makes the steps atomic, and nothing stops your business cancelling its compute after the customer accepted. If it does, the job commitment stands, and your business still answers to the customer under the job's own terms.
+
+## The test customer
+
+Avow's test customer is a sandbox business on testnet, labelled as Avow's test customer in everything it returns. Its own agent key funds its reserves from its own account. Orders arrive by pull, so your machine needs no inbound connection. Its origin is the sandbox deployment's `customerUrl`, and `TEST_CUSTOMER_PATHS` names its routes.
+
+| Route | What it does |
+| --- | --- |
+| `GET /v1/profile` | The customer's label, business id, account, lock, chain, mandate hash and limits |
+| `POST /v1/orders` | Takes your supplier profile and answers with an offer, which names the commitment id, the proposed job terms, the compute the quote has to rely on and the offer's expiry |
+| `POST /v1/orders/{orderId}/quote` | Takes the version 3 terms, their salt, the terms agreement your signing key signed, its signature and the subject section of each booking relied on, and answers 202 while the customer verifies |
+| `GET /v1/orders/{orderId}` | Where the order stands, from `offered` through `verifying`, `refused`, `reserved`, `accepted` and `delivered` to `paid`, with each check's block, the reason and who refused, the reserve and the payment |
+| `POST /v1/orders/{orderId}/delivery` | Takes an empty object and answers 202, and the customer then pays |
+
+Every POST is a signed API request, signed by your supplier signing key, with the customer's origin as its audience and the customer's lock as its domain. A refusal has the API's error shape and a reason code. The GETs are unsigned.
+
+## Session events
+
+A job's process posts its events to the same session as the rest of the sandbox, and the screen shows them as they arrive. In order they are `job_order_received`, `job_compute_secured`, `job_quote_sent`, `job_customer_verifying`, `job_customer_verified` or `job_customer_refused`, `job_commitment_checked` or `job_commitment_refused`, `job_work_started`, `job_delivered`, `job_paid` and `job_reserve_released`. A refusal carries its reason code, who refused and the block its check read. `jobEventSentence` gives the one sentence the terminal and the screen both say for each, and the decisive sentence for `job_commitment_checked` is `DECISIVE_SENTENCE`.
+
+## A link to verify a job
+
+A `#verify=` token from `encodeCommitmentReference` names only the job's terms hash. `encodeJobVerification` adds the terms' header, the dependencies section in clear with that section's own salt, and the hash of every other section. A browser recomputes the terms hash with `jobVerificationProblem`, matches it against the lock's, and reads the compute booking the dependencies section names at a block it pins. The work, the price and the charges stay behind their hashes, and the one section salt reveals no other section. The JSON's `kind` tells a job's token from a commitment reference's.

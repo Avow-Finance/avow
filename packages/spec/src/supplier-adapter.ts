@@ -49,7 +49,8 @@ const bytes32 = z
   .transform((s) => s.toLowerCase() as Hex)
 const objectJson = z.record(z.string(), z.unknown())
 
-const profileJson = z.object({
+/** A supplier's profile as JSON, as Avow registered the supplier. */
+export const supplierProfileJson = z.object({
   businessId: z.string().min(1),
   account: address,
   payee: address,
@@ -65,7 +66,7 @@ const offerJson = z.strictObject({
 
 /** Reads a supplier's profile. Other fields are ignored, so an adapter can serve more. */
 export function parseSupplierProfile(json: unknown): Parsed<SupplierProfile> {
-  const parsed = profileJson.safeParse(json)
+  const parsed = supplierProfileJson.safeParse(json)
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }

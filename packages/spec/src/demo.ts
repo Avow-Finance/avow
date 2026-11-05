@@ -1,5 +1,6 @@
 import type { Address } from 'viem'
 import { type GpuReservationTerms, gpuReservationTerms } from './gpu-reservation.js'
+import { type JobTerms, jobTerms } from './job.js'
 
 /** Whole dollars in micros. */
 export function dollars(n: number): bigint {
@@ -57,6 +58,33 @@ export function testnetDemoTerms(windowStart: bigint, arbiter: Address): GpuRese
     chargeDeadline: windowEnd,
     contestWindow: 10n * MINUTE,
     releaseDate: windowEnd,
+    arbiter,
+    day90SupplierShareBps: 5000,
+  })
+}
+
+/**
+ * A job on testnet as Avow's test customer proposes one: a ten-minute fine-tuning run on one H100
+ * in the demo region, starting at `startsAt`, for $40 paid on delivery. Its reserve backs a late
+ * cancellation after work has started, up to $10, and a no-show, up to $6, two minutes after the
+ * start. Charges can be reported until ten minutes after the deadline, and the reserve comes back
+ * then.
+ */
+export function testnetDemoJobTerms(startsAt: bigint, arbiter: Address): JobTerms {
+  const deliverBy = startsAt + 10n * MINUTE
+  return jobTerms({
+    work: { kind: 'fine-tuning', summary: 'Fine-tune a small model on the demo dataset' },
+    compute: { gpu: 'H100', count: 1, region: 'demo' },
+    currency: 'USD',
+    startsAt,
+    deliverBy,
+    price: dollars(40),
+    lateCancellation: dollars(10),
+    noShow: dollars(6),
+    gracePeriod: 2n * MINUTE,
+    chargeDeadline: deliverBy + 10n * MINUTE,
+    contestWindow: 10n * MINUTE,
+    releaseDate: deliverBy + 10n * MINUTE,
     arbiter,
     day90SupplierShareBps: 5000,
   })
