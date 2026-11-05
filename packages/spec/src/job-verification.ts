@@ -1,7 +1,7 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import { type Dependencies, dependenciesJson } from './dependencies.js'
-import { type ChainedJobTerms, JOB } from './job.js'
+import { type ChainedJobTerms, JOB, type JobDependencyCheck } from './job.js'
 import { bytes32 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import { decodeLinkToken, encodeLinkToken } from './reference-link.js'
@@ -17,7 +17,12 @@ import {
   termsHash,
   termsHeader,
 } from './terms.js'
-import { AMOUNT_DECIMALS, CHAINED_TERMS_VERSION, CURRENCIES } from './types.js'
+import {
+  AMOUNT_DECIMALS,
+  CHAINED_TERMS_VERSION,
+  CURRENCIES,
+  DEPENDENCY_CHECKS_ALLOWED,
+} from './types.js'
 import { type Parsed, toWire } from './wire.js'
 
 /**
@@ -38,7 +43,7 @@ export interface JobVerification {
   kind: 'job'
   /** The job commitment, on the buyer side of the customer's lock. */
   commitment: CommitmentReference
-  header: ChainedTermsHeader & { template: typeof JOB; dependencyCheck: 'buyer' }
+  header: ChainedTermsHeader & { template: typeof JOB; dependencyCheck: JobDependencyCheck }
   dependencies: Dependencies
   /** The dependencies section's own salt. */
   dependenciesSalt: Hex
@@ -57,7 +62,7 @@ export const jobVerificationJson = z.strictObject({
     template: z.literal(JOB),
     currency: z.enum(CURRENCIES),
     amountDecimals: z.literal(AMOUNT_DECIMALS),
-    dependencyCheck: z.literal('buyer'),
+    dependencyCheck: z.enum(DEPENDENCY_CHECKS_ALLOWED[JOB]),
   }),
   dependencies: dependenciesJson,
   dependenciesSalt: bytes32,

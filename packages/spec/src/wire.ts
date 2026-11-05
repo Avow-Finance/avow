@@ -41,6 +41,7 @@ import {
   AMOUNT_DECIMALS,
   CHAINED_TERMS_VERSION,
   CURRENCIES,
+  DEPENDENCY_CHECKS_ALLOWED,
   MANDATE_ACTIONS,
   TEMPLATE_IDS,
   TERMS_VERSION,
@@ -187,7 +188,7 @@ export const chainedGpuReservationTermsJson = z.strictObject({
 export const chainedJobTermsJson = z.strictObject({
   ...jobTermsJson.shape,
   version: z.literal(CHAINED_TERMS_VERSION),
-  dependencyCheck: z.literal('buyer'),
+  dependencyCheck: z.enum(DEPENDENCY_CHECKS_ALLOWED[JOB]),
   dependencies: dependenciesJson,
 })
 
