@@ -7,6 +7,9 @@ import {
   approvalPartiesProblem,
   approvalTermsProblem,
   approvalTokenProblem,
+  type ChainedTerms,
+  type CheckedDependency,
+  chainedTermsShapeProblem,
   checkEnvelope,
   checkMandate,
   digestOf,
@@ -15,11 +18,13 @@ import {
   isTermsV1,
   lockTerms,
   type Mandate,
+  type MandateCheckInput,
   MESSAGE_VERSIONS,
   mandateHash,
   newSalt,
   type RailToken,
   type ReasonCode,
+  type RefusalLayer,
   type Signed,
   type SignedAgreement,
   type StartReceipt,
@@ -30,8 +35,15 @@ import {
   type TermsProfile,
   termsAgreementTypedData,
   termsHash,
+  termsShapeProblem,
 } from '@avow-finance/spec'
-import { type LockedBacking, readBacking } from '@avow-finance/verifier'
+import {
+  type DependencyDeps,
+  type DependencyRefusal,
+  type LockedBacking,
+  readBacking,
+  verifyDependencies,
+} from '@avow-finance/verifier'
 import {
   type Address,
   type Chain,
@@ -93,6 +105,12 @@ export interface AgentConfig<A extends AvowApi = AvowApi> {
    */
   send?: (calls: Call[]) => Promise<Landed>
   limits?: SendLimits
+  /**
+   * The chain and factory pairs whose locks a booking relied on may sit in, each with its reader,
+   * such as `tempoLockReader`. `commitToQuote` refuses version 3 terms with
+   * `dependency.lock_unknown` when this is left out.
+   */
+  dependencies?: DependencyDeps
 }
 
 /** One booking the agent makes with one supplier. */
@@ -108,11 +126,14 @@ export interface Booking {
   category: string
 }
 
+/** Terms a commitment can be made under: version 2, or version 3 through `commitToQuote`. */
+export type CommittedTerms = Terms | ChainedTerms
+
 /** A commitment the agent agreed and Avow approved, before any money moved. */
-export interface ApprovedCommitment {
+export interface ApprovedCommitment<T extends CommittedTerms = Terms> {
   commitmentId: Hex
   supplier: SupplierProfile
-  terms: Terms
+  terms: T
   /**
    * The commitment's salt, which keeps the terms hash from revealing standard terms. Keep it
    * private, since showing a section of the terms or checking the commitment later needs it.
@@ -124,7 +145,7 @@ export interface ApprovedCommitment {
 }
 
 /** A commitment the agent made and funded. */
-export interface Commitment extends ApprovedCommitment {
+export interface Commitment<T extends CommittedTerms = Terms> extends ApprovedCommitment<T> {
   /**
    * The transaction that funded the reserve. It's null when the reserve landed in a transaction
    * the agent didn't send, or when the receipt of the agent's own couldn't be read.
@@ -142,9 +163,45 @@ export type Reconciled =
   | { outcome: 'failed' | 'unknown' }
 
 /** A booking's outcome. A refusal carries the reason code, and Avow's decision id once it decided. */
-export type BookResult =
-  | { ok: true; commitment: Commitment }
+export type BookResult<T extends CommittedTerms = Terms> =
+  | { ok: true; commitment: Commitment<T> }
   | { ok: false; reason: ReasonCode; decisionId?: string }
+
+/**
+ * Who refused a quote: `avow` is Avow's API declining to approve the reserve, and `sdk` is the
+ * agent's own check, before Avow is asked or of what Avow approved. Either way no money moved.
+ */
+export type QuoteRefusalLayer = Extract<RefusalLayer, 'sdk' | 'avow'>
+
+/**
+ * A quote's outcome. Once funded it lists each booking version 3 terms rely on with the block the
+ * agent read it at, just before it funded. A refusal names who refused, and a refusal by that check
+ * says which booking failed and the block it was read at.
+ */
+export type QuoteResult =
+  | { ok: true; commitment: Commitment<CommittedTerms>; dependencies: readonly CheckedDependency[] }
+  | { ok: false; reason: ReasonCode; layer: QuoteRefusalLayer; decisionId?: string }
+  | (DependencyRefusal & { layer: 'sdk'; decisionId?: string })
+
+/** A quote a supplier already signed, which the agent commits to as the buyer. */
+export interface SignedQuote {
+  /** The supplier as Avow registered it. Its signing key has to have signed the agreement. */
+  supplier: SupplierProfile
+  /** Version 2 terms, or version 3 terms in full. */
+  terms: CommittedTerms
+  salt: Hex
+  /**
+   * The terms agreement the supplier signed. It names this agent's business as the buyer, the
+   * agent's mandate, the supplier and the terms hash of these terms under this salt.
+   */
+  agreement: TermsAgreement
+  supplierSignature: Hex
+  /**
+   * For version 3 terms, the section of each booking they rely on that the supplier shows, as
+   * JSON, in the terms' order.
+   */
+  disclosed?: readonly unknown[]
+}
 
 /**
  * A booking whose funding failed after Avow approved it. The agent has already read the lock
@@ -155,13 +212,14 @@ export type BookResult =
  */
 export class BookingError extends Error {
   readonly outcome: 'failed' | 'unknown'
-  readonly commitment: ApprovedCommitment
+  /** The commitment, whose terms are version 3 only when `commitToQuote` made it. */
+  readonly commitment: ApprovedCommitment<CommittedTerms>
   readonly hashes: readonly Hex[]
 
   constructor(
     message: string,
     outcome: 'failed' | 'unknown',
-    commitment: ApprovedCommitment,
+    commitment: ApprovedCommitment<CommittedTerms>,
     hashes: readonly Hex[],
     options?: { cause?: unknown },
   ) {
@@ -195,11 +253,29 @@ export interface AgentCalls {
    */
   book(b: Booking): Promise<BookResult>
   /**
-   * Reads the lock for a commitment `book` approved but couldn't settle, once Avow's approval can
-   * no longer land, so the agent learns whether that same booking was funded. It takes what a
-   * `BookingError` carries.
+   * Commits as the buyer to a quote the supplier already signed, and funds the reserve. Before
+   * anything is signed it refuses terms that don't hash to the agreement's terms hash, an
+   * agreement naming another buyer, mandate or supplier, or one expired or valid too long, and a
+   * supplier signature from another key. Version 2 terms then go through the mandate check, as
+   * `book` runs it. It signs as the buyer, asks Avow, and checks the approval as `book` does. For
+   * version 3 terms it then checks every booking they rely on with `verifyDependencies`, taking
+   * the owner from Avow's approval, and runs the mandate check on the checked terms. Only then does
+   * it fund, settling a failed funding as `book` does.
+   *
+   * So for version 3 terms Avow is asked before the agent's own mandate check runs. Avow's API runs
+   * the same check first, so a version 3 quote over the mandate's caps comes back as Avow's refusal,
+   * with the layer `avow`. Every other refusal is the SDK's, and no money moves before any of them.
    */
-  reconcile(approved: ApprovedCommitment, hashes?: readonly Hex[]): Promise<Reconciled>
+  commitToQuote(q: SignedQuote): Promise<QuoteResult>
+  /**
+   * Reads the lock for a commitment `book` or `commitToQuote` approved but couldn't settle, once
+   * Avow's approval can no longer land, so the agent learns whether that same booking was funded.
+   * It takes what a `BookingError` carries.
+   */
+  reconcile(
+    approved: ApprovedCommitment<CommittedTerms>,
+    hashes?: readonly Hex[],
+  ): Promise<Reconciled>
   /** What the lock holds for one of the business's commitments, or null when it holds nothing. */
   commitment(commitmentId: Hex): Promise<LockedBacking | null>
 }
@@ -317,7 +393,12 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
    */
   function approvalProblem(
     approval: Signed<Approval>,
-    expected: { commitmentId: Hex; supplier: SupplierProfile; terms: Terms; termsHash: Hex },
+    expected: {
+      commitmentId: Hex
+      supplier: SupplierProfile
+      terms: CommittedTerms
+      termsHash: Hex
+    },
   ): ReasonCode | null {
     const envelopeProblem = checkEnvelope(approval, {
       type: 'Approval',
@@ -397,7 +478,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
    * timeout.
    */
   async function reconcile(
-    approved: ApprovedCommitment,
+    approved: ApprovedCommitment<CommittedTerms>,
     hashes: readonly Hex[] = [],
   ): Promise<Reconciled> {
     const a = approved.approval.message
@@ -464,6 +545,168 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
 
   // Every agent has `cancel` and `start` at run time, so a JavaScript caller whose `AvowApi` has
   // no records learns why from the error. `Agent<A>` shows them only when `A` has records.
+
+  /** The reserve request Avow approves and the mandate check reads, for terms of either version. */
+  function requestOf<T extends CommittedTerms>(
+    commitmentId: Hex,
+    supplier: SupplierProfile,
+    category: string,
+    terms: T,
+  ) {
+    return {
+      commitmentId,
+      agentKey: key.accessKeyAddress,
+      supplier: supplier.businessId,
+      payee: supplier.payee,
+      category,
+      terms,
+    }
+  }
+
+  /**
+   * The same check Avow and a supplier's verifier run, or null when it approves. The lock enforces
+   * the open reserves cap, so this check counts none open, as the verifier does. The SDK can't yet
+   * carry the administrator's approval in person, so a reserve the mandate sends to them is
+   * refused.
+   */
+  function mandateCheck(request: MandateCheckInput['request']): ReasonCode | null {
+    const allowed = checkMandate({
+      mandate,
+      request,
+      token,
+      openReserves: 0n,
+      revoked: false,
+      now: now(),
+      profile: config.profile,
+    })
+    return allowed.result === 'approved' ? null : allowed.reason
+  }
+
+  /**
+   * Signs the agreement as the buyer once the supplier's signature checks out, asks Avow to
+   * approve the reserve, and checks the approval against the terms and the mandate. Version 3
+   * terms then pass `verifyDependencies` on that approval, which names the owner of each booking
+   * they rely on, and the mandate check on the checked terms. Only then is the reserve funded.
+   */
+  async function commitAgreed(a: {
+    supplier: SupplierProfile
+    terms: CommittedTerms
+    salt: Hex
+    agreement: TermsAgreement
+    supplierSignature: Hex
+    disclosed?: readonly unknown[]
+  }): Promise<QuoteResult> {
+    const { supplier, terms, salt, agreement } = a
+    const digest = digestOf(termsAgreementTypedData(agreement, d))
+    if (!isKeySignature(digest, a.supplierSignature, supplier.signingKey)) {
+      return { ok: false, reason: 'message.signature_invalid', layer: 'sdk' }
+    }
+    const buyerSignature = await key.sign({ hash: digest, raw: true })
+    const signed: SignedAgreement = {
+      type: 'TermsAgreement',
+      schemaVersion: MESSAGE_VERSIONS.TermsAgreement,
+      chainId: d.chainId,
+      lock: d.verifyingContract,
+      message: agreement,
+      buyerSignature,
+      supplierSignature: a.supplierSignature,
+    }
+    const { commitmentId } = agreement
+    const request = requestOf(commitmentId, supplier, agreement.category, terms)
+    const answer = await avow.approveReserve({
+      request,
+      salt,
+      agreement: signed,
+      fundedBy: 'agent',
+    })
+    if (!answer.ok) {
+      return { ok: false, reason: answer.reason, layer: 'avow', decisionId: answer.decisionId }
+    }
+    const { decisionId } = answer
+    const problem = approvalProblem(answer.approval, {
+      commitmentId,
+      supplier,
+      terms,
+      termsHash: agreement.termsHash,
+    })
+    if (problem) return { ok: false, reason: problem, layer: 'sdk', decisionId }
+
+    let dependencies: readonly CheckedDependency[] = []
+    if (isChainedTerms(terms)) {
+      const relied = await verifyDependencies(
+        { terms, approval: answer.approval.message, disclosed: a.disclosed ?? [], now: now() },
+        config.dependencies ?? { readers: [] },
+      )
+      if (!relied.ok) return { ...relied, layer: 'sdk', decisionId }
+      const allowed = mandateCheck({ ...request, terms: relied.terms })
+      if (allowed) return { ok: false, reason: allowed, layer: 'sdk', decisionId }
+      dependencies = relied.checked
+    }
+    const approved: ApprovedCommitment<CommittedTerms> = {
+      commitmentId,
+      supplier,
+      terms,
+      salt,
+      termsHash: agreement.termsHash,
+      agreement: signed,
+      approval: answer.approval,
+    }
+    const reservedIn = await fund(approved)
+    return { ok: true, commitment: { ...approved, reservedIn }, dependencies }
+  }
+
+  /**
+   * Funds an approved reserve with the agent's key and returns the transaction that funded it,
+   * once the lock holds the commitment under exactly the approval the agent checked. When funding
+   * fails it reads the lock after the approval stops working, returns if the reserve landed
+   * anyway, and otherwise throws a `BookingError`.
+   */
+  async function fund(approved: ApprovedCommitment<CommittedTerms>): Promise<Hex | null> {
+    const { commitmentId, approval } = approved
+    let landed: Landed | null = null
+    let failure: unknown = null
+    try {
+      landed = await send(reserveCalls(approval, d))
+    } catch (error) {
+      failure = error
+    }
+    if (landed) {
+      const held = await backingAt(commitmentId, landed.blockNumber).catch(() => null)
+      const expected = approvalDigest(approval.message, d).toLowerCase()
+      if (held && held.approvalHash.toLowerCase() === expected) return landed.transactionHash
+    }
+    const hashes =
+      failure instanceof SendError ? failure.hashes : landed ? [landed.transactionHash] : []
+    const what = failure
+      ? failure instanceof Error
+        ? failure.message
+        : String(failure)
+      : `${landed?.transactionHash} landed, but the lock didn't show the reserve under Avow's approval`
+    // A transaction the key never signed can't land, so a send that failed before signing
+    // settles the booking.
+    if (failure instanceof SendError && failure.signings === 0) {
+      throw new BookingError(
+        `Funding ${commitmentId} failed: ${what}`,
+        'failed',
+        approved,
+        hashes,
+        {
+          cause: failure,
+        },
+      )
+    }
+    const settled = await reconcile(approved, hashes)
+    if (settled.outcome === 'funded') return settled.reservedIn
+    throw new BookingError(
+      settled.outcome === 'failed'
+        ? `Funding ${commitmentId} failed, and the lock holds no reserve for it: ${what}`
+        : `Whether ${commitmentId} was funded is unknown: ${what}`,
+      settled.outcome,
+      approved,
+      hashes,
+      { cause: failure ?? undefined },
+    )
+  }
   const agent: AgentCalls & AgentRecordCalls = {
     account: mandate.account,
     lock: d.verifyingContract,
@@ -473,40 +716,20 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     async book(b: Booking): Promise<BookResult> {
       const { terms } = b
       // A new commitment takes version 2 terms. Version 1 is only for commitments made under it,
-      // and this agent doesn't read the bookings version 3 terms rely on, so both stop here,
-      // before anything is signed.
+      // and version 3 terms come signed by their supplier through `commitToQuote`, so both stop
+      // here, before anything is signed.
       if (isTermsV1(terms) || isChainedTerms(terms)) {
         return { ok: false, reason: 'terms.version_unknown' }
       }
       const supplier = b.supplier.profile
       const commitmentId = toHex(crypto.getRandomValues(new Uint8Array(32)))
-      const request = {
-        commitmentId,
-        agentKey: key.accessKeyAddress,
-        supplier: supplier.businessId,
-        payee: supplier.payee,
-        category: b.category,
-        terms,
-      }
-      // The same check Avow and a supplier's verifier run. The lock enforces the open reserves
-      // cap, so this check counts none open, as the verifier does. The SDK can't yet carry the
-      // administrator's approval in person, so a reserve the mandate sends to them is refused.
-      const allowed = checkMandate({
-        mandate,
-        request,
-        token,
-        openReserves: 0n,
-        revoked: false,
-        now: now(),
-        profile: config.profile,
-      })
-      if (allowed.result !== 'approved') return { ok: false, reason: allowed.reason }
+      const allowed = mandateCheck(requestOf(commitmentId, supplier, b.category, terms))
+      if (allowed) return { ok: false, reason: allowed }
 
       const salt = newSalt()
-      const tHash = termsHash(terms, salt)
       const agreement: TermsAgreement = {
         commitmentId,
-        termsHash: tHash,
+        termsHash: termsHash(terms, salt),
         category: b.category,
         buyerBusinessId: mandate.businessId,
         supplierBusinessId: supplier.businessId,
@@ -514,100 +737,54 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
         nonce: randomUint(),
         expiry: now() + offerValidity,
       }
-      const digest = digestOf(termsAgreementTypedData(agreement, d))
-      const buyerSignature = await key.sign({ hash: digest, raw: true })
       const supplierSignature = await b.supplier.signAgreement({
         agreement,
         terms,
         salt,
         domain: d,
       })
-      if (!isKeySignature(digest, supplierSignature, supplier.signingKey)) {
-        return { ok: false, reason: 'message.signature_invalid' }
-      }
-      const signed: SignedAgreement = {
-        type: 'TermsAgreement',
-        schemaVersion: MESSAGE_VERSIONS.TermsAgreement,
-        chainId: d.chainId,
-        lock: d.verifyingContract,
-        message: agreement,
-        buyerSignature,
-        supplierSignature,
-      }
-      const answer = await avow.approveReserve({
-        request,
-        salt,
-        agreement: signed,
-        fundedBy: 'agent',
-      })
-      if (!answer.ok) return { ok: false, reason: answer.reason, decisionId: answer.decisionId }
-      const problem = approvalProblem(answer.approval, {
-        commitmentId,
-        supplier,
-        terms,
-        termsHash: tHash,
-      })
-      if (problem) return { ok: false, reason: problem, decisionId: answer.decisionId }
-
-      const approved: ApprovedCommitment = {
-        commitmentId,
-        supplier,
-        terms,
-        salt,
-        termsHash: tHash,
-        agreement: signed,
-        approval: answer.approval,
-      }
-      let landed: Landed | null = null
-      let failure: unknown = null
-      try {
-        landed = await send(reserveCalls(answer.approval, d))
-      } catch (error) {
-        failure = error
-      }
-      if (landed) {
-        // The lock has to hold this commitment under exactly the approval the agent checked.
-        const held = await backingAt(commitmentId, landed.blockNumber).catch(() => null)
-        const expected = approvalDigest(answer.approval.message, d).toLowerCase()
-        if (held && held.approvalHash.toLowerCase() === expected) {
-          return { ok: true, commitment: { ...approved, reservedIn: landed.transactionHash } }
-        }
-      }
-      const hashes =
-        failure instanceof SendError ? failure.hashes : landed ? [landed.transactionHash] : []
-      const what = failure
-        ? failure instanceof Error
-          ? failure.message
-          : String(failure)
-        : `${landed?.transactionHash} landed, but the lock didn't show the reserve under Avow's approval`
-      // A transaction the key never signed can't land, so a send that failed before signing
-      // settles the booking.
-      if (failure instanceof SendError && failure.signings === 0) {
-        throw new BookingError(
-          `Funding ${commitmentId} failed: ${what}`,
-          'failed',
-          approved,
-          hashes,
-          {
-            cause: failure,
-          },
-        )
-      }
-      const settled = await reconcile(approved, hashes)
-      if (settled.outcome === 'funded') {
-        return { ok: true, commitment: { ...approved, reservedIn: settled.reservedIn } }
-      }
-      throw new BookingError(
-        settled.outcome === 'failed'
-          ? `Funding ${commitmentId} failed, and the lock holds no reserve for it: ${what}`
-          : `Whether ${commitmentId} was funded is unknown: ${what}`,
-        settled.outcome,
-        approved,
-        hashes,
-        { cause: failure ?? undefined },
-      )
+      const done = await commitAgreed({ supplier, terms, salt, agreement, supplierSignature })
+      if (done.ok) return { ok: true, commitment: { ...done.commitment, terms } }
+      return done.decisionId === undefined
+        ? { ok: false, reason: done.reason }
+        : { ok: false, reason: done.reason, decisionId: done.decisionId }
     },
 
+    async commitToQuote(q: SignedQuote): Promise<QuoteResult> {
+      const { terms, agreement: a } = q
+      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown', layer: 'sdk' }
+      const shape = isChainedTerms(terms)
+        ? chainedTermsShapeProblem(terms)
+        : termsShapeProblem(terms)
+      if (shape) return { ok: false, reason: shape, layer: 'sdk' }
+      if (termsHash(terms, q.salt).toLowerCase() !== a.termsHash.toLowerCase()) {
+        return { ok: false, reason: 'terms.hash_mismatch', layer: 'sdk' }
+      }
+      const parties =
+        a.buyerBusinessId === mandate.businessId &&
+        a.mandateHash.toLowerCase() === mHash.toLowerCase() &&
+        a.supplierBusinessId === q.supplier.businessId
+      if (!parties) return { ok: false, reason: 'agreement.parties_mismatch', layer: 'sdk' }
+      if (a.expiry <= now()) return { ok: false, reason: 'message.expired', layer: 'sdk' }
+      if (a.expiry > now() + offerValidity) {
+        return { ok: false, reason: 'message.validity_too_long', layer: 'sdk' }
+      }
+      // Version 2 terms go through the mandate check before anything is signed, as in `book`.
+      // Version 3 terms go through it once their bookings are checked, since it takes them only as
+      // checked terms.
+      if (!isChainedTerms(terms)) {
+        const allowed = mandateCheck(requestOf(a.commitmentId, q.supplier, a.category, terms))
+        if (allowed) return { ok: false, reason: allowed, layer: 'sdk' }
+      }
+      return commitAgreed({
+        supplier: q.supplier,
+        terms,
+        salt: q.salt,
+        agreement: a,
+        supplierSignature: q.supplierSignature,
+        disclosed: q.disclosed ?? [],
+      })
+    },
     reconcile,
 
     async cancel(commitmentId: Hex) {

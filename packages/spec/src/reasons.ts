@@ -21,6 +21,8 @@ export const REASON_CODES = {
   'mandate.action_not_permitted': "The mandate doesn't permit this action",
   'mandate.supplier_not_allowed': "The supplier isn't on the mandate's list",
   'mandate.category_not_allowed': "The category isn't on the mandate's list",
+  'terms.category_mismatch':
+    "These terms' template has a mandate category of its own, and the request names another",
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
   'mandate.token_not_allowed': "The lock's token isn't one the mandate allows",
   'mandate.over_payment_limit': "The amount is above the mandate's payment limit for the token",
@@ -83,6 +85,17 @@ export const REASON_CODES = {
     "Paying for the transaction would take one of Avow's relay budgets past the gas it allows in 24 hours",
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
+  'order.supplier_mismatch':
+    "The order was offered to another supplier, so only that supplier's signing key can quote it or report its delivery",
+  'order.limit_reached':
+    'The supplier already holds as many open orders as the test customer allows, or the customer has reached its own total or daily limit',
+  'order.unknown': 'The test customer has no order with that id',
+  'order.out_of_step':
+    "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
+  'order.terms_changed':
+    "The quote's terms differ from the offer's beyond the compute bookings they add",
+  'agreement.parties_mismatch':
+    "The terms agreement names another buyer, mandate or supplier than the agent's business, its mandate and the supplier it deals with",
   'commitment.unknown': 'Avow has no record of this commitment',
   'commitment.cancel_on_lock':
     "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",
@@ -159,6 +172,8 @@ export const REASON_CODES = {
     "The commitment on the lock names another supplier account or signing key than this supplier's",
   'reference.commitment_mismatch':
     "The lock holds no commitment for this reference, holds it under another terms hash, or the reference names a side the terms' backing doesn't secure",
+  'reference.unreadable':
+    "A read of the commitment the reference names failed, timed out or couldn't be pinned to one block, so nothing was decided",
   'payment.not_found': 'No transfer is at that chain, transaction and log index',
   'payment.failed': 'The transaction that holds the payment failed',
   'payment.not_final': "The payment's block isn't finalized yet",
@@ -196,6 +211,8 @@ export const REASON_CODES = {
     "A read of the booking relied on failed, timed out or couldn't be pinned to one block, so nothing was decided",
   'dependency.stale':
     "The latest finalized block the node gave was older than the check's limit by the caller's clock, so nothing was decided",
+  'dependency.required':
+    'These terms name no booking they rely on, and their template commits only on a booking it relies on, such as the compute a job runs on',
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
 } as const

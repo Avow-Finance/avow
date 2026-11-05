@@ -5,8 +5,35 @@ import { type Parsed, toWire } from './wire.js'
 /** The longest token `decodeCommitmentReference` reads, well above any reference's. */
 const MAX_TOKEN = 1024
 
-const toBase64Url = (text: string) =>
-  btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const TOKEN = /^[A-Za-z0-9_-]+$/
+
+/**
+ * A value as one URL-safe token for a link: its canonical JSON in UTF-8, in base64url without
+ * padding. Canonical JSON has one encoding for each value, so a value has one token.
+ */
+export function encodeLinkToken(value: unknown): string {
+  const bytes = new TextEncoder().encode(canonicalJson(toWire(value)))
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+/**
+ * The JSON a token from `encodeLinkToken` carries, or null when the token is empty, longer than
+ * `max`, or isn't base64url holding UTF-8 JSON.
+ */
+export function decodeLinkToken(token: string, max: number): { json: unknown } | null {
+  if (token.length === 0 || token.length > max || !TOKEN.test(token)) return null
+  try {
+    const base64 = token.replace(/-/g, '+').replace(/_/g, '/')
+    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
+    return { json: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
+  } catch {
+    return null
+  }
+}
 
 /**
  * A commitment reference as one URL-safe token, for a link such as `#verify=<token>`: the
@@ -16,22 +43,14 @@ const toBase64Url = (text: string) =>
 export function encodeCommitmentReference(reference: CommitmentReference): string {
   const parsed = commitmentReferenceJson.safeParse(toWire(reference))
   if (!parsed.success) throw new RangeError("That isn't a commitment reference")
-  return toBase64Url(canonicalJson(toWire(parsed.data)))
+  return encodeLinkToken(parsed.data)
 }
 
 /** Reads the commitment reference a token from `encodeCommitmentReference` carries. */
 export function decodeCommitmentReference(token: string): Parsed<CommitmentReference> {
-  if (token.length === 0 || token.length > MAX_TOKEN || !/^[A-Za-z0-9_-]+$/.test(token)) {
-    return { ok: false, reason: 'message.invalid' }
-  }
-  let json: unknown
-  try {
-    const base64 = token.replace(/-/g, '+').replace(/_/g, '/')
-    json = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')))
-  } catch {
-    return { ok: false, reason: 'message.invalid' }
-  }
-  const parsed = commitmentReferenceJson.safeParse(json)
+  const decoded = decodeLinkToken(token, MAX_TOKEN)
+  if (!decoded) return { ok: false, reason: 'message.invalid' }
+  const parsed = commitmentReferenceJson.safeParse(decoded.json)
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }

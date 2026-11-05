@@ -8,6 +8,7 @@ import {
   type EnforceableTerms,
   enforceableTerms,
   plainTermsOf,
+  templateCategoryProblem,
   validateChainedTerms,
   validateTerms,
 } from './terms.js'
@@ -83,6 +84,9 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
     ? validateChainedTerms(r.terms, input.profile)
     : validateTerms(r.terms, input.profile)
   if (termsProblem) return deny(termsProblem)
+  // Version 1 terms have no template, so no category of their own.
+  const category = 'template' in r.terms ? templateCategoryProblem(r.terms, r.category) : null
+  if (category) return deny(category)
   const enforced = enforceableTerms(isChainedTerms(r.terms) ? plainTermsOf(r.terms) : r.terms)
   if (enforced.currency !== m.currency) return deny('mandate.currency_not_allowed')
   if (token.currency !== enforced.currency) return deny('terms.currency_mismatch')

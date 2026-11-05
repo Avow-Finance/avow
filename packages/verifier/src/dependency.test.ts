@@ -1,12 +1,17 @@
 import {
   type ChainedTerms,
+  chainedJobTerms,
   chainedTerms,
   type Dependencies,
   discloseSection,
   elideDependencies,
+  type JobVerification,
+  jobVerificationOf,
   RAIL_STATES,
   type RailState,
   type ReasonCode,
+  termsHash,
+  testnetDemoJobTerms,
   testnetDemoTerms,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
@@ -14,19 +19,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type DependencyDeps,
   type DependencyInput,
+  type DependencyRecord,
   type PinnedBlock,
   type PinnedLockReader,
   verifyDependencies,
+  verifyJobVerification,
 } from './dependency.js'
 import {
   ARBITER,
   blockAt,
+  buyer,
   CHAIN_ID,
   CLOSED_FREE_CANCEL,
   dependencyOn,
   gpuCloud,
   id,
   json,
+  LOCK,
   type LockScript,
   NOW,
   newKey,
@@ -363,9 +372,12 @@ describe('provenance', () => {
       locks: {},
       head: blockAt(9n),
     })
-    const supported = scriptedLocks({ head: blockAt(10n) })
+    // Its node is a block ahead, and knows block 9 too, as any node past finality does.
+    const supported = scriptedLocks({ heads: [blockAt(10n), blockAt(9n)] })
     const { result } = await check({ readers: [other.reader, supported.reader] })
-    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(10n) }]))
+    // The chain was pinned at block 9 by its first read, so the second reader reads there too.
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(9n) }]))
+    expect(supported.calls.map((c) => c.call)).not.toContain('head')
     const elsewhere = scriptedLocks({ chainId: CHAIN_ID + 1 })
     expect((await check({ readers: [elsewhere.reader] })).result).toEqual(
       refused('dependency.lock_unknown', null),
@@ -382,11 +394,16 @@ describe('provenance', () => {
     expect(other.calls).toEqual([])
   })
 
-  it('records the block of the last factory read when none lists the lock', async () => {
+  it('records the block the chain was pinned at when no factory lists the lock', async () => {
     const first = scriptedLocks({ locks: {}, head: blockAt(9n) })
-    const second = scriptedLocks({ factory: OTHER_FACTORY, locks: {} })
+    const second = scriptedLocks({
+      factory: OTHER_FACTORY,
+      locks: {},
+      heads: [PINNED, blockAt(9n)],
+    })
     const { result } = await check({ readers: [first.reader, second.reader] })
-    expect(result).toEqual(refused('dependency.lock_unknown'))
+    expect(result).toEqual(refused('dependency.lock_unknown', blockAt(9n)))
+    for (const c of second.calls) expect(c.at, c.call).toBe(9n)
   })
 })
 
@@ -425,6 +442,313 @@ describe('ownership', () => {
     const { result, calls } = await check({ approval })
     expect(result).toEqual(refused('approval.terms_mismatch', null, null))
     expect(calls).toEqual([])
+  })
+})
+
+describe('a job that relies on the compute it runs on', () => {
+  const job = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+
+  it('passes when the supplier’s accepted GPU booking holds the job’s compute for its whole run', async () => {
+    const { result } = await check({ terms: job })
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: PINNED }], job))
+  })
+
+  it('refuses a job whose terms say Avow checks, before reading anything', async () => {
+    const avow = { ...job, dependencyCheck: 'avow' } as never
+    const { result, calls } = await check({ terms: avow })
+    expect(result).toEqual(refused('terms.template_invalid', null, null))
+    expect(calls).toEqual([])
+  })
+
+  it('refuses compute that ends before the job’s deadline, and compute still freely cancellable', async () => {
+    const tooLate = chainedJobTerms(testnetDemoJobTerms(START + 3500n, ARBITER), [dependencyOn()])
+    expect((await check({ terms: tooLate })).result).toEqual(refused('dependency.does_not_fit'))
+    const open = withRecord({ freeCancelBy: PINNED.timestamp + 5n })
+    expect((await check({ terms: job, script: open })).result).toEqual(
+      refused('dependency.cancellable'),
+    )
+  })
+})
+
+describe('a link to verify a job', () => {
+  const JOB_COMMITMENT = id('the job')
+  const jobTerms = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+  const reference = {
+    kind: 'commitment',
+    chainId: CHAIN_ID,
+    lock: LOCK,
+    commitmentId: JOB_COMMITMENT,
+    side: 'buyer',
+    termsHash: termsHash(jobTerms, SALT),
+  } as const
+  const verification = jobVerificationOf(jobTerms, SALT, reference)
+
+  /** The customer's lock, holding the job as the developer's business accepted it. */
+  const customerLock = (record: Partial<DependencyRecord> | null = {}) => ({
+    ...supplierLock(null),
+    account: buyer.address,
+    records: record
+      ? {
+          [recordKey(JOB_COMMITMENT, 'buyer')]: {
+            state: 'accepted' as const,
+            hasReport: false,
+            termsHash: reference.termsHash,
+            supplier: supplierAccount.address,
+            freeCancelBy: START,
+            ...record,
+          },
+        }
+      : {},
+  })
+
+  async function read(
+    change: {
+      job?: Partial<DependencyRecord> | null
+      compute?: Partial<DependencyRecord>
+      v?: JobVerification
+      head?: PinnedBlock
+    } = {},
+  ) {
+    const locks = {
+      [LOCK]: customerLock(change.job === undefined ? {} : change.job),
+      [SUPPLIER_LOCK]: supplierLock(change.compute ?? {}),
+    }
+    const { reader, calls } = scriptedLocks({
+      locks,
+      ...(change.head ? { head: change.head } : {}),
+    })
+    const result = await verifyJobVerification(
+      { verification: change.v ?? verification, now: NOW },
+      { readers: [reader] },
+    )
+    return { result, calls }
+  }
+
+  /** A link's refusal, which carries no job, so nothing in it can be drawn as standing. */
+  const linkRefused = (
+    reason: ReasonCode,
+    block: PinnedBlock | null = PINNED,
+    index: number | null = 0,
+  ) => ({ outcome: 'refused', reason, index, block })
+  const standing = { booking: dependencyOn().on, readAt: PINNED, fit: 'unchecked', standing: true }
+  const reserved = { state: 'reserved' as const }
+
+  it('says an accepted job stands, reading the job and its compute at one block', async () => {
+    const { result, calls } = await read()
+    expect(result).toEqual({
+      outcome: 'stands',
+      job: { state: 'accepted', freeCancelBy: START, block: PINNED },
+      supplier: supplierAccount.address,
+      bookings: [standing],
+    })
+    for (const c of calls) expect(c.at, c.call).toBe(PINNED.number)
+  })
+
+  it('says a reserved job awaits acceptance, with every booking it relies on standing', async () => {
+    const { result } = await read({ job: { ...reserved, freeCancelBy: START + 60n } })
+    expect(result).toEqual({
+      outcome: 'awaiting_acceptance',
+      job: { state: 'reserved', freeCancelBy: START + 60n, block: PINNED },
+      supplier: supplierAccount.address,
+      bookings: [standing],
+    })
+  })
+
+  it('says a charge is pending while one is reported or paused, with the reserve still held', async () => {
+    for (const state of ['charge_pending', 'paused'] as const) {
+      const { result } = await read({ job: { state } })
+      expect(result, state).toEqual({
+        outcome: 'charge_pending',
+        job: { state, freeCancelBy: START, block: PINNED },
+        supplier: supplierAccount.address,
+        bookings: [standing],
+      })
+    }
+  })
+
+  it('says a job ended once its reserve was released, charged or resolved', async () => {
+    for (const state of ['released', 'charged', 'resolved'] as const) {
+      const { result } = await read({ job: { state } })
+      expect(result, state).toEqual({
+        outcome: 'ended',
+        job: { state, freeCancelBy: START, block: PINNED },
+        supplier: supplierAccount.address,
+        bookings: [standing],
+      })
+    }
+  })
+
+  it('counts an accepted job with a report filed as a charge pending, as the booking check does', async () => {
+    const { result } = await read({ job: { hasReport: true } })
+    expect(result).toMatchObject({ outcome: 'charge_pending', job: { state: 'charge_pending' } })
+    // The same rule refuses a booking relied on in the same state.
+    const compute = await read({ ...{ job: reserved }, compute: { hasReport: true } })
+    expect(compute.result).toEqual(linkRefused('dependency.charge_pending'))
+  })
+
+  it('leaves an accepted job standing when its compute was released after, and reports the booking as read', async () => {
+    // The challenge: the developer's business cancels the compute after the customer accepted.
+    const { result } = await read({ compute: { state: 'released' } })
+    expect(result).toEqual({
+      outcome: 'stands',
+      job: { state: 'accepted', freeCancelBy: START, block: PINNED },
+      supplier: supplierAccount.address,
+      bookings: [{ ...standing, standing: false, reason: 'dependency.ended' }],
+    })
+    // An ended job reports its bookings the same way, and its outcome stays its own.
+    const ended = await read({ job: { state: 'released' }, compute: { state: 'released' } })
+    expect(ended.result).toMatchObject({
+      outcome: 'ended',
+      bookings: [{ standing: false, reason: 'dependency.ended', readAt: PINNED }],
+    })
+  })
+
+  /**
+   * The job's chain read through two readers: the customer's lock through the first, and the
+   * compute through a second, from another factory on the same chain, scripted as given.
+   */
+  async function throughTwo(job: Partial<DependencyRecord>, second: LockScript) {
+    const first = scriptedLocks({ locks: { [LOCK]: customerLock(job) } })
+    const other = scriptedLocks({
+      factory: OTHER_FACTORY,
+      locks: { [SUPPLIER_LOCK]: { ...supplierLock(), factory: OTHER_FACTORY } },
+      ...second,
+    })
+    return verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [first.reader, other.reader], timeoutMs: 50 },
+    )
+  }
+  const unreadable = { ...standing, standing: false, reason: 'dependency.unreadable' }
+
+  it('reports a booking it couldn’t read behind an accepted job, and never drops it', async () => {
+    for (const second of [{ fails: 'commitment' }, { hangs: 'commitment' }] as const) {
+      expect(await throughTwo({}, second), JSON.stringify(second)).toEqual({
+        outcome: 'stands',
+        job: { state: 'accepted', freeCancelBy: START, block: PINNED },
+        supplier: supplierAccount.address,
+        bookings: [unreadable],
+      })
+      expect(await throughTwo({ state: 'released' }, second)).toMatchObject({
+        outcome: 'ended',
+        bookings: [unreadable],
+      })
+    }
+  })
+
+  it('refuses a reserved job whose booking it couldn’t read', async () => {
+    for (const second of [{ fails: 'commitment' }, { hangs: 'commitment' }] as const) {
+      expect(await throughTwo(reserved, second), JSON.stringify(second)).toEqual(
+        linkRefused('dependency.unreadable'),
+      )
+    }
+  })
+
+  it('refuses the whole link when a read on the job’s chain finds the pinned block moved, in every state', async () => {
+    for (const job of [{}, reserved, { state: 'released' as const }, { hasReport: true }]) {
+      const result = await throughTwo(job, { rehash: id('another block') })
+      expect(result, JSON.stringify(job)).toEqual(linkRefused('reference.unreadable', PINNED, null))
+    }
+  })
+
+  it('refuses a link whose parts don’t hash to its reference, reading nothing', async () => {
+    const tampered = { ...verification, dependenciesSalt: id('another salt') }
+    const { result, calls } = await read({ v: tampered })
+    expect(result).toEqual(linkRefused('terms.hash_mismatch', null, null))
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a customer’s lock that holds no job under that terms hash, before any compute', async () => {
+    for (const job of [null, { termsHash: id('other terms') }]) {
+      const { result, calls } = await read({ job })
+      expect(result).toEqual(linkRefused('reference.commitment_mismatch', PINNED, null))
+      // Only the job was read, never the compute.
+      expect(calls.filter((c) => c.call === 'commitment')).toHaveLength(1)
+    }
+  })
+
+  it('refuses a customer’s lock no supported factory made, or one on a chain it has no reader for', async () => {
+    const unlisted = scriptedLocks({
+      locks: {
+        [LOCK]: { ...customerLock(), listed: false },
+        [SUPPLIER_LOCK]: supplierLock(),
+      },
+    })
+    const unknown = await verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [unlisted.reader] },
+    )
+    expect(unknown).toEqual(linkRefused('chain.lock_unknown', PINNED, null))
+    // Nothing is read from a lock the factory doesn't list.
+    expect(unlisted.calls.map((c) => c.call)).toEqual(['head', 'isLock', 'blockHash'])
+    const elsewhere = scriptedLocks({ chainId: CHAIN_ID + 1 })
+    const noReader = await verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [elsewhere.reader] },
+    )
+    expect(noReader).toEqual(linkRefused('chain.lock_unknown', null, null))
+    expect(elsewhere.calls).toEqual([])
+  })
+
+  it('names the job, never a booking relied on, when the read of the job fails', async () => {
+    const locks = { [LOCK]: customerLock(), [SUPPLIER_LOCK]: supplierLock() }
+    for (const call of ['commitment', 'head'] as const) {
+      const { reader } = scriptedLocks({ locks, fails: call })
+      const result = await verifyJobVerification({ verification, now: NOW }, { readers: [reader] })
+      expect(result, call).toEqual(
+        linkRefused('reference.unreadable', call === 'head' ? null : PINNED, null),
+      )
+    }
+  })
+
+  it('refuses a reference to the supplier side before reading anything', async () => {
+    const seller = { ...verification, commitment: { ...reference, side: 'supplier' as const } }
+    const { result, calls } = await read({ v: seller })
+    expect(result).toEqual(linkRefused('reference.commitment_mismatch', null, null))
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a reserved job whose compute sits in a lock that isn’t the supplier’s the customer’s lock names', async () => {
+    const { result } = await read({ job: { ...reserved, supplier: newKey().address } })
+    expect(result).toEqual(linkRefused('dependency.not_owned'))
+  })
+
+  it('refuses a reserved job whose compute ended, is still freely cancellable, or was read at a stale block', async () => {
+    expect((await read({ job: reserved, compute: { state: 'released' } })).result).toEqual(
+      linkRefused('dependency.ended'),
+    )
+    const open = { freeCancelBy: PINNED.timestamp + 1n }
+    expect((await read({ job: reserved, compute: open })).result).toEqual(
+      linkRefused('dependency.cancellable'),
+    )
+    const old = { ...PINNED, timestamp: NOW - 31n }
+    expect((await read({ job: reserved, head: old })).result).toEqual(
+      linkRefused('dependency.stale', old, null),
+    )
+  })
+
+  it('passes compute too small for the job, since fit needs the job’s subject', async () => {
+    // Nine GPUs, where the booking relied on holds eight.
+    const big = testnetDemoJobTerms(START, ARBITER)
+    const nine = {
+      ...big,
+      subject: { ...big.subject, compute: { ...big.subject.compute, count: 9 } },
+    }
+    const terms = chainedJobTerms(nine, [dependencyOn()])
+    const hash = termsHash(terms, SALT)
+    const v = jobVerificationOf(terms, SALT, { ...reference, termsHash: hash })
+    const { result } = await read({ v, job: { ...reserved, termsHash: hash } })
+    expect(result).toMatchObject({ outcome: 'awaiting_acceptance', bookings: [standing] })
+  })
+
+  it('gives entries that can’t pass for the full check’s, which tested fit', async () => {
+    const { result } = await read()
+    if (result.outcome === 'refused') throw new Error('expected a job')
+    // A CheckedDependency has `on` and `block`, which a booking the link names never carries.
+    for (const b of result.bookings) {
+      expect(b).not.toHaveProperty('on')
+      expect(b).not.toHaveProperty('block')
+    }
   })
 })
 
@@ -691,6 +1015,54 @@ describe('reads pinned to one block', () => {
   it('gives dependency.unreadable when the node no longer has the block', async () => {
     const { result } = await check({ script: { rehash: null } })
     expect(result).toEqual(refused('dependency.unreadable'))
+  })
+
+  it('reads every booking on one chain at one block, even through two readers there', async () => {
+    // Two factories on one chain: the job sits in the first's lock, the compute in the second's.
+    const JOB_COMMITMENT = id('the job')
+    const job = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+    const reference = {
+      kind: 'commitment',
+      chainId: CHAIN_ID,
+      lock: LOCK,
+      commitmentId: JOB_COMMITMENT,
+      side: 'buyer',
+      termsHash: termsHash(job, SALT),
+    } as const
+    const first = scriptedLocks({
+      locks: {
+        [LOCK]: {
+          ...supplierLock(null),
+          account: buyer.address,
+          records: {
+            [recordKey(JOB_COMMITMENT, 'buyer')]: {
+              state: 'accepted',
+              hasReport: false,
+              termsHash: reference.termsHash,
+              supplier: supplierAccount.address,
+              freeCancelBy: START,
+            },
+          },
+        },
+      },
+    })
+    // The second reader's node is a few blocks ahead, so pinning on its own would pick 4326.
+    const second = scriptedLocks({
+      factory: OTHER_FACTORY,
+      heads: [blockAt(4326n), PINNED],
+      locks: { [SUPPLIER_LOCK]: { ...supplierLock(), factory: OTHER_FACTORY } },
+    })
+    const result = await verifyJobVerification(
+      { verification: jobVerificationOf(job, SALT, reference), now: NOW },
+      { readers: [first.reader, second.reader] },
+    )
+    expect(result).toMatchObject({
+      outcome: 'stands',
+      job: { block: PINNED },
+      bookings: [{ readAt: PINNED, standing: true }],
+    })
+    for (const c of [...first.calls, ...second.calls]) expect(c.at, c.call).toBe(PINNED.number)
+    expect(second.calls.map((c) => c.call)).not.toContain('head')
   })
 
   it('gives dependency.unreadable, never lock_unknown, when an unlisted lock’s block moved', async () => {

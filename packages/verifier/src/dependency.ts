@@ -2,11 +2,16 @@ import {
   type Approval,
   type ChainedTerms,
   type CheckedChainedTerms,
+  type CheckedDependency,
   type CommitmentReference,
   chainedTermsShapeProblem,
   checkSectionDisclosure,
   type Dependency,
   dependenciesProblem,
+  dependencyCheckProblem,
+  type JobVerification,
+  jobVerificationProblem,
+  type PinnedBlock,
   parseSectionDisclosure,
   type RailState,
   type ReasonCode,
@@ -19,7 +24,7 @@ import type { LockedBacking } from './chain.js'
 
 /**
  * The check of a booking another booking relies on. A version 3 booking names each one in its
- * dependencies section, and before a buyer signs or a seller accepts, this reads each one's lock
+ * dependencies section, and before a buyer funds or a seller accepts, this reads each one's lock
  * directly and runs five tests. Any failure stops the step. It runs the same whoever the terms say
  * checks for the buyer, since it needs the terms in full, and terms carrying the dependencies
  * section only as its digest are refused with `dependency.elided` before anything is read.
@@ -37,9 +42,9 @@ import type { LockedBacking } from './chain.js'
  *    seller shows hashes to that terms hash.
  * 5. Fit. The booking asks for no more than the booking it relies on, by its template's rule.
  *
- * Each reader pins the latest finalized block once per check, so every booking read through it is
- * read at that one block, named by number, and the result records that block's number, hash and
- * timestamp. A finalized block older than the read age limit by the caller's clock refuses with
+ * The first read on each chain pins that chain's latest finalized block once per check, so every
+ * booking on that chain is read at that one block, named by number, through whichever reader reads
+ * it, and the result records that block's number, hash and timestamp. A finalized block older than the read age limit by the caller's clock refuses with
  * `dependency.stale`, since a node that has fallen behind would show a state the chain has left. A
  * read that fails, times out or can't be pinned refuses with `dependency.unreadable`, never as not
  * found and never as a pass.
@@ -51,13 +56,7 @@ import type { LockedBacking } from './chain.js'
  * leave the accepted state right after the read.
  */
 
-/** A block a check's reads were pinned to, by number, with the hash and timestamp it had. */
-export interface PinnedBlock {
-  number: bigint
-  hash: Hex
-  /** The block's timestamp in seconds, which the lock's deadlines are held against. */
-  timestamp: bigint
-}
+export type { CheckedChainedTerms, CheckedDependency, PinnedBlock } from '@avow-finance/spec'
 
 /** What a lock's record of one side of a commitment says, as far as this check reads it. */
 export type DependencyRecord = Pick<
@@ -132,7 +131,7 @@ export interface DependencyInput {
    * Avow's approval of this booking's reserve, or for Avow's own check the approval it is about to
    * sign. A buyer passes the approval it is about to fund, and `prepareAcceptance` passes the
    * approval the lock holds, which its later checks confirm. The supplier is taken from it and
-   * from nowhere else, so neither a seller's claim nor a caller's setting can name the owner.
+   * from nowhere else, so neither what a seller says nor a caller's setting can name the owner.
    */
   approval: DependencyApproval
   /**
@@ -143,14 +142,6 @@ export interface DependencyInput {
   /** The caller's clock, in seconds, which the pinned block's timestamp is held against. */
   now: bigint
 }
-
-/** A booking relied on that passed, with the block every read of it was pinned to. */
-export interface CheckedDependency {
-  on: CommitmentReference
-  block: PinnedBlock
-}
-
-export type { CheckedChainedTerms } from '@avow-finance/spec'
 
 /** Why a check refused, with where and as of which block. */
 export interface DependencyRefusal {
@@ -166,11 +157,20 @@ export type DependencyCheck =
   | { ok: true; terms: CheckedChainedTerms; checked: readonly CheckedDependency[] }
   | DependencyRefusal
 
+/**
+ * A commitment's state as every check reads it. An accepted commitment with a report filed has a
+ * charge pending in all but name, so it counts as `charge_pending`. The check of a booking relied
+ * on and the check of a job's link both read states through this, so they can't disagree.
+ */
+export function standingState(record: Pick<DependencyRecord, 'state' | 'hasReport'>): RailState {
+  return record.state === 'accepted' && record.hasReport ? 'charge_pending' : record.state
+}
+
 /** What the state test makes of each state the lock has. The build fails when one is missing. */
 const STATE_REASONS: { readonly [S in RailState]: ReasonCode | null } = {
   none: 'dependency.not_found',
   reserved: 'dependency.not_accepted',
-  // Accepted passes only with no report filed, which `stateProblem` checks.
+  // Accepted passes only with no report filed, which `standingState` counts as a pending charge.
   accepted: null,
   charge_pending: 'dependency.charge_pending',
   paused: 'dependency.charge_pending',
@@ -187,8 +187,7 @@ function stateProblem(
   if (!record) return 'dependency.not_found'
   // A booking the seller supplied from its own account shows no one else accepted it.
   if (isAddressEqual(record.supplier, seller)) return 'dependency.self_supplied'
-  if (record.state === 'accepted' && record.hasReport) return 'dependency.charge_pending'
-  const reason = STATE_REASONS[record.state]
+  const reason = STATE_REASONS[standingState(record)]
   if (reason) return reason
   // The lock lets the seller's account cancel an accepted booking at no charge in any block before
   // its free-cancellation deadline, and block timestamps never go back, so this one has to be at or
@@ -213,6 +212,8 @@ class Unreadable extends Error {
   constructor(
     readonly block: PinnedBlock | null,
     readonly reason: 'dependency.unreadable' | 'dependency.stale' = 'dependency.unreadable',
+    /** Whether the chain gave another hash for the pinned block, so the block itself moved. */
+    readonly moved = false,
   ) {
     super('The booking relied on could not be read at one recent block')
   }
@@ -233,13 +234,17 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, late]).finally(() => clearTimeout(timer))
 }
 
-/** The block each reader pinned in one check, by reader. */
-type Pins = Map<PinnedLockReader, PinnedBlock>
+/**
+ * The block each chain was pinned at in one check, by chain id, so two readers on one chain, such
+ * as two factories there, read at the same block.
+ */
+type Pins = Map<number, PinnedBlock>
 
 /**
- * Reads one booking relied on through one reader, every read at the block the reader pinned for
- * this check. The first read through a reader pins the latest finalized block, and every later one
- * in the same check reads at that block too. A pinned block older than the freshness limit stops
+ * Reads one booking relied on through one reader, every read at the block pinned for its chain in
+ * this check. The first read on a chain pins the latest finalized block through the reader making
+ * it, and every later read on that chain in the same check, through any reader, reads at that
+ * block too. A pinned block older than the freshness limit stops
  * the check before the lock is read. A lock the reader's factory doesn't list is never read from.
  * Whatever was read stands only once the block at that height still has the hash it had when it
  * was pinned, a lock no factory lists included.
@@ -252,10 +257,10 @@ async function observe(
   fresh: Freshness,
 ): Promise<Observed> {
   const work = async (): Promise<Observed> => {
-    let block = pins.get(reader)
+    let block = pins.get(reader.chainId)
     if (!block) {
       block = await reader.head()
-      pins.set(reader, block)
+      pins.set(reader.chainId, block)
     }
     if (fresh.now - block.timestamp > fresh.maxAge) throw new Unreadable(block, 'dependency.stale')
     const listed = await reader.isLock(on.lock, block.number)
@@ -264,14 +269,66 @@ async function observe(
       ? await reader.commitment(on.lock, on.commitmentId, on.side, block.number)
       : null
     const still = await reader.blockHash(block.number)
-    if (still?.toLowerCase() !== block.hash.toLowerCase()) throw new Unreadable(block)
+    if (still?.toLowerCase() !== block.hash.toLowerCase()) {
+      throw new Unreadable(block, 'dependency.unreadable', still !== null)
+    }
     return { reader, block, fields, record }
   }
   try {
     return await within(work(), timeoutMs)
   } catch (error) {
-    throw error instanceof Unreadable ? error : new Unreadable(pins.get(reader) ?? null)
+    throw error instanceof Unreadable ? error : new Unreadable(pins.get(reader.chainId) ?? null)
   }
+}
+
+/**
+ * Whether a lock is one the reader's factory made: the factory lists it, and the lock's own factory
+ * field names that factory. Each caller gives its own reason when it isn't.
+ */
+function madeByFactory(
+  seen: Observed,
+): seen is Observed & { fields: NonNullable<Observed['fields']> } {
+  return seen.fields !== null && isAddressEqual(seen.fields.factory, seen.reader.factory)
+}
+
+/** Whether the lock holds the commitment read under the terms hash given. */
+const heldUnder = (seen: Observed, termsHash: Hex) =>
+  seen.record?.termsHash.toLowerCase() === termsHash.toLowerCase()
+
+/** A check's refusal, with the dependency that failed and the block its reads were pinned to. */
+const refusal = (
+  reason: ReasonCode,
+  index: number | null,
+  block: PinnedBlock | null,
+): DependencyRefusal => ({ ok: false, reason, index, block })
+
+/** How long a check's reads may take and how old its blocks may be, the defaults unless set. */
+function readLimits(deps: DependencyDeps, now: bigint): { timeoutMs: number; fresh: Freshness } {
+  return {
+    timeoutMs: deps.timeoutMs ?? DEPENDENCY_READ_TIMEOUT_MS,
+    fresh: { now, maxAge: deps.maxReadAge ?? DEPENDENCY_MAX_READ_AGE },
+  }
+}
+
+/**
+ * The tests that need only the chain, in order, or null when all pass: provenance, ownership,
+ * state, and the terms hash the lock holds the booking under.
+ */
+function standingProblem(
+  on: CommitmentReference,
+  seen: Observed,
+  supplier: Address,
+): ReasonCode | null {
+  // 1. Provenance.
+  if (!madeByFactory(seen)) return 'dependency.lock_unknown'
+  // 2. Ownership.
+  if (!isAddressEqual(seen.fields.account, supplier)) return 'dependency.not_owned'
+  // 3. State.
+  const state = stateProblem(seen.record, supplier, seen.block)
+  if (state) return state
+  // 4. Terms, as the lock holds them.
+  if (!heldUnder(seen, on.termsHash)) return 'dependency.terms_mismatch'
+  return null
 }
 
 /** The five tests on what was read, in order, or null when all pass. */
@@ -282,20 +339,10 @@ function problemOf(
   supplier: Address,
   disclosed: unknown,
 ): ReasonCode | null {
+  const standing = standingProblem(dependency.on, seen, supplier)
+  if (standing) return standing
   const { on } = dependency
-  // 1. Provenance.
-  if (!seen.fields || !isAddressEqual(seen.fields.factory, seen.reader.factory)) {
-    return 'dependency.lock_unknown'
-  }
-  // 2. Ownership.
-  if (!isAddressEqual(seen.fields.account, supplier)) return 'dependency.not_owned'
-  // 3. State.
-  const state = stateProblem(seen.record, supplier, seen.block)
-  if (state) return state
-  // 4. Terms.
-  if (seen.record?.termsHash.toLowerCase() !== on.termsHash.toLowerCase()) {
-    return 'dependency.terms_mismatch'
-  }
+  // 4. Terms, as the seller shows them.
   const shown = parseSectionDisclosure(disclosed)
   if (
     !shown.ok ||
@@ -322,47 +369,286 @@ export async function verifyDependencies(
   input: DependencyInput,
   deps: DependencyDeps,
 ): Promise<DependencyCheck> {
-  const refuse = (reason: ReasonCode, index: number | null, block: PinnedBlock | null) =>
-    ({ ok: false, reason, index, block }) as const
   const t = input.terms
   const shape = chainedTermsShapeProblem(t)
-  if (shape) return refuse(shape, null, null)
+  if (shape) return refusal(shape, null, null)
+  const setting = dependencyCheckProblem(t)
+  if (setting) return refusal(setting, null, null)
   const rules = dependenciesProblem(t.dependencies)
-  if (rules) return refuse(rules, null, null)
+  if (rules) return refusal(rules, null, null)
   // The fit test compares subjects, so a subject its template refuses stops the check before any
   // read.
   const subject = subjectProblem({ template: t.template, subject: t.subject })
-  if (subject) return refuse(subject, null, null)
-  if (input.disclosed.length > t.dependencies.length) return refuse('message.invalid', null, null)
+  if (subject) return refusal(subject, null, null)
+  if (input.disclosed.length > t.dependencies.length) return refusal('message.invalid', null, null)
   // The approval of this booking's reserve is for its buyer side, the only side version 3 terms
   // can be reserved on.
-  if (input.approval.side !== 'buyer') return refuse('approval.terms_mismatch', null, null)
+  if (input.approval.side !== 'buyer') return refusal('approval.terms_mismatch', null, null)
   const supplier = input.approval.supplier
-  const timeoutMs = deps.timeoutMs ?? DEPENDENCY_READ_TIMEOUT_MS
-  const fresh = { now: input.now, maxAge: deps.maxReadAge ?? DEPENDENCY_MAX_READ_AGE }
+  const { timeoutMs, fresh } = readLimits(deps, input.now)
   const pins: Pins = new Map()
   const checked: CheckedDependency[] = []
   for (const [index, dependency] of t.dependencies.entries()) {
-    // Each supported factory on the booking's chain in turn, until one lists the lock. The last
-    // one read stands for a lock none of them lists.
-    let seen: Observed | null = null
-    for (const reader of deps.readers.filter((r) => r.chainId === dependency.on.chainId)) {
-      try {
-        seen = await observe(dependency.on, reader, pins, timeoutMs, fresh)
-      } catch (error) {
-        if (error instanceof Unreadable) return refuse(error.reason, index, error.block)
-        return refuse('dependency.unreadable', index, null)
-      }
-      if (seen.fields) break
-    }
-    // No factory is supported on the booking's chain, so nothing was read.
-    if (!seen) return refuse('dependency.lock_unknown', index, null)
+    const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
+    if (!('reader' in seen)) return refusal(seen.reason, index, seen.block)
     const problem = problemOf(dependency, seen, t, supplier, input.disclosed[index])
-    if (problem) return refuse(problem, index, seen.block)
-    // Copies, so freezing what the check gives back leaves the caller's terms and the reader's
-    // block alone.
-    const { number, hash, timestamp } = seen.block
-    checked.push({ on: { ...dependency.on }, block: { number, hash, timestamp } })
+    if (problem) return refusal(problem, index, seen.block)
+    checked.push(copied(dependency.on, seen.block))
   }
   return { ok: true, terms: t as CheckedChainedTerms, checked }
+}
+
+/**
+ * Copies of a booking and its block, so freezing what a check gives back leaves the caller's
+ * terms and the reader's block alone.
+ */
+function copied(on: CommitmentReference, block: PinnedBlock): CheckedDependency {
+  const { number, hash, timestamp } = block
+  return { on: { ...on }, block: { number, hash, timestamp } }
+}
+
+/** A read that stopped, with why and the block it had pinned. */
+interface Stopped {
+  reason: ReasonCode
+  block: PinnedBlock | null
+  /** Whether the chain gave another hash for the pinned block, so the block itself moved. */
+  moved: boolean
+}
+
+/**
+ * Reads one booking through each supported reader on its chain in turn, until one's factory lists
+ * its lock. The last one read stands for a lock none of them lists, and a chain no reader supports
+ * is `dependency.lock_unknown`, with nothing read.
+ */
+async function readThrough(
+  on: CommitmentReference,
+  readers: readonly PinnedLockReader[],
+  pins: Pins,
+  timeoutMs: number,
+  fresh: Freshness,
+): Promise<Observed | Stopped> {
+  let seen: Observed | null = null
+  for (const reader of readers.filter((r) => r.chainId === on.chainId)) {
+    try {
+      seen = await observe(on, reader, pins, timeoutMs, fresh)
+    } catch (error) {
+      if (error instanceof Unreadable) {
+        return { reason: error.reason, block: error.block, moved: error.moved }
+      }
+      return { reason: 'dependency.unreadable', block: null, moved: false }
+    }
+    if (seen.fields) break
+  }
+  return seen ?? { reason: 'dependency.lock_unknown', block: null, moved: false }
+}
+
+export interface JobVerificationInput {
+  /** What a link to verify a job carries, from `decodeJobVerification`. */
+  verification: JobVerification
+  /** The caller's clock, in seconds, which the pinned block's timestamp is held against. */
+  now: bigint
+}
+
+/**
+ * A job's states while a charge is open: reported and pending, or paused while the customer
+ * contests it. The reserve is still held.
+ */
+export const CHARGE_OPEN_JOB_STATES = [
+  'charge_pending',
+  'paused',
+] as const satisfies readonly RailState[]
+export type ChargeOpenJobState = (typeof CHARGE_OPEN_JOB_STATES)[number]
+
+/** A job's states once it ended: its reserve released, charged or resolved, and gone from the lock. */
+export const ENDED_JOB_STATES = [
+  'released',
+  'charged',
+  'resolved',
+] as const satisfies readonly RailState[]
+export type EndedJobState = (typeof ENDED_JOB_STATES)[number]
+
+/** The job commitment as the customer's lock held it at the pinned block, in one state. */
+export interface CheckedJob<S extends RailState> {
+  state: S
+  /** The customer's free-cancellation deadline as the lock holds it, which is when work starts. */
+  freeCancelBy: bigint
+  /** The block the job commitment was read at, which every read on its chain shares. */
+  block: PinnedBlock
+}
+
+/**
+ * A booking a job's link names, as the link's check read it: standing, or with the reason it
+ * doesn't stand at the block it was read at. The link carries the job's subject only as its hash,
+ * so the check never tests whether the job fits inside the booking. A `CheckedDependency` comes only
+ * from a check that tested fit, as the customer's check and the developer's acceptance do, so this
+ * has fields of its own and neither can stand for the other.
+ */
+export type LinkedBooking =
+  | { booking: CommitmentReference; readAt: PinnedBlock; fit: 'unchecked'; standing: true }
+  | {
+      booking: CommitmentReference
+      /** The block the booking was read at, or null when its read stopped before one was pinned. */
+      readAt: PinnedBlock | null
+      fit: 'unchecked'
+      standing: false
+      reason: ReasonCode
+    }
+
+/** A booking that stood when the link's check read it. */
+export type StandingBooking = Extract<LinkedBooking, { standing: true }>
+
+/**
+ * What a link to verify a job shows, as the chain held it at one pinned block. A page switches on
+ * the outcome, and only `stands` is a job a page can show as standing.
+ *
+ * - `refused`: the link doesn't match the chain or couldn't be read, or a booking a reserved job
+ *   relies on doesn't stand, with the reason, the booking by its place and the block.
+ * - `awaiting_acceptance`: the customer reserved and the developer's business hasn't accepted, and
+ *   every booking the job relies on stands.
+ * - `stands`: the job is accepted with no report filed. Each booking comes back as read, since a
+ *   booking cancelled or failed after the customer accepted leaves the job standing.
+ * - `charge_pending`: a charge is reported and pending, or paused while it's contested, and the
+ *   reserve is still held. Each booking comes back as read.
+ * - `ended`: the reserve was released, charged or resolved. Each booking comes back as read.
+ */
+export type JobVerificationCheck =
+  | { outcome: 'refused'; reason: ReasonCode; index: number | null; block: PinnedBlock | null }
+  | (JobLinkParties & {
+      outcome: 'awaiting_acceptance'
+      job: CheckedJob<'reserved'>
+      bookings: readonly StandingBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'stands'
+      job: CheckedJob<'accepted'>
+      bookings: readonly LinkedBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'charge_pending'
+      job: CheckedJob<ChargeOpenJobState>
+      bookings: readonly LinkedBooking[]
+    })
+  | (JobLinkParties & {
+      outcome: 'ended'
+      job: CheckedJob<EndedJobState>
+      bookings: readonly LinkedBooking[]
+    })
+
+interface JobLinkParties {
+  /**
+   * The supplier the customer's lock names for the job, copied there from Avow's approval, whose
+   * own lock has to hold each compute booking.
+   */
+  supplier: Address
+}
+
+const jobRefusal = (
+  reason: ReasonCode,
+  index: number | null,
+  block: PinnedBlock | null,
+): JobVerificationCheck => ({ outcome: 'refused', reason, index, block })
+
+const isChargeOpen = (state: RailState): state is ChargeOpenJobState =>
+  (CHARGE_OPEN_JOB_STATES as readonly RailState[]).includes(state)
+
+const isEnded = (state: RailState): state is EndedJobState =>
+  (ENDED_JOB_STATES as readonly RailState[]).includes(state)
+
+/**
+ * What a read of the job's own commitment that stopped means, in the job's terms. The reasons a
+ * read of a booking relied on stops with name that booking, so these name the job's lock and the
+ * job's reference instead. A stale block means the same for either, so it stays.
+ */
+const JOB_READ_REASONS: Partial<Record<ReasonCode, ReasonCode>> = {
+  'dependency.lock_unknown': 'chain.lock_unknown',
+  'dependency.unreadable': 'reference.unreadable',
+}
+
+/**
+ * The check a page runs on a link to verify a job, reading the chain at one pinned finalized
+ * block. It works out the job's terms hash from what the link carries, reads the job commitment
+ * from the customer's lock with its state and free-cancellation deadline, and takes the supplier
+ * from the lock's record of it, which the lock copied from Avow's approval. Then it runs the tests
+ * `verifyDependencies` runs on each compute booking the job names that need only the chain:
+ * provenance, ownership by that supplier, state with free cancellation, the terms hash the lock
+ * holds and a fresh block. It skips the shown section and fit, which need the job's terms in full.
+ *
+ * The job's state, read through `standingState`, decides the outcome. While the job is reserved the
+ * bookings gate it, as they gate the developer's acceptance, so a booking that doesn't stand refuses.
+ * Once the job is accepted, has a charge open or has ended, each booking is reported as read and the
+ * outcome stays the job's, since a booking cancelled or failed after the customer accepted leaves
+ * the job standing. A read on the job's own chain that finds the pinned block's hash changed refuses
+ * the whole link as `reference.unreadable` in every state, since the job was read at that block.
+ *
+ * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
+ * customer's lock no supported factory created is `chain.lock_unknown`, a read of the job that
+ * fails is `reference.unreadable`, and a lock that holds no job commitment under that terms hash is
+ * `reference.commitment_mismatch`, each before any compute booking is read.
+ */
+export async function verifyJobVerification(
+  input: JobVerificationInput,
+  deps: DependencyDeps,
+): Promise<JobVerificationCheck> {
+  const v = input.verification
+  const hashed = jobVerificationProblem(v)
+  if (hashed) return jobRefusal(hashed, null, null)
+  const rules = dependenciesProblem(v.dependencies)
+  if (rules) return jobRefusal(rules, null, null)
+  if (v.commitment.side !== 'buyer') return jobRefusal('reference.commitment_mismatch', null, null)
+  const { timeoutMs, fresh } = readLimits(deps, input.now)
+  const pins: Pins = new Map()
+  const job = await readThrough(v.commitment, deps.readers, pins, timeoutMs, fresh)
+  if (!('reader' in job)) {
+    return jobRefusal(JOB_READ_REASONS[job.reason] ?? job.reason, null, job.block)
+  }
+  if (!madeByFactory(job)) return jobRefusal('chain.lock_unknown', null, job.block)
+  const state = job.record ? standingState(job.record) : 'none'
+  if (!job.record || state === 'none' || !heldUnder(job, v.commitment.termsHash)) {
+    return jobRefusal('reference.commitment_mismatch', null, job.block)
+  }
+  const supplier = job.record.supplier
+  const gated = state === 'reserved'
+  const bookings: LinkedBooking[] = []
+  for (const [index, dependency] of v.dependencies.entries()) {
+    const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
+    const booking = { ...dependency.on }
+    if (!('reader' in seen)) {
+      // The job was read at the same block on its chain, so a block that moved there leaves
+      // nothing about the job standing either.
+      if (seen.moved && dependency.on.chainId === v.commitment.chainId) {
+        return jobRefusal('reference.unreadable', null, seen.block)
+      }
+      if (gated) return jobRefusal(seen.reason, index, seen.block)
+      const readAt = seen.block ? copied(dependency.on, seen.block).block : null
+      bookings.push({ booking, readAt, fit: 'unchecked', standing: false, reason: seen.reason })
+      continue
+    }
+    const problem = standingProblem(dependency.on, seen, supplier)
+    if (problem && gated) return jobRefusal(problem, index, seen.block)
+    const readAt = copied(dependency.on, seen.block).block
+    bookings.push(
+      problem
+        ? { booking, readAt, fit: 'unchecked', standing: false, reason: problem }
+        : { booking, readAt, fit: 'unchecked', standing: true },
+    )
+  }
+  const at = {
+    freeCancelBy: job.record.freeCancelBy,
+    block: copied(v.commitment, job.block).block,
+  }
+  if (state === 'reserved') {
+    const standing = bookings.filter((b): b is StandingBooking => b.standing)
+    return {
+      outcome: 'awaiting_acceptance',
+      job: { state, ...at },
+      supplier,
+      bookings: standing,
+    }
+  }
+  if (state === 'accepted') return { outcome: 'stands', job: { state, ...at }, supplier, bookings }
+  if (isChargeOpen(state)) {
+    return { outcome: 'charge_pending', job: { state, ...at }, supplier, bookings }
+  }
+  if (isEnded(state)) return { outcome: 'ended', job: { state, ...at }, supplier, bookings }
+  return jobRefusal('reference.commitment_mismatch', null, job.block)
 }

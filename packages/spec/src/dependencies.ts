@@ -1,5 +1,13 @@
+import type { Hex } from 'viem'
 import { z } from 'zod'
-import { type GpuSubject, gpuSubjectFits, gpuSubjectProblem } from './gpu-reservation.js'
+import {
+  GPU_RESERVATION,
+  type GpuSubject,
+  gpuSubjectFits,
+  gpuSubjectProblem,
+} from './gpu-reservation.js'
+import { type JobSubject, jobFitsReservation, jobSubjectProblem } from './job.js'
+import { bytes32, u64 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import { type CommitmentReference, commitmentReferenceJson } from './references.js'
 import {
@@ -150,17 +158,26 @@ export function dependenciesProblem(dependencies: unknown): ReasonCode | null {
 
 /**
  * Each template's rules for a booking's subject, on its own and inside the subject of a booking it
- * relies on. The build fails when a template has no rules here.
+ * relies on. A GPU reservation fits only inside a GPU reservation, and a job only inside the GPU
+ * reservation of the compute it runs on. The build fails when a template has no rules here.
  */
 const SUBJECT_RULES: {
   readonly [T in TemplateId]: {
     problem: (subject: unknown) => ReasonCode | null
-    fits: (inner: unknown, outer: unknown) => boolean
+    fits: (inner: unknown, outer: TemplatedSubject) => boolean
   }
 } = {
   'gpu-reservation/1': {
     problem: (subject) => gpuSubjectProblem(subject as GpuSubject),
-    fits: (inner, outer) => gpuSubjectFits(inner as GpuSubject, outer as GpuSubject),
+    fits: (inner, outer) =>
+      outer.template === GPU_RESERVATION &&
+      gpuSubjectFits(inner as GpuSubject, outer.subject as GpuSubject),
+  },
+  'job/1': {
+    problem: (subject) => jobSubjectProblem(subject as JobSubject),
+    fits: (inner, outer) =>
+      outer.template === GPU_RESERVATION &&
+      jobFitsReservation(inner as JobSubject, outer.subject as GpuSubject),
   },
 }
 
@@ -183,11 +200,41 @@ export function subjectProblem(t: TemplatedSubject): ReasonCode | null {
 }
 
 /**
- * Whether a booking's subject fits inside the subject of a booking it relies on. The two have to
- * be under the same template, a template this code doesn't know never fits, and neither does a
- * subject its template's rules refuse.
+ * Whether a booking's subject fits inside the subject of a booking it relies on, by the rules of
+ * the inner booking's template. A pair of templates those rules don't name never fits, a template
+ * this code doesn't know never fits, and neither does a subject its template's rules refuse.
  */
 export function subjectFits(inner: TemplatedSubject, outer: TemplatedSubject): boolean {
-  if (inner.template !== outer.template) return false
-  return rulesOf(inner.template)?.fits(inner.subject, outer.subject) ?? false
+  return rulesOf(inner.template)?.fits(inner.subject, outer) ?? false
 }
+
+/** A block a check read at, by number, with the hash and timestamp it had then. */
+export interface PinnedBlock {
+  number: bigint
+  hash: Hex
+  /** The block's timestamp in seconds, which the lock's deadlines are held against. */
+  timestamp: bigint
+}
+
+/** A pinned block's JSON form, with numbers as decimal strings and the hash in lower case. */
+export const pinnedBlockJson = z.strictObject({ number: u64, hash: bytes32, timestamp: u64 })
+
+/** A booking relied on that passed a check, with the block every read of it was pinned to. */
+export interface CheckedDependency {
+  on: CommitmentReference
+  block: PinnedBlock
+}
+
+/** A booking relied on by its place in the terms, or null when no single one is meant. */
+export const dependencyIndexJson = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_DEPENDENCIES - 1)
+  .nullable()
+
+/** A checked booking's JSON form. */
+export const checkedDependencyJson = z.strictObject({
+  on: commitmentReferenceJson,
+  block: pinnedBlockJson,
+})

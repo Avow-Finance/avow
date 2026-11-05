@@ -1,0 +1,52 @@
+---
+title: Committing to a quote a supplier signed
+slug: docs/composable-commitments/commit-to-quote
+---
+
+`book` has the agent propose terms and ask the supplier to sign them. Some suppliers quote first. A business taking a job quotes its customer with terms it already signed, naming the compute booking the job relies on, and the customer's agent commits to that quote. `commitToQuote`, on the agent `createAgent` makes, is that path. It takes version 2 terms, or [version 3](/docs/composable-commitments/terms-v3) terms in full, and refuses version 1.
+
+```ts
+const result = await agent.commitToQuote({
+  supplier,           // the supplier as Avow registered it
+  terms,              // version 2, or version 3 in full
+  salt,
+  agreement,          // the terms agreement the supplier's signing key signed
+  supplierSignature,
+  disclosed,          // for version 3, the section of each booking relied on that the supplier shows
+})
+if (result.ok) console.log(result.commitment.commitmentId, result.dependencies)
+else console.log(result.layer, result.reason)
+```
+
+## What it takes
+
+A `SignedQuote` holds the supplier's profile as Avow registered it, the terms, their salt, the terms agreement and the supplier's signature on it. For version 3 terms it also holds the section of each booking the terms rely on that the supplier shows, in the terms' order. The agreement has to name the agent's business as the buyer, the agent's mandate, the supplier and the terms hash of these terms under this salt.
+
+## What it checks, in order
+
+1. The terms' version and shape, and that the terms and salt give the agreement's terms hash.
+2. The agreement's parties, which are the agent's business, its mandate and the supplier the quote names.
+3. The agreement's expiry, which is still ahead and at most ten minutes away.
+4. For version 2 terms, the mandate check, before anything is signed.
+5. The supplier's signature on the agreement, which has to come from the signing key in the supplier's profile.
+6. Avow's approval. The agent signs the agreement as the buyer and asks Avow to approve the reserve.
+7. The approval against the terms and the mandate, as `book` checks it.
+8. For version 3 terms, `verifyDependencies` on that approval, which names the owner of each booking relied on, then the mandate check on the checked terms.
+
+Only after every check passes does the agent fund the reserve. The result is the commitment with each booking relied on and the block it was read at, or a refusal with its reason code and the layer that refused it.
+
+## Who refuses
+
+Every refusal names its layer, `sdk` for the agent's own checks or `avow` for Avow's API, and none of them moves money.
+
+| Refusal | Layer | When |
+| --- | --- | --- |
+| The terms' version, shape or hash, or the agreement's parties or expiry | `sdk` | Before anything is signed |
+| Version 2 terms the mandate refuses, such as a reserve over its cap or job terms that name no compute (`dependency.required`) | `sdk` | Before anything is signed |
+| A supplier signature from another key | `sdk` | Before Avow sees the agreement |
+| Anything Avow's API refuses, such as version 3 terms over the mandate's cap | `avow` | When the agent asks for the approval |
+| An approval that differs from the terms or the mandate | `sdk` | After the approval, before funding |
+| A booking relied on that the dependency check refuses | `sdk` | After the approval, before funding |
+| Version 3 terms the mandate refuses | `sdk` | After the approval, before funding |
+
+Version 3 terms reach the mandate check only once their bookings are checked, and that check takes the owner of each booking from Avow's approval. So for version 3 the agent asks Avow before its own mandate check runs. Avow's API runs the same mandate check first, so a version 3 quote over the mandate's cap comes back refused by Avow, with the layer `avow`. The SDK's check after the approval still refuses anything an approval lets through that the mandate doesn't allow, and no money moves before it.

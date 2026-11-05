@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem'
 import type { Dependencies, DependencyCheck } from './dependencies.js'
 import type { ChargeKind } from './eip712.js'
 import type { ChainedGpuReservationTerms, GpuReservationTerms } from './gpu-reservation.js'
+import type { ChainedJobTerms, JobTerms } from './job.js'
 import type { ReasonCode } from './reasons.js'
 
 /**
@@ -150,8 +151,23 @@ export const AMOUNT_DECIMALS = 6
  * The templates this code knows, by name and version. A template fixes what its subject holds and
  * the rules its terms follow, and its meaning never changes. A new meaning is a new version.
  */
-export const TEMPLATE_IDS = ['gpu-reservation/1'] as const
+export const TEMPLATE_IDS = ['gpu-reservation/1', 'job/1'] as const
 export type TemplateId = (typeof TEMPLATE_IDS)[number]
+
+/**
+ * Who each template lets check the bookings its version 3 terms rely on. A job's customer checks
+ * its compute itself, so a job takes only `buyer`. Every rule about the setting reads it from here,
+ * and the build fails when a template is missing.
+ */
+export const DEPENDENCY_CHECKS_ALLOWED = {
+  'gpu-reservation/1': ['buyer', 'avow'],
+  'job/1': ['buyer'],
+} as const satisfies {
+  readonly [T in TemplateId]: readonly [DependencyCheck, ...DependencyCheck[]]
+}
+
+/** The settings a template allows for who checks its version 3 terms' bookings. */
+export type DependencyChecksOf<T extends TemplateId> = (typeof DEPENDENCY_CHECKS_ALLOWED)[T][number]
 
 /** What the buyer owes for the subject. The lock never reads it, so the terms describe it only. */
 export type Consideration =
@@ -227,8 +243,11 @@ export interface TermsOf<Subject, Template extends TemplateId> {
   backing: Backing
 }
 
-/** Version 2 terms under any template this code knows. */
-export type Terms = GpuReservationTerms
+/**
+ * Version 2 terms under any template this code knows. Job terms take this shape only as a proposal,
+ * since a job relies on a compute booking and so commits only under version 3.
+ */
+export type Terms = GpuReservationTerms | JobTerms
 
 /**
  * The terms of a commitment that relies on other bookings, version 3. They hold version 2's header
@@ -244,7 +263,7 @@ export interface ChainedTermsOf<Subject, Template extends TemplateId>
 }
 
 /** Version 3 terms under any template this code knows. */
-export type ChainedTerms = ChainedGpuReservationTerms
+export type ChainedTerms = ChainedGpuReservationTerms | ChainedJobTerms
 
 /** An agent's request to reserve money for a supplier under terms. */
 export interface ReserveRequest {

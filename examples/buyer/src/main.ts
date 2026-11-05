@@ -213,7 +213,8 @@ async function book() {
   try {
     result = await agent.book({ supplier, terms, category: 'compute' })
   } catch (e) {
-    if (e instanceof BookingError) store.saveBooking({ ...e.commitment, outcome: e.outcome })
+    // The error is this booking's, whose version 2 terms book carries unchanged.
+    if (e instanceof BookingError) store.saveBooking({ ...e.commitment, terms, outcome: e.outcome })
     throw e
   }
   if (!result.ok) throw new Error(`The booking was refused: ${result.reason}`)

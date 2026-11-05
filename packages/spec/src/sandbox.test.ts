@@ -15,6 +15,7 @@ import {
   type SessionEvent,
   whenRetryPasses,
 } from './sandbox.js'
+import { JOB_EVENTS } from './test-helpers.js'
 import { toWire } from './wire.js'
 
 const reference: CommitmentReference = {
@@ -26,7 +27,7 @@ const reference: CommitmentReference = {
   termsHash: `0x${'cd'.repeat(32)}`,
 }
 
-/** One event of each type, as the starter posts them. */
+/** One event of each type, as the starter and a job post them. */
 const events: SessionEvent[] = [
   { type: 'run_started', run: 1, source: 'script', tool: null },
   { type: 'run_started', run: 1, source: 'mcp', tool: 'book' },
@@ -55,6 +56,7 @@ const events: SessionEvent[] = [
   },
   { type: 'committed', run: 3, source: 'script', reference, amount: dollars(250) },
   { type: 'accepted', run: 3, source: 'script', reference },
+  ...JOB_EVENTS,
 ]
 
 /** The event as it crosses JSON between the starter, Avow's API and the screen. */
