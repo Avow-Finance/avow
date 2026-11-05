@@ -449,7 +449,7 @@ describe('tempoLockReader', () => {
     const node = lockNode()
     const reader = tempoLockReader(node.client, { factory: FACTORY, chainId: 42431 })
     const head = await reader.head()
-    expect(head).toEqual({ number: HEAD, hash: id('block 77') })
+    expect(head).toEqual({ number: HEAD, hash: id('block 77'), timestamp: 1n })
     expect(await reader.isLock(LOCK, head.number)).toBe(true)
     expect(await reader.lockFields(LOCK, head.number)).toEqual({
       factory: getAddress(FACTORY),
@@ -484,13 +484,20 @@ describe('tempoLockReader', () => {
     const reader = tempoLockReader(node.client, { factory: FACTORY, chainId: CHAIN_ID })
     const terms = chainedTerms(testnetDemoTerms(START, ARBITER), [dependencyOn()])
     const result = await verifyDependencies(
-      { terms, supplier: reseller, disclosed: [shownUpstream] },
+      {
+        terms,
+        approval: { side: 'buyer', supplier: reseller },
+        disclosed: [shownUpstream],
+        now: 1n,
+      },
       { readers: [reader] },
     )
     expect(result).toEqual({
       ok: true,
       terms,
-      checked: [{ on: dependencyOn().on, block: { number: HEAD, hash: id('block 77') } }],
+      checked: [
+        { on: dependencyOn().on, block: { number: HEAD, hash: id('block 77'), timestamp: 1n } },
+      ],
     })
     for (const c of node.calls) expect(c.block, c.fn).toBe(toHex(HEAD))
   })
@@ -502,7 +509,12 @@ describe('tempoLockReader', () => {
       dependencyOn({ lock: LOOKALIKE }),
     ])
     const result = await verifyDependencies(
-      { terms, supplier: reseller, disclosed: [shownUpstream] },
+      {
+        terms,
+        approval: { side: 'buyer', supplier: reseller },
+        disclosed: [shownUpstream],
+        now: 1n,
+      },
       { readers: [reader] },
     )
     expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown' })
@@ -514,7 +526,12 @@ describe('tempoLockReader', () => {
     const reader = tempoLockReader(node.client, { factory: FACTORY, chainId: CHAIN_ID })
     const terms = chainedTerms(testnetDemoTerms(START, ARBITER), [dependencyOn()])
     const result = await verifyDependencies(
-      { terms, supplier: reseller, disclosed: [shownUpstream] },
+      {
+        terms,
+        approval: { side: 'buyer', supplier: reseller },
+        disclosed: [shownUpstream],
+        now: 1n,
+      },
       { readers: [reader] },
     )
     expect(result).toMatchObject({ ok: false, reason: 'dependency.unreadable' })

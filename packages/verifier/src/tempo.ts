@@ -326,6 +326,7 @@ function chainIdOf(client: Client, options: TempoReaderOptions): number {
  * Reads the locks one factory created on Tempo, every read as of a block named by number, for the
  * check of a booking another booking relies on. The latest finalized block is the one pinned, so
  * no later block can change what it shows, and a node that doesn't have a block refuses the read.
+ * The pinned block carries its timestamp, so the check can refuse a node that has fallen behind.
  * The caller trusts the node the client talks to, so it uses one it chose.
  */
 export function tempoLockReader(client: Client, options: TempoReaderOptions): PinnedLockReader {
@@ -337,7 +338,7 @@ export function tempoLockReader(client: Client, options: TempoReaderOptions): Pi
     factory,
     async head() {
       const block = await getBlock(client, { blockTag: 'finalized' })
-      return { number: block.number, hash: block.hash }
+      return { number: block.number, hash: block.hash, timestamp: block.timestamp }
     },
     async blockHash(blockNumber) {
       try {

@@ -46,7 +46,9 @@ import {
   agreed,
   approval,
   authorization,
+  blockAt,
   buyer,
+  CLOSED_FREE_CANCEL,
   COMMITMENT,
   DOMAIN,
   dependencyOn,
@@ -669,17 +671,21 @@ describe('a booking that relies on the supplier’s own booking', () => {
       dependencies?: 'none'
       terms?: ChainedTerms
       termsHash?: Hex
+      /** Fields of Avow's approval that differ from the supplier's own. */
+      approved?: Partial<Approval>
+      /** What the supplier hands over as Avow's approval, in place of a signed one. */
+      approvalJson?: unknown
     } = {},
   ) {
     const t = change.terms ?? chained
     const h = change.termsHash ?? termsHash(t, SALT)
-    const approved = approval({ termsHash: h })
+    const approved = approval({ termsHash: h, ...change.approved })
     chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, approved))
     const { reader, calls } = scriptedLocks(change.script)
     const prepared = await prepareAcceptance(
       {
         authorization: await signedAuthorization(authorization({ termsHash: h })),
-        approval: await signedApproval(approved),
+        approval: 'approvalJson' in change ? change.approvalJson : await signedApproval(approved),
         mandate: await signedMandate(mandate),
         agreed: { ...agreed, termsHash: h },
         terms: t,
@@ -700,9 +706,29 @@ describe('a booking that relies on the supplier’s own booking', () => {
     for (const c of calls) expect(c.at, c.call).toBe(PINNED.number)
   })
 
+  it('takes the owner from Avow’s approval, never from the supplier’s own settings', async () => {
+    // The lock relied on belongs to this supplier's account, which its settings name, and the
+    // approval names another account, so the booking isn't the approved supplier's.
+    const { prepared, calls } = await prepareChained({ approved: { supplier: newKey().address } })
+    expect(prepared).toEqual({ ok: false, reason: 'dependency.not_owned', index: 0, block: PINNED })
+    expect(calls.map((c) => c.call)).toContain('lockFields')
+  })
+
+  it('refuses something other than an approval before reading the booking relied on', async () => {
+    const { prepared, calls } = await prepareChained({ approvalJson: { approval: 'yes' } })
+    expect(prepared).toEqual({ ok: false, reason: 'message.invalid' })
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a finalized block older than the limit by the request’s clock', async () => {
+    const old = { ...PINNED, timestamp: NOW - 120n }
+    const { prepared } = await prepareChained({ script: { head: old } })
+    expect(prepared).toEqual({ ok: false, reason: 'dependency.stale', index: 0, block: old })
+  })
+
   it('freezes its own copies of each reference and block, leaving the caller’s objects alone', async () => {
     const own = chainedTerms(terms, [dependencyOn()])
-    const head = { number: 4321n, hash: id('block 4321') }
+    const head = { ...PINNED }
     const { prepared } = await prepareChained({ terms: own, script: { head } })
     if (!prepared.ok) throw new Error(prepared.reason)
     const [listed] = prepared.dependencies
@@ -726,11 +752,12 @@ describe('a booking that relies on the supplier’s own booking', () => {
   it('reads the bookings relied on before anything else reads the terms', async () => {
     const script = { locks: { [SUPPLIER_LOCK]: supplierLock({ state: 'reserved' }) } }
     const { reader } = scriptedLocks(script)
-    // An authorization that doesn't even parse is never reached while the dependency fails.
+    // An authorization that doesn't even parse is never reached while the dependency fails. Only
+    // the approval is read first, since it names the owner, and reading it reads no terms.
     const prepared = await prepareAcceptance(
       {
         authorization: 'not an authorization',
-        approval: 'not an approval',
+        approval: await signedApproval(approval({ termsHash: hash })),
         mandate: await signedMandate(mandate),
         agreed: { ...agreed, termsHash: hash },
         terms: chained,
@@ -804,6 +831,7 @@ describe('a booking that relies on the supplier’s own booking', () => {
         hasReport: false,
         termsHash: hash,
         supplier: supplierAccount.address,
+        freeCancelBy: CLOSED_FREE_CANCEL,
       },
     }
     const buyerLock = { ...supplierLock(null), account: buyer.address, records: held }
@@ -851,7 +879,7 @@ describe('a booking that relies on the supplier’s own booking', () => {
   describe('an upstream cancellation raced against every step after it', () => {
     // Each step reads the chain one block after the last. The buyer checks the booking relied on
     // at block 100, Avow checks it at 101 before it approves, and the seller accepts at 102.
-    const block = (n: bigint) => ({ number: n, hash: id(`block ${n}`) })
+    const block = blockAt
     const AT = { buyer: 100n, avow: 101n, seller: 102n } as const
     const STEPS = ['buyer', 'avow', 'seller'] as const
 
@@ -862,8 +890,9 @@ describe('a booking that relies on the supplier’s own booking', () => {
         verifyDependencies(
           {
             terms: chainedTerms(terms, [dependencyOn()], setting),
-            supplier: supplierAccount.address,
+            approval: { side: 'buyer', supplier: supplierAccount.address },
             disclosed: [shownUpstream],
+            now: NOW,
           },
           { readers: [scriptedLocks({ head: block(at), from }).reader] },
         )
@@ -903,8 +932,9 @@ describe('a booking that relies on the supplier’s own booking', () => {
       const result = await verifyDependencies(
         {
           terms: chainedTerms(terms, [dependencyOn()]),
-          supplier: supplierAccount.address,
+          approval: { side: 'buyer', supplier: supplierAccount.address },
           disclosed: [shownUpstream],
+          now: NOW,
         },
         { readers: [reader] },
       )

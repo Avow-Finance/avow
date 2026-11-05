@@ -25,7 +25,7 @@ For GPU reservations, `gpuSubjectFits` says whether a booking fits inside the on
 
 | Setting | Who checks | What the buyer is shown |
 | --- | --- | --- |
-| `buyer`, the default | The buyer reads each booking from the chain itself before it signs | The terms in full, every reference and the subject the seller shows for each |
+| `buyer`, the default | The buyer reads each booking from the chain itself before it funds its reserve | The terms in full, every reference and the subject the seller shows for each |
 | `avow` | Avow, before it approves, and the buyer relies on that approval. Avow's API check is planned and not built yet | The terms with the dependencies section as its label and digest |
 
 The seller and Avow see the terms in full in both settings. The setting sits in the header, which is hashed in the clear, so a buyer shown only the digest still reads the setting and checks it against the terms hash. A setting inside the hidden section would let a seller hide entries the buyer is meant to read, and the buyer couldn't tell. `chainedTerms` takes the setting as its third argument and defaults to `buyer`.

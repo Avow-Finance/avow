@@ -144,9 +144,9 @@ const sameTiming = (a: LockTiming, b: LockTiming) =>
  * with the first reason that applies.
  *
  * 0. For version 3 terms, every booking they rely on passes `verifyDependencies` first, with the
- *    supplier's own account as the one whose lock has to hold it. That holds whoever the terms say
- *    checks for the buyer, since the supplier has the terms in full. Nothing below reads them
- *    before.
+ *    account Avow's approval names as supplier as the one whose lock has to hold it. That holds
+ *    whoever the terms say checks for the buyer, since the supplier has the terms in full. Nothing
+ *    below reads them before, and the checks below confirm the lock holds exactly that approval.
  * 1. Avow's authorization passes every check `verifySupplierAuthorization` makes, with the buyer's
  *    signed mandate required, so a mandate that's forged, expired, revoked with its agent key, or
  *    that doesn't allow this supplier, category, currency, token or amount refuses.
@@ -191,8 +191,20 @@ export async function prepareAcceptance(
   let under: TermsUnderCheck
   let dependencies: readonly CheckedDependency[] = []
   if (isChainedTerms(t)) {
+    // The owner comes from the approval, never from this supplier's own settings. The approval's
+    // envelope is read here and its lock and contents are checked below, so a check that passes
+    // here leads to an acceptance only once the lock is shown to hold this approval.
+    const named = parseSigned(request.approval, 'Approval', approvalJson, {
+      chainId: config.chainId,
+    })
+    if (!named.ok) return named
     const relied = await verifyDependencies(
-      { terms: t, supplier: config.account, disclosed: request.disclosed ?? [] },
+      {
+        terms: t,
+        approval: named.value.message,
+        disclosed: request.disclosed ?? [],
+        now: request.now,
+      },
       deps.dependencies ?? { readers: [] },
     )
     if (!relied.ok) return relied

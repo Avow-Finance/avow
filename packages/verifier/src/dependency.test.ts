@@ -20,12 +20,15 @@ import {
 } from './dependency.js'
 import {
   ARBITER,
+  blockAt,
   CHAIN_ID,
+  CLOSED_FREE_CANCEL,
   dependencyOn,
   gpuCloud,
   id,
   json,
   type LockScript,
+  NOW,
   newKey,
   OTHER_FACTORY,
   PINNED,
@@ -58,16 +61,27 @@ function asking(change: Partial<typeof plain.subject.resource>, window: object =
   return chainedTerms({ ...plain, subject }, [dependencyOn()])
 }
 
+/** Avow's approval of the booking's reserve, naming the supplier given as its supplier. */
+const approvedFor = (supplier: Address) => ({ side: 'buyer', supplier }) as const
+
 async function check(
-  change: Partial<DependencyInput> & { script?: LockScript; readers?: PinnedLockReader[] } = {},
+  change: Partial<DependencyInput> & {
+    /** The supplier Avow's approval names, the supplier's account by default. */
+    supplier?: Address
+    script?: LockScript
+    readers?: PinnedLockReader[]
+    maxReadAge?: bigint
+  } = {},
 ) {
   const { reader, calls } = scriptedLocks(change.script)
   const input: DependencyInput = {
     terms: change.terms ?? downstream,
-    supplier: change.supplier ?? supplierAccount.address,
+    approval: change.approval ?? approvedFor(change.supplier ?? supplierAccount.address),
     disclosed: change.disclosed ?? [shownUpstream],
+    now: change.now ?? NOW,
   }
   const deps: DependencyDeps = { readers: change.readers ?? [reader] }
+  if (change.maxReadAge !== undefined) deps.maxReadAge = change.maxReadAge
   return { result: await verifyDependencies(input, deps), calls }
 }
 
@@ -147,9 +161,9 @@ describe('a booking that relies on the supplier’s accepted booking', () => {
     const eight = asking({})
     const { reader } = scriptedLocks()
     const deps = { readers: [reader] }
-    const supplier = supplierAccount.address
-    const a = await verifyDependencies({ terms: four, supplier, disclosed: [shownUpstream] }, deps)
-    const b = await verifyDependencies({ terms: eight, supplier, disclosed: [shownUpstream] }, deps)
+    const shown = { approval: approvedFor(supplierAccount.address), disclosed: [shownUpstream] }
+    const a = await verifyDependencies({ terms: four, ...shown, now: NOW }, deps)
+    const b = await verifyDependencies({ terms: eight, ...shown, now: NOW }, deps)
     expect(a.ok && b.ok).toBe(true)
   })
 
@@ -164,6 +178,7 @@ describe('a booking that relies on the supplier’s accepted booking', () => {
       hasReport: false,
       termsHash: UPSTREAM_HASH,
       supplier: gpuCloud.address,
+      freeCancelBy: CLOSED_FREE_CANCEL,
     }
     const { result } = await check({ ...both, script: { locks: { [SUPPLIER_LOCK]: lock } } })
     expect(result).toEqual(
@@ -186,9 +201,10 @@ describe('a booking that relies on the supplier’s accepted booking', () => {
       hasReport: false,
       termsHash: UPSTREAM_HASH,
       supplier: gpuCloud.address,
+      freeCancelBy: CLOSED_FREE_CANCEL,
     }
-    const first = { number: 101n, hash: id('block 101') }
-    const next = { number: 102n, hash: id('block 102') }
+    const first = blockAt(101n)
+    const next = blockAt(102n)
     const script = { locks: { [SUPPLIER_LOCK]: lock }, heads: [first, next] }
     const disclosed = [shownUpstream, shownUpstream]
     const { result, calls } = await check({ terms, disclosed, script })
@@ -345,13 +361,11 @@ describe('provenance', () => {
     const other = scriptedLocks({
       factory: OTHER_FACTORY,
       locks: {},
-      head: { number: 9n, hash: id('block 9') },
+      head: blockAt(9n),
     })
-    const supported = scriptedLocks({ head: { number: 10n, hash: id('block 10') } })
+    const supported = scriptedLocks({ head: blockAt(10n) })
     const { result } = await check({ readers: [other.reader, supported.reader] })
-    expect(result).toEqual(
-      passed([{ on: dependencyOn().on, block: { number: 10n, hash: id('block 10') } }]),
-    )
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(10n) }]))
     const elsewhere = scriptedLocks({ chainId: CHAIN_ID + 1 })
     expect((await check({ readers: [elsewhere.reader] })).result).toEqual(
       refused('dependency.lock_unknown', null),
@@ -361,17 +375,15 @@ describe('provenance', () => {
   })
 
   it('stops at the first supported factory that lists the lock', async () => {
-    const supported = scriptedLocks({ head: { number: 10n, hash: id('block 10') } })
+    const supported = scriptedLocks({ head: blockAt(10n) })
     const other = scriptedLocks({ factory: OTHER_FACTORY, locks: {} })
     const { result } = await check({ readers: [supported.reader, other.reader] })
-    expect(result).toEqual(
-      passed([{ on: dependencyOn().on, block: { number: 10n, hash: id('block 10') } }]),
-    )
+    expect(result).toEqual(passed([{ on: dependencyOn().on, block: blockAt(10n) }]))
     expect(other.calls).toEqual([])
   })
 
   it('records the block of the last factory read when none lists the lock', async () => {
-    const first = scriptedLocks({ locks: {}, head: { number: 9n, hash: id('block 9') } })
+    const first = scriptedLocks({ locks: {}, head: blockAt(9n) })
     const second = scriptedLocks({ factory: OTHER_FACTORY, locks: {} })
     const { result } = await check({ readers: [first.reader, second.reader] })
     expect(result).toEqual(refused('dependency.lock_unknown'))
@@ -387,6 +399,7 @@ describe('ownership', () => {
       hasReport: false,
       termsHash: UPSTREAM_HASH,
       supplier: gpuCloud.address,
+      freeCancelBy: CLOSED_FREE_CANCEL,
     }
     const script = { locks: { [SUPPLIER_LOCK]: lock } }
     const { result, calls } = await check({ terms, script })
@@ -394,9 +407,67 @@ describe('ownership', () => {
     expect(calls).toEqual([])
   })
 
-  it('refuses when the booking names another supplier than the lock’s account', async () => {
+  it('refuses when Avow’s approval names another supplier than the lock’s account', async () => {
     const { result } = await check({ supplier: newKey().address })
     expect(result).toEqual(refused('dependency.not_owned'))
+  })
+
+  it('takes the owner from the approval alone, so a seller naming the lock’s owner gains nothing', async () => {
+    // A seller that cites the supplier's booking is refused once Avow's approval names the seller,
+    // whoever the seller claims to be.
+    const seller = newKey().address
+    const { result } = await check({ approval: approvedFor(seller) })
+    expect(result).toEqual(refused('dependency.not_owned'))
+  })
+
+  it('refuses an approval for the supplier side before reading anything', async () => {
+    const approval = { side: 'supplier', supplier: supplierAccount.address } as const
+    const { result, calls } = await check({ approval })
+    expect(result).toEqual(refused('approval.terms_mismatch', null, null))
+    expect(calls).toEqual([])
+  })
+})
+
+describe('fresh reads', () => {
+  it('refuses a finalized block older than the limit, naming it and reading no lock', async () => {
+    const old = { ...PINNED, timestamp: NOW - 31n }
+    const { result, calls } = await check({ script: { head: old } })
+    expect(result).toEqual(refused('dependency.stale', old))
+    expect(calls.map((c) => c.call)).toEqual(['head'])
+  })
+
+  it('passes a finalized block exactly at the limit, and one a skewed clock puts ahead', async () => {
+    const atLimit = { ...PINNED, timestamp: NOW - 30n }
+    expect((await check({ script: { head: atLimit } })).result.ok).toBe(true)
+    const ahead = { ...PINNED, timestamp: NOW + 5n }
+    expect((await check({ script: { head: ahead } })).result.ok).toBe(true)
+  })
+
+  it('holds the block to a limit the caller sets', async () => {
+    const tenSecondsOld = { ...PINNED, timestamp: NOW - 10n }
+    const script = { head: tenSecondsOld }
+    expect((await check({ script, maxReadAge: 5n })).result).toEqual(
+      refused('dependency.stale', tenSecondsOld),
+    )
+    expect((await check({ script, maxReadAge: 10n })).result.ok).toBe(true)
+  })
+})
+
+describe('free cancellation', () => {
+  it('refuses a booking its buyer could still cancel at no charge at the block read', async () => {
+    // The lock takes a free cancellation in any block whose timestamp is before the deadline.
+    const open = withRecord({ freeCancelBy: PINNED.timestamp + 1n })
+    expect((await check({ script: open })).result).toEqual(refused('dependency.cancellable'))
+  })
+
+  it('passes once the block read is at the deadline, when the lock refuses a free cancellation', async () => {
+    const closing = withRecord({ freeCancelBy: PINNED.timestamp })
+    expect((await check({ script: closing })).result.ok).toBe(true)
+  })
+
+  it('names a reserved booking as not accepted, whatever its free cancellation', async () => {
+    const reserved = withRecord({ state: 'reserved', freeCancelBy: PINNED.timestamp + 60n })
+    expect((await check({ script: reserved })).result).toEqual(refused('dependency.not_accepted'))
   })
 })
 
@@ -450,6 +521,7 @@ describe('cycles', () => {
       hasReport: false,
       termsHash,
       supplier,
+      freeCancelBy: CLOSED_FREE_CANCEL,
     })
     const locks = {
       [SUPPLIER_LOCK]: {
@@ -578,7 +650,12 @@ describe('reads pinned to one block', () => {
     vi.useFakeTimers()
     const { reader } = scriptedLocks({ hangs: 'commitment' })
     const pending = verifyDependencies(
-      { terms: downstream, supplier: supplierAccount.address, disclosed: [shownUpstream] },
+      {
+        terms: downstream,
+        approval: approvedFor(supplierAccount.address),
+        disclosed: [shownUpstream],
+        now: NOW,
+      },
       { readers: [reader], timeoutMs: 5000 },
     )
     await vi.advanceTimersByTimeAsync(5000)
@@ -590,7 +667,12 @@ describe('reads pinned to one block', () => {
     const { reader } = scriptedLocks({ hangs: 'isLock' })
     let settled = false
     const pending = verifyDependencies(
-      { terms: downstream, supplier: supplierAccount.address, disclosed: [shownUpstream] },
+      {
+        terms: downstream,
+        approval: approvedFor(supplierAccount.address),
+        disclosed: [shownUpstream],
+        now: NOW,
+      },
       { readers: [reader] },
     ).finally(() => {
       settled = true

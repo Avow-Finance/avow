@@ -358,7 +358,15 @@ export function dependencyOn(change: Partial<CommitmentReference> = {}): Depende
 }
 
 /** The block the scripted chain pins by default. */
-export const PINNED: PinnedBlock = { number: 4321n, hash: id('block 4321') }
+/** The block a scripted reader pins, finalized two seconds before the tests' clock. */
+export const PINNED: PinnedBlock = { number: 4321n, hash: id('block 4321'), timestamp: NOW - 2n }
+
+/** A block after `PINNED` by number, finalized at the same moment as far as the clock shows. */
+export const blockAt = (number: bigint): PinnedBlock => ({
+  number,
+  hash: id(`block ${number}`),
+  timestamp: PINNED.timestamp,
+})
 
 export interface ScriptedLock {
   /** Whether the reader's factory lists the lock. */
@@ -371,6 +379,9 @@ export interface ScriptedLock {
 }
 
 export const recordKey = (commitmentId: Hex, side: Side) => `${commitmentId.toLowerCase()}:${side}`
+
+/** A free-cancellation deadline ten minutes before the pinned block, so it has closed. */
+export const CLOSED_FREE_CANCEL = NOW - 600n
 
 /** The supplier's lock as it stands once the GPU cloud accepted the upstream booking it supplies. */
 export function supplierLock(record: Partial<DependencyRecord> | null = {}): ScriptedLock {
@@ -385,6 +396,7 @@ export function supplierLock(record: Partial<DependencyRecord> | null = {}): Scr
             hasReport: false,
             termsHash: UPSTREAM_HASH,
             supplier: gpuCloud.address,
+            freeCancelBy: CLOSED_FREE_CANCEL,
             ...record,
           },
         }

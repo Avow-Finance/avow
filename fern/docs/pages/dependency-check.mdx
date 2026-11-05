@@ -11,8 +11,8 @@ Each booking is an ordinary commitment in its own lock, no money moves between t
 
 | Step | `buyer` setting | `avow` setting |
 | --- | --- | --- |
-| The buyer signs the terms | The buyer runs `verifyDependencies` and signs only once it passes | The buyer checks the terms hash of its view and relies on Avow's approval |
-| Avow approves the reserve | Planned and not built yet. Avow's API is to run the same five tests and refuse with the same reason codes | The same, and the buyer's only check of the bookings relied on |
+| Avow approves the reserve | Planned and not built yet. Avow's API is to run the same five tests on the approval it is about to sign and refuse with the same reason codes | The same, and the buyer's only check of the bookings relied on |
+| The buyer funds its reserve | The buyer runs `verifyDependencies` on Avow's approval and funds only once it passes | The buyer checks that Avow's approval names the terms hash of its view |
 | The reserve lands | Nobody checks. The lock checks Avow's approval and the terms hash, and knows nothing of the dependency | The same |
 | The reseller accepts | `prepareAcceptance` runs `verifyDependencies` before anything else reads the terms | The same, since the reseller holds the terms in full |
 | After acceptance | Nothing gates the booking | The same |
@@ -22,18 +22,18 @@ Each booking is an ordinary commitment in its own lock, no money moves between t
 Before it reads anything, the check refuses terms whose shape, setting, dependencies section or subject break the rules. Terms carrying the dependencies section only as its digest are `dependency.elided`. The terms name only the buyer side of a lock, so an entry naming the supplier side is `terms.invalid`, and a subject the template refuses, such as one asking for no GPUs, gives the template's reason. Then it reads each booking's lock and refuses with the first reason that applies.
 
 1. **Provenance.** The lock is on a chain the caller supports, that chain's supported factory lists it, and the lock's own factory field names the same factory (`dependency.lock_unknown`). A lookalike contract with the same functions and an accepted booking is refused here, and nothing is read from it.
-2. **Ownership.** The lock belongs to the account the sale names as its supplier (`dependency.not_owned`), so a reseller can't cite another business's booking.
-3. **State.** The lock holds the booking (`dependency.not_found`), its supplier isn't the seller's own account (`dependency.self_supplied`), and the lock holds it as accepted with no report filed. A reserved booking is `dependency.not_accepted`, a filed report, pending charge or paused charge is `dependency.charge_pending`, and a released, charged or resolved booking is `dependency.ended`.
+2. **Ownership.** The lock belongs to the account Avow's approval names as the sale's supplier (`dependency.not_owned`). The lock copies that account into the sale's commitment, and the check takes the owner from the approval and from nowhere else, so a reseller can't cite another business's booking by naming that business in its quote. An approval for the supplier side of a reserve is `approval.terms_mismatch`.
+3. **State.** The lock holds the booking (`dependency.not_found`), its supplier isn't the seller's own account (`dependency.self_supplied`), and the lock holds it as accepted with no report filed. A reserved booking is `dependency.not_accepted`, a filed report, pending charge or paused charge is `dependency.charge_pending`, and a released, charged or resolved booking is `dependency.ended`. An accepted booking also has to be past its free cancellation at the block read, meaning that block's timestamp is at or after the lock's `freeCancelBy`. Before that the reseller can cancel it at no charge, so it's `dependency.cancellable`. From then on, cancelling it costs the reseller a late-cancellation charge if its terms allow one.
 4. **Terms.** The lock holds it under the terms hash the sale names (`dependency.terms_mismatch`), and the subject the reseller shows hashes to that terms hash (`dependency.disclosure_invalid`).
 5. **Fit.** The sale asks for no more GPUs, of the same GPU and region, inside the booking's window (`dependency.does_not_fit`).
 
 ## Reads pinned to one block
 
-The caller passes one `PinnedLockReader` for each chain and factory pair it supports, and the check reads no other chain or factory. `tempoLockReader` reads Tempo. Each reader pins the latest finalized block once per check, at its first read, and every read through it names that block by number. No later block can change what the check saw, and every booking read through one reader is read at the same block. Once a booking's reads finish, the check confirms the block at that height still has the hash it was pinned with. A read that fails, takes longer than ten seconds or can't be pinned refuses with `dependency.unreadable`, never as not found and never as a pass. The result records the block each booking was read at.
+The caller passes one `PinnedLockReader` for each chain and factory pair it supports, and the check reads no other chain or factory. `tempoLockReader` reads Tempo. Each reader pins the latest finalized block once per check, at its first read, and every read through it names that block by number. No later block can change what the check saw, and every booking read through one reader is read at the same block. Once a booking's reads finish, the check confirms the block at that height still has the hash it was pinned with. A read that fails, takes longer than ten seconds or can't be pinned refuses with `dependency.unreadable`, never as not found and never as a pass. A pinned block more than 30 seconds older than the caller's clock is `dependency.stale` before any lock is read, since a node that has fallen behind shows a state the chain may have left. Tempo finalizes blocks within about a second, so the limit leaves room for clock drift, and `maxReadAge` sets another. The result records the block each booking was read at, with its number, hash and timestamp.
 
 ## Accepting a booking that relies on others
 
-For version 3 terms, in either setting, `prepareAcceptance` runs `verifyDependencies` before anything else reads the terms, with the reseller's own account as the one whose lock has to hold each booking relied on. The prepared acceptance lists each booking with the block it was read at, as its own copies, so freezing the acceptance leaves the reseller's terms alone. Version 3 terms reach the authorization checks only as the checked terms `verifyDependencies` gives back. `verifySupplierAuthorization` refuses version 3 terms, since it doesn't read the bookings they rely on.
+For version 3 terms, in either setting, `prepareAcceptance` runs `verifyDependencies` before anything else reads the terms, with the account Avow's approval names as supplier as the one whose lock has to hold each booking relied on. It reads only the approval first, and its later checks confirm the lock holds exactly that approval, so a reseller's own settings never decide the owner. The prepared acceptance lists each booking with the block it was read at, as its own copies, so freezing the acceptance leaves the reseller's terms alone. Version 3 terms reach the authorization checks only as the checked terms `verifyDependencies` gives back. `verifySupplierAuthorization` refuses version 3 terms, since it doesn't read the bookings they rely on.
 
 ## What the buyer sees
 
@@ -69,7 +69,7 @@ Nothing gates the downstream booking once the reseller accepts. The buyer can wa
 
 | Upstream event | What it means |
 | --- | --- |
-| Released by the GPU cloud's consent, as kept | The GPU cloud's job started as agreed, the normal path |
+| Released by the GPU cloud's consent, giving the reason kept | The GPU cloud says its job started as agreed, the normal path. The lock records the reason as given and checks nothing behind it |
 | Released at the release date | The upstream window ended with no charge, also normal |
 | Released by the GPU cloud's consent, as `supplierFailed` | The GPU cloud says it didn't deliver |
 | Released by free cancellation | The reseller gave up its upstream booking |

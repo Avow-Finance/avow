@@ -183,6 +183,8 @@ export const REASON_CODES = {
     "The booking relied on is reserved, and its supplier hasn't accepted it",
   'dependency.charge_pending':
     'The booking relied on has a report filed, a charge pending or a charge paused for a dispute',
+  'dependency.cancellable':
+    "The booking relied on was still inside its free cancellation at the block read, so the seller's business could still cancel it at no charge",
   'dependency.ended': 'The booking relied on has been released, charged or resolved',
   'dependency.terms_mismatch':
     'The lock holds the booking relied on under another terms hash than the dependency names',
@@ -192,6 +194,8 @@ export const REASON_CODES = {
     'This booking asks for more GPUs, another GPU or region, or a window outside the booking it relies on',
   'dependency.unreadable':
     "A read of the booking relied on failed, timed out or couldn't be pinned to one block, so nothing was decided",
+  'dependency.stale':
+    "The latest finalized block the node gave was older than the check's limit by the caller's clock, so nothing was decided",
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
 } as const

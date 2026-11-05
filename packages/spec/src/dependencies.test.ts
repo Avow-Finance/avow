@@ -720,6 +720,8 @@ describe('the reason codes a dependency check gives', () => {
       'dependency.does_not_fit',
       'dependency.unreadable',
       'dependency.elided',
+      'dependency.cancellable',
+      'dependency.stale',
     ]
     for (const code of codes) expect(describeReason(code).length, code).toBeGreaterThan(20)
   })
