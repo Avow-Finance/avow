@@ -72,7 +72,7 @@ const CUSTOMER_WHO: Record<CustomerRefusalLayer, string> = {
 }
 
 const SUPPLIER_WHO: Record<CommitmentRefusalLayer, string> = {
-  supplier: "Your code refused the customer's commitment",
+  service: "Your code refused the customer's commitment",
   avow: "Avow didn't authorize the customer's commitment for your business",
   relay: "Avow's relay refused to send your acceptance",
   lock: "The customer's lock refused your acceptance",

@@ -216,6 +216,8 @@ export const REASON_CODES = {
     'These terms name no booking they rely on, and their template commits only on a booking it relies on, such as the compute a job runs on',
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
+  'sandbox.taken':
+    'The account, lock or signing key already belongs to another business or supplier Avow records',
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES
