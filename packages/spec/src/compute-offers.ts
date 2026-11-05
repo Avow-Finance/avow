@@ -35,7 +35,10 @@ export interface ComputeOffer {
   pricePerGpuHour: bigint
   /** The reserve a booking needs for each GPU, in micros. */
   reservePerGpu: bigint
-  /** When the offer lapses, in unix seconds. */
+  /**
+   * When the offer lapses, in unix seconds. It says when the listing stops standing. The supplier
+   * keeps no record of its listings and signs any terms within its own limits.
+   */
   expiry: bigint
 }
 

@@ -88,6 +88,27 @@ describe('the demo supplier’s four offers for a job', () => {
     expect(firm.pricePerGpuHour <= dollars(3)).toBe(true)
   })
 
+  it('end the flexible offer’s free cancellation at the job’s start, so it can never pass before the job starts', () => {
+    const flex = offer('h100-flex')
+    expect(flex.freeCancelBy).toBe(job.subject.startsAt)
+    expect(flex.startsAt).toBe(job.subject.startsAt)
+  })
+
+  it('lapse before any window starts, ten minutes after listing at most', () => {
+    for (const o of listing.offers) {
+      expect(o.expiry <= o.startsAt - 60n, o.id).toBe(true)
+      expect(o.expiry <= listing.listedAt + 600n, o.id).toBe(true)
+    }
+    // A listing made close to the job's start lapses a minute before the window.
+    const late = demoComputeOffers({
+      startsAt: job.subject.startsAt,
+      deliverBy: job.subject.deliverBy,
+      listedAt: job.subject.startsAt - 150n,
+    })
+    const firm = late.offers.find((o) => o.id === 'h100-firm')
+    expect(firm?.expiry).toBe((firm?.startsAt ?? 0n) - 60n)
+  })
+
   it('fail each of the others for a reason a check names', () => {
     // Flexible, so still cancellable when the customer checks it.
     expect(isFirmOffer(offer('h100-flex'), listing.listedAt)).toBe(false)
