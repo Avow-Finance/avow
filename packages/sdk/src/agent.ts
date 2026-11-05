@@ -261,6 +261,10 @@ export interface AgentCalls {
    * version 3 terms it then checks every booking they rely on with `verifyDependencies`, taking
    * the owner from Avow's approval, and runs the mandate check on the checked terms. Only then does
    * it fund, settling a failed funding as `book` does.
+   *
+   * So for version 3 terms Avow is asked before the agent's own mandate check runs. Avow's API runs
+   * the same check first, so a version 3 quote over the mandate's caps comes back as Avow's refusal,
+   * with the layer `avow`. Every other refusal is the SDK's, and no money moves before any of them.
    */
   commitToQuote(q: SignedQuote): Promise<QuoteResult>
   /**

@@ -34,3 +34,19 @@ A `SignedQuote` holds the supplier's profile as Avow registered it, the terms, t
 8. For version 3 terms, `verifyDependencies` on that approval, which names the owner of each booking relied on, then the mandate check on the checked terms.
 
 Only after every check passes does the agent fund the reserve. The result is the commitment with each booking relied on and the block it was read at, or a refusal with its reason code and the layer that refused it.
+
+## Who refuses
+
+Every refusal names its layer, `sdk` for the agent's own checks or `avow` for Avow's API, and none of them moves money.
+
+| Refusal | Layer | When |
+| --- | --- | --- |
+| The terms' version, shape or hash, or the agreement's parties or expiry | `sdk` | Before anything is signed |
+| Version 2 terms the mandate refuses, such as a reserve over its cap or job terms that name no compute (`dependency.required`) | `sdk` | Before anything is signed |
+| A supplier signature from another key | `sdk` | Before Avow sees the agreement |
+| Anything Avow's API refuses, such as version 3 terms over the mandate's cap | `avow` | When the agent asks for the approval |
+| An approval that differs from the terms or the mandate | `sdk` | After the approval, before funding |
+| A booking relied on that the dependency check refuses | `sdk` | After the approval, before funding |
+| Version 3 terms the mandate refuses | `sdk` | After the approval, before funding |
+
+Version 3 terms reach the mandate check only once their bookings are checked, and that check takes the owner of each booking from Avow's approval. So for version 3 the agent asks Avow before its own mandate check runs. Avow's API runs the same mandate check first, so a version 3 quote over the mandate's cap comes back refused by Avow, with the layer `avow`. The SDK's check after the approval still refuses anything an approval lets through that the mandate doesn't allow, and no money moves before it.
