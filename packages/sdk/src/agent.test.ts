@@ -563,6 +563,7 @@ describe('committing to a quote the supplier signed', () => {
     expect(result).toEqual({
       ok: false,
       reason: 'dependency.cancellable',
+      layer: 'sdk',
       index: 0,
       block: READ_AT,
       decisionId: 'dec_1',
@@ -570,10 +571,29 @@ describe('committing to a quote the supplier signed', () => {
     expect(s.calls).toEqual(['approveReserve'])
   })
 
+  it('names Avow when Avow refuses, and the SDK when its own check refuses what Avow approved', async () => {
+    const s = await quoting()
+    s.hooks.refusal = 'mandate.over_commitment_cap'
+    expect(await s.agent.commitToQuote(await quoteFor(s))).toEqual({
+      ok: false,
+      reason: 'mandate.over_commitment_cap',
+      layer: 'avow',
+      decisionId: 'dec_1',
+    })
+    s.hooks.refusal = null
+    s.hooks.approvalChange = { amount: 1n }
+    expect(await s.agent.commitToQuote(await quoteFor(s))).toMatchObject({
+      ok: false,
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    expect(s.calls).toEqual(['approveReserve', 'approveReserve'])
+  })
+
   it('refuses a booking it has no reader for', async () => {
     const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
     const result = await s.agent.commitToQuote(await quoteFor(s))
-    expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown' })
+    expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown', layer: 'sdk' })
     expect(s.calls).toEqual(['approveReserve'])
   })
 
@@ -582,7 +602,7 @@ describe('committing to a quote the supplier signed', () => {
     const result = await s.agent.commitToQuote(
       await quoteFor(s, { terms: testnetDemoJobTerms(START, ARBITER) }),
     )
-    expect(result).toEqual({ ok: false, reason: 'dependency.required' })
+    expect(result).toEqual({ ok: false, reason: 'dependency.required', layer: 'sdk' })
     expect(s.calls).toEqual([])
   })
 
@@ -598,7 +618,7 @@ describe('committing to a quote the supplier signed', () => {
     ]
     for (const [agreement, reason] of cases) {
       const result = await s.agent.commitToQuote(await quoteFor(s, { agreement }))
-      expect(result, reason).toEqual({ ok: false, reason })
+      expect(result, reason).toEqual({ ok: false, reason, layer: 'sdk' })
     }
     expect(s.calls).toEqual([])
   })
@@ -610,7 +630,7 @@ describe('committing to a quote the supplier signed', () => {
       hash: digestOf(termsAgreementTypedData(quote.agreement, D)),
     })
     const result = await s.agent.commitToQuote({ ...quote, supplierSignature: other })
-    expect(result).toEqual({ ok: false, reason: 'message.signature_invalid' })
+    expect(result).toEqual({ ok: false, reason: 'message.signature_invalid', layer: 'sdk' })
     expect(s.calls).toEqual([])
   })
 

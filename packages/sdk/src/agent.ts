@@ -24,6 +24,7 @@ import {
   newSalt,
   type RailToken,
   type ReasonCode,
+  type RefusalLayer,
   type Signed,
   type SignedAgreement,
   type StartReceipt,
@@ -167,14 +168,20 @@ export type BookResult<T extends CommittedTerms = Terms> =
   | { ok: false; reason: ReasonCode; decisionId?: string }
 
 /**
+ * Who refused a quote: `avow` is Avow's API declining to approve the reserve, and `sdk` is the
+ * agent's own check, before Avow is asked or of what Avow approved. Either way no money moved.
+ */
+export type QuoteRefusalLayer = Extract<RefusalLayer, 'sdk' | 'avow'>
+
+/**
  * A quote's outcome. Once funded it lists each booking version 3 terms rely on with the block the
- * agent read it at, just before it funded. A refusal by that check says which booking failed and
- * the block it was read at.
+ * agent read it at, just before it funded. A refusal names who refused, and a refusal by that check
+ * says which booking failed and the block it was read at.
  */
 export type QuoteResult =
   | { ok: true; commitment: Commitment<CommittedTerms>; dependencies: readonly CheckedDependency[] }
-  | { ok: false; reason: ReasonCode; decisionId?: string }
-  | (DependencyRefusal & { decisionId?: string })
+  | { ok: false; reason: ReasonCode; layer: QuoteRefusalLayer; decisionId?: string }
+  | (DependencyRefusal & { layer: 'sdk'; decisionId?: string })
 
 /** A quote a supplier already signed, which the agent commits to as the buyer. */
 export interface SignedQuote {
@@ -588,7 +595,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     const { supplier, terms, salt, agreement } = a
     const digest = digestOf(termsAgreementTypedData(agreement, d))
     if (!isKeySignature(digest, a.supplierSignature, supplier.signingKey)) {
-      return { ok: false, reason: 'message.signature_invalid' }
+      return { ok: false, reason: 'message.signature_invalid', layer: 'sdk' }
     }
     const buyerSignature = await key.sign({ hash: digest, raw: true })
     const signed: SignedAgreement = {
@@ -608,7 +615,9 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
       agreement: signed,
       fundedBy: 'agent',
     })
-    if (!answer.ok) return { ok: false, reason: answer.reason, decisionId: answer.decisionId }
+    if (!answer.ok) {
+      return { ok: false, reason: answer.reason, layer: 'avow', decisionId: answer.decisionId }
+    }
     const { decisionId } = answer
     const problem = approvalProblem(answer.approval, {
       commitmentId,
@@ -616,7 +625,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
       terms,
       termsHash: agreement.termsHash,
     })
-    if (problem) return { ok: false, reason: problem, decisionId }
+    if (problem) return { ok: false, reason: problem, layer: 'sdk', decisionId }
 
     let dependencies: readonly CheckedDependency[] = []
     if (isChainedTerms(terms)) {
@@ -624,9 +633,9 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
         { terms, approval: answer.approval.message, disclosed: a.disclosed ?? [], now: now() },
         config.dependencies ?? { readers: [] },
       )
-      if (!relied.ok) return { ...relied, decisionId }
+      if (!relied.ok) return { ...relied, layer: 'sdk', decisionId }
       const allowed = mandateCheck({ ...request, terms: relied.terms })
-      if (allowed) return { ok: false, reason: allowed, decisionId }
+      if (allowed) return { ok: false, reason: allowed, layer: 'sdk', decisionId }
       dependencies = relied.checked
     }
     const approved: ApprovedCommitment<CommittedTerms> = {
@@ -739,28 +748,29 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
 
     async commitToQuote(q: SignedQuote): Promise<QuoteResult> {
       const { terms, agreement: a } = q
-      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown' }
+      if (isTermsV1(terms)) return { ok: false, reason: 'terms.version_unknown', layer: 'sdk' }
       const shape = isChainedTerms(terms)
         ? chainedTermsShapeProblem(terms)
         : termsShapeProblem(terms)
-      if (shape) return { ok: false, reason: shape }
+      if (shape) return { ok: false, reason: shape, layer: 'sdk' }
       if (termsHash(terms, q.salt).toLowerCase() !== a.termsHash.toLowerCase()) {
-        return { ok: false, reason: 'terms.hash_mismatch' }
+        return { ok: false, reason: 'terms.hash_mismatch', layer: 'sdk' }
       }
       const parties =
         a.buyerBusinessId === mandate.businessId &&
         a.mandateHash.toLowerCase() === mHash.toLowerCase() &&
         a.supplierBusinessId === q.supplier.businessId
-      if (!parties) return { ok: false, reason: 'agreement.parties_mismatch' }
-      if (a.expiry <= now()) return { ok: false, reason: 'message.expired' }
-      if (a.expiry > now() + offerValidity)
-        return { ok: false, reason: 'message.validity_too_long' }
+      if (!parties) return { ok: false, reason: 'agreement.parties_mismatch', layer: 'sdk' }
+      if (a.expiry <= now()) return { ok: false, reason: 'message.expired', layer: 'sdk' }
+      if (a.expiry > now() + offerValidity) {
+        return { ok: false, reason: 'message.validity_too_long', layer: 'sdk' }
+      }
       // Version 2 terms go through the mandate check before anything is signed, as in `book`.
       // Version 3 terms go through it once their bookings are checked, since it takes them only as
       // checked terms.
       if (!isChainedTerms(terms)) {
         const allowed = mandateCheck(requestOf(a.commitmentId, q.supplier, a.category, terms))
-        if (allowed) return { ok: false, reason: allowed }
+        if (allowed) return { ok: false, reason: allowed, layer: 'sdk' }
       }
       return commitAgreed({
         supplier: q.supplier,
