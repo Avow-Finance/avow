@@ -38,6 +38,8 @@ navigation:
         path: ./docs/pages/dependency-check.mdx
       - page: Jobs
         path: ./docs/pages/jobs.mdx
+      - page: Committing to a quote
+        path: ./docs/pages/commit-to-quote.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

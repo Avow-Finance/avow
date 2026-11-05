@@ -154,6 +154,21 @@ export const AMOUNT_DECIMALS = 6
 export const TEMPLATE_IDS = ['gpu-reservation/1', 'job/1'] as const
 export type TemplateId = (typeof TEMPLATE_IDS)[number]
 
+/**
+ * Who each template lets check the bookings its version 3 terms rely on. A job's customer checks
+ * its compute itself, so a job takes only `buyer`. Every rule about the setting reads it from here,
+ * and the build fails when a template is missing.
+ */
+export const DEPENDENCY_CHECKS_ALLOWED = {
+  'gpu-reservation/1': ['buyer', 'avow'],
+  'job/1': ['buyer'],
+} as const satisfies {
+  readonly [T in TemplateId]: readonly [DependencyCheck, ...DependencyCheck[]]
+}
+
+/** The settings a template allows for who checks its version 3 terms' bookings. */
+export type DependencyChecksOf<T extends TemplateId> = (typeof DEPENDENCY_CHECKS_ALLOWED)[T][number]
+
 /** What the buyer owes for the subject. The lock never reads it, so the terms describe it only. */
 export type Consideration =
   /** An amount for each unit the template names, such as a GPU-hour. */

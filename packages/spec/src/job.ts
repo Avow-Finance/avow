@@ -7,6 +7,8 @@ import {
   CHAINED_TERMS_VERSION,
   type ChainedTermsOf,
   type Currency,
+  DEPENDENCY_CHECKS_ALLOWED,
+  type DependencyChecksOf,
   type RemedyCharge,
   TERMS_VERSION,
   type TermsOf,
@@ -63,8 +65,12 @@ export type JobTerms = TermsOf<JobSubject, typeof JOB>
  * full and a link to verify a job shows the booking.
  */
 export type ChainedJobTerms = Omit<ChainedTermsOf<JobSubject, typeof JOB>, 'dependencyCheck'> & {
-  dependencyCheck: 'buyer'
+  dependencyCheck: JobDependencyCheck
 }
+
+/** Who checks a job's compute, the one setting `DEPENDENCY_CHECKS_ALLOWED` gives a job. */
+export type JobDependencyCheck = DependencyChecksOf<typeof JOB>
+const [JOB_DEPENDENCY_CHECK] = DEPENDENCY_CHECKS_ALLOWED[JOB]
 
 /** What a job states, in micros and unix seconds, before the template builds its terms. */
 export interface JobInput {
@@ -142,7 +148,12 @@ export function jobTerms(input: JobInput): JobTerms {
 
 /** Version 3 job terms that rely on the compute bookings given, which the customer checks. */
 export function chainedJobTerms(terms: JobTerms, dependencies: Dependencies): ChainedJobTerms {
-  return { ...terms, version: CHAINED_TERMS_VERSION, dependencyCheck: 'buyer', dependencies }
+  return {
+    ...terms,
+    version: CHAINED_TERMS_VERSION,
+    dependencyCheck: JOB_DEPENDENCY_CHECK,
+    dependencies,
+  }
 }
 
 const isText = (v: unknown, max: number): v is string =>

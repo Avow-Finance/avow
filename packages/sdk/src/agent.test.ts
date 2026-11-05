@@ -563,6 +563,7 @@ describe('committing to a quote the supplier signed', () => {
     expect(result).toEqual({
       ok: false,
       reason: 'dependency.cancellable',
+      layer: 'sdk',
       index: 0,
       block: READ_AT,
       decisionId: 'dec_1',
@@ -570,10 +571,60 @@ describe('committing to a quote the supplier signed', () => {
     expect(s.calls).toEqual(['approveReserve'])
   })
 
+  it('names Avow when Avow refuses, and the SDK when its own check refuses what Avow approved', async () => {
+    const s = await quoting()
+    s.hooks.refusal = 'mandate.over_commitment_cap'
+    expect(await s.agent.commitToQuote(await quoteFor(s))).toEqual({
+      ok: false,
+      reason: 'mandate.over_commitment_cap',
+      layer: 'avow',
+      decisionId: 'dec_1',
+    })
+    s.hooks.refusal = null
+    s.hooks.approvalChange = { amount: 1n }
+    expect(await s.agent.commitToQuote(await quoteFor(s))).toMatchObject({
+      ok: false,
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    expect(s.calls).toEqual(['approveReserve', 'approveReserve'])
+  })
+
+  it('refuses a job its own mandate check refuses after Avow approved, before any money moves', async () => {
+    // Avow's stand-in approves whatever it's asked, so only the SDK's check of the checked terms
+    // stands between the approval and the reserve here.
+    const s = await quoting()
+    const wrongCategory = await s.agent.commitToQuote(
+      await quoteFor(s, { agreement: { category: 'compute' } }),
+    )
+    expect(wrongCategory).toEqual({
+      ok: false,
+      reason: 'terms.category_mismatch',
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    const capped = await setup({
+      mandate: { categories: ['compute', JOB_CATEGORY], capPerCommitment: dollars(5) },
+    })
+    const agent = createAgent({
+      ...capped.config,
+      dependencies: { readers: [computeReader(capped.supplier.account)] },
+    })
+    // The job's reserve is its largest charge, $10, over the mandate's $5 for one commitment.
+    expect(await agent.commitToQuote(await quoteFor(capped))).toEqual({
+      ok: false,
+      reason: 'mandate.over_commitment_cap',
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    expect(s.calls).toEqual(['approveReserve'])
+    expect(capped.calls).toEqual(['approveReserve'])
+  })
+
   it('refuses a booking it has no reader for', async () => {
     const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
     const result = await s.agent.commitToQuote(await quoteFor(s))
-    expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown' })
+    expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown', layer: 'sdk' })
     expect(s.calls).toEqual(['approveReserve'])
   })
 
@@ -582,7 +633,7 @@ describe('committing to a quote the supplier signed', () => {
     const result = await s.agent.commitToQuote(
       await quoteFor(s, { terms: testnetDemoJobTerms(START, ARBITER) }),
     )
-    expect(result).toEqual({ ok: false, reason: 'dependency.required' })
+    expect(result).toEqual({ ok: false, reason: 'dependency.required', layer: 'sdk' })
     expect(s.calls).toEqual([])
   })
 
@@ -598,7 +649,7 @@ describe('committing to a quote the supplier signed', () => {
     ]
     for (const [agreement, reason] of cases) {
       const result = await s.agent.commitToQuote(await quoteFor(s, { agreement }))
-      expect(result, reason).toEqual({ ok: false, reason })
+      expect(result, reason).toEqual({ ok: false, reason, layer: 'sdk' })
     }
     expect(s.calls).toEqual([])
   })
@@ -610,7 +661,7 @@ describe('committing to a quote the supplier signed', () => {
       hash: digestOf(termsAgreementTypedData(quote.agreement, D)),
     })
     const result = await s.agent.commitToQuote({ ...quote, supplierSignature: other })
-    expect(result).toEqual({ ok: false, reason: 'message.signature_invalid' })
+    expect(result).toEqual({ ok: false, reason: 'message.signature_invalid', layer: 'sdk' })
     expect(s.calls).toEqual([])
   })
 

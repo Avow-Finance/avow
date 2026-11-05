@@ -154,11 +154,17 @@ describe('the test customer’s routes', () => {
   })
 
   it('take a quote or a delivery report only from the supplier the order was offered to', () => {
-    const offeredTo = { signingKey: '0x000000000000000000000000000000000000519e' } as const
-    expect(orderSignerProblem(offeredTo, '0x000000000000000000000000000000000000519E')).toBeNull()
-    expect(orderSignerProblem(offeredTo, '0x000000000000000000000000000000000000beef')).toBe(
-      'order.supplier_mismatch',
-    )
+    const key = '0x000000000000000000000000000000000000519e' as const
+    const registered = { businessId: order.supplierBusinessId, signingKey: key }
+    expect(
+      orderSignerProblem(order, registered, '0x000000000000000000000000000000000000519E'),
+    ).toBeNull()
+    expect(
+      orderSignerProblem(order, registered, '0x000000000000000000000000000000000000beef'),
+    ).toBe('order.supplier_mismatch')
+    // Another supplier's own registered key, signing as itself, can't act on this order.
+    const another = { businessId: 'biz_another', signingKey: key }
+    expect(orderSignerProblem(order, another, key)).toBe('order.supplier_mismatch')
     const unbound = { ...order, status: 'offered' }
     const { supplierBusinessId: _, ...anyone } = unbound
     expect(parseOrderState(overJson(anyone)).ok).toBe(false)

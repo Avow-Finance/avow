@@ -1,7 +1,7 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import { type Dependencies, dependenciesJson } from './dependencies.js'
-import { type ChainedJobTerms, JOB } from './job.js'
+import { type ChainedJobTerms, JOB, type JobDependencyCheck } from './job.js'
 import { bytes32 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import { decodeLinkToken, encodeLinkToken } from './reference-link.js'
@@ -17,7 +17,12 @@ import {
   termsHash,
   termsHeader,
 } from './terms.js'
-import { AMOUNT_DECIMALS, CHAINED_TERMS_VERSION, CURRENCIES } from './types.js'
+import {
+  AMOUNT_DECIMALS,
+  CHAINED_TERMS_VERSION,
+  CURRENCIES,
+  DEPENDENCY_CHECKS_ALLOWED,
+} from './types.js'
 import { type Parsed, toWire } from './wire.js'
 
 /**
@@ -28,8 +33,9 @@ import { type Parsed, toWire } from './wire.js'
  * and reads the booking the dependencies section names at a block it pins.
  *
  * Only the dependencies section is shown. Each section's salt comes from the terms' salt, and one
- * section's salt reveals neither the terms' salt nor any other section. So the job's subject, with
- * its work, compute and deadline, and its price stay behind their hashes. The lock already shows
+ * section's salt reveals neither the terms' salt nor any other section. So the link doesn't show
+ * the job's subject, with its work, compute and deadline, or its price. Once the job is paid, the
+ * payment transfer shows the price, since its memo is the commitment id. The lock already shows
  * anyone what it enforces for the job: the reserve, each charge's cap and the moment it becomes
  * chargeable, the deadlines, the contest window and the release date. Free cancellation ends when
  * work starts, so the lock shows the start too.
@@ -38,7 +44,7 @@ export interface JobVerification {
   kind: 'job'
   /** The job commitment, on the buyer side of the customer's lock. */
   commitment: CommitmentReference
-  header: ChainedTermsHeader & { template: typeof JOB; dependencyCheck: 'buyer' }
+  header: ChainedTermsHeader & { template: typeof JOB; dependencyCheck: JobDependencyCheck }
   dependencies: Dependencies
   /** The dependencies section's own salt. */
   dependenciesSalt: Hex
@@ -57,7 +63,7 @@ export const jobVerificationJson = z.strictObject({
     template: z.literal(JOB),
     currency: z.enum(CURRENCIES),
     amountDecimals: z.literal(AMOUNT_DECIMALS),
-    dependencyCheck: z.literal('buyer'),
+    dependencyCheck: z.enum(DEPENDENCY_CHECKS_ALLOWED[JOB]),
   }),
   dependencies: dependenciesJson,
   dependenciesSalt: bytes32,

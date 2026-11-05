@@ -212,15 +212,18 @@ interface OrderBase {
 
 /**
  * Why a quote or a delivery report for an order can't be taken from this signer, or null when it
- * can. Only the signing key of the supplier the order was offered to can act on it.
+ * can. Only the supplier the order was offered to can act on it, through the signing key Avow
+ * registered for that supplier, so the order's supplier, the registered profile and the signer are
+ * checked together, and a key registered for another supplier never acts on this order.
  */
 export function orderSignerProblem(
-  offeredTo: Pick<SupplierProfile, 'signingKey'>,
+  order: { supplierBusinessId: string },
+  registered: Pick<SupplierProfile, 'businessId' | 'signingKey'>,
   signer: Address,
 ): ReasonCode | null {
-  return offeredTo.signingKey.toLowerCase() === signer.toLowerCase()
-    ? null
-    : 'order.supplier_mismatch'
+  const offeredTo = order.supplierBusinessId === registered.businessId
+  const theirKey = registered.signingKey.toLowerCase() === signer.toLowerCase()
+  return offeredTo && theirKey ? null : 'order.supplier_mismatch'
 }
 
 /**
