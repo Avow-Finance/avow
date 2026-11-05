@@ -10,4 +10,4 @@ export {
   visible,
   wrap,
 } from './look.js'
-export { Rail, setApart, type Write } from './rail.js'
+export { Rail, type Receipt, setApart, type Write } from './rail.js'

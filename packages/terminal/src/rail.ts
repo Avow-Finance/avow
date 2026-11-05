@@ -3,6 +3,18 @@ import { type Look, type Paint, type Styles, stylesOf, wrap } from './look.js'
 /** Where a rail draws, which in the tools is the terminal's output. */
 export type Write = (text: string) => void
 
+/** A commitment as the terminal shows it. */
+export interface Receipt {
+  /** What it is, such as the job commitment and its id. */
+  readonly title: string
+  /** A sentence or two on who reserved what for whom, and what the reserve covers. */
+  readonly lines: readonly string[]
+  /** Its states in order, each reached or not yet. */
+  readonly states: readonly { readonly name: string; readonly reached: boolean }[]
+  /** Where anyone can check it. */
+  readonly link?: string
+}
+
 /** The frames of the spinner a step turns while it takes time, and how long each shows. */
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 const FRAME_MS = 80
@@ -11,6 +23,14 @@ const FRAME_MS = 80
 const MIN_TEXT = 24
 
 const plain: Paint = (text) => text
+
+/** A model's words still arriving: the indent under its name, the column reached and a part word. */
+interface Speech {
+  hang: string
+  column: number
+  pending: string
+  started: boolean
+}
 
 /**
  * A run of steps drawn down one line at the left, the way a setup reads. It opens on a title, each
@@ -26,6 +46,8 @@ export class Rail {
   #spinner: { timer: ReturnType<typeof setInterval>; frame: number; text: string } | null = null
   /** Whether the last line drawn was the rail alone, so two stages never draw two of them. */
   #spaced = false
+  /** Words still arriving from a model, and where the line they're on has got to. */
+  #speech: Speech | null = null
 
   constructor(look: Look, write: Write = (text) => void process.stdout.write(text)) {
     this.#look = look
@@ -102,6 +124,105 @@ export class Rail {
     this.#block(this.#s.dim('└'), text, this.#s.bold, '   ')
   }
 
+  /**
+   * Words a model or an agent said, in its own name, with the name in the brand's violet so they
+   * never read as something a tool did or a check proved.
+   */
+  said(speaker: string, text: string): void {
+    const lead = `${speaker} › `
+    const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 3 - lead.length))
+    const hang = ' '.repeat(lead.length)
+    this.#emit(
+      [
+        `${this.prefix}${this.#s.accent(speaker)} ${this.#s.dim('›')} ${first}`,
+        ...more.map((line) => `${this.prefix}${hang}${line}`),
+      ].join('\n'),
+    )
+    this.#spaced = false
+  }
+
+  /**
+   * Starts a model's words that arrive a piece at a time, as a local model or an API streams them.
+   * Each piece is laid onto the rail as it comes, wrapped at the terminal's width under the
+   * speaker's name, and the line ends when `end` is called or anything else is drawn.
+   */
+  speak(speaker: string): { write: (piece: string) => void; end: () => void } {
+    this.settle()
+    this.#endSpeech()
+    const lead = `${speaker} › `
+    this.#write(`${this.prefix}${this.#s.accent(speaker)} ${this.#s.dim('›')} `)
+    this.#spaced = false
+    this.#speech = {
+      hang: ' '.repeat(lead.length),
+      column: 3 + lead.length,
+      pending: '',
+      started: false,
+    }
+    return {
+      write: (piece) => this.#speakPiece(piece),
+      end: () => this.#endSpeech(),
+    }
+  }
+
+  /** What goes before a message the developer types to the agent. */
+  get you(): string {
+    return `${this.prefix}${this.#s.dim('you ›')} `
+  }
+
+  /** A quieter line, such as what typing to the agent can and can't change. */
+  quiet(text: string): void {
+    this.#block(this.#s.dim('│'), text, this.#s.dim)
+  }
+
+  /** A tool the model called, by name, with what it was called on. */
+  call(tool: string, detail = ''): void {
+    const words =
+      detail === '' ? this.#s.bold(tool) : `${this.#s.bold(tool)} ${this.#s.dim(detail)}`
+    this.#emit(`${this.prefix}${this.#s.dim('↳')} ${words}`)
+    this.#spaced = false
+  }
+
+  /** What the tool just called gave back, under it, ticked or refused. */
+  returned(ok: boolean, text: string): void {
+    const mark = ok ? this.#s.ok('✓') : this.#s.bad('✗')
+    const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 7))
+    this.#emit(
+      [`${this.prefix}  ${mark} ${first}`, ...more.map((line) => `${this.prefix}    ${line}`)].join(
+        '\n',
+      ),
+    )
+    this.#spaced = false
+  }
+
+  /**
+   * A fact code outside the model verified, with the block it was read at, since a check proves
+   * the state at that block and nothing after it.
+   */
+  fact(block: bigint | number, text: string): void {
+    this.#item(this.#s.ok('∎'), `${this.#s.dim(`At block ${block},`)} ${text}`)
+  }
+
+  /** A commitment as a compact receipt: what it is, its states so far, and where to check it. */
+  receipt(receipt: Receipt): void {
+    const states = receipt.states
+      .map((s) => (s.reached ? `${this.#s.ok('●')} ${s.name}` : this.#s.dim(`○ ${s.name}`)))
+      .join('  ')
+    this.#space()
+    this.#emit(
+      [
+        `${this.prefix}${this.#s.bold(receipt.title)}`,
+        ...receipt.lines.flatMap((line) =>
+          wrap(line, Math.max(MIN_TEXT, this.#look.width - 3)).map(
+            (part) => `${this.prefix}${part}`,
+          ),
+        ),
+        `${this.prefix}${states}`,
+        ...(receipt.link ? [`${this.prefix}${this.#s.dim(receipt.link)}`] : []),
+      ].join('\n'),
+    )
+    this.#spaced = false
+  }
+
   /** Stops a spinner and clears its line, before anything else draws on the terminal. */
   settle(): void {
     if (!this.#spinner) return
@@ -146,7 +267,47 @@ export class Rail {
 
   #emit(lines: string): void {
     this.settle()
+    this.#endSpeech()
     this.#write(`${lines}\n`)
+  }
+
+  #speakPiece(piece: string): void {
+    const speech = this.#speech
+    if (!speech) return
+    speech.pending += piece
+    // Whole words go down as soon as the space or line break after them arrives.
+    for (let at = speech.pending.search(/[ \n]/); at >= 0; at = speech.pending.search(/[ \n]/)) {
+      const word = speech.pending.slice(0, at)
+      const breaks = speech.pending[at] === '\n'
+      speech.pending = speech.pending.slice(at + 1)
+      if (word !== '') this.#placeWord(speech, word)
+      if (breaks && speech.started) {
+        this.#write(`\n${this.prefix}${speech.hang}`)
+        speech.column = 3 + speech.hang.length
+        speech.started = false
+      }
+    }
+  }
+
+  #placeWord(speech: Speech, word: string): void {
+    const width = Math.max(MIN_TEXT + 3, this.#look.width)
+    const room = speech.column + (speech.started ? 1 : 0) + word.length <= width
+    if (speech.started && !room) {
+      this.#write(`\n${this.prefix}${speech.hang}${word}`)
+      speech.column = 3 + speech.hang.length + word.length
+    } else {
+      this.#write(`${speech.started ? ' ' : ''}${word}`)
+      speech.column += (speech.started ? 1 : 0) + word.length
+    }
+    speech.started = true
+  }
+
+  #endSpeech(): void {
+    const speech = this.#speech
+    if (!speech) return
+    if (speech.pending !== '') this.#placeWord(speech, speech.pending)
+    this.#speech = null
+    this.#write('\n')
   }
 }
 
