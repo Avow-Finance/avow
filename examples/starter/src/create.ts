@@ -161,7 +161,7 @@ export function parseArgs(args: readonly string[]): CreateArgs {
 }
 
 /** Asks for the business's name on the rail, and takes the default for an empty answer. */
-async function askName(rail: Rail, paint: ReturnType<typeof stylesOf>): Promise<string> {
+async function askName(rail: Rail): Promise<string> {
   rail.ask(`Name your sandbox business, or press Enter for ${DEFAULT_NAME}`)
   const lines = createInterface({ input: process.stdin, output: process.stdout, historySize: 0 })
   try {
@@ -179,7 +179,7 @@ async function askName(rail: Rail, paint: ReturnType<typeof stylesOf>): Promise<
         businessFile(TEMPLATE_DIR, answer)
         return answer.trim()
       } catch (error) {
-        rail.answered(paint.bad(error instanceof Error ? error.message : String(error)))
+        rail.answered(error instanceof Error ? error.message : String(error), 'bad')
       }
     }
   } finally {
@@ -219,7 +219,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const began = Date.now()
   const installing = args.install ? install(target) : null
   if (args.name === null && process.stdin.isTTY) {
-    const name = await askName(rail, paint)
+    const name = await askName(rail)
     writeFileSync(join(target, 'business.ts'), businessFile(TEMPLATE_DIR, name))
   }
   rail.done(`Made ${args.folder}, with agent.ts, business.ts and a README`)

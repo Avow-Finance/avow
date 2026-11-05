@@ -11,6 +11,7 @@ export {
   wrap,
 } from './look.js'
 export {
+  clean,
   type Evidence,
   type Fact,
   type Hex,

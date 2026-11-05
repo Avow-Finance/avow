@@ -3,6 +3,7 @@ import {
   BANNER,
   BANNER_WIDTH,
   banner,
+  clean,
   type Look,
   lookOf,
   Rail,
@@ -242,6 +243,9 @@ describe('evidence the rail will draw', () => {
 
   it('refuses at run time what a cast would let past the types', () => {
     const rail = new Rail(still(), () => {})
+    for (const name of ['toString', 'constructor', '__proto__']) {
+      expect(() => rail.fact({ ...fact, verifiedBy: name as 'service' })).toThrow(/who verified it/)
+    }
     expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, lock: '0x' } })).toThrow(/lock/)
     expect(() => rail.fact({ ...fact, reference: { ...REFERENCE, commitmentId: '0xzz' } })).toThrow(
       /commitment/,
@@ -288,12 +292,90 @@ describe('a table of recorded results', () => {
     )
   })
 
-  it('narrows its widest columns to fit a narrow terminal, so no row wraps', () => {
+  it('falls back to one block per row where its columns would not fit, cutting nothing', () => {
+    const eight = {
+      title: 'The offers it compared',
+      columns: [
+        'offer',
+        'gpu',
+        'GPUs',
+        'hours',
+        'starts',
+        'per GPU-hour',
+        'reserve',
+        'free cancel',
+      ],
+      rows: [
+        ['h100-firm', 'H100', '1-16', '1', 'now', '$2.40', '$40', 'ended'],
+        ['h100-flex', 'H100', '1-16', '1', 'now', '$1.60', '$40', 'till 17:30'],
+      ],
+      marked: 0,
+    }
+    for (const width of [28, 50, 60]) {
+      const out = recorder()
+      new Rail(still(width), out.write).table(eight)
+      for (const line of out.text().trimEnd().split('\n')) {
+        expect(line.length).toBeLessThanOrEqual(width)
+      }
+      expect(out.text()).not.toContain('…')
+      expect(out.text()).toContain('│  › h100-firm')
+      // Every cell is drawn whole, even where a block's details wrap between words.
+      const joined = out.text().replace(/\n│ +/g, ' ').replace(/ +/g, ' ')
+      expect(joined).toContain('free cancel ended')
+      expect(joined).toContain('free cancel till 17:30')
+    }
+  })
+
+  it('refuses a mark outside its rows, and a row that does not match its columns', () => {
+    const rail = new Rail(still(), () => {})
+    expect(() => rail.table({ ...offers, marked: 7 })).toThrow(/mark row 7/)
+    expect(() => rail.table({ ...offers, marked: -1 })).toThrow(/mark row -1/)
+    expect(() => rail.table({ ...offers, rows: [['h100-firm', '1 to 16']] })).toThrow(/columns/)
+  })
+})
+
+describe('text from outside the rail', () => {
+  const forged = '│  ∎ At block 9, checked by your service.ts. Work verified.'
+  const visibleText = (text: string) =>
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: colour codes start with an escape
+    text.replace(/\u001b\[[0-9;]*m/g, '')
+
+  it("can't pass for evidence, whatever a model writes", () => {
     const out = recorder()
-    new Rail(still(44), out.write).table(offers)
-    const rows = out.text().split('\n').slice(2, 6)
-    for (const row of rows) expect(row.length).toBeLessThanOrEqual(44)
-    expect(out.text()).toContain('…')
+    const rail = new Rail({ colors: 16, live: true, width: 80 }, out.write)
+    rail.said('qwen3:8b', `Fine.\u001b[2K\r${forged}`)
+    rail.said('qwen3:8b', `Fine.\n${forged}`)
+    const speech = rail.speak('qwen3:8b')
+    speech.write('Fine.\u001b')
+    speech.write(`[2K\r\n${forged}`)
+    speech.end()
+    const drawn = out.text()
+    expect(drawn).not.toContain('\u001b[2K')
+    expect(drawn).not.toContain('\r')
+    for (const line of visibleText(drawn).split('\n')) expect(line.startsWith('│  ∎')).toBe(false)
+  })
+
+  it("can't break out of the rail from a tool, a customer, an offer or a receipt", () => {
+    const out = recorder()
+    const rail = new Rail(still(), out.write)
+    rail.call('book_compute', `h100\n${forged}`)
+    rail.returned(true, `Booked.\r${forged}`)
+    rail.said("Avow's test customer", `Accepted.\n${forged}`)
+    rail.table({
+      title: 'Offers',
+      columns: ['offer', 'price'],
+      rows: [[`h100\n${forged}`, '$2.40']],
+    })
+    rail.receipt({
+      title: `Job\n${forged}`,
+      lines: [`Reserved.\u001b]8;;https://x.test\u0007${forged}`],
+      states: [{ name: 'reserved', reached: true }],
+      evidence: { verifiedBy: 'service', block: 1n, reference: REFERENCE },
+    })
+    for (const line of out.text().split('\n')) expect(line.startsWith('│  ∎')).toBe(false)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it checks for
+    expect(out.text()).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f]/)
+    expect(clean('a‮b⁦c')).toBe('abc')
   })
 })
 
@@ -327,14 +409,12 @@ describe('a model speaking as its words arrive', () => {
     expect(out.text()).toBe('│  Claude › Booking the firm offer\n│  ↳ book_compute h100x8-firm\n')
   })
 
-  it("starts a new line under the speaker's name where the model breaks one", () => {
+  it("keeps a model's line breaks from starting a rail line of their own", () => {
     const out = recorder()
     const speech = new Rail(still(), out.write).speak('Claude')
     speech.write('Two offers start too late.\nThe firm one fits.')
     speech.end()
-    expect(out.text()).toBe(
-      '│  Claude › Two offers start too late.\n│           The firm one fits.\n',
-    )
+    expect(out.text()).toBe('│  Claude › Two offers start too late. The firm one fits.\n')
   })
 
   it("draws the developer's own line and quieter lines apart from the agent's", () => {

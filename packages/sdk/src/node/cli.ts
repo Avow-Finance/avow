@@ -122,17 +122,15 @@ async function main(args: readonly string[]): Promise<void> {
         const first = await input.ask(rail.prefix, true)
         if (first === null) throw new Error('No passphrase was set.')
         if (first.length < MIN_PASSPHRASE) {
-          rail.answered(
-            paint.bad(`That's shorter than ${MIN_PASSPHRASE} characters. Choose another.`),
-          )
+          rail.answered(`That's shorter than ${MIN_PASSPHRASE} characters. Choose another.`, 'bad')
           continue
         }
-        rail.answered(paint.dim('Set'))
+        rail.answered('Set', 'quiet')
         if ((await input.ask(`${rail.prefix}${paint.dim('Type it again ')}`, true)) === first) {
-          rail.answered(paint.dim('Typed again, and it matches'))
+          rail.answered('Typed again, and it matches', 'quiet')
           return first
         }
-        rail.answered(paint.bad("Those didn't match. Choose it again."))
+        rail.answered("Those didn't match. Choose it again.", 'bad')
       }
     },
     async passphrase() {
@@ -141,7 +139,7 @@ async function main(args: readonly string[]): Promise<void> {
       rail.ask("Type your business's passphrase")
       const typed = await input.ask(rail.prefix, true)
       if (typed === null) throw new Error('No passphrase was typed.')
-      rail.answered(paint.dim('Typed'))
+      rail.answered('Typed', 'quiet')
       return typed
     },
     async confirm(question, details = []) {
