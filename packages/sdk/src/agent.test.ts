@@ -590,6 +590,37 @@ describe('committing to a quote the supplier signed', () => {
     expect(s.calls).toEqual(['approveReserve', 'approveReserve'])
   })
 
+  it('refuses a job its own mandate check refuses after Avow approved, before any money moves', async () => {
+    // Avow's stand-in approves whatever it's asked, so only the SDK's check of the checked terms
+    // stands between the approval and the reserve here.
+    const s = await quoting()
+    const wrongCategory = await s.agent.commitToQuote(
+      await quoteFor(s, { agreement: { category: 'compute' } }),
+    )
+    expect(wrongCategory).toEqual({
+      ok: false,
+      reason: 'terms.category_mismatch',
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    const capped = await setup({
+      mandate: { categories: ['compute', JOB_CATEGORY], capPerCommitment: dollars(5) },
+    })
+    const agent = createAgent({
+      ...capped.config,
+      dependencies: { readers: [computeReader(capped.supplier.account)] },
+    })
+    // The job's reserve is its largest charge, $10, over the mandate's $5 for one commitment.
+    expect(await agent.commitToQuote(await quoteFor(capped))).toEqual({
+      ok: false,
+      reason: 'mandate.over_commitment_cap',
+      layer: 'sdk',
+      decisionId: 'dec_1',
+    })
+    expect(s.calls).toEqual(['approveReserve'])
+    expect(capped.calls).toEqual(['approveReserve'])
+  })
+
   it('refuses a booking it has no reader for', async () => {
     const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
     const result = await s.agent.commitToQuote(await quoteFor(s))

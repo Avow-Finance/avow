@@ -561,6 +561,36 @@ describe('a link to verify a job', () => {
     }
   })
 
+  it('refuses a customer’s lock no supported factory made, or one on a chain it has no reader for', async () => {
+    const unlisted = scriptedLocks({
+      locks: {
+        [LOCK]: { ...customerLock(), listed: false },
+        [SUPPLIER_LOCK]: supplierLock(),
+      },
+    })
+    const unknown = await verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [unlisted.reader] },
+    )
+    expect(unknown).toEqual(refused('chain.lock_unknown', PINNED, null))
+    // Nothing is read from a lock the factory doesn't list.
+    expect(unlisted.calls.map((c) => c.call)).toEqual(['head', 'isLock', 'blockHash'])
+    const elsewhere = scriptedLocks({ chainId: CHAIN_ID + 1 })
+    const noReader = await verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [elsewhere.reader] },
+    )
+    expect(noReader).toEqual(refused('chain.lock_unknown', null, null))
+    expect(elsewhere.calls).toEqual([])
+  })
+
+  it('refuses a reference to the supplier side before reading anything', async () => {
+    const seller = { ...verification, commitment: { ...reference, side: 'supplier' as const } }
+    const { result, calls } = await read({ v: seller })
+    expect(result).toEqual(refused('reference.commitment_mismatch', null, null))
+    expect(calls).toEqual([])
+  })
+
   it('refuses compute in a lock that isn’t the supplier’s the customer’s lock names', async () => {
     const { result } = await read({ job: { supplier: newKey().address } })
     expect(result).toEqual(refused('dependency.not_owned'))
