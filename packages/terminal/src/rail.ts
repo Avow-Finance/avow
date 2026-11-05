@@ -45,10 +45,11 @@ const UNSURE = /[\p{Cn}\p{Co}\p{Cs}]|\ufe0e|\ufe0f|\u20e3/gu
  * rail's marks or a close look-alike. They are the modifier arrowheads, the single angle quotes,
  * arrows, the end-of-proof mark and the divides sign, technical symbols, box drawing, blocks and
  * geometric shapes, dingbats, the arrows, brackets and math symbols after them, Braille (the
- * spinner's frames), other symbols and arrows, and the halfwidth forms.
+ * spinner's frames), other symbols and arrows, the diamond suits, the fullwidth and halfwidth
+ * bars and forms, and the extended geometric shapes.
  */
 const MARKS =
-  /[\u02c2-\u02c5\u2039\u203a\u2190-\u21ff\u220e\u2223\u2300-\u23ff\u2500-\u25ff\u2700-\u29ff\u2b00-\u2bff\uffe8-\uffee]/g
+  /[\u02c2-\u02c5\u2039\u203a\u2190-\u21ff\u220e\u2223\u2300-\u23ff\u2500-\u25ff\u2662\u2666\u2700-\u29ff\u2b00-\u2bff\uff5c\uffe8-\uffee\u{1f780}-\u{1f7ff}]/gu
 
 /**
  * Turn the terminal's autowrap off, and back on. Every write of the rail's rows sits between the

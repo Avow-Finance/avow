@@ -714,7 +714,7 @@ describe('character widths', () => {
     // The emoji selectors and the keycap go, so every base draws as text.
     expect(clean('©\ufe0f 1\ufe0f\u20e3 ✔\ufe0f')).toBe('© 1 ')
     // The rail's marks and their look-alikes go, the spinner's frames among them.
-    expect(clean('￨￭￮⬥⬦⯀⟩˃∣⏐⠋⧫')).toBe('')
+    expect(clean('￨￭￮⬥⬦⯀⟩˃∣⏐⠋⧫｜♦♢\u{1f793}')).toBe('')
   })
 })
 
