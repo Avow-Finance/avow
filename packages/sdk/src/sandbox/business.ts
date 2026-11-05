@@ -73,6 +73,16 @@ export const balanceOf = (client: SandboxClient, token: Address, account: Addres
   client.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [account] })
 
 /**
+ * Has Moderato's faucet fund an account's fees when it holds less than enough for them, and gives
+ * the faucet's transactions, none when it held enough already.
+ */
+export async function fundFees(client: SandboxClient, account: Address): Promise<Hex[]> {
+  if ((await balanceOf(client, MODERATO_FEE_TOKEN, account)) >= ENOUGH_FOR_FEES) return []
+  const receipts = await Actions.faucet.fundSync(client, { account, timeout: 60_000 })
+  return receipts.map((r) => r.transactionHash)
+}
+
+/**
  * Makes a sandbox business from its root key and registers it, in a browser or in Node.
  * Moderato's faucet funds the account's fees, the root key creates the lock from Avow's factory,
  * and then signs the sandbox registration, which has Avow's sandbox faucet pay the account its
@@ -87,11 +97,7 @@ export async function createSandboxBusiness(deps: SandboxBusinessDeps): Promise<
   const now = deps.now ?? systemClock
   const account = root.address
 
-  let feeHashes: Hex[] = []
-  if ((await balanceOf(client, MODERATO_FEE_TOKEN, account)) < ENOUGH_FOR_FEES) {
-    const receipts = await Actions.faucet.fundSync(client, { account, timeout: 60_000 })
-    feeHashes = receipts.map((r) => r.transactionHash)
-  }
+  const feeHashes = await fundFees(client, account)
   onStep({ step: 'fees', hashes: feeHashes })
 
   const lock = await client.readContract({

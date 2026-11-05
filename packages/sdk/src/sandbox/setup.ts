@@ -29,6 +29,7 @@ import {
   saveAgentItem,
   saveCommitments,
 } from './store.js'
+import { ensureSandboxSupplier } from './supplier-key.js'
 import { checkSuppliers, connectSupplier } from './suppliers.js'
 import { micros, toDollars } from './terms.js'
 import { openKey, sealKey } from './vault.js'
@@ -275,6 +276,8 @@ export async function prepareSandboxBusiness(
     setUpAgain = !fresh
   }
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
+  // The business quotes and accepts jobs as a supplier, with a signing key of its own.
+  await ensureSandboxSupplier({ store, business, deployment, client, openRoot, log, fetch: send })
   let agent: AgentItem | null = await loadAgentItem(store)
   if (agent && !isAddressEqual(agent.business.lock, lock)) agent = null
   // The agent's file names the mandate it holds, and the agent can write that file. So the mandate

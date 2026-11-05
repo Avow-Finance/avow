@@ -12,9 +12,11 @@ import { type Address, type Hex, isAddress } from 'viem'
 /**
  * What a sandbox keeps, each item apart. `business` holds the business's root key sealed under its
  * passphrase, which only the runner opens. `agent` holds the agent's own key and the mandate it acts
- * under, which is all the agent's process reads. `state` holds the commitments the agent made.
+ * under. `supplier` holds the signing key the business quotes and accepts jobs with, and its
+ * registration as a sandbox supplier. Those two are all a job process reads. `state` holds the
+ * commitments the agent made.
  */
-export type SandboxStoreItem = 'business' | 'agent' | 'state'
+export type SandboxStoreItem = 'business' | 'agent' | 'supplier' | 'state'
 
 /**
  * Where a sandbox keeps its items, as text. In Node it's the `.avow` folder of the working

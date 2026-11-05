@@ -184,6 +184,50 @@ export async function signBusinessRegistration(r: {
   return { registration, accountSignature: await r.rootKey.sign({ hash: digest }) }
 }
 
+/**
+ * A supplier's registration, signed by its account's root key and by its signing key over the same
+ * digest, so nobody registers a signing key they don't hold. The request around it has to be
+ * signed by the same root key, naming the lock factory, since a supplier has no lock of its own.
+ * It's valid for `validity` seconds from `now`, which the API holds to at most five minutes.
+ */
+export async function signSupplierRegistration(r: {
+  chainId: number
+  factory: Address
+  /** The API's origin, which the registration names as its audience. */
+  audience: string
+  account: Address
+  /** Where charges the supplier reports are paid out. */
+  payee: Address
+  rootKey: HashSigner
+  /** The supplier's signing key, which signs its agreements, acceptances and requests. */
+  signingKey: HashSigner & { address: Address }
+  now: bigint
+  validity: bigint
+}): Promise<{
+  registration: SupplierRegistration
+  accountSignature: Hex
+  signingKeySignature: Hex
+}> {
+  const registration: SupplierRegistration = {
+    environment: SANDBOX_ENVIRONMENT,
+    audience: r.audience,
+    account: r.account,
+    payee: r.payee,
+    signingKey: r.signingKey.address,
+    nonce: toHex(crypto.getRandomValues(new Uint8Array(32))),
+    expiry: r.now + r.validity,
+  }
+  const hash = registrationDigest(registrationDomain(r.chainId, r.factory), {
+    kind: 'supplier',
+    registration,
+  })
+  return {
+    registration,
+    accountSignature: await r.rootKey.sign({ hash }),
+    signingKeySignature: await r.signingKey.sign({ hash }),
+  }
+}
+
 /** What Avow answers a sandbox business's registration with: its id and the test dollars it paid. */
 export interface SandboxRegistrationAnswer {
   businessId: string
