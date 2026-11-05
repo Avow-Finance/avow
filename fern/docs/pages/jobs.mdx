@@ -18,7 +18,7 @@ The template's rules are fixed.
 - The deadline falls by the charge deadline.
 - The consideration is one fixed price above zero.
 
-A job's terms always say the buyer checks the bookings they rely on. The `avow` setting promises to hide the booking from the buyer, which a job can't keep, since the customer gets the terms in full and a link to verify a job shows the booking, so every check refuses it as `terms.template_invalid`.
+A job's terms always say the buyer checks the bookings they rely on. The `avow` setting promises to hide the booking from the buyer, which a job can't keep, since the customer gets the terms in full and a link to verify a job shows the booking. So job terms in the `avow` setting never get through. The parsers refuse them first, as `terms.invalid` for terms read on their own and as `message.invalid` inside a request's body, and a check handed them as values refuses them as `terms.template_invalid`.
 
 Job terms in version 2's shape name no compute. They read, so a check can say why it refuses them, and every check refuses them as `dependency.required`. The customer and Avow's API run the same check, so they refuse with the same code.
 
