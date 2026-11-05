@@ -94,6 +94,8 @@ export const REASON_CODES = {
     "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
   'order.terms_changed':
     "The quote's terms differ from the offer's beyond the compute bookings they add",
+  'order.commitment_mismatch':
+    "The quote's terms agreement names another commitment id than the one the order's offer names",
   'agreement.parties_mismatch':
     "The terms agreement names another buyer, mandate or supplier than the agent's business, its mandate and the supplier it deals with",
   'commitment.unknown': 'Avow has no record of this commitment',
@@ -215,6 +217,39 @@ export const REASON_CODES = {
     'These terms name no booking they rely on, and their template commits only on a booking it relies on, such as the compute a job runs on',
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
+  'dependency.unrecorded':
+    'Avow holds no record of the booking relied on, so it has nothing to check the section shown against',
+  'service.compute_off':
+    'The compute switch in service.ts is off, so the tool layer books no compute and a quote names no booking',
+  'service.over_budget':
+    "The offer's rate per GPU-hour is over the compute budget in service.ts, so the tool layer didn't book it",
+  'service.unknown_offer': 'No offer in the latest listing has that id, so nothing was booked',
+  'service.unknown_booking': 'No compute booking this session made has that id',
+  'service.quantity_unavailable':
+    "The offer doesn't take that many GPUs in one booking, so nothing was booked",
+  'service.booking_required':
+    'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
+  'sandbox.closed':
+    'Sandbox registration and its faucet are switched off for now, so nothing was registered or paid',
+  'sandbox.limit_reached':
+    'Registering would take one of the sandbox limits past what it allows, so send it again once `retryAt` has passed',
+  'sandbox.budget_spent':
+    'The faucet has sent everything its total budget allows, so it registers no more businesses until Avow raises it',
+  'sandbox.pool_empty':
+    "The faucet's pool of test dollars can't pay another business yet, so nothing was registered",
+  'sandbox.faucet_fees_low':
+    "The faucet's own fees are too low to send a payout, so nothing was registered. They refill on their own within a few minutes, so register again then",
+  'sandbox.taken':
+    'The account, lock or signing key already belongs to another business or supplier Avow records',
+  'sandbox.session_taken':
+    'Another sandbox business already posts to this session, so start a session of your own',
+  'sandbox.session_expired':
+    'This session took events for a week after its first and has ended, so start a new session',
+  'sandbox.session_full':
+    'This session holds as many events as a session can, so start a new session',
+  'sandbox.event_too_large': 'The event is larger than a session keeps, so nothing was posted',
+  'sandbox.session_rate':
+    'Your business is posting events faster than the sandbox allows, so send it again once `retryAt` has passed',
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES

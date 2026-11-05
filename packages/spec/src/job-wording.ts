@@ -34,6 +34,14 @@ export const CHECK_BOUNDARY =
 export const AFTER_ACCEPTANCE =
   "If your compute is cancelled or fails after the customer accepted, the job commitment stands, and your business still answers to the customer under the job's own terms. It finds other capacity or releases the job with the reason supplier failed."
 
+/** What's simulated and what's real, said in one plain line wherever the work appears. */
+export const SIMULATED_LINE =
+  'The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.'
+
+/** The label of the result a delivery hands over, which says plainly that it's a placeholder. */
+export const SIMULATED_RESULT_LABEL =
+  'Simulated fine-tuning result, a placeholder, since no model was trained'
+
 /** The first challenge, which the prescribed edit answers. */
 export const REFUSAL_CHALLENGE = 'Remove the compute booking. Would the customer still accept?'
 
@@ -108,7 +116,7 @@ export function jobEventSentence(event: JobEvent): string {
       return 'The customer is verifying the compute booking your quote names.'
     case 'job_customer_verified': {
       const blocks = [...new Set(event.checks.map((c) => c.block.number))]
-      return `The customer verified your compute booking at block ${blocks.join(' and ')}.`
+      return `${TEST_CUSTOMER_LABEL} says it verified your compute booking at block ${blocks.join(' and ')}.`
     }
     case 'job_customer_refused':
       return `${CUSTOMER_WHO[event.refusal.layer]}. ${refusalTail(event.refusal.code, event.refusal.block)}`
@@ -119,7 +127,7 @@ export function jobEventSentence(event: JobEvent): string {
     case 'job_work_started':
       return "Work started, and the customer's free cancellation has ended."
     case 'job_delivered':
-      return 'Your code reported delivery to the customer.'
+      return 'Your code reported delivery to the customer and handed over a placeholder result, since the training is simulated.'
     case 'job_paid':
       return "The customer paid the job's price by a transfer whose memo names the job commitment. Anyone can check it on chain as a payment reference."
     case 'job_reserve_released':

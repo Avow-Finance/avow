@@ -48,7 +48,11 @@ const signingKeys = {
 
 describe("a supplier adapter's routes and bodies", () => {
   it('names the two routes an agent calls', () => {
-    expect(SUPPLIER_ADAPTER_PATHS).toEqual({ profile: '/profile', agreements: '/agreements' })
+    expect(SUPPLIER_ADAPTER_PATHS).toEqual({
+      profile: '/profile',
+      agreements: '/agreements',
+      offers: '/offers',
+    })
   })
 
   it('reads an offer as the SDK sends it, and refuses anything else', () => {
