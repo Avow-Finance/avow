@@ -35,6 +35,20 @@ export interface SupplierConnection {
 }
 
 /**
+ * A supplier declining to sign an agreement, with the status it answered, such as over its most
+ * for one booking or past its limit of open bookings. Nothing was reserved.
+ */
+export class SupplierDeclined extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = 'SupplierDeclined'
+  }
+}
+
+/**
  * The agent's channel to a supplier's adapter, over the routes and bodies the spec fixes for
  * every adapter. The profile comes from the supplier, and the agent checks every signature it gets
  * back against the signing key in that profile before it relies on it. The SDK refuses a booking
@@ -63,7 +77,11 @@ export async function httpSupplier(
       const body: unknown = await signed.json().catch(() => null)
       if (!signed.ok) {
         const why = parseSupplierRefusal(body)?.error ?? String(signed.status)
-        throw new Error(`The supplier refused the agreement: ${why}`)
+        // A 4xx is the supplier's answer, and anything else is a supplier that couldn't answer.
+        if (signed.status < 500) {
+          throw new SupplierDeclined(`The supplier refused the agreement: ${why}`, signed.status)
+        }
+        throw new Error(`The supplier couldn't answer the agreement: ${why}`)
       }
       const parsed = parseAgreementSignature(body)
       if (!parsed.ok) throw new Error(`The supplier answered with no signature (${parsed.reason})`)

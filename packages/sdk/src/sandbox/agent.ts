@@ -38,7 +38,8 @@ import type { AvowApi } from '../avow-api.js'
 import { agentRequestKey, httpAvowApi, relayReason } from '../http.js'
 import { readOpenReserves } from '../lock.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
-import { landedReverted, sendSponsored } from '../send.js'
+import { landedReverted, sendErrorIn, sendSponsored } from '../send.js'
+import { SupplierDeclined } from '../supplier.js'
 import type { SandboxClient } from './business.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
@@ -403,7 +404,14 @@ function booker(m: {
   ): Promise<Refusal> {
     const left = await leftNow().catch(() => r.leftBefore)
     const dailyLeft = await dailyLeftNow().catch(() => null)
-    const amounts = { needed: r.needed, left, authority: cap, dailyLimit, dailyLeft }
+    const amounts = {
+      needed: r.needed,
+      left,
+      authority: cap,
+      capPerCommitment: mandate.message.capPerCommitment,
+      dailyLimit,
+      dailyLeft,
+    }
     report({ type: 'refused', run, source, code: r.code, layer: r.layer, amounts })
     return new Refusal(
       { code: r.code, layer: r.layer, amounts, decisionId: extra.decisionId ?? null },
@@ -499,6 +507,12 @@ function booker(m: {
       try {
         booked = await agent.book({ supplier: connection, terms, category: 'compute' })
       } catch (error) {
+        if (error instanceof SupplierDeclined) {
+          throw await refusal(
+            { code: 'supplier.declined', layer: 'supplier', needed: reserve, leftBefore },
+            { cause: error },
+          )
+        }
         if (error instanceof BookingError && error.outcome === 'failed') {
           throw await refusal(
             { ...fundingRefusal(error), needed: reserve, leftBefore },
@@ -576,14 +590,21 @@ function keychainRefused(error: unknown): boolean {
 
 /**
  * Who refused a reserve Avow had approved. The account's keychain refuses a key past its daily
- * limit when the transaction is prepared, and Avow's relay refuses with its own reason. A funding
- * transaction that landed and reverted is the lock's refusal, and anything else is unknown.
+ * limit when the transaction is prepared, and Avow's relay refuses with its own reason, or with
+ * none when it can't be reached or hands back other bytes, which is the relay being unavailable. A
+ * transaction that landed and reverted, or that reverted while the node prepared it, is the lock's
+ * refusal. Anything else, such as one that expired in no block or that the node never took, is
+ * unknown.
  */
 export function fundingRefusal(error: unknown): { code: ReasonCode; layer: RefusalLayer } {
   if (keychainRefused(error)) return { code: 'keychain.over_daily_limit', layer: 'keychain' }
   const reason = relayReason(error)
   if (reason) return { code: reason, layer: 'relay' }
-  if (landedReverted(error)) return { code: 'chain.reserve_missing', layer: 'lock' }
+  const stopped = sendErrorIn(error)
+  if (stopped?.stage === 'relay') return { code: 'service.unavailable', layer: 'relay' }
+  if (landedReverted(error) || (stopped?.stage === 'prepare' && /revert/i.test(stopped.message))) {
+    return { code: 'chain.reserve_missing', layer: 'lock' }
+  }
   return { code: 'chain.reserve_missing', layer: 'unknown' }
 }
 

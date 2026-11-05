@@ -214,6 +214,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
             needed: dollars(error.amounts.needed),
             left: dollars(error.amounts.left),
             heldAtOnce: dollars(error.amounts.authority),
+            perCommitment: dollars(error.amounts.capPerCommitment),
             movedPerDay: dollars(error.amounts.dailyLimit),
             movedToday: dollars(error.amounts.dailyLeft),
           },

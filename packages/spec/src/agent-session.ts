@@ -1,6 +1,6 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
-import { type ComputeOffer, computeOfferJson, MAX_COMPUTE_OFFERS } from './compute-offers.js'
+import { type ComputeOffers, computeOffersJson } from './compute-offers.js'
 import { type PinnedBlock, pinnedBlockJson } from './dependencies.js'
 import { type FactBody, factBodyShape, VERIFIERS, type VerifiedBy } from './facts.js'
 import { type JobVerification, jobVerificationJson } from './job-verification.js'
@@ -28,7 +28,8 @@ import { orderIdJson } from './test-customer.js'
  * A signed event is an attributed statement. The agent key's signature says who posted it, never
  * that what it says is true. So each fact and receipt names who verified it, the commitment on the
  * chain and the block, and a reader checks from the chain what it can. The developer's own
- * messages stay in their terminal and are never posted.
+ * messages stay in their terminal and are never posted as events, but the agent's replies can
+ * repeat them, since `said` carries the model's words.
  */
 
 /** The tools the agent session gives a model, and nothing else. */
@@ -43,8 +44,26 @@ export const JOB_TOOLS = [
 ] as const
 export type JobTool = (typeof JOB_TOOLS)[number]
 
-/** Who spoke: a model by its id, `scripted` for the deterministic fixture, or the customer. */
-export type Speaker = { kind: 'model'; model: string } | { kind: 'customer' }
+/**
+ * Who spoke: a model by its id, `scripted` for the deterministic fixture, or the customer, with the
+ * index of what it said in its order's `said`, so a reader matches the two.
+ */
+export type Speaker = { kind: 'model'; model: string } | { kind: 'customer'; index: number }
+
+/**
+ * The form a model's name takes wherever it's drawn: up to 64 letters, digits, spaces and
+ * `._:'/@+-`, as `speakerName` makes one from any model id.
+ */
+export const SPEAKER_NAME = /^[A-Za-z0-9 ._:'/@+-]{1,64}$/
+
+/** A model id in the form `SPEAKER_NAME` takes, any other character replaced and cut to 64. */
+export function speakerName(model: string): string {
+  const named = model
+    .replace(/[^A-Za-z0-9 ._:'/@+-]/g, '-')
+    .trim()
+    .slice(0, 64)
+  return named === '' ? 'model' : named
+}
 
 /** The model id scripted runs speak as, so every line they draw says it was scripted. */
 export const SCRIPTED_MODEL = 'scripted'
@@ -63,7 +82,11 @@ export interface Said extends SessionEventBase {
   text: string
 }
 
-/** A tool the model called, with a summary code wrote of what it was called with. */
+/**
+ * A tool the model called, with a summary code wrote of what it was called with. A booking call
+ * names the offer and how many GPUs, both null when the model's input wasn't in the form the tool
+ * takes, which the tool layer refuses.
+ */
 export type ToolCall = SessionEventBase & {
   type: 'tool_call'
   /** Pairs the call with its result, counting from 1 within the run. */
@@ -72,6 +95,7 @@ export type ToolCall = SessionEventBase & {
 } & (
     | { tool: Exclude<JobTool, 'book_compute'> }
     | { tool: 'book_compute'; offer: string; quantity: number }
+    | { tool: 'book_compute'; offer: null; quantity: null }
   )
 
 /** The limits that applied when the model compared offers, in micros. */
@@ -80,17 +104,21 @@ export interface ToolLimits {
   budgetPerGpuHour: bigint
   /** Whether `service.ts` books compute at all. */
   computeSwitch: 'on' | 'off'
-  /** The agent's authority, the most it can hold in bookings at once. */
-  authority: bigint
-  /** What the agent had left of it. */
-  authorityLeft: bigint
+  /** The most the agent's mandate allows for one commitment. */
+  capPerCommitment: bigint
+  /** The most the agent can hold in bookings at once. */
+  capOpenReserves: bigint
+  /** What the agent had left of its open-reserves cap. */
+  openReservesLeft: bigint
 }
 
 /**
  * What a tool returned, in a summary code wrote. A refusal names its reason code and the layer
  * that refused. A listing of offers carries them and the limits that applied, so the comparison can
- * be shown as it was. A result shown again, as evidence beside an answer, names the call it records
- * and is never a new call.
+ * be shown as it was. A result shown again, as evidence beside an answer, names the run and call
+ * that made it and is never a new call. A reader shows the original event it names, and refuses a
+ * copy that differs from it, so the evidence beside an answer is the recorded result and never a
+ * new claim.
  */
 export type ToolResult = SessionEventBase & {
   type: 'tool_result'
@@ -99,9 +127,12 @@ export type ToolResult = SessionEventBase & {
   summary: string
   /** For a result shown again, the run and call that made it. */
   recalled: { run: number; call: number } | null
-  /** For `compute_offers`, the offers the model saw. */
-  offers: ComputeOffer[] | null
-  /** For `compute_offers`, the limits that applied to them. */
+  /**
+   * For `compute_offers`, the listing the model saw, with the moment it was listed, which says
+   * whether each offer was firm.
+   */
+  listing: ComputeOffers | null
+  /** For `compute_offers`, the limits that applied to it. */
   limits: ToolLimits | null
 } & ({ ok: true } | { ok: false; code: ReasonCode; layer: RefusalLayer })
 
@@ -149,8 +180,9 @@ const otherTools = JOB_TOOLS.filter((t) => t !== 'book_compute') as [
 const limitsJson = z.strictObject({
   budgetPerGpuHour: u256,
   computeSwitch: z.enum(['on', 'off']),
-  authority: u256,
-  authorityLeft: u256,
+  capPerCommitment: u256,
+  capOpenReserves: u256,
+  openReservesLeft: u256,
 })
 
 const toolResultFields = {
@@ -160,13 +192,14 @@ const toolResultFields = {
   tool: z.enum(JOB_TOOLS),
   summary,
   recalled: z.strictObject({ run: runJson, call }).nullable(),
-  offers: z.array(computeOfferJson).min(1).max(MAX_COMPUTE_OFFERS).nullable(),
+  listing: computeOffersJson.nullable(),
   limits: limitsJson.nullable(),
 }
 
-/** Offers and limits come only with a listing of offers. */
-const listingOnly = (r: { tool: JobTool; offers: unknown; limits: unknown }) =>
-  r.tool === 'compute_offers' || (r.offers === null && r.limits === null)
+/** A listing and its limits come with a successful `compute_offers` result, and with no other. */
+const listingOnly = (r: { tool: JobTool; ok: boolean; listing: unknown; limits: unknown }) =>
+  (r.tool === 'compute_offers' && r.ok) === (r.listing !== null) &&
+  (r.listing !== null) === (r.limits !== null)
 
 /** Each agent session event's JSON form, which the session's event schema takes beside its own. */
 export const AGENT_SESSION_EVENT_SCHEMAS = [
@@ -174,8 +207,8 @@ export const AGENT_SESSION_EVENT_SCHEMAS = [
     ...base,
     type: z.literal('said'),
     speaker: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('model'), model: z.string().min(1).max(100) }),
-      z.strictObject({ kind: z.literal('customer') }),
+      z.strictObject({ kind: z.literal('model'), model: z.string().regex(SPEAKER_NAME) }),
+      z.strictObject({ kind: z.literal('customer'), index: z.number().int().min(0).max(31) }),
     ]),
     text: z.string().min(1).max(SAID_TEXT_MAX),
   }),
@@ -188,6 +221,15 @@ export const AGENT_SESSION_EVENT_SCHEMAS = [
       summary,
       offer: z.string().min(1).max(64),
       quantity: z.number().int().positive().max(1024),
+    }),
+    z.strictObject({
+      ...base,
+      type: z.literal('tool_call'),
+      call,
+      tool: z.literal('book_compute'),
+      summary,
+      offer: z.null(),
+      quantity: z.null(),
     }),
     z.strictObject({
       ...base,

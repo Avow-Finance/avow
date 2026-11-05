@@ -1,5 +1,6 @@
 import type { ReasonCode } from '@avow-finance/spec'
 import {
+  type DeliveryReport,
   type JobOffer,
   type OrderAnswer,
   type OrderState,
@@ -43,8 +44,8 @@ export interface TestCustomer {
   quote(orderId: string, quote: QuoteRequest): Promise<OrderAnswer>
   /** Where an order stands now. */
   state(orderId: string): Promise<OrderState>
-  /** Reports the job delivered. The customer answers, then pays. */
-  delivery(orderId: string): Promise<OrderAnswer>
+  /** Reports the job delivered, handing over its result. The customer answers, then pays. */
+  delivery(orderId: string, report: DeliveryReport): Promise<OrderAnswer>
 }
 
 /** What a test customer client needs: the signed-request settings and the chain expected. */
@@ -125,11 +126,11 @@ export async function connectTestCustomer(config: TestCustomerConfig): Promise<T
         if (!state.ok) return state
         return state.value.orderId === orderId ? state : { ok: false, reason: 'message.invalid' }
       }),
-    delivery: (orderId) =>
+    delivery: (orderId, report) =>
       send({
         domain,
         path: TEST_CUSTOMER_PATHS.delivery(orderId),
-        body: {},
+        body: report,
         read: parseOrderAnswer,
       }),
   }

@@ -38,10 +38,6 @@ export const AFTER_ACCEPTANCE =
 export const SIMULATED_LINE =
   'The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.'
 
-/** The label of the result a delivery hands over, which says plainly that it's a placeholder. */
-export const SIMULATED_RESULT_LABEL =
-  'Simulated fine-tuning result, a placeholder, since no model was trained'
-
 /** The first challenge, which the prescribed edit answers. */
 export const REFUSAL_CHALLENGE = 'Remove the compute booking. Would the customer still accept?'
 

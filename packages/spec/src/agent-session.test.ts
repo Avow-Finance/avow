@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { JOB_TOOLS } from './agent-session.js'
+import { JOB_TOOLS, speakerName } from './agent-session.js'
 import { parseSessionEvent, refusalSentence, whenRetryPasses } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, ORDER } from './test-helpers.js'
 import { toWire } from './wire.js'
@@ -34,6 +34,16 @@ describe('the agent session’s events', () => {
     }
   })
 
+  it('name a model the way the terminal can draw it, and the customer by what it said', () => {
+    expect(speakerName('qwen3:8b')).toBe('qwen3:8b')
+    expect(speakerName('hf.co/org/model\u001b[31m')).toBe('hf.co/org/model--31m')
+    expect(speakerName('x'.repeat(80))).toHaveLength(64)
+    const said = kind('said', (e) => (e.speaker as { kind: string }).kind === 'model')
+    expect(reads({ ...said, speaker: { kind: 'model', model: 'a\nb' } })).toBe(false)
+    const customer = kind('said', (e) => (e.speaker as { kind: string }).kind === 'customer')
+    expect(reads({ ...customer, speaker: { kind: 'customer' } })).toBe(false)
+  })
+
   it('keep speech apart, from a model by its id or from the customer, and never anyone else', () => {
     const said = kind('said')
     expect(reads({ ...said, speaker: { kind: 'developer' } })).toBe(false)
@@ -42,17 +52,25 @@ describe('the agent session’s events', () => {
     expect(reads({ ...said, check: 'dependency' })).toBe(false)
   })
 
-  it('carry the offer and quantity on a booking call, and on no other', () => {
+  it('carry the offer and quantity on a booking call, both or neither, and on no other', () => {
     const book = kind('tool_call', (e) => e.tool === 'book_compute')
     const { quantity: _, ...noQuantity } = book
     expect(reads(noQuantity)).toBe(false)
+    // A call whose input wasn't in the tool's form names neither.
+    expect(reads({ ...book, offer: null, quantity: null })).toBe(true)
+    expect(reads({ ...book, offer: null })).toBe(false)
+    expect(reads({ ...book, quantity: null })).toBe(false)
     const other = kind('tool_call', (e) => e.tool === 'compute_offers')
     expect(reads({ ...other, offer: 'h100-firm', quantity: 1 })).toBe(false)
   })
 
-  it('carry offers and limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
+  it('carry the listing and its limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
     const listing = kind('tool_result', (e) => e.tool === 'compute_offers' && e.recalled === null)
     expect(reads({ ...listing, tool: 'authority' })).toBe(false)
+    expect(reads({ ...listing, listing: null })).toBe(false)
+    expect(reads({ ...listing, limits: null })).toBe(false)
+    // The listing says when it was listed, so whether each offer was firm reads from the event.
+    expect(listing.listing).toMatchObject({ listedAt: expect.any(String) })
     const refused = kind('tool_result', (e) => e.ok === false)
     expect(reads({ ...refused, layer: 'model' })).toBe(false)
     expect(reads({ ...refused, ok: true })).toBe(false)
@@ -89,6 +107,7 @@ describe('a refusal by the developer’s service.ts or the customer’s verifier
     needed: 40_000_000n,
     left: 500_000_000n,
     authority: 500_000_000n,
+    capPerCommitment: 500_000_000n,
     dailyLimit: null,
     dailyLeft: null,
   }

@@ -122,8 +122,11 @@ export interface JobCommitmentChecked extends JobEventBase {
   releaseDate: bigint
   /** The compute booking as the acceptance check read it again, with its block. */
   checks: CheckedDependency[]
-  /** The transaction that carried the acceptance, and its block. */
-  acceptedIn: { transactionHash: Hex; blockNumber: bigint }
+  /**
+   * The transaction that carried the acceptance, and its block. Null when the lock already showed
+   * the acceptance an earlier attempt sent, and this run never saw the transaction it landed in.
+   */
+  acceptedIn: { transactionHash: Hex; blockNumber: bigint } | null
 }
 
 /**
@@ -250,7 +253,7 @@ export const JOB_EVENT_SCHEMAS = [
       .max(4),
     releaseDate: u64,
     checks,
-    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }),
+    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }).nullable(),
   }),
   z.strictObject({
     ...base,

@@ -11,9 +11,9 @@ import {
   reserveLine,
   SEPARATE_RESERVES,
   SIMULATED_LINE,
-  SIMULATED_RESULT_LABEL,
 } from './job-wording.js'
 import { describeReason } from './reasons.js'
+import { SIMULATED_RESULT_LABEL } from './test-customer.js'
 import { JOB_EVENTS, READ_BLOCK } from './test-helpers.js'
 
 const charges = [

@@ -219,12 +219,16 @@ export const CUSTOMER_SAID_MAX = 500
 /** The most messages or facts one order carries. */
 export const ORDER_STATEMENTS_MAX = 32
 
+/** The label of the result a delivery hands over, which says plainly that it's a placeholder. */
+export const SIMULATED_RESULT_LABEL =
+  'Simulated fine-tuning result, a placeholder, since no model was trained'
+
 /**
- * The result a delivery hands over. The work is simulated, so it's a placeholder whose label says
- * so plainly, with the hash of its content.
+ * The result a delivery hands over. The work is simulated, so it's a placeholder whose label is the
+ * one plain label, with the hash of its content.
  */
 export interface DeliveryResult {
-  label: string
+  label: typeof SIMULATED_RESULT_LABEL
   hash: Hex
 }
 
@@ -402,7 +406,7 @@ const base = {
 }
 
 export const deliveryReportJson = z.strictObject({
-  result: z.strictObject({ label: z.string().min(1).max(200), hash: bytes32 }),
+  result: z.strictObject({ label: z.literal(SIMULATED_RESULT_LABEL), hash: bytes32 }),
 })
 
 export const orderStateJson = z.discriminatedUnion('status', [

@@ -19,17 +19,21 @@ export type AgentSource = (typeof AGENT_SOURCES)[number]
  * layer applies before anything is signed. `sdk` is the agent's own SDK, which checks the mandate
  * before anyone signs. `avow` is Avow's API, which checks the mandate against what the lock holds
  * before it approves a reserve. `customer` is the customer's verifier, which checks a quote before
- * the customer commits. `relay` is Avow's relay, which refuses to pay the fee for a transaction it
- * won't sponsor. `lock` is a lock on-chain, which reverts a reserve that breaks Avow's approval,
- * including the caps the approval carries. `keychain` is the business account's keychain, which
- * holds the agent's key to the daily limit the business's root key set. `unknown` is a reserve that
- * never landed when nothing on the way gave a reason.
+ * the customer commits. `supplier` is the supplier the agent books with, which can decline to sign
+ * the agreement or never accept the reserve. `relay` is Avow's relay, which refuses to pay the fee
+ * for a transaction it won't sponsor, or can't be reached. `lock` is a lock on-chain, which reverts
+ * a reserve that breaks Avow's approval, including the caps the approval carries, whether the
+ * revert lands or shows while the node prepares the transaction. `keychain` is the business
+ * account's keychain, which holds the agent's key to the daily limit the business's root key set.
+ * `unknown` is a transaction whose fate nobody gave: it expired in no block, the node never took
+ * it, or the node wouldn't give its latest block.
  */
 export const REFUSAL_LAYERS = [
   'service',
   'sdk',
   'avow',
   'customer',
+  'supplier',
   'relay',
   'lock',
   'keychain',
