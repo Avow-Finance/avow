@@ -19,6 +19,7 @@ export {
   type Hex,
   Rail,
   type Receipt,
+  SPEAKER_NAME,
   setApart,
   type Table,
   type VerifiedBy,

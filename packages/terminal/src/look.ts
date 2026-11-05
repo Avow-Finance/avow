@@ -82,31 +82,18 @@ export function visible(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, '')
 }
 
-/** Ranges of characters that take no column, drawing over the one before them. */
-const ZERO: readonly (readonly [number, number])[] = [
-  [0x0300, 0x036f],
-  [0x0483, 0x0489],
-  [0x0591, 0x05bd],
-  [0x0610, 0x061a],
-  [0x064b, 0x065f],
-  [0x0e31, 0x0e31],
-  [0x0e34, 0x0e3a],
-  [0x0e47, 0x0e4e],
-  [0x1ab0, 0x1aff],
-  [0x1dc0, 0x1dff],
-  [0x200b, 0x200f],
-  [0x20d0, 0x20ff],
-  [0x302a, 0x302d],
-  [0x3099, 0x309a],
-  [0xfe00, 0xfe0f],
-  [0xfe20, 0xfe2f],
-  [0xe0100, 0xe01ef],
-]
+/**
+ * The combining diacritical marks, the one range every terminal draws over the character before
+ * it. Every other mark counts as a column of its own, since terminals disagree about them, and a
+ * row measured too wide only wraps a little early, while one measured too narrow runs past the
+ * terminal.
+ */
+const ZERO: readonly (readonly [number, number])[] = [[0x0300, 0x036f]]
 
 /**
  * Ranges of characters a terminal draws two columns wide: East Asian wide and fullwidth
- * characters, and emoji. Where a range is uncertain it counts as wide, since a row measured
- * too wide wraps a little early, while one measured too narrow runs past the terminal.
+ * characters, the historic scripts some tables draw wide, and emoji. Where a range is uncertain it
+ * counts as wide, for the same reason.
  */
 const WIDE: readonly (readonly [number, number])[] = [
   [0x1100, 0x115f],
@@ -117,8 +104,7 @@ const WIDE: readonly (readonly [number, number])[] = [
   [0x2b00, 0x2bff],
   [0x2e80, 0x303e],
   [0x3041, 0x33ff],
-  [0x3400, 0x4dbf],
-  [0x4e00, 0x9fff],
+  [0x3400, 0x9fff],
   [0xa000, 0xa4cf],
   [0xa960, 0xa97f],
   [0xac00, 0xd7a3],
@@ -127,6 +113,9 @@ const WIDE: readonly (readonly [number, number])[] = [
   [0xfe30, 0xfe6f],
   [0xff00, 0xff60],
   [0xffe0, 0xffe6],
+  [0x16fe0, 0x16fff],
+  [0x17000, 0x18d8f],
+  [0x1aff0, 0x1b2ff],
   [0x1f000, 0x1faff],
   [0x20000, 0x2fffd],
   [0x30000, 0x3fffd],

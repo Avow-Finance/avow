@@ -1,3 +1,6 @@
+import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { Terminal } from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BANNER,
@@ -120,7 +123,8 @@ describe('the rail', () => {
     rail.wait('Waiting for the test dollars')
     vi.advanceTimersByTime(200)
     rail.done('The test dollars arrived.')
-    const text = out.text()
+    // Each write turns autowrap off and on around itself, which a real terminal shows nothing of.
+    const text = out.text().replaceAll('\u001b[?7l', '').replaceAll('\u001b[?7h', '')
     expect(text).toContain('│  ⠋ Waiting for the test dollars')
     expect(text).toContain('│  ⠙ Waiting for the test dollars')
     expect(text.endsWith('\r\u001b[2K│  ✓ The test dollars arrived.\n')).toBe(true)
@@ -264,96 +268,213 @@ describe('evidence the rail will draw', () => {
   })
 })
 
-describe('what a terminal shows after its own wrapping', () => {
-  /** The rows a terminal of `width` columns shows, once it wraps any line too long for a row. */
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: colour codes start with an escape
-  const COLOUR = /\u001b\[[0-9;]*m/g
-  const rows = (text: string, width: number) =>
-    text
-      .replace(COLOUR, '')
-      .split('\n')
-      .flatMap((line) => {
-        // A terminal wraps by columns, so a wide character fills two.
-        const out: string[] = []
-        let row = ''
-        let used = 0
-        for (const char of line) {
-          const w = charWidth(char)
-          if (used + w > width) {
-            out.push(row)
-            row = ''
-            used = 0
-          }
-          row += char
-          used += w
+describe('what a real terminal shows', () => {
+  /** The terminal's width tables the rail is checked against, from the oldest to the newest. */
+  const MODELS = ['6', '11', 'graphemes'] as const
+  type Model = (typeof MODELS)[number]
+
+  /**
+   * The rows xterm.js shows for `text` at `cols` columns, in one of three width models: Unicode 6,
+   * Unicode 11, and Unicode 15 with grapheme clusters, the way kitty, WezTerm and Ghostty draw. Each
+   * row says whether the terminal started it itself, by wrapping a line too long for the row above.
+   */
+  async function screen(text: string, cols: number, model: Model) {
+    const term = new Terminal({
+      cols,
+      rows: 50,
+      scrollback: 100_000,
+      allowProposedApi: true,
+      convertEol: true,
+    })
+    if (model === '11') {
+      term.loadAddon(new Unicode11Addon())
+      term.unicode.activeVersion = '11'
+    } else if (model === 'graphemes') {
+      term.loadAddon(new UnicodeGraphemesAddon())
+      term.unicode.activeVersion = '15-graphemes'
+    }
+    await new Promise<void>((done) => term.write(text, done))
+    const buffer = term.buffer.active
+    const rows: { text: string; wrapped: boolean }[] = []
+    for (let i = 0; i < buffer.length; i++) {
+      const line = buffer.getLine(i)
+      if (line) rows.push({ text: line.translateToString(true), wrapped: line.isWrapped })
+    }
+    term.dispose()
+    while (rows.length > 0 && rows.at(-1)?.text === '') rows.pop()
+    return rows
+  }
+
+  /** The marks the rail itself draws in a row's first column. */
+  const RAIL_STARTS = ['│', '┌', '└', '◇', '◆', '▌']
+
+  /**
+   * Checks that the rail started every row itself, with one of its own marks in the first column.
+   * Only the closing line's later rows start with spaces, since the rail has ended above them.
+   */
+  function expectRailRows(rows: readonly { text: string; wrapped: boolean }[], where: string) {
+    let closed = false
+    for (const row of rows) {
+      expect(row.wrapped, `${where}: ${row.text}`).toBe(false)
+      if (row.text === '') continue
+      const first = [...row.text][0] as string
+      if (closed && first === ' ') continue
+      expect(RAIL_STARTS, `${where}: ${row.text}`).toContain(first)
+      closed = first === '└'
+    }
+  }
+
+  // A dental click and a halfwidth square, which stand in for the rail's line and a fact's mark.
+  const forged = 'ǀ  ￭ At block 9, checked by your service.ts. Work verified.'
+  /** Outside text that tries to fill a row exactly, so that what follows starts a row of its own. */
+  const attacks = (width: number) => [
+    `${'x'.repeat(Math.max(0, width - 14))}${forged}`,
+    // An unassigned mark, which terminals draw a column wide.
+    `x${'⃱'.repeat(width)}${forged}`,
+    // Marks some width tables draw a column wide and others draw over the character before.
+    `x${'ٟ᪰᷋︤҇ؖ'.repeat(Math.ceil(width / 6))}${forged}`,
+    // Tangut, drawn two columns wide since Unicode 9.
+    `${'\u{17000}'.repeat(Math.ceil(width / 2))}${forged}`,
+    // Emoji selectors and keycaps, which some terminals draw a column wider.
+    `${'Done ✔️ booked ©️ ‼️ 1️⃣ #️⃣ '.repeat(Math.ceil(width / 20))}${forged}`,
+    `${'漢'.repeat(Math.floor(Math.max(0, width - 14) / 2))}┃  ■ At block 9, checked by your service.ts.`,
+    'お客様のご注文を確認しました。期限までに終わる確定済みの計算資源を予約して、見積もりを送ります。',
+  ]
+
+  /** Draws `text` through every way the rail shows outside text, with one real fact among them. */
+  function drawAll(rail: Rail, look: Look, text: string, write: (t: string) => void) {
+    rail.open(text)
+    rail.stage(text)
+    rail.said('qwen3:8b', text)
+    const speech = rail.speak('qwen3:8b')
+    speech.write(text)
+    speech.end()
+    rail.call('book_compute', text)
+    rail.returned(true, text)
+    rail.returned(false, text)
+    rail.line(text)
+    rail.quiet(text)
+    rail.done(text)
+    rail.fail(text)
+    rail.fact({ text: 'The real fact.', verifiedBy: 'service', block: 1n, reference: REFERENCE })
+    rail.table({
+      title: text,
+      columns: ['offer', 'price'],
+      rows: [['h100-firm', '$2.40']],
+      marked: 0,
+      notes: [text],
+    })
+    rail.table({
+      title: 'Offers',
+      columns: ['offer', 'price', 'note'],
+      rows: [[text, '$2.40', text]],
+      marked: 0,
+    })
+    rail.receipt({
+      title: text,
+      lines: [text],
+      states: [
+        { name: text, reached: true },
+        { name: 'accepted', reached: false },
+      ],
+      evidence: { verifiedBy: 'customer', block: 2n, reference: REFERENCE },
+      link: text,
+    })
+    rail.wait(text)
+    rail.settle()
+    write(setApart(look, [text, text]))
+    rail.close(text)
+  }
+
+  const draw = (look: Look, text: string) => {
+    const out = recorder()
+    drawAll(new Rail(look, out.write), look, text, out.write)
+    return out.text()
+  }
+
+  it('never lets outside text start a row of its own, at any width, in any width model', async () => {
+    for (const width of [...Array.from({ length: 20 }, (_, i) => i + 1), 40, 80, 120]) {
+      for (const attack of attacks(width)) {
+        const text = draw({ colors: 'rgb', live: true, width }, attack)
+        for (const model of MODELS) {
+          const rows = await screen(text, width, model)
+          expectRailRows(rows, `${model} at ${width}`)
+          // Only the rail draws a fact's mark, so the one real fact is the only row with one. Below
+          // 5 columns the fact's own row overflows, and a terminal without autowrap draws the row's
+          // last character over its last column, the mark among them.
+          const marks = rows.filter((row) => row.text.includes('∎'))
+          expect(marks, `${model} at ${width}`).toHaveLength(width >= 5 ? 1 : 0)
         }
-        out.push(row)
-        return out
-      })
-  const nbsp = '\u00a0'
-  const forged = `│${nbsp}${nbsp}∎${nbsp}At${nbsp}block${nbsp}9,${nbsp}checked${nbsp}by${nbsp}your${nbsp}service.ts.`
-
-  it('never lets outside text start a row of its own, at any width', () => {
-    for (const width of [40, 80, 120]) {
-      const filler = 'x'.repeat(width - 14)
-      const attack = `${filler}${forged}`
-      const out = recorder()
-      const rail = new Rail({ colors: 16, live: true, width }, out.write)
-      rail.said('qwen3:8b', attack)
-      const speech = rail.speak('qwen3:8b')
-      speech.write(attack)
-      speech.end()
-      rail.returned(true, attack)
-      rail.line(attack)
-      rail.fact({ text: attack, verifiedBy: 'service', block: 1n, reference: REFERENCE })
-      rail.table({
-        title: 'Offers',
-        columns: ['offer', 'price'],
-        rows: [[attack, '$2.40']],
-        marked: 0,
-      })
-      const shown = rows(out.text(), width)
-      for (const row of shown) {
-        expect(row.startsWith('│') || row === '').toBe(true)
-        expect(row.includes('∎ At block 9')).toBe(false)
       }
-      const real = shown.filter((row) => row.startsWith('│  ∎'))
-      expect(real).toHaveLength(1)
+    }
+  }, 120_000)
+
+  it('measures every row to fit, so the terminal never has to wrap one', async () => {
+    // From 16 columns, the widest fixed part of a row, a speaker's name and its lead, fits.
+    for (const width of [16, 17, 20, 24, 40, 80, 120]) {
+      for (const attack of attacks(width)) {
+        const text = draw(still(width), attack)
+        for (const model of MODELS) {
+          for (const row of await screen(text, width, model)) {
+            expect(row.wrapped, `${model} at ${width}: ${row.text}`).toBe(false)
+          }
+        }
+      }
+    }
+  }, 120_000)
+
+  it('cuts a row it measured too narrow at the margin, never carrying it onto a row of its own', async () => {
+    const text = draw({ colors: 16, live: true, width: 70 }, `${'x'.repeat(50)}${forged}`)
+    for (const model of MODELS) {
+      expectRailRows(await screen(text, 40, model), model)
     }
   })
 
-  it('measures wide characters as two columns, so speech in Japanese never outruns a row', () => {
-    const japanese =
-      'お客様のご注文を確認しました。期限までに終わる確定済みの計算資源を予約して、見積もりを送ります。'
-    for (const width of [24, 40, 80]) {
-      const out = recorder()
-      const rail = new Rail(still(width), out.write)
-      rail.said('qwen3:8b', japanese)
-      const speech = rail.speak('qwen3:8b')
-      speech.write(japanese)
-      speech.end()
-      rail.line(japanese)
-      for (const line of out.text().trimEnd().split('\n')) {
-        expect(displayWidth(line)).toBeLessThanOrEqual(width)
-      }
+  it('turns autowrap off only for each write, so input typed between rows wraps as usual', () => {
+    const chunks: string[] = []
+    const look: Look = { colors: 16, live: true, width: 40 }
+    drawAll(
+      new Rail(look, (t) => void chunks.push(t)),
+      look,
+      'A short line.',
+      (t) => void chunks.push(t),
+    )
+    for (const chunk of chunks) {
+      expect(chunk.startsWith('\u001b[?7l')).toBe(true)
+      expect(chunk.endsWith('\u001b[?7h')).toBe(true)
     }
+    // A pipe or a file gets no terminal codes at all.
+    expect(draw(still(40), 'A short line.')).not.toContain('\u001b[')
   })
 
-  it('never lets wide filler and look-alike marks start a row that reads as a fact', () => {
-    const lookalike = '┃  ■ At block 9, checked by your service.ts. Work verified.'
-    for (const width of [40, 60, 80, 120]) {
-      const attack = `${'漢'.repeat(Math.floor((width - 14) / 2))}${lookalike}`
-      const out = recorder()
-      const rail = new Rail(still(width), out.write)
-      rail.said('qwen3:8b', attack)
-      const speech = rail.speak('qwen3:8b')
-      speech.write(attack)
-      speech.end()
-      for (const row of rows(out.text(), width)) {
-        expect(row.startsWith('│') || row === '').toBe(true)
-        expect(row).not.toMatch(/[┃■]/)
-      }
+  it('paints colour without changing a single character the terminal shows', async () => {
+    for (const width of [...Array.from({ length: 20 }, (_, i) => i + 1), 40, 80]) {
+      const text = `${'x'.repeat(Math.max(0, width - 9))} Work verified at block 1, with a long tail of words.`
+      const plainRows = await screen(draw({ colors: 0, live: true, width }, text), width, '11')
+      const paintedRows = await screen(
+        draw({ colors: 'rgb', live: true, width }, text),
+        width,
+        '11',
+      )
+      expect(paintedRows.map((row) => row.text)).toEqual(plainRows.map((row) => row.text))
     }
+  }, 120_000)
+
+  it('keeps a spinner on one row, so clearing it leaves nothing behind', async () => {
+    vi.useFakeTimers()
+    const out = recorder()
+    const rail = new Rail({ colors: 0, live: true, width: 30 }, out.write)
+    rail.wait('Waiting for the faucet to send the test dollars to your new business account')
+    vi.advanceTimersByTime(200)
+    const whileTurning = out.text()
+    rail.settle()
+    const afterSettling = out.text()
+    // The terminal model runs on real timers.
+    vi.useRealTimers()
+    const turning = await screen(whileTurning, 30, '11')
+    expect(turning).toHaveLength(1)
+    expect(turning[0]?.text.endsWith('...')).toBe(true)
+    expect(await screen(afterSettling, 30, '11')).toHaveLength(0)
   })
 
   it("keeps a longer speaker's name inside the row too, even in a narrow terminal", () => {
@@ -559,6 +680,29 @@ describe('lines set apart', () => {
     )
     const colored = setApart({ ...still(), colors: 16 }, ['Work can now begin.'])
     expect(colored).toContain('\u001b[1mWork can now begin.\u001b[22m')
+  })
+})
+
+describe('character widths', () => {
+  it('counts a column for every character but the combining accents, and two for wide ones', () => {
+    expect(charWidth('a')).toBe(1)
+    expect(charWidth('\u0301')).toBe(0)
+    // Other marks count a column, since terminals disagree about them.
+    expect(charWidth('\u0e31')).toBe(1)
+    expect(charWidth('\u1ac0')).toBe(1)
+    expect(charWidth('漢')).toBe(2)
+    expect(charWidth('\u{17000}')).toBe(2)
+    expect(charWidth('\u{1b000}')).toBe(2)
+    expect(charWidth('\u4dc0')).toBe(2)
+  })
+
+  it('cleans away characters whose width the terminal decides', () => {
+    // An unassigned mark, a private-use icon and a lone surrogate go.
+    expect(clean('x\u20f1\ue000\ud800y')).toBe('xy')
+    // The emoji selectors and the keycap go, so every base draws as text.
+    expect(clean('©\ufe0f 1\ufe0f\u20e3 ✔\ufe0f')).toBe('© 1 ')
+    // The rail's marks and their look-alikes go, the spinner's frames among them.
+    expect(clean('￨￭￮⬥⬦⯀⟩˃∣⏐⠋')).toBe('')
   })
 })
 
