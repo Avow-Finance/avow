@@ -234,6 +234,8 @@ export const REASON_CODES = {
     'The supplier declined to sign the agreement, such as for a booking over its most or past its limit of open bookings, so nothing was reserved',
   'supplier.not_accepted':
     "The supplier didn't accept the reserve by its acceptance deadline, so it goes back to the business then",
+  'service.check_failed':
+    "checkBeforeWork in service.ts threw, took too long or gave a verdict that doesn't read, so nothing was accepted and no work started",
   'service.booking_required':
     'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
   'sandbox.closed':
