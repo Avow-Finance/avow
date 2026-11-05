@@ -121,6 +121,16 @@ describe('session events', () => {
     expect(parseSessionEventPost({ event: events[0], extra: 1 }).ok).toBe(false)
   })
 
+  it('takes a job accepted with no transaction seen, and no transaction without its block', () => {
+    const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
+    if (!checked) throw new Error('The fixtures check a commitment')
+    const unseen = { ...checked, acceptedIn: null }
+    expect(parseSessionEvent(overJson(unseen))).toEqual({ ok: true, value: unseen })
+    const json = overJson(checked) as { acceptedIn: Record<string, unknown> }
+    const { blockNumber: _, ...noBlock } = json.acceptedIn
+    expect(parseSessionEvent({ ...json, acceptedIn: noBlock }).ok).toBe(false)
+  })
+
   it('takes business on an authority change and on nothing else', () => {
     const changed = overJson(events[2]) as Record<string, unknown>
     for (const source of ['script', 'mcp']) {

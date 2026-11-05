@@ -52,10 +52,14 @@ describe('the agent session’s events', () => {
     expect(reads({ ...said, check: 'dependency' })).toBe(false)
   })
 
-  it('carry the offer and quantity on a booking call, and on no other', () => {
+  it('carry the offer and quantity on a booking call, both or neither, and on no other', () => {
     const book = kind('tool_call', (e) => e.tool === 'book_compute')
     const { quantity: _, ...noQuantity } = book
     expect(reads(noQuantity)).toBe(false)
+    // A call whose input wasn't in the tool's form names neither.
+    expect(reads({ ...book, offer: null, quantity: null })).toBe(true)
+    expect(reads({ ...book, offer: null })).toBe(false)
+    expect(reads({ ...book, quantity: null })).toBe(false)
     const other = kind('tool_call', (e) => e.tool === 'compute_offers')
     expect(reads({ ...other, offer: 'h100-firm', quantity: 1 })).toBe(false)
   })

@@ -82,7 +82,11 @@ export interface Said extends SessionEventBase {
   text: string
 }
 
-/** A tool the model called, with a summary code wrote of what it was called with. */
+/**
+ * A tool the model called, with a summary code wrote of what it was called with. A booking call
+ * names the offer and how many GPUs, both null when the model's input wasn't in the form the tool
+ * takes, which the tool layer refuses.
+ */
 export type ToolCall = SessionEventBase & {
   type: 'tool_call'
   /** Pairs the call with its result, counting from 1 within the run. */
@@ -91,6 +95,7 @@ export type ToolCall = SessionEventBase & {
 } & (
     | { tool: Exclude<JobTool, 'book_compute'> }
     | { tool: 'book_compute'; offer: string; quantity: number }
+    | { tool: 'book_compute'; offer: null; quantity: null }
   )
 
 /** The limits that applied when the model compared offers, in micros. */
@@ -216,6 +221,15 @@ export const AGENT_SESSION_EVENT_SCHEMAS = [
       summary,
       offer: z.string().min(1).max(64),
       quantity: z.number().int().positive().max(1024),
+    }),
+    z.strictObject({
+      ...base,
+      type: z.literal('tool_call'),
+      call,
+      tool: z.literal('book_compute'),
+      summary,
+      offer: z.null(),
+      quantity: z.null(),
     }),
     z.strictObject({
       ...base,

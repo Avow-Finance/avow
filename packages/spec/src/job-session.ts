@@ -122,16 +122,20 @@ export interface JobCommitmentChecked extends JobEventBase {
   releaseDate: bigint
   /** The compute booking as the acceptance check read it again, with its block. */
   checks: CheckedDependency[]
-  /** The transaction that carried the acceptance, and its block. */
-  acceptedIn: { transactionHash: Hex; blockNumber: bigint }
+  /**
+   * The transaction that carried the acceptance, and its block. Null when the lock already showed
+   * the acceptance an earlier attempt sent, and this run never saw the transaction it landed in.
+   */
+  acceptedIn: { transactionHash: Hex; blockNumber: bigint } | null
 }
 
 /**
  * Who refused the customer's commitment on the developer's side. `service` is the developer's own
- * check in `service.ts`, and `relay` and `lock` refused the acceptance on its way to the customer's
- * lock.
+ * check, which the job process runs for its service. `avow` is Avow's API declining to authorize
+ * the commitment for the developer's business, as for a reserve it doesn't see funded. `relay` and
+ * `lock` refused the acceptance on its way to the customer's lock.
  */
-export const COMMITMENT_REFUSAL_LAYERS = ['service', 'relay', 'lock'] as const
+export const COMMITMENT_REFUSAL_LAYERS = ['service', 'avow', 'relay', 'lock'] as const
 export type CommitmentRefusalLayer = (typeof COMMITMENT_REFUSAL_LAYERS)[number]
 
 /** The developer's code refused the customer's commitment, so no work starts. */
@@ -249,7 +253,7 @@ export const JOB_EVENT_SCHEMAS = [
       .max(4),
     releaseDate: u64,
     checks,
-    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }),
+    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }).nullable(),
   }),
   z.strictObject({
     ...base,
