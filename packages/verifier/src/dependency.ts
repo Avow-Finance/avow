@@ -9,6 +9,8 @@ import {
   type Dependency,
   dependenciesProblem,
   dependencyCheckProblem,
+  type JobVerification,
+  jobVerificationProblem,
   type PinnedBlock,
   parseSectionDisclosure,
   type RailState,
@@ -263,15 +265,15 @@ async function observe(
   }
 }
 
-/** The five tests on what was read, in order, or null when all pass. */
-function problemOf(
-  dependency: Dependency,
+/**
+ * The tests that need only the chain, in order, or null when all pass: provenance, ownership,
+ * state, and the terms hash the lock holds the booking under.
+ */
+function standingProblem(
+  on: CommitmentReference,
   seen: Observed,
-  terms: ChainedTerms,
   supplier: Address,
-  disclosed: unknown,
 ): ReasonCode | null {
-  const { on } = dependency
   // 1. Provenance.
   if (!seen.fields || !isAddressEqual(seen.fields.factory, seen.reader.factory)) {
     return 'dependency.lock_unknown'
@@ -281,10 +283,25 @@ function problemOf(
   // 3. State.
   const state = stateProblem(seen.record, supplier, seen.block)
   if (state) return state
-  // 4. Terms.
+  // 4. Terms, as the lock holds them.
   if (seen.record?.termsHash.toLowerCase() !== on.termsHash.toLowerCase()) {
     return 'dependency.terms_mismatch'
   }
+  return null
+}
+
+/** The five tests on what was read, in order, or null when all pass. */
+function problemOf(
+  dependency: Dependency,
+  seen: Observed,
+  terms: ChainedTerms,
+  supplier: Address,
+  disclosed: unknown,
+): ReasonCode | null {
+  const standing = standingProblem(dependency.on, seen, supplier)
+  if (standing) return standing
+  const { on } = dependency
+  // 4. Terms, as the seller shows them.
   const shown = parseSectionDisclosure(disclosed)
   if (
     !shown.ok ||
@@ -334,26 +351,137 @@ export async function verifyDependencies(
   const pins: Pins = new Map()
   const checked: CheckedDependency[] = []
   for (const [index, dependency] of t.dependencies.entries()) {
-    // Each supported factory on the booking's chain in turn, until one lists the lock. The last
-    // one read stands for a lock none of them lists.
-    let seen: Observed | null = null
-    for (const reader of deps.readers.filter((r) => r.chainId === dependency.on.chainId)) {
-      try {
-        seen = await observe(dependency.on, reader, pins, timeoutMs, fresh)
-      } catch (error) {
-        if (error instanceof Unreadable) return refuse(error.reason, index, error.block)
-        return refuse('dependency.unreadable', index, null)
-      }
-      if (seen.fields) break
-    }
-    // No factory is supported on the booking's chain, so nothing was read.
-    if (!seen) return refuse('dependency.lock_unknown', index, null)
+    const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
+    if (!('reader' in seen)) return refuse(seen.reason, index, seen.block)
     const problem = problemOf(dependency, seen, t, supplier, input.disclosed[index])
     if (problem) return refuse(problem, index, seen.block)
-    // Copies, so freezing what the check gives back leaves the caller's terms and the reader's
-    // block alone.
-    const { number, hash, timestamp } = seen.block
-    checked.push({ on: { ...dependency.on }, block: { number, hash, timestamp } })
+    checked.push(copied(dependency.on, seen.block))
   }
   return { ok: true, terms: t as CheckedChainedTerms, checked }
+}
+
+/**
+ * Copies of a booking and its block, so freezing what a check gives back leaves the caller's
+ * terms and the reader's block alone.
+ */
+function copied(on: CommitmentReference, block: PinnedBlock): CheckedDependency {
+  const { number, hash, timestamp } = block
+  return { on: { ...on }, block: { number, hash, timestamp } }
+}
+
+/** A read that stopped, with why and the block it had pinned. */
+interface Stopped {
+  reason: ReasonCode
+  block: PinnedBlock | null
+}
+
+/**
+ * Reads one booking through each supported reader on its chain in turn, until one's factory lists
+ * its lock. The last one read stands for a lock none of them lists, and a chain no reader supports
+ * is `dependency.lock_unknown`, with nothing read.
+ */
+async function readThrough(
+  on: CommitmentReference,
+  readers: readonly PinnedLockReader[],
+  pins: Pins,
+  timeoutMs: number,
+  fresh: Freshness,
+): Promise<Observed | Stopped> {
+  let seen: Observed | null = null
+  for (const reader of readers.filter((r) => r.chainId === on.chainId)) {
+    try {
+      seen = await observe(on, reader, pins, timeoutMs, fresh)
+    } catch (error) {
+      if (error instanceof Unreadable) return { reason: error.reason, block: error.block }
+      return { reason: 'dependency.unreadable', block: null }
+    }
+    if (seen.fields) break
+  }
+  return seen ?? { reason: 'dependency.lock_unknown', block: null }
+}
+
+export interface JobVerificationInput {
+  /** What a link to verify a job carries, from `decodeJobVerification`. */
+  verification: JobVerification
+  /** The caller's clock, in seconds, which the pinned block's timestamp is held against. */
+  now: bigint
+}
+
+/** What a link to verify a job shows, as the chain held it at one pinned block. */
+export type JobVerificationCheck =
+  | {
+      ok: true
+      /** The block the job commitment was read at, which every read on its chain shares. */
+      block: PinnedBlock
+      /**
+       * The supplier the customer's lock names for the job, copied there from Avow's approval,
+       * whose own lock has to hold each compute booking.
+       */
+      supplier: Address
+      /** Each compute booking the job names, with the block it was read at. */
+      checked: readonly CheckedDependency[]
+      /**
+       * The link carries the job's subject only as its hash, so whether the job fits inside each
+       * booking wasn't checked.
+       */
+      fitChecked: false
+    }
+  | DependencyRefusal
+
+/**
+ * The check a page runs on a link to verify a job, reading the chain at one pinned finalized
+ * block. It works out the job's terms hash from what the link carries, reads the job commitment
+ * from the customer's lock, and takes the supplier from the lock's record of it, which the lock
+ * copied from Avow's approval. Then it runs the tests `verifyDependencies` runs on each compute
+ * booking the job names that need only the chain: provenance, ownership by that supplier, state
+ * with free cancellation, the terms hash the lock holds and a fresh block. It skips the shown
+ * section and fit, which need the job's terms in full, and the result says fit wasn't checked.
+ *
+ * A link whose parts don't hash to its reference's terms hash is `terms.hash_mismatch`, a
+ * customer's lock no supported factory created is `chain.lock_unknown`, and a lock that holds no
+ * job commitment under that terms hash is `reference.commitment_mismatch`, each before any
+ * compute booking is read.
+ */
+export async function verifyJobVerification(
+  input: JobVerificationInput,
+  deps: DependencyDeps,
+): Promise<JobVerificationCheck> {
+  const refuse = (reason: ReasonCode, index: number | null, block: PinnedBlock | null) =>
+    ({ ok: false, reason, index, block }) as const
+  const v = input.verification
+  const hashed = jobVerificationProblem(v)
+  if (hashed) return refuse(hashed, null, null)
+  const rules = dependenciesProblem(v.dependencies)
+  if (rules) return refuse(rules, null, null)
+  if (v.commitment.side !== 'buyer') return refuse('reference.commitment_mismatch', null, null)
+  const timeoutMs = deps.timeoutMs ?? DEPENDENCY_READ_TIMEOUT_MS
+  const fresh = { now: input.now, maxAge: deps.maxReadAge ?? DEPENDENCY_MAX_READ_AGE }
+  const pins: Pins = new Map()
+  const job = await readThrough(v.commitment, deps.readers, pins, timeoutMs, fresh)
+  if (!('reader' in job)) {
+    const reason = job.reason === 'dependency.lock_unknown' ? 'chain.lock_unknown' : job.reason
+    return refuse(reason, null, job.block)
+  }
+  if (!job.fields || !isAddressEqual(job.fields.factory, job.reader.factory)) {
+    return refuse('chain.lock_unknown', null, job.block)
+  }
+  if (job.record?.termsHash.toLowerCase() !== v.commitment.termsHash.toLowerCase()) {
+    return refuse('reference.commitment_mismatch', null, job.block)
+  }
+  const supplier = job.record.supplier
+  const checked: CheckedDependency[] = []
+  for (const [index, dependency] of v.dependencies.entries()) {
+    const seen = await readThrough(dependency.on, deps.readers, pins, timeoutMs, fresh)
+    if (!('reader' in seen)) return refuse(seen.reason, index, seen.block)
+    const problem = standingProblem(dependency.on, seen, supplier)
+    if (problem) return refuse(problem, index, seen.block)
+    checked.push(copied(dependency.on, seen.block))
+  }
+  return {
+    ok: true,
+    block: copied(v.commitment, job.block).block,
+    supplier,
+    checked,
+    fitChecked: false,
+  }
 }

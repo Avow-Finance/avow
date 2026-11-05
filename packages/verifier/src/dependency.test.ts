@@ -5,9 +5,12 @@ import {
   type Dependencies,
   discloseSection,
   elideDependencies,
+  type JobVerification,
+  jobVerificationOf,
   RAIL_STATES,
   type RailState,
   type ReasonCode,
+  termsHash,
   testnetDemoJobTerms,
   testnetDemoTerms,
 } from '@avow-finance/spec'
@@ -16,19 +19,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type DependencyDeps,
   type DependencyInput,
+  type DependencyRecord,
   type PinnedBlock,
   type PinnedLockReader,
   verifyDependencies,
+  verifyJobVerification,
 } from './dependency.js'
 import {
   ARBITER,
   blockAt,
+  buyer,
   CHAIN_ID,
   CLOSED_FREE_CANCEL,
   dependencyOn,
   gpuCloud,
   id,
   json,
+  LOCK,
   type LockScript,
   NOW,
   newKey,
@@ -452,6 +459,118 @@ describe('a job that relies on the compute it runs on', () => {
     expect((await check({ terms: job, script: open })).result).toEqual(
       refused('dependency.cancellable'),
     )
+  })
+})
+
+describe('a link to verify a job', () => {
+  const JOB_COMMITMENT = id('the job')
+  const jobTerms = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+  const reference = {
+    kind: 'commitment',
+    chainId: CHAIN_ID,
+    lock: LOCK,
+    commitmentId: JOB_COMMITMENT,
+    side: 'buyer',
+    termsHash: termsHash(jobTerms, SALT),
+  } as const
+  const verification = jobVerificationOf(jobTerms, SALT, reference)
+
+  /** The customer's lock, holding the job as the developer's business accepted it. */
+  const customerLock = (record: Partial<DependencyRecord> | null = {}) => ({
+    ...supplierLock(null),
+    account: buyer.address,
+    records: record
+      ? {
+          [recordKey(JOB_COMMITMENT, 'buyer')]: {
+            state: 'accepted' as const,
+            hasReport: false,
+            termsHash: reference.termsHash,
+            supplier: supplierAccount.address,
+            freeCancelBy: START,
+            ...record,
+          },
+        }
+      : {},
+  })
+
+  async function read(
+    change: {
+      job?: Partial<DependencyRecord> | null
+      compute?: Partial<DependencyRecord>
+      v?: JobVerification
+      head?: PinnedBlock
+    } = {},
+  ) {
+    const locks = {
+      [LOCK]: customerLock(change.job === undefined ? {} : change.job),
+      [SUPPLIER_LOCK]: supplierLock(change.compute ?? {}),
+    }
+    const { reader, calls } = scriptedLocks({
+      locks,
+      ...(change.head ? { head: change.head } : {}),
+    })
+    const result = await verifyJobVerification(
+      { verification: change.v ?? verification, now: NOW },
+      { readers: [reader] },
+    )
+    return { result, calls }
+  }
+
+  it('reads the job and its compute at one block, taking the supplier from the customer’s lock', async () => {
+    const { result, calls } = await read()
+    expect(result).toEqual({
+      ok: true,
+      block: PINNED,
+      supplier: supplierAccount.address,
+      checked: [{ on: dependencyOn().on, block: PINNED }],
+      fitChecked: false,
+    })
+    for (const c of calls) expect(c.at, c.call).toBe(PINNED.number)
+  })
+
+  it('refuses a link whose parts don’t hash to its reference, reading nothing', async () => {
+    const tampered = { ...verification, dependenciesSalt: id('another salt') }
+    const { result, calls } = await read({ v: tampered })
+    expect(result).toEqual(refused('terms.hash_mismatch', null, null))
+    expect(calls).toEqual([])
+  })
+
+  it('refuses a customer’s lock that holds no job under that terms hash, before any compute', async () => {
+    for (const job of [null, { termsHash: id('other terms') }]) {
+      const { result, calls } = await read({ job })
+      expect(result).toEqual(refused('reference.commitment_mismatch', PINNED, null))
+      // Only the job was read, never the compute.
+      expect(calls.filter((c) => c.call === 'commitment')).toHaveLength(1)
+    }
+  })
+
+  it('refuses compute in a lock that isn’t the supplier’s the customer’s lock names', async () => {
+    const { result } = await read({ job: { supplier: newKey().address } })
+    expect(result).toEqual(refused('dependency.not_owned'))
+  })
+
+  it('refuses compute that has ended, is still freely cancellable, or was read at a stale block', async () => {
+    expect((await read({ compute: { state: 'released' } })).result).toEqual(
+      refused('dependency.ended'),
+    )
+    const open = { freeCancelBy: PINNED.timestamp + 1n }
+    expect((await read({ compute: open })).result).toEqual(refused('dependency.cancellable'))
+    const old = { ...PINNED, timestamp: NOW - 31n }
+    expect((await read({ head: old })).result).toEqual(refused('dependency.stale', old, null))
+  })
+
+  it('passes compute too small for the job, since fit needs the job’s subject', async () => {
+    // Nine GPUs, where the booking relied on holds eight.
+    const big = testnetDemoJobTerms(START, ARBITER)
+    const nine = {
+      ...big,
+      subject: { ...big.subject, compute: { ...big.subject.compute, count: 9 } },
+    }
+    const terms = chainedJobTerms(nine, [dependencyOn()])
+    const hash = termsHash(terms, SALT)
+    const v = jobVerificationOf(terms, SALT, { ...reference, termsHash: hash })
+    const { result } = await read({ v, job: { termsHash: hash } })
+    expect(result).toMatchObject({ ok: true, fitChecked: false })
   })
 })
 
