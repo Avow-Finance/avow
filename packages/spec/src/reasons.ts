@@ -87,6 +87,8 @@ export const REASON_CODES = {
   'supplier.unknown': 'Avow has no profile for this supplier',
   'order.supplier_mismatch':
     "The order was offered to another supplier, so only that supplier's signing key can quote it or report its delivery",
+  'agreement.parties_mismatch':
+    "The terms agreement names another buyer, mandate or supplier than the agent's business, its mandate and the supplier it deals with",
   'commitment.unknown': 'Avow has no record of this commitment',
   'commitment.cancel_on_lock':
     "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",

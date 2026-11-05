@@ -1,21 +1,27 @@
 import {
   type Approval,
   approvalTypedData,
+  chainedJobTerms,
   chainedTerms,
   digestOf,
+  discloseSection,
   dollars,
   gpuReservationTerms,
+  JOB_CATEGORY,
   PRODUCTION_PROFILE,
   parseTerms,
   type Signed,
   TESTNET_DEMO_PROFILE,
+  type TermsAgreement,
   termsAgreementTypedData,
   termsHash,
+  testnetDemoJobTerms,
+  testnetDemoTerms,
   testnetDemoTermsV1,
   toWire,
   verifyApiRequest,
 } from '@avow-finance/spec'
-import { LOCK_ABI } from '@avow-finance/verifier'
+import { type DependencyRecord, LOCK_ABI, type PinnedLockReader } from '@avow-finance/verifier'
 import {
   type Address,
   createClient,
@@ -31,12 +37,13 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { tempoModerato } from 'viem/chains'
 import { Abis, Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { type AgentConfig, BookingError, createAgent } from './agent.js'
+import { type AgentConfig, BookingError, type CommittedTerms, createAgent } from './agent.js'
 import type { AvowApi } from './avow-api.js'
 import { agentRequestKey, httpAvowApi } from './http.js'
 import { type Call, RESERVE_ABI } from './lock.js'
 import { SendError } from './send.js'
 import {
+  ARBITER,
   bookingFixture,
   D,
   gpuBooking,
@@ -449,6 +456,171 @@ describe('booking with a supplier', () => {
       expect(await book(s)).toEqual({ ok: false, reason, decisionId: 'dec_1' })
       expect(s.sent).toEqual([])
     }
+  })
+})
+
+/** The supplier's compute booking a job relies on, in the supplier's own lock. */
+const SUPPLIER_LOCK: Address = '0x00000000000000000000000000000000000010c6'
+const FACTORY: Address = '0x00000000000000000000000000000000000fac01'
+const UPSTREAM = testnetDemoTerms(START, ARBITER)
+const UPSTREAM_SALT = `0x${'77'.repeat(32)}` as const
+const COMPUTE = {
+  kind: 'commitment',
+  chainId: 42431,
+  lock: SUPPLIER_LOCK,
+  commitmentId: id('the compute'),
+  side: 'buyer',
+  termsHash: termsHash(UPSTREAM, UPSTREAM_SALT),
+} as const
+const SHOWN = JSON.parse(
+  JSON.stringify(toWire(discloseSection(UPSTREAM, UPSTREAM_SALT, 'subject'))),
+)
+const READ_AT = { number: 99n, hash: id('block 99'), timestamp: NOW - 1n }
+
+/** A reader of the supplier's lock, holding the compute booking as the GPU cloud accepted it. */
+function computeReader(account: Address, record: Partial<DependencyRecord> = {}): PinnedLockReader {
+  return {
+    chainId: 42431,
+    factory: FACTORY,
+    head: async () => READ_AT,
+    blockHash: async () => READ_AT.hash,
+    isLock: async () => true,
+    lockFields: async () => ({ factory: FACTORY, account }),
+    commitment: async () => ({
+      state: 'accepted',
+      hasReport: false,
+      termsHash: COMPUTE.termsHash,
+      supplier: '0x00000000000000000000000000000000000c10ad',
+      freeCancelBy: NOW - 60n,
+      ...record,
+    }),
+  }
+}
+
+/** The supplier's signed quote for a job relying on its compute, as the customer receives it. */
+async function quoteFor(
+  s: Awaited<ReturnType<typeof setup>>,
+  change: { terms?: CommittedTerms; agreement?: Partial<TermsAgreement> } = {},
+) {
+  const terms =
+    change.terms ??
+    chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [
+      { on: COMPUTE, condition: 'accepted', disclosed: 'subject' },
+    ])
+  const salt = `0x${'42'.repeat(32)}` as const
+  const agreement: TermsAgreement = {
+    commitmentId: id('the job'),
+    termsHash: termsHash(terms, salt),
+    // A job falls under the job category, and anything else under the buyer's own.
+    category: terms.template === 'job/1' ? JOB_CATEGORY : 'compute',
+    buyerBusinessId: 'biz_buyer',
+    supplierBusinessId: 'biz_supplier',
+    mandateHash: s.mHash,
+    nonce: 9n,
+    expiry: NOW + 300n,
+    ...change.agreement,
+  }
+  // The supplier's signing key signs the agreement as sent, whatever it names.
+  const supplierSignature = await s.supplierKey.sign({
+    hash: digestOf(termsAgreementTypedData(agreement, D)),
+  })
+  return { supplier: s.supplier, terms, salt, agreement, supplierSignature, disclosed: [SHOWN] }
+}
+
+/** An agent that reads the supplier's lock through the reader given. */
+async function quoting(record: Partial<DependencyRecord> = {}) {
+  const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
+  const reader = computeReader(s.supplier.account, record)
+  return { ...s, agent: createAgent({ ...s.config, dependencies: { readers: [reader] } }) }
+}
+
+describe('committing to a quote the supplier signed', () => {
+  it('checks the compute on Avow’s approval, then funds, and says which block it read', async () => {
+    const s = await quoting()
+    const quote = await quoteFor(s)
+    const result = await s.agent.commitToQuote(quote)
+    if (!result.ok) throw new Error(result.reason)
+    expect(s.calls).toEqual(['approveReserve', 'send'])
+    expect(result.dependencies).toEqual([{ on: COMPUTE, block: READ_AT }])
+    expect(result.commitment).toMatchObject({
+      commitmentId: id('the job'),
+      terms: quote.terms,
+      termsHash: quote.agreement.termsHash,
+      reservedIn: id('the reserve transaction'),
+    })
+    // Avow got the terms in full, and both sides signed the agreement the supplier sent.
+    expect(s.requests[0]?.request.terms).toEqual(quote.terms)
+    const signed = result.commitment.agreement
+    expect(signed.supplierSignature).toBe(quote.supplierSignature)
+    const digest = digestOf(termsAgreementTypedData(quote.agreement, D))
+    const buyer = await recoverAddress({ hash: digest, signature: signed.buyerSignature })
+    expect(buyer.toLowerCase()).toBe(s.key.accessKeyAddress.toLowerCase())
+  })
+
+  it('refuses compute the check refuses, with the block, after Avow decided and before any money moves', async () => {
+    const s = await quoting({ freeCancelBy: NOW + 30n })
+    const result = await s.agent.commitToQuote(await quoteFor(s))
+    expect(result).toEqual({
+      ok: false,
+      reason: 'dependency.cancellable',
+      index: 0,
+      block: READ_AT,
+      decisionId: 'dec_1',
+    })
+    expect(s.calls).toEqual(['approveReserve'])
+  })
+
+  it('refuses a booking it has no reader for', async () => {
+    const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
+    const result = await s.agent.commitToQuote(await quoteFor(s))
+    expect(result).toMatchObject({ ok: false, reason: 'dependency.lock_unknown' })
+    expect(s.calls).toEqual(['approveReserve'])
+  })
+
+  it('refuses a job that names no compute before anything is signed, as Avow would', async () => {
+    const s = await quoting()
+    const result = await s.agent.commitToQuote(
+      await quoteFor(s, { terms: testnetDemoJobTerms(START, ARBITER) }),
+    )
+    expect(result).toEqual({ ok: false, reason: 'dependency.required' })
+    expect(s.calls).toEqual([])
+  })
+
+  it('refuses an agreement that names another buyer, mandate, supplier or terms, or the wrong time', async () => {
+    const s = await quoting()
+    const cases: [Partial<TermsAgreement>, string][] = [
+      [{ buyerBusinessId: 'biz_other' }, 'agreement.parties_mismatch'],
+      [{ mandateHash: id('another mandate') }, 'agreement.parties_mismatch'],
+      [{ supplierBusinessId: 'biz_other' }, 'agreement.parties_mismatch'],
+      [{ termsHash: id('other terms') }, 'terms.hash_mismatch'],
+      [{ expiry: NOW }, 'message.expired'],
+      [{ expiry: NOW + 601n }, 'message.validity_too_long'],
+    ]
+    for (const [agreement, reason] of cases) {
+      const result = await s.agent.commitToQuote(await quoteFor(s, { agreement }))
+      expect(result, reason).toEqual({ ok: false, reason })
+    }
+    expect(s.calls).toEqual([])
+  })
+
+  it('refuses a supplier signature from another key, before Avow sees the agreement', async () => {
+    const s = await quoting()
+    const quote = await quoteFor(s)
+    const other = await privateKeyToAccount(generatePrivateKey()).sign({
+      hash: digestOf(termsAgreementTypedData(quote.agreement, D)),
+    })
+    const result = await s.agent.commitToQuote({ ...quote, supplierSignature: other })
+    expect(result).toEqual({ ok: false, reason: 'message.signature_invalid' })
+    expect(s.calls).toEqual([])
+  })
+
+  it('funds a version 2 quote after the mandate check, as book does', async () => {
+    const s = await quoting()
+    const terms = gpuReservationTerms(gpuBooking())
+    const result = await s.agent.commitToQuote({ ...(await quoteFor(s, { terms })), disclosed: [] })
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.dependencies).toEqual([])
+    expect(s.calls).toEqual(['approveReserve', 'send'])
   })
 })
 
