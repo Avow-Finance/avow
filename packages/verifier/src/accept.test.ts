@@ -3,18 +3,21 @@ import {
   type Approval,
   acceptanceTypedData,
   type ChainedTerms,
+  chainedJobTerms,
   chainedTerms,
   digestOf,
   elideDependencies,
   elidedTermsHash,
   type GpuReservationTerms,
   isKeySignature,
+  JOB_CATEGORY,
   LOCK_RECORD_FIELDS,
   lockTerms,
   type Mandate,
   mandateHash,
   PRODUCTION_PROFILE,
   termsHash,
+  testnetDemoJobTerms,
   testnetDemoTermsV1,
   toWire,
 } from '@avow-finance/spec'
@@ -944,5 +947,50 @@ describe('a booking that relies on the supplier’s own booking', () => {
       const next = await prepareChained({ script: { head: block(101n), from } })
       expect(next.prepared).toMatchObject({ ok: false, reason: 'dependency.ended' })
     })
+  })
+})
+
+describe('a job that runs on the supplier’s compute', () => {
+  const job = chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [dependencyOn()])
+  const hash = termsHash(job, SALT)
+  const enforced = lockTerms(job, TOKEN.decimals)
+  const approved = approval({ ...enforced, termsHash: hash })
+
+  /** Prepares the acceptance of the job the supplier agreed to under the category given. */
+  async function prepareJob(category: string = JOB_CATEGORY) {
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, approved))
+    const { reader } = scriptedLocks()
+    return prepareAcceptance(
+      {
+        authorization: await signedAuthorization(
+          authorization({
+            termsHash: hash,
+            amount: enforced.amount,
+            acceptBy: enforced.acceptBy,
+            chargeDeadline: enforced.chargeDeadline,
+            releaseDate: enforced.releaseDate,
+          }),
+        ),
+        approval: await signedApproval(approved),
+        mandate: await signedMandate(mandate),
+        agreed: { ...agreed, termsHash: hash, category },
+        terms: job,
+        disclosed: [shownUpstream],
+        now: NOW,
+        nonce: 7n,
+      },
+      { ...deps, dependencies: { readers: [reader] } },
+    )
+  }
+
+  it('prepares the acceptance once its compute is accepted, checking the mandate on its terms whole', async () => {
+    const prepared = await prepareJob()
+    if (!prepared.ok) throw new Error(prepared.reason)
+    expect(prepared.acceptance).toMatchObject({ termsHash: hash, amount: enforced.amount })
+    expect(prepared.dependencies).toEqual([{ on: dependencyOn().on, block: PINNED }])
+  })
+
+  it('refuses a job agreed under another category than a job’s, as the mandate check reads it', async () => {
+    expect(await prepareJob('compute')).toEqual(refused('terms.category_mismatch'))
   })
 })

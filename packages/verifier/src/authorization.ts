@@ -250,7 +250,9 @@ export async function checkAuthorization(
         supplier: config.businessId,
         payee: auth.payee,
         category: input.agreed.category,
-        terms: t,
+        // Checked version 3 terms go in whole. Their plain booking alone would fail a template
+        // that commits only on a booking it relies on, as a job does.
+        terms: under.terms,
       },
       token,
       openReserves: 0n,
