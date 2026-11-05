@@ -9,14 +9,14 @@ import {
 import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
 import { enforceableTerms } from './terms.js'
 import { demoMandate, demoRequest, NOW, newKey, START, TOKEN } from './test-helpers.js'
-import type { Mandate, ReserveRequest } from './types.js'
+import type { Mandate } from './types.js'
 
 const admin = newKey()
 const agent = newKey()
 
 function input(
   mandate: Partial<Mandate> = {},
-  request: Partial<ReserveRequest> = {},
+  request: Partial<MandateCheckInput['request']> = {},
   rest: Partial<MandateCheckInput> = {},
 ): MandateCheckInput {
   return {

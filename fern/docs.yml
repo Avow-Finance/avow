@@ -30,6 +30,12 @@ navigation:
     contents:
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx
+  - section: Composable commitments
+    contents:
+      - page: Version 3 terms
+        path: ./docs/pages/terms-v3.mdx
+      - page: Checking dependencies
+        path: ./docs/pages/dependency-check.mdx
 colors:
   accentPrimary: '#ffffff'
   background: '#000000'

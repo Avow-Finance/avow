@@ -1,14 +1,27 @@
 import { isAddressEqual } from 'viem'
+import { type CheckedChainedTerms, isChainedTerms } from './dependencies.js'
 import type { TermsProfile } from './profiles.js'
 import { type RailToken, toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
-import { type AnyTerms, type EnforceableTerms, enforceableTerms, validateTerms } from './terms.js'
+import {
+  type AnyTerms,
+  type EnforceableTerms,
+  enforceableTerms,
+  plainTermsOf,
+  validateChainedTerms,
+  validateTerms,
+} from './terms.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
   mandate: Mandate
-  /** The reserve request. A verifier checking a commitment made under version 1 terms passes those. */
-  request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms }
+  /**
+   * The reserve request. A verifier checking a commitment made under version 1 terms passes those.
+   * Version 3 terms come only as `CheckedChainedTerms`, which short of a deliberate cast only
+   * `verifyDependencies` produces, and are checked as the plain booking they make, with their
+   * dependencies section checked for form.
+   */
+  request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms | CheckedChainedTerms }
   /** The token the buyer's lock holds reserves in. */
   token: RailToken
   /** Micros already reserved and still open under this mandate, as the lock reports them. */
@@ -51,6 +64,9 @@ export function mandateEndsBeforeWindow(
 /**
  * The mandate check Avow runs before it signs an approval. It's pure, so the SDK and a supplier
  * can run the same check on the signed mandate. The caller checks the mandate's signature first.
+ * It reads version 3 terms as the plain booking they make, and it can't read a lock, so it takes
+ * them only as the checked terms the dependency check produces. The types hold a caller to that,
+ * short of a deliberate cast, and nothing checks it at run time.
  */
 export function checkMandate(input: MandateCheckInput): MandateCheck {
   const { mandate: m, request: r, token } = input
@@ -63,9 +79,11 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   if (!isAddressEqual(r.agentKey, m.agentKey)) return deny('agent.key_mismatch')
   if (!m.actions.includes('reserve')) return deny('mandate.action_not_permitted')
 
-  const termsProblem = validateTerms(r.terms, input.profile)
+  const termsProblem = isChainedTerms(r.terms)
+    ? validateChainedTerms(r.terms, input.profile)
+    : validateTerms(r.terms, input.profile)
   if (termsProblem) return deny(termsProblem)
-  const enforced = enforceableTerms(r.terms)
+  const enforced = enforceableTerms(isChainedTerms(r.terms) ? plainTermsOf(r.terms) : r.terms)
   if (enforced.currency !== m.currency) return deny('mandate.currency_not_allowed')
   if (token.currency !== enforced.currency) return deny('terms.currency_mismatch')
 

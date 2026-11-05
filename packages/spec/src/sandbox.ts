@@ -5,7 +5,8 @@ import { address, bytes32, u256 } from './json-fields.js'
 import { isTestnetChain } from './networks.js'
 import { describeReason, REASON_CODES, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
-import { commitmentReferenceJson, type Parsed } from './wire.js'
+import { commitmentReferenceJson } from './references.js'
+import type { Parsed } from './wire.js'
 
 /**
  * Avow's sandbox on testnet. A developer's machine registers a sandbox business, which Avow pays

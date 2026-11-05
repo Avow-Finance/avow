@@ -2,6 +2,7 @@ import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { dollars, testnetDemoTerms } from './demo.js'
 import type { AvowDomain } from './eip712.js'
+import type { GpuReservationTerms } from './gpu-reservation.js'
 import type { RailToken } from './rail.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
@@ -53,7 +54,8 @@ export function demoMandate(account: Address, agentKey: Address): Mandate {
   }
 }
 
-export function demoRequest(agentKey: Address): ReserveRequest {
+/** A reserve request under the demo's version 2 terms. */
+export function demoRequest(agentKey: Address): ReserveRequest & { terms: GpuReservationTerms } {
   return {
     commitmentId: id('commitment-1'),
     agentKey,

@@ -17,6 +17,7 @@ The commitment schema that Avow's API, the SDK and the verifier all read. A supp
 | --- | --- |
 | Records | Business, administrator, agent, mandate and commitment, with the 11 commitment states, the moves between them, the contest and outcome a record holds in each, and the references a record cites. `parseCommitment` refuses a record whose state can't hold its contest or outcome, or whose outcome's amounts don't fit its ending |
 | Terms | Version 2 terms: a header and five sections, each hashed apart, with templates for what each kind of commitment promises. GPU reservation is the first template |
+| Version 3 terms | Version 2 with one more section, `dependencies`, for a booking that relies on another business's booking |
 | Version 1 terms | The flat GPU reservation format published before the terms had a version, frozen so commitments made under it stay verifiable |
 | References | Typed references to a commitment or a settled payment, the checks of a payment against the chain's transfer event in a token the reader accepts, and the rule that a payment's value counts once |
 | Signed messages | The mandate, the terms agreement, the supplier authorization, the administrator's approval, the start receipt and Avow's timestamp, each as EIP-712 typed data. A timestamp names a signed request by its digest and says when Avow received it, so a late cancellation or a start request carries a time anyone can check against Avow's timestamp key |
@@ -74,9 +75,13 @@ Each section has its own label, so a section can't be read as another section. A
 
 `discloseSection` shows one section with its own salt and the other four sections' hashes, and `checkSectionDisclosure` checks it against the terms hash a lock or a signed message holds. A business can show what it booked and when without showing a price. The commitment's salt never leaves the parties.
 
+## The terms, version 3
+
+Version 3 terms add a `dependencies` section for a booking that relies on another business's booking, and [Version 3 terms](../../fern/docs/pages/terms-v3.mdx) describes them, their dependency disclosure control and the buyer's view.
+
 ## Version 1 terms
 
-Version 1 terms are flat and carry no version field. Commitments made under them stay verifiable. `termsHash`, `validateTerms` and `lockTerms` read either version, and version 1 keeps the hash, checks and mapping it was signed under, with its original vectors pinned in the tests. `parseAnyTerms` reads either version for checking a commitment already made, and `parseTerms` takes version 2 only, for new commitments.
+Version 1 terms are flat and carry no version field. Commitments made under them stay verifiable. `termsHash`, `validateTerms` and `lockTerms` read version 1 as well as version 2, and version 1 keeps the hash, checks and mapping it was signed under, with its original vectors pinned in the tests. `parseAnyTerms` reads version 1 or 2 for checking a commitment already made, `parseTerms` takes version 2 only, for a new plain booking, and `parseChainedTerms` takes version 3 only.
 
 ## References and payments
 
@@ -92,7 +97,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | --- | --- | --- |
 | Messages a lock checks | `LOCK_MESSAGE_VERSION`, 1 | The lock's code changes, which means a new lock |
 | Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1 | That message changes |
-| Terms | `version` inside the terms hash, 2 | The header, a section's schema, canonical JSON or the hashing changes |
+| Terms | `version` inside the terms hash, 2 for a plain booking and 3 for one that relies on other bookings | The header, a section's schema, canonical JSON or the hashing changes |
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
 | Commitment record | `COMMITMENT_RECORD_VERSION`, 3 | The record's own fields change. Version 2 added the references a record cites. Version 3 gave a reserve that went back at its release date its own kind of outcome, `reached_release_date`, which versions 1 and 2 recorded as `kept`, as they did the supplier's consent. A version 1 or 2 record reads as version 3, citing nothing when it's version 1. One that ended as `kept` stays version 2, so writing it back keeps its meaning |
 
@@ -111,4 +116,4 @@ pnpm --filter @avow-finance/spec test
 pnpm --filter @avow-finance/spec build && node packages/spec/scripts/write-terms-vectors.mjs
 ```
 
-Tests generate their keys for each run and never write them anywhere. The second line rewrites the version 2 vectors, which only a new terms version should need. `scripts/write-contest-statement-vectors.mjs` rewrites the contest statement vectors the same way, which only a new statement label should need.
+Tests generate their keys for each run and never write them anywhere. The second line rewrites the version 2 and version 3 vectors, which only a new terms version should need. The tests pin each published file by its hash, so a change that moves a published hash fails. `scripts/write-contest-statement-vectors.mjs` rewrites the contest statement vectors the same way, which only a new statement label should need.
