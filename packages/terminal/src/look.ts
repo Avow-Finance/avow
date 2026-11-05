@@ -4,7 +4,7 @@ export interface Look {
   readonly colors: 0 | 16 | 256 | 'rgb'
   /** Whether a line can be drawn again in place, as a spinner needs. */
   readonly live: boolean
-  /** Its width in columns. */
+  /** The width the rail draws to, in columns: the terminal's, up to `MAX_WIDTH`. */
   readonly width: number
 }
 
@@ -17,14 +17,26 @@ export interface Screen {
 type Env = Readonly<Record<string, string | undefined>>
 
 /**
+ * The widest the rail draws. Longer rows read badly, and a terminal narrowed to this width or more
+ * after drawing has nothing to rewrap.
+ */
+export const MAX_WIDTH = 100
+
+/**
  * The look of an output stream. Colour follows the usual settings: NO_COLOR turns it off,
  * FORCE_COLOR turns it on at a level, and otherwise a terminal gets it and a pipe or a file doesn't.
+ * Output piped through something like `tee` still reaches a terminal, so when the stream is a pipe
+ * and `beside` (the error stream) is a terminal, rows are measured to that terminal's width.
  */
-export function lookOf(screen: Screen, env: Env = process.env): Look {
+export function lookOf(screen: Screen, env: Env = process.env, beside?: Screen): Look {
   const tty = screen.isTTY === true && env.TERM !== 'dumb'
-  const width = screen.columns !== undefined && screen.columns > 0 ? screen.columns : 80
-  return { colors: colorsOf(tty, env), live: tty, width }
+  const columns =
+    columnsOf(screen) ?? (screen.isTTY !== true && beside?.isTTY ? columnsOf(beside) : undefined)
+  return { colors: colorsOf(tty, env), live: tty, width: Math.min(columns ?? 80, MAX_WIDTH) }
 }
+
+const columnsOf = (screen: Screen) =>
+  screen.columns !== undefined && screen.columns > 0 ? screen.columns : undefined
 
 function colorsOf(tty: boolean, env: Env): Look['colors'] {
   if (env.NO_COLOR !== undefined && env.NO_COLOR !== '') return 0
@@ -82,31 +94,18 @@ export function visible(text: string): string {
   return text.replace(/\u001b\[[0-9;]*m/g, '')
 }
 
-/** Ranges of characters that take no column, drawing over the one before them. */
-const ZERO: readonly (readonly [number, number])[] = [
-  [0x0300, 0x036f],
-  [0x0483, 0x0489],
-  [0x0591, 0x05bd],
-  [0x0610, 0x061a],
-  [0x064b, 0x065f],
-  [0x0e31, 0x0e31],
-  [0x0e34, 0x0e3a],
-  [0x0e47, 0x0e4e],
-  [0x1ab0, 0x1aff],
-  [0x1dc0, 0x1dff],
-  [0x200b, 0x200f],
-  [0x20d0, 0x20ff],
-  [0x302a, 0x302d],
-  [0x3099, 0x309a],
-  [0xfe00, 0xfe0f],
-  [0xfe20, 0xfe2f],
-  [0xe0100, 0xe01ef],
-]
+/**
+ * The combining diacritical marks, the one range every terminal draws over the character before
+ * it. Every other mark counts as a column of its own, since terminals disagree about them, and a
+ * row measured too wide only wraps a little early, while one measured too narrow runs past the
+ * terminal.
+ */
+const ZERO: readonly (readonly [number, number])[] = [[0x0300, 0x036f]]
 
 /**
  * Ranges of characters a terminal draws two columns wide: East Asian wide and fullwidth
- * characters, and emoji. Where a range is uncertain it counts as wide, since a row measured
- * too wide wraps a little early, while one measured too narrow runs past the terminal.
+ * characters, the historic scripts some tables draw wide, and emoji. Where a range is uncertain it
+ * counts as wide, for the same reason.
  */
 const WIDE: readonly (readonly [number, number])[] = [
   [0x1100, 0x115f],
@@ -117,8 +116,7 @@ const WIDE: readonly (readonly [number, number])[] = [
   [0x2b00, 0x2bff],
   [0x2e80, 0x303e],
   [0x3041, 0x33ff],
-  [0x3400, 0x4dbf],
-  [0x4e00, 0x9fff],
+  [0x3400, 0x9fff],
   [0xa000, 0xa4cf],
   [0xa960, 0xa97f],
   [0xac00, 0xd7a3],
@@ -127,6 +125,9 @@ const WIDE: readonly (readonly [number, number])[] = [
   [0xfe30, 0xfe6f],
   [0xff00, 0xff60],
   [0xffe0, 0xffe6],
+  [0x16fe0, 0x16fff],
+  [0x17000, 0x18d8f],
+  [0x1aff0, 0x1b2ff],
   [0x1f000, 0x1faff],
   [0x20000, 0x2fffd],
   [0x30000, 0x3fffd],
