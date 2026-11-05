@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, renameSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { formatUsd, type SandboxDeployment } from '@avow-finance/spec'
-import { banner, lookOf, Rail, stylesOf } from '@avow-finance/terminal'
+import { banner, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
 import { loadBusinessItem } from '../sandbox/business-store.js'
@@ -52,7 +52,7 @@ It runs on Tempo's Moderato testnet with test dollars. Your business's key stays
 machine, sealed under your passphrase.`
 
 /** Set by create-avow-agent, which draws the banner and opens the rail before setup runs. */
-const CONTINUED = process.env.AVOW_SANDBOX_CONTINUE === '1'
+const CONTINUED = process.env[RAIL_OPEN_ENV] === '1'
 
 /**
  * Opens a link in the default browser, quietly, when someone is at the terminal to see it, and says

@@ -100,4 +100,13 @@ describe('create-avow-agent', () => {
     expect(lines).toEqual([HELP])
     expect(HELP).toContain('--no-start')
   })
+
+  it('writes a name holding $ exactly, never as a replacement pattern', () => {
+    for (const name of ['Cash $$ Co', 'Acme $& Co', 'Acme $` Co', "Acme $' Co", 'Acme $1 Co']) {
+      const business = businessFile(TEMPLATE_DIR, name)
+      const quoted = `'${name.replace(/'/g, "\\'")}'`
+      expect(business).toContain(`  name: ${quoted},`)
+      expect(business.split('\n').filter((l) => l.startsWith('  name:'))).toHaveLength(1)
+    }
+  })
 })

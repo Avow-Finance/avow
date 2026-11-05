@@ -10,7 +10,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { banner, lookOf, Rail, stylesOf } from '@avow-finance/terminal'
+import { banner, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
 
 /** What a new agent folder starts with, which travels beside this script in the tarball. */
 export const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'template')
@@ -46,7 +46,8 @@ export function businessFile(template: string, name: string): string {
     throw new Error(`The template's business.ts doesn't set the name as ${NAME_LINE.trim()}`)
   }
   const quoted = `'${trimmed.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
-  return source.replace(NAME_LINE, `  name: ${quoted},`)
+  // A function, so a $ in the name is written as it is and never read as a replacement pattern.
+  return source.replace(NAME_LINE, () => `  name: ${quoted},`)
 }
 
 /** The folder's name as npm takes a package name: lower case, with no spaces. */
@@ -249,7 +250,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     npm(['start', '--silent'], {
       cwd: target,
       stdio: 'inherit',
-      env: { ...process.env, AVOW_SANDBOX_CONTINUE: '1' },
+      env: { ...process.env, [RAIL_OPEN_ENV]: '1' },
     }),
   )
   process.off('SIGINT', ignore)

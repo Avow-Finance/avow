@@ -12,6 +12,8 @@ import {
 } from './index.js'
 
 const still = (width = 80): Look => ({ colors: 0, live: false, width })
+const LOCK = '0x8684fEd14dC5733751C46640Db293c93f810AF31'
+const COMMITMENT = `0x9f3c${'0'.repeat(56)}a1e2`
 const recorder = () => {
   let out = ''
   return {
@@ -140,7 +142,12 @@ describe('the three kinds of line a job run shows', () => {
     rail.returned(true, 'Booked $180 with avow-demo-gpu.')
     rail.call('book_compute', 'h100x8-spot')
     rail.returned(false, 'service.over_budget: the offer costs $180 and your budget is $150.')
-    rail.fact(1204331n, 'the compute booking is accepted and its free cancellation has ended.')
+    rail.fact({
+      text: 'The compute booking is accepted and its free cancellation has ended.',
+      checkedBy: 'service.ts',
+      block: 1204331n,
+      reference: { lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' },
+    })
     expect(out.text()).toBe(
       [
         '│  qwen3:8b › The firm offer starts now, so I will book it.',
@@ -148,8 +155,9 @@ describe('the three kinds of line a job run shows', () => {
         '│    ✓ Booked $180 with avow-demo-gpu.',
         '│  ↳ book_compute h100x8-spot',
         '│    ✗ service.over_budget: the offer costs $180 and your budget is $150.',
-        '│  ∎ At block 1204331, the compute booking is accepted and its free cancellation',
-        '│    has ended.',
+        '│  ∎ At block 1204331, checked by service.ts. The compute booking is accepted',
+        '│    and its free cancellation has ended.',
+        '│    lock 0x8684…AF31, commitment 0x9f3c…a1e2, buyer side',
         '',
       ].join('\n'),
     )
@@ -183,6 +191,12 @@ describe('the three kinds of line a job run shows', () => {
         { name: 'accepted', reached: true },
         { name: 'delivered', reached: false },
       ],
+      evidence: {
+        checkedBy: 'service.ts',
+        block: 1204340,
+        reference: { lock: LOCK, commitmentId: COMMITMENT, side: 'buyer' },
+        transactionHash: `0x${'ab'.repeat(32)}`,
+      },
       link: 'https://try.testnet.avow.finance/verify#abc',
     })
     expect(out.text()).toBe(
@@ -191,6 +205,8 @@ describe('the three kinds of line a job run shows', () => {
         '│  Job commitment 0x9f3c…a1e2',
         "│  $300 reserved by Avow's test customer, for a late cancellation or a no-show.",
         '│  ● reserved  ● accepted  ○ delivered',
+        '│  Read at block 1204340 by service.ts, lock 0x8684…AF31, commitment',
+        '│  0x9f3c…a1e2, buyer side, transaction 0xabab…abab',
         '│  https://try.testnet.avow.finance/verify#abc',
         '',
       ].join('\n'),

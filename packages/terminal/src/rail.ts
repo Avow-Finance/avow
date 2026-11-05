@@ -3,6 +3,28 @@ import { type Look, type Paint, type Styles, stylesOf, wrap } from './look.js'
 /** Where a rail draws, which in the tools is the terminal's output. */
 export type Write = (text: string) => void
 
+/**
+ * Where a fact or a receipt comes from, since a signed line only says who published it. It names
+ * who checked, what they read on chain and at which block, and the transaction where there is one.
+ */
+export interface Evidence {
+  /** Who checked, such as "service.ts", "Avow's test customer" or "Avow's API". */
+  readonly checkedBy: string
+  readonly block: bigint | number
+  /** The commitment it was read from: its lock, its id and the side read. */
+  readonly reference: {
+    readonly lock: string
+    readonly commitmentId: string
+    readonly side: string
+  }
+  readonly transactionHash?: string
+}
+
+/** A fact code outside the model checked, with where it comes from. */
+export interface Fact extends Evidence {
+  readonly text: string
+}
+
 /** A commitment as the terminal shows it. */
 export interface Receipt {
   /** What it is, such as the job commitment and its id. */
@@ -11,9 +33,23 @@ export interface Receipt {
   readonly lines: readonly string[]
   /** Its states in order, each reached or not yet. */
   readonly states: readonly { readonly name: string; readonly reached: boolean }[]
+  /** Where its states were read. */
+  readonly evidence: Evidence
   /** Where anyone can check it. */
   readonly link?: string
 }
+
+/** An address or a hash as the terminal shortens it, with enough of each end to tell it apart. */
+const short = (hex: string) => (hex.length > 14 ? `${hex.slice(0, 6)}…${hex.slice(-4)}` : hex)
+
+/** The chain reference under a fact or a receipt, in one quiet line. */
+const referenceLine = (e: Evidence) =>
+  [
+    `lock ${short(e.reference.lock)}`,
+    `commitment ${short(e.reference.commitmentId)}`,
+    `${e.reference.side} side`,
+    ...(e.transactionHash ? [`transaction ${short(e.transactionHash)}`] : []),
+  ].join(', ')
 
 /** The frames of the spinner a step turns while it takes time, and how long each shows. */
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
@@ -195,11 +231,16 @@ export class Rail {
   }
 
   /**
-   * A fact code outside the model verified, with the block it was read at, since a check proves
-   * the state at that block and nothing after it.
+   * A fact code outside the model verified. It says who checked and at which block, since a check
+   * proves the state at that block and nothing after it, with the chain reference under it.
    */
-  fact(block: bigint | number, text: string): void {
-    this.#item(this.#s.ok('∎'), `${this.#s.dim(`At block ${block},`)} ${text}`)
+  fact(fact: Fact): void {
+    this.#item(
+      this.#s.ok('∎'),
+      `${this.#s.dim(`At block ${fact.block}, checked by ${fact.checkedBy}.`)} ${fact.text}`,
+    )
+    this.#emit(`${this.prefix}  ${this.#s.dim(referenceLine(fact))}`)
+    this.#spaced = false
   }
 
   /** A commitment as a compact receipt: what it is, its states so far, and where to check it. */
@@ -217,6 +258,10 @@ export class Rail {
           ),
         ),
         `${this.prefix}${states}`,
+        ...wrap(
+          `Read at block ${receipt.evidence.block} by ${receipt.evidence.checkedBy}, ${referenceLine(receipt.evidence)}`,
+          Math.max(MIN_TEXT, this.#look.width - 3),
+        ).map((part) => `${this.prefix}${this.#s.dim(part)}`),
         ...(receipt.link ? [`${this.prefix}${this.#s.dim(receipt.link)}`] : []),
       ].join('\n'),
     )

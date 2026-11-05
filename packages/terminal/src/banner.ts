@@ -1,6 +1,12 @@
 import { BANNER, BANNER_WIDTH } from './banner-art.js'
 import { type Look, stylesOf } from './look.js'
 
+/**
+ * The environment setting create-avow-agent sets when it runs setup in the folder it made, having
+ * drawn the banner and opened the rail, so setup carries the rail on. It changes only what's drawn.
+ */
+export const RAIL_OPEN_ENV = 'AVOW_SANDBOX_CONTINUE'
+
 /** What every tool here says under its banner, as the sandbox's pages say at their top. */
 export const TESTNET_LINE = 'Testnet sandbox. Test dollars only.'
 
