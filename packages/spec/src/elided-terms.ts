@@ -3,6 +3,7 @@ import {
   chainedTermsHashFromSections,
   chainedTermsShapeProblem,
   DEPENDENCIES_LABEL,
+  dependencyCheckProblem,
   type ElidedSection,
   sectionHash,
   sectionSalt,
@@ -45,6 +46,9 @@ export function elideDependencies(terms: ChainedTerms, salt: Hex): ElidedTerms {
     throw new TypeError(
       'The buyer checks the bookings these terms rely on, so it sees them in full',
     )
+  }
+  if (dependencyCheckProblem(terms)) {
+    throw new TypeError("These terms' template has the buyer check the bookings they rely on")
   }
   const digest = sectionHash('dependencies', dependencies, sectionSalt(salt, 'dependencies'))
   const salts = {} as Record<TermsSection, Hex>

@@ -8,6 +8,7 @@ import {
   checkSectionDisclosure,
   type Dependency,
   dependenciesProblem,
+  dependencyCheckProblem,
   type PinnedBlock,
   parseSectionDisclosure,
   type RailState,
@@ -315,6 +316,8 @@ export async function verifyDependencies(
   const t = input.terms
   const shape = chainedTermsShapeProblem(t)
   if (shape) return refuse(shape, null, null)
+  const setting = dependencyCheckProblem(t)
+  if (setting) return refuse(setting, null, null)
   const rules = dependenciesProblem(t.dependencies)
   if (rules) return refuse(rules, null, null)
   // The fit test compares subjects, so a subject its template refuses stops the check before any

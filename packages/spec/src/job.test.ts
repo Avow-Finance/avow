@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { dollars, testnetDemoJobTerms, testnetDemoTerms } from './demo.js'
+import { type CheckedChainedTerms, subjectFits, subjectProblem } from './dependencies.js'
+import { elideDependencies } from './elided-terms.js'
 import {
-  type CheckedChainedTerms,
-  chainedTerms,
-  subjectFits,
-  subjectProblem,
-} from './dependencies.js'
-import { JOB, type JobSubject, type JobTerms, jobFitsReservation, validateJob } from './job.js'
+  chainedJobTerms,
+  JOB,
+  type JobSubject,
+  type JobTerms,
+  jobFitsReservation,
+  validateJob,
+} from './job.js'
 import { checkMandate } from './mandate.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import { discloseSection, termsHash, validateChainedTerms, validateTerms } from './terms.js'
@@ -25,7 +28,7 @@ import { parseChainedTerms, parseSectionDisclosure, parseTerms, toWire } from '.
 
 const job = testnetDemoJobTerms(START, ARBITER)
 const relyOn = { on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' } as const
-const chained = chainedTerms(job, [relyOn])
+const chained = chainedJobTerms(job, [relyOn])
 const roundTrip = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
 
 /** The compute a job runs on: one H100 in the demo region for the half hour from `START`. */
@@ -54,6 +57,13 @@ describe('job terms', () => {
   it('commit only under version 3, naming the compute they run on', () => {
     expect(validateChainedTerms(chained, TESTNET_DEMO_PROFILE)).toBeNull()
     expect(validateTerms(job, TESTNET_DEMO_PROFILE)).toBe('dependency.required')
+  })
+
+  it('take only the buyer setting, since the customer checks the compute itself', () => {
+    const avow = { ...chained, dependencyCheck: 'avow' } as never
+    expect(validateChainedTerms(avow, TESTNET_DEMO_PROFILE)).toBe('terms.template_invalid')
+    expect(parseChainedTerms(roundTrip(avow)).ok).toBe(false)
+    expect(() => elideDependencies(avow, SALT)).toThrow(TypeError)
   })
 
   it('read back from JSON in both shapes, and hash like any sectioned terms', () => {

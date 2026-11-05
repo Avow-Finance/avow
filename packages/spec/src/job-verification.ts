@@ -1,6 +1,6 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
-import { DEPENDENCY_CHECKS, type Dependencies, dependenciesJson } from './dependencies.js'
+import { type Dependencies, dependenciesJson } from './dependencies.js'
 import { type ChainedJobTerms, JOB } from './job.js'
 import { bytes32 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
@@ -35,7 +35,7 @@ export interface JobVerification {
   kind: 'job'
   /** The job commitment, on the buyer side of the customer's lock. */
   commitment: CommitmentReference
-  header: ChainedTermsHeader & { template: typeof JOB }
+  header: ChainedTermsHeader & { template: typeof JOB; dependencyCheck: 'buyer' }
   dependencies: Dependencies
   /** The dependencies section's own salt. */
   dependenciesSalt: Hex
@@ -54,7 +54,7 @@ export const jobVerificationJson = z.strictObject({
     template: z.literal(JOB),
     currency: z.enum(CURRENCIES),
     amountDecimals: z.literal(AMOUNT_DECIMALS),
-    dependencyCheck: z.enum(DEPENDENCY_CHECKS),
+    dependencyCheck: z.literal('buyer'),
   }),
   dependencies: dependenciesJson,
   dependenciesSalt: bytes32,

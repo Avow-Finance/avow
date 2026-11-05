@@ -552,8 +552,32 @@ export function validateChainedTerms(
   const shape = chainedTermsShapeProblem(terms)
   if (shape) return shape
   return (
-    sectionRulesProblem(plainTermsOf(terms), profile) ?? dependenciesProblem(terms.dependencies)
+    dependencyCheckProblem(terms) ??
+    sectionRulesProblem(plainTermsOf(terms), profile) ??
+    dependenciesProblem(terms.dependencies)
   )
+}
+
+/**
+ * Who each template lets check the bookings its version 3 terms rely on. A job's customer checks
+ * its compute itself, so a job takes only `buyer`. The build fails when a template is missing here.
+ */
+const DEPENDENCY_CHECKS_ALLOWED: { readonly [T in TemplateId]: readonly DependencyCheck[] } = {
+  'gpu-reservation/1': ['buyer', 'avow'],
+  'job/1': ['buyer'],
+}
+
+/**
+ * Why version 3 terms can't use the setting they name for who checks their bookings, or null when
+ * they can. A setting the template doesn't allow is `terms.template_invalid`.
+ */
+export function dependencyCheckProblem(
+  terms: Pick<ChainedTerms, 'template' | 'dependencyCheck'>,
+): ReasonCode | null {
+  const allowed = Object.hasOwn(DEPENDENCY_CHECKS_ALLOWED, terms.template)
+    ? DEPENDENCY_CHECKS_ALLOWED[terms.template as TemplateId]
+    : []
+  return allowed.includes(terms.dependencyCheck) ? null : 'terms.template_invalid'
 }
 
 /**

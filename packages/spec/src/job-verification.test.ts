@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { testnetDemoJobTerms } from './demo.js'
-import { chainedTerms } from './dependencies.js'
+import { chainedJobTerms } from './job.js'
 import {
   decodeJobVerification,
   encodeJobVerification,
@@ -8,12 +8,12 @@ import {
   jobVerificationOf,
   jobVerificationProblem,
 } from './job-verification.js'
-import { encodeCommitmentReference } from './reference-link.js'
+import { encodeCommitmentReference, encodeLinkToken } from './reference-link.js'
 import { termsHash } from './terms.js'
 import { ARBITER, COMPUTE_REFERENCE, id, JOB_REFERENCE, SALT, START } from './test-helpers.js'
 
 const job = testnetDemoJobTerms(START, ARBITER)
-const terms = chainedTerms(job, [
+const terms = chainedJobTerms(job, [
   { on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' },
 ])
 const commitment = { ...JOB_REFERENCE, termsHash: termsHash(terms, SALT) }
@@ -44,7 +44,8 @@ describe('a link to verify a job', () => {
         ],
       },
       { ...verification, dependenciesSalt: id('another salt') },
-      { ...verification, header: { ...verification.header, dependencyCheck: 'avow' } },
+      // A token can't carry the setting, so only a hand-made one could try it.
+      { ...verification, header: { ...verification.header, dependencyCheck: 'avow' } } as never,
       { ...verification, sectionHashes: { ...verification.sectionHashes, consideration: id('x') } },
     ]
     for (const v of changed) expect(jobVerificationProblem(v)).toBe('terms.hash_mismatch')
@@ -52,6 +53,12 @@ describe('a link to verify a job', () => {
 
   it('refuses to name one job’s commitment with another’s terms', () => {
     expect(() => jobVerificationOf(terms, SALT, JOB_REFERENCE)).toThrow(RangeError)
+  })
+
+  it('reads a token naming the avow setting as invalid, since a job’s customer checks its compute', () => {
+    const avow = { ...verification, header: { ...verification.header, dependencyCheck: 'avow' } }
+    const token = encodeLinkToken(avow)
+    expect(decodeJobVerification(token)).toEqual({ ok: false, reason: 'message.invalid' })
   })
 
   it('reads a commitment reference’s token, or anything else, as invalid', () => {

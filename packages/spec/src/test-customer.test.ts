@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { dollars, testnetDemoJobTerms } from './demo.js'
-import { chainedTerms } from './dependencies.js'
+import { chainedJobTerms } from './job.js'
 import { discloseSection } from './terms.js'
 import {
   type JobOffer,
@@ -37,7 +37,7 @@ import { toWire } from './wire.js'
 const overJson = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
 const customer = { label: TEST_CUSTOMER_LABEL, businessId: 'biz_test_customer' } as const
 const job = testnetDemoJobTerms(START, ARBITER)
-const chained = chainedTerms(job, [
+const chained = chainedJobTerms(job, [
   { on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' },
 ])
 

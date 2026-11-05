@@ -1,8 +1,10 @@
 import type { Address } from 'viem'
+import type { Dependencies } from './dependencies.js'
 import { type GpuSubject, gpuSubjectProblem } from './gpu-reservation.js'
 import type { ReasonCode } from './reasons.js'
 import {
   AMOUNT_DECIMALS,
+  CHAINED_TERMS_VERSION,
   type ChainedTermsOf,
   type Currency,
   type RemedyCharge,
@@ -47,8 +49,15 @@ export interface JobSubject {
 /** Job terms as version 2 shapes them, the form a customer proposes before compute is named. */
 export type JobTerms = TermsOf<JobSubject, typeof JOB>
 
-/** Version 3 job terms, which name the booking of the compute the job runs on. */
-export type ChainedJobTerms = ChainedTermsOf<JobSubject, typeof JOB>
+/**
+ * Version 3 job terms, which name the booking of the compute the job runs on. The customer checks
+ * that booking itself, so a job's terms always say `buyer` checks. The `avow` setting promises to
+ * hide the booking from the buyer, which a job can't keep, since the customer gets its terms in full
+ * and a link to verify a job shows the booking.
+ */
+export type ChainedJobTerms = Omit<ChainedTermsOf<JobSubject, typeof JOB>, 'dependencyCheck'> & {
+  dependencyCheck: 'buyer'
+}
 
 /** What a job states, in micros and unix seconds, before the template builds its terms. */
 export interface JobInput {
@@ -122,6 +131,11 @@ export function jobTerms(input: JobInput): JobTerms {
     },
     backing: { kind: 'reserve', side: 'buyer', amount: reserve, releaseDate: input.releaseDate },
   }
+}
+
+/** Version 3 job terms that rely on the compute bookings given, which the customer checks. */
+export function chainedJobTerms(terms: JobTerms, dependencies: Dependencies): ChainedJobTerms {
+  return { ...terms, version: CHAINED_TERMS_VERSION, dependencyCheck: 'buyer', dependencies }
 }
 
 const isText = (v: unknown, max: number): v is string =>
