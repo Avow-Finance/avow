@@ -125,20 +125,19 @@ const NEXT_STEP: Record<SandboxBusinessStep['step'], string | null> = {
   funded: null,
 }
 
+/** An address as the terminal shortens it, with enough of each end to tell it apart. */
+const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`
+
 const stepLine = (s: SandboxBusinessStep): string => {
   switch (s.step) {
     case 'fees':
-      return s.hashes.length > 0
-        ? "Funded the account's fees from Moderato's faucet."
-        : 'The account holds enough for its fees.'
+      return s.hashes.length > 0 ? "Fees funded from Moderato's faucet" : 'Fees already covered'
     case 'lock':
-      return s.createdIn
-        ? `Created the business's lock at ${s.lock}.`
-        : `The business's lock is at ${s.lock}.`
+      return s.createdIn ? `Lock created at ${short(s.lock)}` : `Lock found at ${short(s.lock)}`
     case 'registered':
-      return `Registered sandbox business ${s.businessId}. Avow is sending ${formatUsd(s.amount)} of test dollars.`
+      return `Registered with Avow's sandbox as ${s.businessId}`
     case 'funded':
-      return `The test dollars arrived. The business holds ${formatUsd(s.balance)}.`
+      return `${formatUsd(s.balance)} of test dollars in your account`
   }
 }
 
@@ -484,10 +483,7 @@ export async function prepareSandboxBusiness(
     suppliers,
   }
   await saveAgentItem(store, next)
-  log(
-    `Signed and enrolled your agent's mandate: ${authorityText(authority, dailyLimit, ids)}.`,
-    'done',
-  )
+  log("Mandate signed, and your agent's key enrolled on your account", 'done')
 
   // Each supplier the lock approves that the new mandate doesn't name comes off on its own, so one
   // that fails leaves the others done, and the person hears which.

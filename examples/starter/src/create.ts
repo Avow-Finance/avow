@@ -149,24 +149,36 @@ export function parseArgs(args: readonly string[]): CreateArgs {
 }
 
 /** Asks for the business's name on the rail, and takes the default for an empty answer. */
-async function askName(rail: Rail): Promise<string> {
+async function askName(rail: Rail, paint: ReturnType<typeof stylesOf>): Promise<string> {
   rail.ask(`Name your sandbox business, or press Enter for ${DEFAULT_NAME}`)
   const lines = createInterface({ input: process.stdin, output: process.stdout, historySize: 0 })
-  const answer = await new Promise<string | null>((done) => {
-    lines.on('close', () => done(null))
-    lines.question(rail.prefix, done)
-  })
-  lines.close()
-  if (answer === null) throw new Error('No name was given.')
-  if (answer.trim() !== '') return answer.trim()
-  rail.answered(DEFAULT_NAME)
-  return DEFAULT_NAME
+  try {
+    for (;;) {
+      const answer = await new Promise<string | null>((done) => {
+        lines.once('close', () => done(null))
+        lines.question(rail.prefix, done)
+      })
+      if (answer === null) throw new Error('No name was given.')
+      if (answer.trim() === '') {
+        rail.answered(DEFAULT_NAME)
+        return DEFAULT_NAME
+      }
+      try {
+        businessFile(TEMPLATE_DIR, answer)
+        return answer.trim()
+      } catch (error) {
+        rail.answered(paint.bad(error instanceof Error ? error.message : String(error)))
+      }
+    }
+  } finally {
+    lines.close()
+  }
 }
 
 /**
- * Draws Avow's banner and opens the rail, asks the business's name, makes the folder and installs
- * its packages, then runs setup in it, which carries the same rail on. It waits for setup to end,
- * so a Ctrl+C there stops setup, and then says where the folder is.
+ * Draws Avow's banner and opens the rail, makes the folder and installs its packages while asking
+ * the business's name, then runs setup in it, which carries the same rail on. It waits for setup
+ * to end, so a Ctrl+C there stops setup, and then says where the folder is.
  */
 export async function main(argv: readonly string[]): Promise<number> {
   const major = Number(process.versions.node.split('.')[0])
@@ -182,21 +194,26 @@ export async function main(argv: readonly string[]): Promise<number> {
   rail.open(`Make ${args.folder}`)
   let target: string
   try {
-    const name = args.name ?? (process.stdin.isTTY ? await askName(rail) : DEFAULT_NAME)
-    target = createAgentFolder(args.folder, TEMPLATE_DIR, name)
+    target = createAgentFolder(args.folder, TEMPLATE_DIR, args.name ?? DEFAULT_NAME)
   } catch (error) {
     rail.fail(error instanceof Error ? error.message : String(error))
     return 1
   }
+  // The packages install while the developer names the business, since neither needs the other.
+  const began = Date.now()
+  const installing = args.install ? install(target) : null
+  if (args.name === null && process.stdin.isTTY) {
+    const name = await askName(rail, paint)
+    writeFileSync(join(target, 'business.ts'), businessFile(TEMPLATE_DIR, name))
+  }
   rail.done(`Made ${args.folder}, with agent.ts, business.ts and a README`)
-  if (!args.install) {
+  if (!installing) {
     rail.close(`Install its packages, then set up its business:`)
     console.log(`      cd ${args.folder}\n      npm install\n      npm start\n`)
     return 0
   }
-  const began = Date.now()
   rail.wait('Installing its packages')
-  const installed = await install(target)
+  const installed = await installing
   if (!installed.ok) {
     rail.fail("npm install didn't finish. What it printed is below.")
     console.error(paint.dim(installed.output.trimEnd()))
