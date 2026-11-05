@@ -554,8 +554,20 @@ describe('a link to verify a job', () => {
     })
   })
 
-  it('says a job ended once a charge is pending or paused, or its reserve released, charged or resolved', async () => {
-    for (const state of ['charge_pending', 'paused', 'released', 'charged', 'resolved'] as const) {
+  it('says a charge is pending while one is reported or paused, with the reserve still held', async () => {
+    for (const state of ['charge_pending', 'paused'] as const) {
+      const { result } = await read({ job: { state } })
+      expect(result, state).toEqual({
+        outcome: 'charge_pending',
+        job: { state, freeCancelBy: START, block: PINNED },
+        supplier: supplierAccount.address,
+        bookings: [standing],
+      })
+    }
+  })
+
+  it('says a job ended once its reserve was released, charged or resolved', async () => {
+    for (const state of ['released', 'charged', 'resolved'] as const) {
       const { result } = await read({ job: { state } })
       expect(result, state).toEqual({
         outcome: 'ended',
@@ -568,7 +580,7 @@ describe('a link to verify a job', () => {
 
   it('counts an accepted job with a report filed as a charge pending, as the booking check does', async () => {
     const { result } = await read({ job: { hasReport: true } })
-    expect(result).toMatchObject({ outcome: 'ended', job: { state: 'charge_pending' } })
+    expect(result).toMatchObject({ outcome: 'charge_pending', job: { state: 'charge_pending' } })
     // The same rule refuses a booking relied on in the same state.
     const compute = await read({ ...{ job: reserved }, compute: { hasReport: true } })
     expect(compute.result).toEqual(linkRefused('dependency.charge_pending'))
@@ -589,6 +601,54 @@ describe('a link to verify a job', () => {
       outcome: 'ended',
       bookings: [{ standing: false, reason: 'dependency.ended', readAt: PINNED }],
     })
+  })
+
+  /**
+   * The job's chain read through two readers: the customer's lock through the first, and the
+   * compute through a second, from another factory on the same chain, scripted as given.
+   */
+  async function throughTwo(job: Partial<DependencyRecord>, second: LockScript) {
+    const first = scriptedLocks({ locks: { [LOCK]: customerLock(job) } })
+    const other = scriptedLocks({
+      factory: OTHER_FACTORY,
+      locks: { [SUPPLIER_LOCK]: { ...supplierLock(), factory: OTHER_FACTORY } },
+      ...second,
+    })
+    return verifyJobVerification(
+      { verification, now: NOW },
+      { readers: [first.reader, other.reader], timeoutMs: 50 },
+    )
+  }
+  const unreadable = { ...standing, standing: false, reason: 'dependency.unreadable' }
+
+  it('reports a booking it couldn’t read behind an accepted job, and never drops it', async () => {
+    for (const second of [{ fails: 'commitment' }, { hangs: 'commitment' }] as const) {
+      expect(await throughTwo({}, second), JSON.stringify(second)).toEqual({
+        outcome: 'stands',
+        job: { state: 'accepted', freeCancelBy: START, block: PINNED },
+        supplier: supplierAccount.address,
+        bookings: [unreadable],
+      })
+      expect(await throughTwo({ state: 'released' }, second)).toMatchObject({
+        outcome: 'ended',
+        bookings: [unreadable],
+      })
+    }
+  })
+
+  it('refuses a reserved job whose booking it couldn’t read', async () => {
+    for (const second of [{ fails: 'commitment' }, { hangs: 'commitment' }] as const) {
+      expect(await throughTwo(reserved, second), JSON.stringify(second)).toEqual(
+        linkRefused('dependency.unreadable'),
+      )
+    }
+  })
+
+  it('refuses the whole link when a read on the job’s chain finds the pinned block moved, in every state', async () => {
+    for (const job of [{}, reserved, { state: 'released' as const }, { hasReport: true }]) {
+      const result = await throughTwo(job, { rehash: id('another block') })
+      expect(result, JSON.stringify(job)).toEqual(linkRefused('reference.unreadable', PINNED, null))
+    }
   })
 
   it('refuses a link whose parts don’t hash to its reference, reading nothing', async () => {
