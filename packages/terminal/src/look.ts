@@ -4,7 +4,7 @@ export interface Look {
   readonly colors: 0 | 16 | 256 | 'rgb'
   /** Whether a line can be drawn again in place, as a spinner needs. */
   readonly live: boolean
-  /** Its width in columns. */
+  /** The width the rail draws to, in columns: the terminal's, up to `MAX_WIDTH`. */
   readonly width: number
 }
 
@@ -17,14 +17,26 @@ export interface Screen {
 type Env = Readonly<Record<string, string | undefined>>
 
 /**
+ * The widest the rail draws. Longer rows read badly, and a terminal narrowed to this width or more
+ * after drawing has nothing to rewrap.
+ */
+export const MAX_WIDTH = 100
+
+/**
  * The look of an output stream. Colour follows the usual settings: NO_COLOR turns it off,
  * FORCE_COLOR turns it on at a level, and otherwise a terminal gets it and a pipe or a file doesn't.
+ * Output piped through something like `tee` still reaches a terminal, so when the stream is a pipe
+ * and `beside` (the error stream) is a terminal, rows are measured to that terminal's width.
  */
-export function lookOf(screen: Screen, env: Env = process.env): Look {
+export function lookOf(screen: Screen, env: Env = process.env, beside?: Screen): Look {
   const tty = screen.isTTY === true && env.TERM !== 'dumb'
-  const width = screen.columns !== undefined && screen.columns > 0 ? screen.columns : 80
-  return { colors: colorsOf(tty, env), live: tty, width }
+  const columns =
+    columnsOf(screen) ?? (screen.isTTY !== true && beside?.isTTY ? columnsOf(beside) : undefined)
+  return { colors: colorsOf(tty, env), live: tty, width: Math.min(columns ?? 80, MAX_WIDTH) }
 }
+
+const columnsOf = (screen: Screen) =>
+  screen.columns !== undefined && screen.columns > 0 ? screen.columns : undefined
 
 function colorsOf(tty: boolean, env: Env): Look['colors'] {
   if (env.NO_COLOR !== undefined && env.NO_COLOR !== '') return 0

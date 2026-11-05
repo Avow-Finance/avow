@@ -11,6 +11,7 @@ import {
   displayWidth,
   type Look,
   lookOf,
+  MAX_WIDTH,
   Rail,
   setApart,
   visible,
@@ -44,6 +45,17 @@ describe('a look', () => {
     expect(lookOf({ isTTY: false }, { FORCE_COLOR: '1' }).colors).toBe(16)
     expect(lookOf(tty, { FORCE_COLOR: '0' }).colors).toBe(0)
     expect(lookOf(tty, { TERM: 'dumb' })).toMatchObject({ colors: 0, live: false })
+  })
+
+  it('draws no wider than 100 columns, and to the terminal beside a pipe', () => {
+    expect(lookOf({ isTTY: true, columns: 220 }, { TERM: 'xterm' }).width).toBe(MAX_WIDTH)
+    // Piped through tee, the rows still reach the terminal the error stream is on.
+    expect(lookOf({ isTTY: false }, {}, { isTTY: true, columns: 60 })).toEqual({
+      colors: 0,
+      live: false,
+      width: 60,
+    })
+    expect(lookOf({ isTTY: false }, {}, { isTTY: false })).toMatchObject({ width: 80 })
   })
 })
 
@@ -702,7 +714,7 @@ describe('character widths', () => {
     // The emoji selectors and the keycap go, so every base draws as text.
     expect(clean('©\ufe0f 1\ufe0f\u20e3 ✔\ufe0f')).toBe('© 1 ')
     // The rail's marks and their look-alikes go, the spinner's frames among them.
-    expect(clean('￨￭￮⬥⬦⯀⟩˃∣⏐⠋')).toBe('')
+    expect(clean('￨￭￮⬥⬦⯀⟩˃∣⏐⠋⧫')).toBe('')
   })
 })
 

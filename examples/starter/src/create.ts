@@ -203,7 +203,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0
   }
   const args = parseArgs(argv)
-  const look = lookOf(process.stdout)
+  const look = lookOf(process.stdout, process.env, process.stderr)
   const paint = stylesOf(look)
   const rail = new Rail(look)
   console.log(banner(look))

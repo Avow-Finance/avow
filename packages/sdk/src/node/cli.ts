@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, renameSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { formatUsd, type SandboxDeployment } from '@avow-finance/spec'
-import { banner, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
+import { banner, clean, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
 import { loadBusinessItem } from '../sandbox/business-store.js'
@@ -90,7 +90,7 @@ async function main(args: readonly string[]): Promise<void> {
       process.exit(1)
     }
   }
-  const look = lookOf(process.stdout)
+  const look = lookOf(process.stdout, process.env, process.stderr)
   const paint = stylesOf(look)
   const rail = new Rail(look)
   const say = (line = '') => {
@@ -223,7 +223,7 @@ async function main(args: readonly string[]): Promise<void> {
       // business.ts is read again for each run, so an edit to it takes effect at the next Enter.
       await prepare(await readBusinessConfig(BUSINESS_FILE))
     } catch (error) {
-      say(`${error instanceof Error ? error.message : String(error)}\n`)
+      rail.fail(error instanceof Error ? error.message : String(error))
       continue
     }
     rail.settle()
@@ -260,6 +260,7 @@ async function showKeyLeft(
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error))
+  // A supplier's or a relay's own words can end up in an error, so they're cleaned like any outside text.
+  console.error(clean(error instanceof Error ? error.message : String(error)))
   process.exit(1)
 })

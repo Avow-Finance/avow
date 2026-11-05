@@ -5,6 +5,7 @@ export {
   displayWidth,
   type Look,
   lookOf,
+  MAX_WIDTH,
   type Paint,
   type Screen,
   type Styles,
