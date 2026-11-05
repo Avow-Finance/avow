@@ -42,6 +42,15 @@ import { keepSession, sessionForNextRun } from './runner-session.js'
 const AGENT_FILE = 'agent.ts'
 const BUSINESS_FILE = 'business.ts'
 
+/** What `avow-sandbox --help` prints. */
+const HELP = `avow-sandbox [start | fresh]
+
+  start    sets up your business, opens your screen, and runs agent.ts each time you press Enter
+  fresh    moves your business aside, keys and all, and sets up a fresh one
+
+It runs on Tempo's Moderato testnet with test dollars. Your business's key stays in .avow on this
+machine, sealed under your passphrase.`
+
 /** Set by create-avow-agent, which draws the banner and opens the rail before setup runs. */
 const CONTINUED = process.env.AVOW_SANDBOX_CONTINUE === '1'
 
@@ -67,8 +76,12 @@ function openInBrowser(url: string): boolean {
 
 async function main(args: readonly string[]): Promise<void> {
   const command = args[0] ?? 'start'
+  if (command === '--help' || command === '-h' || command === 'help') {
+    console.log(HELP)
+    return
+  }
   if (command !== 'start' && command !== 'fresh') {
-    console.error('Use avow-sandbox start, or avow-sandbox fresh for a fresh business.')
+    console.error(`There's no command ${command} here.\n\n${HELP}`)
     process.exit(1)
   }
   for (const file of [AGENT_FILE, BUSINESS_FILE]) {

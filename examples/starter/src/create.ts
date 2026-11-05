@@ -127,6 +127,17 @@ export interface CreateArgs {
   start: boolean
 }
 
+/** What `create-avow-agent --help` prints. */
+export const HELP = `create-avow-agent [folder] [--name <business>] [--no-install] [--no-start]
+
+Makes a folder holding an Avow sandbox agent, installs its packages, and sets up its business on
+Tempo's Moderato testnet with test dollars.
+
+  folder           where to make it, my-agent by default
+  --name <name>    the business's name, so nothing asks for it
+  --no-install     stop once the folder is made
+  --no-start       stop once its packages are installed`
+
 /** `create-avow-agent [folder] [--name <business>] [--no-install] [--no-start]` */
 export function parseArgs(args: readonly string[]): CreateArgs {
   let folder: string | null = null
@@ -185,6 +196,10 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (major < 20) {
     console.error(`The starter needs Node 20 or later, and this is Node ${process.versions.node}.`)
     return 1
+  }
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(HELP)
+    return 0
   }
   const args = parseArgs(argv)
   const look = lookOf(process.stdout)

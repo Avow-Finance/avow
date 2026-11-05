@@ -6,6 +6,8 @@ import {
   businessFile,
   createAgentFolder,
   DEFAULT_NAME,
+  HELP,
+  main,
   packageName,
   parseArgs,
   TEMPLATE_DIR,
@@ -84,5 +86,18 @@ describe('create-avow-agent', () => {
     expect(parseArgs(['acme', '--no-start'])).toMatchObject({ install: true, start: false })
     // Setup needs the packages, so skipping the install skips setup too.
     expect(parseArgs(['acme', '--no-install'])).toMatchObject({ install: false, start: false })
+  })
+
+  it('prints its usage for --help, and makes nothing', async () => {
+    const lines: string[] = []
+    const log = console.log
+    console.log = (line: string) => void lines.push(line)
+    try {
+      expect(await main(['--help'])).toBe(0)
+    } finally {
+      console.log = log
+    }
+    expect(lines).toEqual([HELP])
+    expect(HELP).toContain('--no-start')
   })
 })
