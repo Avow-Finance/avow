@@ -28,7 +28,7 @@ import {
   type SupplierAuthorization,
 } from './eip712.js'
 import { validateGpuReservation } from './gpu-reservation.js'
-import { validateJob } from './job.js'
+import { JOB_CATEGORY, validateJob } from './job.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -495,6 +495,29 @@ const TEMPLATE_RULES: {
 } = {
   'gpu-reservation/1': (t) => validateGpuReservation(t),
   'job/1': (t) => validateJob(t),
+}
+
+/**
+ * The one mandate category each template's bookings fall under, or null when the request names
+ * its own. The build fails when a template is missing here.
+ */
+const TEMPLATE_CATEGORIES: { readonly [T in TemplateId]: string | null } = {
+  'gpu-reservation/1': null,
+  'job/1': JOB_CATEGORY,
+}
+
+/**
+ * Why terms can't be booked under this mandate category, or null when they can. A template with
+ * a category of its own, such as a job's, takes only that one, and any other is
+ * `terms.category_mismatch`.
+ */
+export function templateCategoryProblem(
+  terms: { template: string },
+  category: string,
+): ReasonCode | null {
+  if (!Object.hasOwn(TEMPLATE_CATEGORIES, terms.template)) return null
+  const fixed = TEMPLATE_CATEGORIES[terms.template as TemplateId]
+  return fixed === null || fixed === category ? null : 'terms.category_mismatch'
 }
 
 /**

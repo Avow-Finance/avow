@@ -9,6 +9,8 @@ A job is a piece of work your business does for a customer by a deadline, on GPU
 
 The subject holds the work, the compute and two times. `work` has a short `kind`, such as `fine-tuning`, and a one-sentence `summary`. `compute` names the GPU, how many and the region. Work starts at `startsAt` and is delivered by `deliverBy`. `jobTerms` builds the terms, and `testnetDemoJobTerms` gives the job Avow's test customer offers on testnet.
 
+Every job falls under the mandate category `compute-job`, which `JOB_CATEGORY` names, so a customer's mandate allows jobs by naming it. Job terms under any other category are refused as `terms.category_mismatch`.
+
 The template's rules are fixed.
 
 - Free cancellation ends exactly when work starts, and your business accepts the customer's reserve by then.

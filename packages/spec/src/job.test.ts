@@ -5,6 +5,7 @@ import { elideDependencies } from './elided-terms.js'
 import {
   chainedJobTerms,
   JOB,
+  JOB_CATEGORY,
   type JobSubject,
   type JobTerms,
   jobFitsReservation,
@@ -74,12 +75,16 @@ describe('job terms', () => {
     expect(subject.ok && subject.value.content).toEqual(job.subject)
   })
 
-  it('pass the mandate check once checked, and are refused when they name no compute', () => {
+  it('pass the mandate check once checked, under the job category alone', () => {
     const agent = newKey()
-    const decide = (terms: JobTerms | CheckedChainedTerms) =>
+    const mandate = {
+      ...demoMandate(newKey().address, agent.address),
+      categories: ['compute', JOB_CATEGORY],
+    }
+    const decide = (terms: JobTerms | CheckedChainedTerms, category: string = JOB_CATEGORY) =>
       checkMandate({
-        mandate: demoMandate(newKey().address, agent.address),
-        request: { ...demoRequest(agent.address), terms },
+        mandate,
+        request: { ...demoRequest(agent.address), category, terms },
         token: TOKEN,
         openReserves: 0n,
         revoked: false,
@@ -88,6 +93,12 @@ describe('job terms', () => {
       })
     expect(decide(chained as CheckedChainedTerms).result).toBe('approved')
     expect(decide(job)).toEqual({ result: 'denied', reason: 'dependency.required' })
+    expect(decide(chained as CheckedChainedTerms, 'compute')).toEqual({
+      result: 'denied',
+      reason: 'terms.category_mismatch',
+    })
+    // A GPU reservation names its own category, as before.
+    expect(decide(demoRequest(agent.address).terms as never, 'compute').result).toBe('approved')
   })
 })
 

@@ -28,6 +28,13 @@ import {
  */
 export const JOB = 'job/1' as const
 
+/**
+ * The mandate category every job falls under, which its terms agreement and reserve request name.
+ * A customer's mandate allows jobs by naming it, and job terms under any other category are refused
+ * as `terms.category_mismatch`.
+ */
+export const JOB_CATEGORY = 'compute-job' as const
+
 /** The longest `work.kind` a job names. */
 export const JOB_KIND_MAX = 64
 
@@ -52,8 +59,8 @@ export type JobTerms = TermsOf<JobSubject, typeof JOB>
 /**
  * Version 3 job terms, which name the booking of the compute the job runs on. The customer checks
  * that booking itself, so a job's terms always say `buyer` checks. The `avow` setting promises to
- * hide the booking from the buyer, which a job can't keep, since the customer gets its terms in full
- * and a link to verify a job shows the booking.
+ * hide the booking from the buyer, which a job can't keep, since the customer gets its terms in
+ * full and a link to verify a job shows the booking.
  */
 export type ChainedJobTerms = Omit<ChainedTermsOf<JobSubject, typeof JOB>, 'dependencyCheck'> & {
   dependencyCheck: 'buyer'

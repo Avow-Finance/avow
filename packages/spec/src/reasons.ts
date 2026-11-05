@@ -21,6 +21,8 @@ export const REASON_CODES = {
   'mandate.action_not_permitted': "The mandate doesn't permit this action",
   'mandate.supplier_not_allowed': "The supplier isn't on the mandate's list",
   'mandate.category_not_allowed': "The category isn't on the mandate's list",
+  'terms.category_mismatch':
+    "These terms' template has a mandate category of its own, and the request names another",
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
   'mandate.token_not_allowed': "The lock's token isn't one the mandate allows",
   'mandate.over_payment_limit': "The amount is above the mandate's payment limit for the token",

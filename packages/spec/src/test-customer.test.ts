@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { dollars, testnetDemoJobTerms } from './demo.js'
-import { chainedJobTerms } from './job.js'
+import { chainedJobTerms, JOB_CATEGORY } from './job.js'
 import { discloseSection } from './terms.js'
 import {
   type JobOffer,
@@ -66,7 +66,7 @@ const quote: QuoteRequest = {
   agreement: {
     commitmentId: JOB_REFERENCE.commitmentId,
     termsHash: JOB_REFERENCE.termsHash,
-    category: 'compute-job',
+    category: JOB_CATEGORY,
     buyerBusinessId: customer.businessId,
     supplierBusinessId: 'biz_developer',
     mandateHash: profile.mandateHash,
