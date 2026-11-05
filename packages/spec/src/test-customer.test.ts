@@ -5,6 +5,7 @@ import { discloseSection } from './terms.js'
 import {
   type JobOffer,
   type OrderState,
+  orderSignerProblem,
   parseJobOffer,
   parseOrderAnswer,
   parseOrderRequest,
@@ -53,6 +54,7 @@ const offer: JobOffer = {
   orderId: ORDER,
   commitmentId: JOB_REFERENCE.commitmentId,
   customer,
+  supplierBusinessId: 'biz_developer',
   terms: job,
   requirement: { template: 'gpu-reservation/1', condition: 'accepted', disclosed: 'subject' },
   expiry: START - 300n,
@@ -79,7 +81,12 @@ const reserve = { reference: JOB_REFERENCE, amount: dollars(10) }
 const checks = [{ on: COMPUTE_REFERENCE, block: READ_BLOCK }]
 const paid = JOB_EVENTS.find((e) => e.type === 'job_paid')
 if (paid?.type !== 'job_paid') throw new Error('The fixtures have a payment')
-const order = { orderId: ORDER, commitmentId: JOB_REFERENCE.commitmentId, customer }
+const order = {
+  orderId: ORDER,
+  commitmentId: JOB_REFERENCE.commitmentId,
+  customer,
+  supplierBusinessId: 'biz_developer',
+}
 
 /** Where an order stands at each status. */
 const states: OrderState[] = [
@@ -143,6 +150,17 @@ describe('the test customer’s routes', () => {
     expect(parseOrderState(overJson(reservedPaid)).ok).toBe(false)
     const unpaid = { ...order, status: 'paid', checks, reserve }
     expect(parseOrderState(overJson(unpaid)).ok).toBe(false)
+  })
+
+  it('take a quote or a delivery report only from the supplier the order was offered to', () => {
+    const offeredTo = { signingKey: '0x000000000000000000000000000000000000519e' } as const
+    expect(orderSignerProblem(offeredTo, '0x000000000000000000000000000000000000519E')).toBeNull()
+    expect(orderSignerProblem(offeredTo, '0x000000000000000000000000000000000000beef')).toBe(
+      'order.supplier_mismatch',
+    )
+    const unbound = { ...order, status: 'offered' }
+    const { supplierBusinessId: _, ...anyone } = unbound
+    expect(parseOrderState(overJson(anyone)).ok).toBe(false)
   })
 
   it('answer a quote and a delivery report with where the order moved', () => {

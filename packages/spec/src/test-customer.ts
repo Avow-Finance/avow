@@ -41,9 +41,13 @@ import {
  *
  * Every POST is a signed API request, as `api-request` defines one, signed by the developer's
  * supplier signing key, with the customer's origin as the audience and the customer's lock as the
- * domain's lock. The customer refuses a request whose signer isn't the signing key Avow registered
- * for the supplier the request names. A refusal has the API's error shape and a reason code. The
- * GETs are unsigned. The origin is the sandbox deployment's `customerUrl`.
+ * domain's lock. An order belongs to the supplier it was offered to, which the customer records
+ * with the offer. A request for a new order has to be signed by the signing key Avow registered
+ * for the supplier it names. A quote or a delivery report has to be signed by the signing key of
+ * the supplier the order was offered to, and `orderSignerProblem` refuses any other signer. An
+ * order's id is no secret, since every job event names it and anyone with the screen's link can
+ * read those, so the id alone lets nobody act on an order. A refusal has the API's error shape and
+ * a reason code. The GETs are unsigned. The origin is the sandbox deployment's `customerUrl`.
  */
 
 /** How the test customer labels itself, in its profile, its offers and every order it returns. */
@@ -122,6 +126,8 @@ export interface JobOffer {
   /** The commitment id the job's terms agreement has to name. */
   commitmentId: Hex
   customer: JobCustomer
+  /** The supplier the order was offered to, the only one that can quote it or report delivery. */
+  supplierBusinessId: string
   /** The job as the customer proposes it, before its terms name any compute. */
   terms: JobTerms
   requirement: JobRequirement
@@ -196,6 +202,21 @@ interface OrderBase {
   orderId: string
   commitmentId: Hex
   customer: JobCustomer
+  /** The supplier the order was offered to. */
+  supplierBusinessId: string
+}
+
+/**
+ * Why a quote or a delivery report for an order can't be taken from this signer, or null when it
+ * can. Only the signing key of the supplier the order was offered to can act on it.
+ */
+export function orderSignerProblem(
+  offeredTo: Pick<SupplierProfile, 'signingKey'>,
+  signer: Address,
+): ReasonCode | null {
+  return offeredTo.signingKey.toLowerCase() === signer.toLowerCase()
+    ? null
+    : 'order.supplier_mismatch'
 }
 
 /**
@@ -256,10 +277,13 @@ export const jobRequirementJson = z.strictObject({
   disclosed: z.literal('subject'),
 })
 
+const businessIdJson = z.string().min(1).max(100)
+
 export const jobOfferJson = z.strictObject({
   orderId: orderIdJson,
   commitmentId: bytes32,
   customer: jobCustomerJson,
+  supplierBusinessId: businessIdJson,
   terms: jobTermsJson,
   requirement: jobRequirementJson,
   expiry: u64,
@@ -283,7 +307,12 @@ export const customerRefusalJson = z.strictObject({
 
 const reserveJson = z.strictObject({ reference: commitmentReferenceJson, amount: u256 })
 const checks = z.array(checkedDependencyJson).max(MAX_DEPENDENCIES)
-const base = { orderId: orderIdJson, commitmentId: bytes32, customer: jobCustomerJson }
+const base = {
+  orderId: orderIdJson,
+  commitmentId: bytes32,
+  customer: jobCustomerJson,
+  supplierBusinessId: businessIdJson,
+}
 
 export const orderStateJson = z.discriminatedUnion('status', [
   z.strictObject({ ...base, status: z.literal('offered') }),

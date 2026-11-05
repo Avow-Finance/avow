@@ -83,6 +83,8 @@ export const REASON_CODES = {
     "Paying for the transaction would take one of Avow's relay budgets past the gas it allows in 24 hours",
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
+  'order.supplier_mismatch':
+    "The order was offered to another supplier, so only that supplier's signing key can quote it or report its delivery",
   'commitment.unknown': 'Avow has no record of this commitment',
   'commitment.cancel_on_lock':
     "Free cancellation hasn't ended, so the business cancels on the lock and gets the whole reserve back",

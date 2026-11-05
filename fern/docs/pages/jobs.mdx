@@ -42,7 +42,7 @@ Avow's test customer is a sandbox business on testnet, labelled as Avow's test c
 | `GET /v1/orders/{orderId}` | Where the order stands, from `offered` through `verifying`, `refused`, `reserved`, `accepted` and `delivered` to `paid`, with each check's block, the reason and who refused, the reserve and the payment |
 | `POST /v1/orders/{orderId}/delivery` | Takes an empty object and answers 202, and the customer then pays |
 
-Every POST is a signed API request, signed by your supplier signing key, with the customer's origin as its audience and the customer's lock as its domain. A refusal has the API's error shape and a reason code. The GETs are unsigned.
+Every POST is a signed API request, signed by your supplier signing key, with the customer's origin as its audience and the customer's lock as its domain. An order belongs to the supplier it was offered to. Only that supplier's signing key can quote it or report its delivery, and any other signer is refused as `order.supplier_mismatch`, since an order's id appears in every job event and anyone with the screen's link can read it. A refusal has the API's error shape and a reason code. The GETs are unsigned.
 
 ## Session events
 
