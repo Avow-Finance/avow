@@ -160,18 +160,32 @@ function shipped(m: Manifest, dependencies: Record<string, string>): Manifest {
   return { ...rest, private: true, dependencies }
 }
 
-/** The SDK, with the spec and the verifier bundled inside it. */
+/** A workspace package's manifest and published files, placed under `node_modules` in a tarball. */
+function inside(dir: string, m: Manifest, dependencies: Record<string, string>): TarEntry[] {
+  const where = `node_modules/${m.name}/`
+  return [
+    { path: `${where}package.json`, data: json(shipped(m, dependencies)) },
+    ...published(dir, m, where),
+  ]
+}
+
+/** The SDK, with the spec, the verifier and the terminal's look bundled inside it. */
 export function sdkTarball(): Buffer {
-  const dirs = { sdk: 'sdk', spec: 'spec', verifier: 'verifier' } as const
+  const dirs = { sdk: 'sdk', spec: 'spec', verifier: 'verifier', terminal: 'terminal' } as const
   const at = (name: keyof typeof dirs) => join(PACKAGES, dirs[name])
   const sdk = readManifest(at('sdk'))
   const spec = readManifest(at('spec'))
   const verifier = readManifest(at('verifier'))
-  const bundled = { [spec.name]: spec.version, [verifier.name]: verifier.version }
+  const terminal = readManifest(at('terminal'))
+  const bundled = {
+    [spec.name]: spec.version,
+    [verifier.name]: verifier.version,
+    [terminal.name]: terminal.version,
+  }
   // Every outside dependency goes on the SDK too, so npm installs it where the bundled packages
   // find it. Two packages pinning one dependency to different versions would break that.
   const outside: Record<string, string> = {}
-  for (const m of [sdk, spec, verifier]) {
+  for (const m of [sdk, spec, verifier, terminal]) {
     for (const [name, version] of Object.entries(m.dependencies ?? {})) {
       if (name in bundled) continue
       if (version.startsWith('workspace:'))
@@ -196,14 +210,9 @@ export function sdkTarball(): Buffer {
       data: json({ ...shipped(sdk, sorted), bundleDependencies: Object.keys(bundled) }),
     },
     ...published(at('sdk'), sdk, ''),
-    ...[spec, verifier].flatMap((m, i) => {
-      const dir = at(i === 0 ? 'spec' : 'verifier')
-      const where = `node_modules/${m.name}/`
-      return [
-        { path: `${where}package.json`, data: json(shipped(m, only(m))) },
-        ...published(dir, m, where),
-      ]
-    }),
+    ...inside(at('spec'), spec, only(spec)),
+    ...inside(at('verifier'), verifier, only(verifier)),
+    ...inside(at('terminal'), terminal, only(terminal)),
   ])
 }
 
@@ -213,6 +222,9 @@ export function createTarball(host: string = DEFAULT_HOST): Buffer {
   const starter = readManifest(STARTER)
   const template = join(STARTER, 'template')
   const folder = readManifest(template)
+  // The command draws with the terminal package, bundled inside so npx fetches nothing else.
+  const terminalDir = join(PACKAGES, 'terminal')
+  const terminal = readManifest(terminalDir)
   const manifest = {
     name: 'create-avow-agent',
     version: starter.version,
@@ -222,6 +234,8 @@ export function createTarball(host: string = DEFAULT_HOST): Buffer {
     type: 'module',
     bin: { 'create-avow-agent': 'dist/bin.js' },
     engines: { node: '>=20' },
+    dependencies: { [terminal.name]: terminal.version },
+    bundleDependencies: [terminal.name],
   }
   const dependencies = { ...folder.dependencies, '@avow-finance/sdk': `${origin}/${TARBALLS.sdk}` }
   const file = (path: string) => readFileSync(join(STARTER, path))
@@ -234,6 +248,7 @@ export function createTarball(host: string = DEFAULT_HOST): Buffer {
       data: file(`template/${f}`),
     })),
     { path: 'template/package.json', data: json({ ...folder, dependencies }) },
+    ...inside(terminalDir, terminal, {}),
   ])
 }
 

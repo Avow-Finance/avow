@@ -57,7 +57,12 @@ describe('the host tarballs', () => {
       private: true,
       bin: { 'create-avow-agent': 'dist/bin.js' },
     })
-    expect(command.dependencies).toBeUndefined()
+    // The terminal package draws its banner and rail, bundled inside, so npx fetches nothing else.
+    expect(command.dependencies).toEqual({ '@avow-finance/terminal': '0.0.0' })
+    expect(command.bundleDependencies).toEqual(['@avow-finance/terminal'])
+    const terminal = manifest(files, 'package/node_modules/@avow-finance/terminal/package.json')
+    expect(terminal).toMatchObject({ private: true, dependencies: {} })
+    expect(files.has('package/node_modules/@avow-finance/terminal/dist/index.js')).toBe(true)
     expect(files.has('package/dist/bin.js') && files.has('package/dist/create.js')).toBe(true)
     expect(files.get('package/template/agent.ts')).toEqual(
       readFileSync(join(STARTER, 'template', 'agent.ts')),
@@ -69,14 +74,19 @@ describe('the host tarballs', () => {
     )
   })
 
-  it('packs the SDK with the spec and the verifier inside, every package private', () => {
+  it('packs the SDK with the spec, the verifier and the terminal inside, every package private', () => {
     const files = untar(sdkTarball())
     const sdk = manifest(files, 'package/package.json')
     const spec = manifest(files, 'package/node_modules/@avow-finance/spec/package.json')
     const verifier = manifest(files, 'package/node_modules/@avow-finance/verifier/package.json')
-    expect(sdk.bundleDependencies).toEqual(['@avow-finance/spec', '@avow-finance/verifier'])
+    const terminal = manifest(files, 'package/node_modules/@avow-finance/terminal/package.json')
+    expect(sdk.bundleDependencies).toEqual([
+      '@avow-finance/spec',
+      '@avow-finance/verifier',
+      '@avow-finance/terminal',
+    ])
     expect(sdk.bin['avow-sandbox']).toBe('./dist/node/cli.js')
-    for (const m of [sdk, spec, verifier]) {
+    for (const m of [sdk, spec, verifier, terminal]) {
       expect(m.private).toBe(true)
       expect(m.scripts).toBeUndefined()
       expect(JSON.stringify(m.dependencies)).not.toContain('workspace:')
@@ -94,6 +104,7 @@ describe('the host tarballs', () => {
       'package/LICENSE',
       'package/node_modules/@avow-finance/spec/dist/index.js',
       'package/node_modules/@avow-finance/verifier/dist/index.js',
+      'package/node_modules/@avow-finance/terminal/dist/index.js',
     ]) {
       expect(files.has(path), path).toBe(true)
     }

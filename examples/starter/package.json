@@ -17,6 +17,7 @@
   "dependencies": {
     "@avow-finance/sdk": "workspace:*",
     "@avow-finance/spec": "workspace:*",
+    "@avow-finance/terminal": "workspace:*",
     "viem": "2.57.11"
   }
 }

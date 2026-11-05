@@ -29,8 +29,8 @@ describe.skipIf(!live)('revocation on Moderato', () => {
       const prompts = {
         newPassphrase: async () => PASSPHRASE,
         passphrase: async () => PASSPHRASE,
-        confirm: async (question: string) => {
-          asked.push(question)
+        confirm: async (question: string, details: readonly string[] = []) => {
+          asked.push([question, ...details].join(' '))
           return true
         },
       }

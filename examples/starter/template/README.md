@@ -4,6 +4,8 @@ This folder gives an AI agent $500 of authority to commit a business, and shows 
 
 ## Run it
 
+The command that made this folder set your business up and left `npm start` running. Run it again whenever you come back.
+
 ```sh
 npm start
 ```
