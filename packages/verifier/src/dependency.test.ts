@@ -520,12 +520,22 @@ describe('a link to verify a job', () => {
     const { result, calls } = await read()
     expect(result).toEqual({
       ok: true,
-      block: PINNED,
+      job: { state: 'accepted', freeCancelBy: START, block: PINNED },
       supplier: supplierAccount.address,
       checked: [{ on: dependencyOn().on, block: PINNED }],
       fitChecked: false,
     })
     for (const c of calls) expect(c.at, c.call).toBe(PINNED.number)
+  })
+
+  it('gives the job’s own state as the lock holds it, so a page never shows an ended job as standing', async () => {
+    for (const state of ['reserved', 'released', 'charged', 'resolved'] as const) {
+      const { result } = await read({ job: { state, freeCancelBy: START + 60n } })
+      expect(result, state).toMatchObject({
+        ok: true,
+        job: { state, freeCancelBy: START + 60n, block: PINNED },
+      })
+    }
   })
 
   it('refuses a link whose parts don’t hash to its reference, reading nothing', async () => {

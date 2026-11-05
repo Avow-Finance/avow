@@ -429,12 +429,25 @@ export interface JobVerificationInput {
   now: bigint
 }
 
+/**
+ * The job commitment as the customer's lock held it at the pinned block. A link names a job in any
+ * state, so its state comes back as read, and a page says what that state means: reserved before
+ * the developer's business accepted, accepted while the job stands, and released, charged or
+ * resolved once it ended.
+ */
+export interface CheckedJob {
+  state: RailState
+  /** The customer's free-cancellation deadline as the lock holds it, which is when work starts. */
+  freeCancelBy: bigint
+  /** The block the job commitment was read at, which every read on its chain shares. */
+  block: PinnedBlock
+}
+
 /** What a link to verify a job shows, as the chain held it at one pinned block. */
 export type JobVerificationCheck =
   | {
       ok: true
-      /** The block the job commitment was read at, which every read on its chain shares. */
-      block: PinnedBlock
+      job: CheckedJob
       /**
        * The supplier the customer's lock names for the job, copied there from Avow's approval,
        * whose own lock has to hold each compute booking.
@@ -453,8 +466,9 @@ export type JobVerificationCheck =
 /**
  * The check a page runs on a link to verify a job, reading the chain at one pinned finalized
  * block. It works out the job's terms hash from what the link carries, reads the job commitment
- * from the customer's lock, and takes the supplier from the lock's record of it, which the lock
- * copied from Avow's approval. Then it runs the tests `verifyDependencies` runs on each compute
+ * from the customer's lock with its state and free-cancellation deadline, and takes the supplier
+ * from the lock's record of it, which the lock copied from Avow's approval. A pass says the link
+ * matches the chain, and the job's state says whether the job stands. Then it runs the tests `verifyDependencies` runs on each compute
  * booking the job names that need only the chain: provenance, ownership by that supplier, state
  * with free cancellation, the terms hash the lock holds and a fresh block. It skips the shown
  * section and fit, which need the job's terms in full, and the result says fit wasn't checked.
@@ -496,7 +510,11 @@ export async function verifyJobVerification(
   }
   return {
     ok: true,
-    block: copied(v.commitment, job.block).block,
+    job: {
+      state: job.record.state,
+      freeCancelBy: job.record.freeCancelBy,
+      block: copied(v.commitment, job.block).block,
+    },
     supplier,
     checked,
     fitChecked: false,
