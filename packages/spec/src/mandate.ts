@@ -17,8 +17,9 @@ export interface MandateCheckInput {
   mandate: Mandate
   /**
    * The reserve request. A verifier checking a commitment made under version 1 terms passes those.
-   * Version 3 terms come only as `CheckedChainedTerms`, which only `verifyDependencies` gives, and
-   * are checked as the plain booking they make, with their dependencies section checked for form.
+   * Version 3 terms come only as `CheckedChainedTerms`, which short of a deliberate cast only
+   * `verifyDependencies` produces, and are checked as the plain booking they make, with their
+   * dependencies section checked for form.
    */
   request: Omit<ReserveRequest, 'terms'> & { terms: AnyTerms | CheckedChainedTerms }
   /** The token the buyer's lock holds reserves in. */
@@ -64,8 +65,8 @@ export function mandateEndsBeforeWindow(
  * The mandate check Avow runs before it signs an approval. It's pure, so the SDK and a supplier
  * can run the same check on the signed mandate. The caller checks the mandate's signature first.
  * It reads version 3 terms as the plain booking they make, and it can't read a lock, so it takes
- * them only once the dependency check has read each booking they rely on, as the checked terms
- * that check gives.
+ * them only as the checked terms the dependency check produces. The types hold a caller to that,
+ * short of a deliberate cast, and nothing checks it at run time.
  */
 export function checkMandate(input: MandateCheckInput): MandateCheck {
   const { mandate: m, request: r, token } = input

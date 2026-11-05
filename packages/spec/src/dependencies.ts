@@ -70,9 +70,10 @@ export type Dependencies =
 declare const dependenciesChecked: unique symbol
 
 /**
- * Version 3 terms every booking of which passed a check that read its lock. Only the verifier's
- * `verifyDependencies` gives one, so code that takes these in place of `ChainedTerms`, such as
- * `checkMandate`, can't be reached with terms whose bookings were never read.
+ * Version 3 terms every booking of which passed a check that read its lock. Short of a deliberate
+ * cast, only the verifier's `verifyDependencies` produces one, so code that takes these in place of
+ * `ChainedTerms`, such as `checkMandate`, can't be handed unchecked terms by mistake. The brand
+ * exists only in the types, and nothing checks it at run time.
  */
 export type CheckedChainedTerms = ChainedTerms & { readonly [dependenciesChecked]: true }
 
