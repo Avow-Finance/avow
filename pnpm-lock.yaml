@@ -65,6 +65,9 @@ importers:
       '@avow-finance/spec':
         specifier: workspace:*
         version: link:../../packages/spec
+      '@avow-finance/terminal':
+        specifier: workspace:*
+        version: link:../../packages/terminal
       viem:
         specifier: 2.57.11
         version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
@@ -94,6 +97,9 @@ importers:
       '@avow-finance/spec':
         specifier: workspace:*
         version: link:../spec
+      '@avow-finance/terminal':
+        specifier: workspace:*
+        version: link:../terminal
       '@avow-finance/verifier':
         specifier: workspace:*
         version: link:../verifier
@@ -122,6 +128,18 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  packages/terminal:
+    devDependencies:
+      '@xterm/addon-unicode-graphemes':
+        specifier: 0.4.0
+        version: 0.4.0
+      '@xterm/addon-unicode11':
+        specifier: 0.9.0
+        version: 0.9.0
+      '@xterm/headless':
+        specifier: 6.0.0
+        version: 6.0.0
 
   packages/verifier:
     dependencies:
@@ -478,6 +496,15 @@ packages:
 
   '@vitest/spy@5.0.3':
     resolution: {integrity: sha512-XhFysQTB8AZ+P4gMi+Lpo99vg2AZi0qKpaB9yXQl37+CaMEAPO3iH/wGVnSyL5MPERiLezpqTVtrR6UZH5GCXg==}
+
+  '@xterm/addon-unicode-graphemes@0.4.0':
+    resolution: {integrity: sha512-9+/CqwbKcnlkJU4d3wIgO+wjsL8f6vyz+UwUWLu6nADQz8Gr8ONqGCJfdDjIdI+yYZLABQqQy47FzEM6AWELjw==}
+
+  '@xterm/addon-unicode11@0.9.0':
+    resolution: {integrity: sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw==}
+
+  '@xterm/headless@6.0.0':
+    resolution: {integrity: sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -1357,6 +1384,12 @@ snapshots:
       vite: 8.3.4(@types/node@22.20.5)
 
   '@vitest/spy@5.0.3': {}
+
+  '@xterm/addon-unicode-graphemes@0.4.0': {}
+
+  '@xterm/addon-unicode11@0.9.0': {}
+
+  '@xterm/headless@6.0.0': {}
 
   abitype@1.2.3(typescript@7.0.2)(zod@4.6.7):
     optionalDependencies:

@@ -287,15 +287,20 @@ export function terminalPrompts(
   const ask = (prompt: string, hidden = false) =>
     new Promise<string | null>((resolve) => {
       if (closed) return resolve(null)
-      output.write(prompt)
       waiting.add(resolve)
-      muted = hidden
-      lines.question('', (answer) => {
+      const answered = (answer: string) => {
         muted = false
         waiting.delete(resolve)
         if (hidden && tty) output.write('\n')
         resolve(answer)
-      })
+      }
+      // A hidden answer's prompt is written before the output is muted, so nothing typed shows. A
+      // visible one's goes to readline, which draws it again whenever it redraws the line.
+      if (hidden) {
+        output.write(prompt)
+        muted = true
+        lines.question('', answered)
+      } else lines.question(prompt, answered)
     })
   return { ask, history: () => [...((lines as unknown as { history?: string[] }).history ?? [])] }
 }
