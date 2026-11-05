@@ -59,9 +59,18 @@ export interface SandboxPrompts {
   newPassphrase(): Promise<string>
   /** Asks for the passphrase that opens the business's key. */
   passphrase(): Promise<string>
-  /** Asks a yes or no question, before the business signs anything new. */
-  confirm(question: string): Promise<boolean>
+  /**
+   * Asks a yes or no question, before the business signs anything new. The details say what a yes
+   * does, a sentence each.
+   */
+  confirm(question: string, details?: readonly string[]): Promise<boolean>
 }
+
+/**
+ * What a line setup reports is: a stage starting, a step done, something under way until the next
+ * line, or a sentence to read. A log that ignores it still reads in order.
+ */
+export type SetupLineKind = 'stage' | 'done' | 'wait' | 'note'
 
 export interface PrepareSandboxBusinessOptions {
   config: SandboxBusinessConfig
@@ -80,7 +89,8 @@ export interface PrepareSandboxBusinessOptions {
    * it even when nothing changed, which takes the passphrase once.
    */
   announce?: boolean
-  log?: (line: string) => void
+  /** Where setup says what it's doing, each line with what kind of line it is. */
+  log?: (line: string, kind?: SetupLineKind) => void
   fetch?: typeof fetch
 }
 
@@ -106,6 +116,14 @@ const DAY = 86_400n
 /** A mandate expiring sooner than this is replaced, once the person agrees. */
 const MANDATE_MARGIN = 3600n
 const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
+
+/** What setting up a business does after each step, which shows as under way until it's done. */
+const NEXT_STEP: Record<SandboxBusinessStep['step'], string | null> = {
+  fees: "Creating the business's lock",
+  lock: "Registering the business with Avow's sandbox",
+  registered: 'Waiting for the test dollars',
+  funded: null,
+}
 
 const stepLine = (s: SandboxBusinessStep): string => {
   switch (s.step) {
@@ -197,8 +215,10 @@ export async function prepareSandboxBusiness(
         "The business's file is gone from .avow but its agent's file is there, so the business's key is missing. Restore .avow/business.json, or start over with npm run fresh.",
       )
     }
+    log("Your business's key", 'stage')
     log(
-      "Your business needs a key of its own. It's sealed on this machine under a passphrase you choose.",
+      "It's made on this machine and sealed under a passphrase you choose, so Avow never holds it.",
+      'note',
     )
     const passphrase = await prompts.newPassphrase()
     const privateKey = generatePrivateKey()
@@ -240,23 +260,38 @@ export async function prepareSandboxBusiness(
   let setUpAgain = false
   if (!business) {
     if (!fresh) {
-      const question = lockMade
-        ? `Your business's lock is on chain at ${lock}, but .avow/business.json doesn't record it, so its setup stopped part way or something changed the file. Set the business up again on the same key and lock? It registers the business with Avow's sandbox again, replaces the record in .avow/business.json, and then signs your agent a new mandate, which revokes every other key on the account. y/N`
-        : `Your business's key is in .avow, but no lock for it is on chain under this deployment, so its setup stopped part way or it was set up on another one. Set it up here? It creates the lock, registers the business with Avow's sandbox and replaces the record in .avow/business.json. y/N`
-      if (!(await prompts.confirm(question))) {
+      const [question, ...details] = lockMade
+        ? [
+            'Set the business up again on the same key and lock?',
+            `Your business's lock is on chain at ${lock}, but .avow/business.json doesn't record it, so its setup stopped part way or something changed the file.`,
+            "A yes registers the business with Avow's sandbox again, replaces the record in .avow/business.json, and then signs your agent a new mandate, which revokes every other key on the account.",
+          ]
+        : [
+            'Set your business up under this deployment?',
+            "Your business's key is in .avow, but no lock for it is on chain under this deployment, so its setup stopped part way or it was set up on another one.",
+            "A yes creates the lock, registers the business with Avow's sandbox and replaces the record in .avow/business.json.",
+          ]
+      if (!(await prompts.confirm(question as string, details))) {
         throw new Error(
           'Nothing changed, and your business stays as it was. Run npm start again to set it up.',
         )
       }
     }
-    log('Setting up your sandbox business on Tempo testnet. The first time takes a minute or two.')
+    log('Your business on Tempo testnet', 'stage')
+    log('The first time takes a minute or two.', 'note')
+    const root = await openRoot()
+    log("Funding the account's fees", 'wait')
     const made = await createSandboxBusiness({
       deployment,
       client,
-      root: await openRoot(),
+      root,
       legalName: config.name,
       country,
-      onStep: (s) => log(stepLine(s)),
+      onStep: (s) => {
+        log(stepLine(s), 'done')
+        const next = NEXT_STEP[s.step]
+        if (next) log(next, 'wait')
+      },
       fetch: send,
     })
     business = {
@@ -283,6 +318,7 @@ export async function prepareSandboxBusiness(
   if (agent && (setUpAgain || !(await keyHoldsMandate(client, business.account, agent, domain)))) {
     log(
       "Your agent's file doesn't name a key the chain shows live under its mandate, so your agent needs a new mandate.",
+      'note',
     )
     agent = null
   }
@@ -319,6 +355,7 @@ export async function prepareSandboxBusiness(
     previous: bigint | null,
   ): Promise<boolean> => {
     if (!session) return false
+    log("Giving your screen your agent's authority", 'wait')
     try {
       await sessionRelay({
         baseUrl: deployment.apiUrl,
@@ -339,10 +376,12 @@ export async function prepareSandboxBusiness(
         // agent's file, which the agent can write.
         mandateHash: mandateHash(a.mandate.message, domain),
       })
+      log("Your screen has your agent's authority.", 'done')
       return true
     } catch (error) {
       log(
         `The screen didn't get your agent's authority: ${error instanceof Error ? error.message : String(error)}`,
+        'note',
       )
       return false
     }
@@ -350,8 +389,10 @@ export async function prepareSandboxBusiness(
   // A session new to the authority gets the mandate the agent holds now, which takes the key.
   const announceCurrent = async (a: AgentItem): Promise<boolean> => {
     if (!options.announce || !session) return false
+    log('Your screen', 'stage')
     log(
       "Your screen has a new session, so your business's key signs your agent's current authority for it. The passphrase opens the key for that one signature.",
+      'note',
     )
     const done = await postAuthority(await openRoot(), a, null)
     opened = null
@@ -367,13 +408,18 @@ export async function prepareSandboxBusiness(
     return prepared(agent, false, await announceCurrent(agent))
   }
 
-  const question = `${
-    changed ? 'Sign a new mandate' : "Your agent's mandate expires within the hour. Sign a new one"
-  } as ${config.name}: ${authorityText(authority, dailyLimit, ids)}? It revokes every other key on the account. y/N`
-  if (!(await prompts.confirm(question))) {
+  const question = changed
+    ? `Sign a new mandate as ${config.name}?`
+    : `Your agent's mandate expires within the hour. Sign a new one as ${config.name}?`
+  const details = [
+    `${authorityText(authority, dailyLimit, ids)}.`,
+    'It revokes every other key on the account.',
+  ]
+  if (!(await prompts.confirm(question, details))) {
     if (agent && current) {
       log(
         `Kept the current mandate: ${authorityText(current.capOpenReserves, dailyLimitOf(current, deployment.token), current.suppliers)}.`,
+        'note',
       )
       return prepared(agent, false, await announceCurrent(agent))
     }
@@ -382,6 +428,7 @@ export async function prepareSandboxBusiness(
     )
   }
   const root = await openRoot()
+  log("Signing and enrolling your agent's mandate", 'wait')
   // The scan starts where the factory created the lock, read from the chain, so nothing on this
   // machine can move it past a key.
   const since = await lockCreatedIn({
@@ -396,7 +443,9 @@ export async function prepareSandboxBusiness(
   if (revoked.length > 0) {
     log(
       `Revoked ${revoked.length} key${revoked.length === 1 ? '' : 's'} the account's keychain still authorized.`,
+      'done',
     )
+    log("Signing and enrolling your agent's mandate", 'wait')
   }
   const profiles = await Promise.all(
     suppliers.map(async (s) => (await connectSupplier(s, send)).profile),
@@ -435,7 +484,10 @@ export async function prepareSandboxBusiness(
     suppliers,
   }
   await saveAgentItem(store, next)
-  log(`Signed and enrolled your agent's mandate: ${authorityText(authority, dailyLimit, ids)}.`)
+  log(
+    `Signed and enrolled your agent's mandate: ${authorityText(authority, dailyLimit, ids)}.`,
+    'done',
+  )
 
   // Each supplier the lock approves that the new mandate doesn't name comes off on its own, so one
   // that fails leaves the others done, and the person hears which.
@@ -446,10 +498,11 @@ export async function prepareSandboxBusiness(
   for (const supplier of dropped) {
     try {
       await sendOwn({ client, account: root, calls: [removeSupplierCall(lock, supplier)] })
-      log(`Took supplier ${supplier} off the lock, since the new mandate doesn't name it.`)
+      log(`Took supplier ${supplier} off the lock, since the new mandate doesn't name it.`, 'done')
     } catch (error) {
       log(
         `Supplier ${supplier} is still approved on the lock: ${error instanceof Error ? error.message : String(error)}. The new mandate doesn't name it, so Avow won't approve a reserve for it.`,
+        'note',
       )
     }
   }

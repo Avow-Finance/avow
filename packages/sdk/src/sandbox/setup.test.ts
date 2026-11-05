@@ -105,7 +105,7 @@ describe("the business's side, when the agent writes to .avow", () => {
     expect(lines.join('\n')).toContain("doesn't name a key the chain shows live under its mandate")
     expect(asked).toHaveLength(1)
     expect(asked[0]).toMatch(
-      /^Sign a new mandate as Starter Test Co: .* It revokes every other key/,
+      /^Sign a new mandate as Starter Test Co\? \$500 held at once, .* It revokes every other key/,
     )
     expect(chain.writes).toEqual([])
   })
