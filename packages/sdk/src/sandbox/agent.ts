@@ -602,6 +602,7 @@ export function fundingRefusal(error: unknown): { code: ReasonCode; layer: Refus
   if (reason) return { code: reason, layer: 'relay' }
   const stopped = sendErrorIn(error)
   if (stopped?.stage === 'relay') return { code: 'service.unavailable', layer: 'relay' }
+  if (stopped?.stage === 'altered') return { code: 'sponsorship.altered', layer: 'relay' }
   if (landedReverted(error) || (stopped?.stage === 'prepare' && /revert/i.test(stopped.message))) {
     return { code: 'chain.reserve_missing', layer: 'lock' }
   }

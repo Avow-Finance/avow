@@ -121,6 +121,23 @@ describe('session events', () => {
     expect(parseSessionEventPost({ event: events[0], extra: 1 }).ok).toBe(false)
   })
 
+  it('still reads a refusal posted before refusals recorded the cap per commitment', () => {
+    const refused = overJson(events[3]) as { amounts: Record<string, unknown> }
+    const { capPerCommitment: _, ...before } = refused.amounts
+    const read = parseSessionEvent({ ...refused, amounts: before })
+    if (!read.ok || read.value.type !== 'refused') throw new Error('the old refusal reads')
+    expect(read.value.amounts.capPerCommitment).toBeNull()
+    expect(
+      refusalSentence({ ...read.value, code: 'mandate.over_commitment_cap', layer: 'avow' }),
+    ).toContain('more than your mandate allows for one commitment')
+  })
+
+  it('says a relay that changed the bytes sent nothing, and the same booking can go again', () => {
+    expect(whenRetryPasses({ code: 'sponsorship.altered', layer: 'relay' })).toBe(
+      'Nothing was sent, so the same booking can pass when you try again.',
+    )
+  })
+
   it('takes a job accepted with no transaction seen, and no transaction without its block', () => {
     const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
     if (!checked) throw new Error('The fixtures check a commitment')

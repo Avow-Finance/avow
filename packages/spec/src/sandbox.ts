@@ -125,8 +125,11 @@ export interface RefusalAmounts {
   left: bigint
   /** The agent's whole authority, the most it can hold in bookings at once, its open-reserves cap. */
   authority: bigint
-  /** The most the agent's mandate allows for one commitment, its cap per commitment. */
-  capPerCommitment: bigint
+  /**
+   * The most the agent's mandate allows for one commitment, its cap per commitment, or null in a
+   * refusal posted before refusals recorded it.
+   */
+  capPerCommitment: bigint | null
   /**
    * The most the agent's key can move in a day, the spending limit the business's root key set on
    * the account's keychain, or null when the key has no daily limit on the lock's token.
@@ -268,7 +271,7 @@ const sandboxEventJson = z.discriminatedUnion('type', [
       needed: u256,
       left: u256,
       authority: u256,
-      capPerCommitment: u256,
+      capPerCommitment: u256.nullable().default(null),
       dailyLimit: u256.nullable(),
       dailyLeft: u256.nullable(),
     }),
@@ -383,7 +386,7 @@ export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): s
     case 'mandate.over_open_reserves_cap':
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
-      return `This booking needs ${formatUsd(needed)}, more than the ${formatUsd(capPerCommitment)} your mandate allows for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
+      return `This booking needs ${formatUsd(needed)}, more than ${capPerCommitment === null ? 'your mandate allows' : `the ${formatUsd(capPerCommitment)} your mandate allows`} for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }
@@ -422,6 +425,9 @@ export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
     return 'The supplier gives the same answer until its limits allow the booking, such as once one of its open bookings ends.'
   }
   if (r.layer === 'relay') {
+    if (r.code === 'sponsorship.altered') {
+      return 'Nothing was sent, so the same booking can pass when you try again.'
+    }
     return RELAY_FOR_NOW.includes(r.code)
       ? "Avow's relay was only limiting how much it takes for now, so the same booking can pass when you try again later."
       : "Avow's relay refuses the same transaction again, so the same booking can pass only once what it checked changes."

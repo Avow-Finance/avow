@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { JOB_TOOLS, speakerName } from './agent-session.js'
+import { JOB_TOOLS, SPEAKER_NAME, speakerName, toolResultProblem } from './agent-session.js'
 import { parseSessionEvent, refusalSentence, whenRetryPasses } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, ORDER } from './test-helpers.js'
 import { toWire } from './wire.js'
@@ -38,8 +38,18 @@ describe('the agent session’s events', () => {
     expect(speakerName('qwen3:8b')).toBe('qwen3:8b')
     expect(speakerName('hf.co/org/model\u001b[31m')).toBe('hf.co/org/model--31m')
     expect(speakerName('x'.repeat(80))).toHaveLength(64)
+    // A name starts with a letter or a digit, as the terminal draws one.
+    expect(speakerName('@cf/meta/llama-3.1-8b-instruct')).toBe('cf/meta/llama-3.1-8b-instruct')
+    expect(speakerName('-qwen')).toBe('qwen')
+    expect(speakerName(':latest')).toBe('latest')
+    expect(speakerName(' ./ ')).toBe('model')
+    for (const name of ['@cf/meta/llama-3.1-8b-instruct', '-qwen', ':latest', ' qwen3']) {
+      expect(SPEAKER_NAME.test(name), name).toBe(false)
+      expect(SPEAKER_NAME.test(speakerName(name)), name).toBe(true)
+    }
     const said = kind('said', (e) => (e.speaker as { kind: string }).kind === 'model')
     expect(reads({ ...said, speaker: { kind: 'model', model: 'a\nb' } })).toBe(false)
+    expect(reads({ ...said, speaker: { kind: 'model', model: '-qwen' } })).toBe(false)
     const customer = kind('said', (e) => (e.speaker as { kind: string }).kind === 'customer')
     expect(reads({ ...customer, speaker: { kind: 'customer' } })).toBe(false)
   })
@@ -62,6 +72,30 @@ describe('the agent session’s events', () => {
     expect(reads({ ...book, quantity: null })).toBe(false)
     const other = kind('tool_call', (e) => e.tool === 'compute_offers')
     expect(reads({ ...other, offer: 'h100-firm', quantity: 1 })).toBe(false)
+  })
+
+  it('pair a booking call that didn’t read with a refusal by service, and never with a booking', () => {
+    type Call = Extract<(typeof AGENT_SESSION_EVENTS)[number], { type: 'tool_call' }>
+    type Result = Extract<(typeof AGENT_SESSION_EVENTS)[number], { type: 'tool_result' }>
+    const call = AGENT_SESSION_EVENTS.find(
+      (e): e is Call => e.type === 'tool_call' && e.tool === 'book_compute',
+    )
+    const result = AGENT_SESSION_EVENTS.find(
+      (e): e is Result => e.type === 'tool_result' && e.call === call?.call,
+    )
+    if (!call || !result || result.ok) throw new Error('the fixtures refuse a booking')
+    expect(toolResultProblem(call, result)).toBeNull()
+    const unread = { ...call, offer: null, quantity: null } as Call
+    const byService = { ...result, layer: 'service', code: 'message.invalid' } as Result
+    expect(toolResultProblem(unread, byService)).toBeNull()
+    // A booking, or a refusal anyone else made, can't be what a call that named nothing got.
+    expect(toolResultProblem(unread, result)).toBe('message.invalid')
+    const { code: _, layer: __, ...rest } = result
+    expect(toolResultProblem(unread, { ...rest, ok: true } as Result)).toBe('message.invalid')
+    expect(toolResultProblem(call, { ...result, call: result.call + 1 })).toBe('message.invalid')
+    expect(toolResultProblem(call, { ...result, recalled: { run: 1, call: 2 } })).toBe(
+      'message.invalid',
+    )
   })
 
   it('carry the listing and its limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
