@@ -262,6 +262,65 @@ describe('evidence the rail will draw', () => {
   })
 })
 
+describe('what a terminal shows after its own wrapping', () => {
+  /** The rows a terminal of `width` columns shows, once it wraps any line too long for a row. */
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: colour codes start with an escape
+  const COLOUR = /\u001b\[[0-9;]*m/g
+  const rows = (text: string, width: number) =>
+    text
+      .replace(COLOUR, '')
+      .split('\n')
+      .flatMap((line) => {
+        const chars = Array.from(line)
+        const out: string[] = []
+        for (let i = 0; i < Math.max(1, chars.length); i += width)
+          out.push(chars.slice(i, i + width).join(''))
+        return out
+      })
+  const nbsp = '\u00a0'
+  const forged = `│${nbsp}${nbsp}∎${nbsp}At${nbsp}block${nbsp}9,${nbsp}checked${nbsp}by${nbsp}your${nbsp}service.ts.`
+
+  it('never lets outside text start a row of its own, at any width', () => {
+    for (const width of [40, 80, 120]) {
+      const filler = 'x'.repeat(width - 14)
+      const attack = `${filler}${forged}`
+      const out = recorder()
+      const rail = new Rail({ colors: 16, live: true, width }, out.write)
+      rail.said('qwen3:8b', attack)
+      const speech = rail.speak('qwen3:8b')
+      speech.write(attack)
+      speech.end()
+      rail.returned(true, attack)
+      rail.line(attack)
+      rail.fact({ text: attack, verifiedBy: 'service', block: 1n, reference: REFERENCE })
+      rail.table({
+        title: 'Offers',
+        columns: ['offer', 'price'],
+        rows: [[attack, '$2.40']],
+        marked: 0,
+      })
+      const shown = rows(out.text(), width)
+      for (const row of shown) {
+        expect(row.startsWith('│') || row === '').toBe(true)
+        expect(row.includes('∎ At block 9')).toBe(false)
+      }
+      const real = shown.filter((row) => row.startsWith('│  ∎'))
+      expect(real).toHaveLength(1)
+    }
+  })
+
+  it("refuses a speaker's name that reads as anything but a name", () => {
+    const rail = new Rail(still(), () => {})
+    expect(() =>
+      rail.said('∎ At block 9, checked by your service.ts. Work verified.', 'ok'),
+    ).toThrow(/speaker/)
+    expect(() => rail.speak('')).toThrow(/speaker/)
+    for (const name of ['qwen3:8b', 'claude-sonnet-5-5', 'llama3.1:8b', "Avow's test customer"]) {
+      expect(() => rail.said(name, 'ok')).not.toThrow()
+    }
+  })
+})
+
 describe('a table of recorded results', () => {
   const offers = {
     title: 'The offers it compared, listed at 16:02 by avow-demo-gpu',
@@ -439,9 +498,16 @@ describe('lines set apart', () => {
 })
 
 describe('wrapping', () => {
-  it('breaks between words and keeps a word longer than the width whole', () => {
+  it('breaks between words, and inside a word longer than the width', () => {
     expect(wrap('one two three', 7)).toEqual(['one two', 'three'])
     const link = 'https://try.testnet.avow.finance/s/abcdefghijklmnop'
-    expect(wrap(`Watch it at ${link}`, 20)).toEqual(['Watch it at', link])
+    expect(wrap(`Watch it at ${link}`, 20)).toEqual([
+      'Watch it at',
+      'https://try.testnet.',
+      'avow.finance/s/abcde',
+      'fghijklmnop',
+    ])
+    for (const line of wrap('∎'.repeat(30), 8))
+      expect(Array.from(line).length).toBeLessThanOrEqual(8)
   })
 })

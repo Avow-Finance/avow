@@ -84,18 +84,27 @@ export function visible(text: string): string {
 
 /**
  * Plain text laid into lines no wider than `width`, broken between words. A word longer than the
- * width, such as a link, keeps a line of its own whole, so it still works when copied.
+ * width is broken inside itself, so no line ever runs past the terminal and gets wrapped by the
+ * terminal instead, where it would start a row without the rail's own prefix.
  */
 export function wrap(text: string, width: number): string[] {
+  const room = Math.max(1, Math.floor(width))
   const lines: string[] = []
   for (const paragraph of text.split('\n')) {
     let line = ''
-    for (const word of paragraph.split(' ')) {
-      if (line === '') line = word
-      else if (line.length + 1 + word.length <= width) line += ` ${word}`
-      else {
-        lines.push(line)
-        line = word
+    for (const whole of paragraph.split(' ')) {
+      // Characters, not UTF-16 units, so a long word never splits inside one.
+      const chars = Array.from(whole)
+      const pieces: string[] = []
+      for (let i = 0; i < chars.length; i += room) pieces.push(chars.slice(i, i + room).join(''))
+      for (const word of pieces.length > 0 ? pieces : ['']) {
+        const used = Array.from(line).length
+        if (line === '') line = word
+        else if (used + 1 + Array.from(word).length <= room) line += ` ${word}`
+        else {
+          lines.push(line)
+          line = word
+        }
       }
     }
     lines.push(line)

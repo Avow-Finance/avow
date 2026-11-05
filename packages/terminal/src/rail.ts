@@ -10,18 +10,39 @@ export type Write = (text: string) => void
  * start a line of its own that passes for evidence.
  */
 export function clean(text: string): string {
-  return (
-    String(text)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what it removes
-      .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what it removes
-      .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what it removes
-      .replace(/\u001b[@-_]/g, '')
-      .replace(/[\r\n\t\v\f]+/g, ' ')
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it removes
-      .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '')
-  )
+  return String(text)
+    .replace(CSI, '')
+    .replace(OSC, '')
+    .replace(ESCAPE, '')
+    .replace(SPACES, ' ')
+    .replace(CONTROLS, '')
+    .replace(MARKS, '')
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what clean removes
+const CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g
+// biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what clean removes
+const OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g
+// biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what clean removes
+const ESCAPE = /\u001b[@-_]/g
+/** Line breaks, tabs and every Unicode space, which become plain spaces so wrapping sees each one. */
+const SPACES = /[\r\n\t\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g
+/** Control characters, zero-width characters and bidirectional overrides. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what clean removes
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2060\ufeff\u202a-\u202e\u2066-\u2069]/g
+/** The rail's own marks, which never come from outside, so nothing outside can draw its lines. */
+const MARKS = /[│┌└◇◆✓✗∎↳●○▌›]/g
+
+/** A speaker's name as the rail draws it: a model id or a party's name, never a sentence. */
+const SPEAKER = /^[A-Za-z0-9][A-Za-z0-9 ._:'/-]{0,47}$/
+
+/** Refuses a speaker's name that isn't shaped like a model id or a name. */
+function checkSpeaker(name: string): string {
+  const speaker = clean(name)
+  if (!SPEAKER.test(speaker)) {
+    throw new TypeError(`The rail won't draw ${JSON.stringify(speaker)} as a speaker's name.`)
+  }
+  return speaker
 }
 
 /** An address, an id or a hash as the chain writes it. */
@@ -245,7 +266,7 @@ export class Rail {
    * never read as something a tool did or a check proved.
    */
   said(who: string, words: string): void {
-    const speaker = clean(who)
+    const speaker = checkSpeaker(who)
     const text = clean(words)
     const lead = `${speaker} › `
     const [first = '', ...more] = wrap(text, Math.max(MIN_TEXT, this.#look.width - 3 - lead.length))
@@ -265,7 +286,7 @@ export class Rail {
    * speaker's name, and the line ends when `end` is called or anything else is drawn.
    */
   speak(who: string): { write: (piece: string) => void; end: () => void } {
-    const speaker = clean(who)
+    const speaker = checkSpeaker(who)
     this.settle()
     this.#endSpeech()
     const lead = `${speaker} › `
@@ -325,7 +346,11 @@ export class Rail {
       this.#s.ok('∎'),
       `${this.#s.dim(`At block ${fact.block}, ${VERIFIED[fact.verifiedBy]}.`)} ${clean(fact.text)}`,
     )
-    this.#emit(`${this.prefix}  ${this.#s.dim(referenceLine(fact))}`)
+    this.#emit(
+      wrap(referenceLine(fact), Math.max(1, this.#look.width - 5))
+        .map((part) => `${this.prefix}  ${this.#s.dim(part)}`)
+        .join('\n'),
+    )
     this.#spaced = false
   }
 
@@ -351,7 +376,7 @@ export class Rail {
     const widths = columns.map((name, i) =>
       Math.max(name.length, ...rows.map((row) => (row[i] as string).length)),
     )
-    const room = Math.max(MIN_TEXT, this.#look.width - 5)
+    const room = this.#look.width - 5
     const fits = widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1) <= room
     const aligned = (cells: readonly string[]) =>
       cells
@@ -370,8 +395,10 @@ export class Rail {
       : rows.flatMap((row, i) => {
           const [key = '', ...rest] = row
           const details = rest.map((cell, j) => `${columns[j + 1]} ${cell}`).join(', ')
+          const [first = '', ...more] = wrap(key, Math.max(1, this.#look.width - 5))
           return [
-            `${this.prefix}${mark(i)}${i === marked ? this.#s.bold(key) : key}`,
+            `${this.prefix}${mark(i)}${i === marked ? this.#s.bold(first) : first}`,
+            ...more.map((part) => `${this.prefix}  ${i === marked ? this.#s.bold(part) : part}`),
             ...wrap(details, Math.max(10, this.#look.width - 7)).map(
               (part) => `${this.prefix}    ${part}`,
             ),
@@ -416,7 +443,11 @@ export class Rail {
           `At block ${receipt.evidence.block}, ${VERIFIED[receipt.evidence.verifiedBy]}, ${referenceLine(receipt.evidence)}`,
           Math.max(MIN_TEXT, this.#look.width - 3),
         ).map((part) => `${this.prefix}${this.#s.dim(part)}`),
-        ...(receipt.link ? [`${this.prefix}${this.#s.dim(clean(receipt.link))}`] : []),
+        ...(receipt.link
+          ? wrap(clean(receipt.link), Math.max(1, this.#look.width - 3)).map(
+              (part) => `${this.prefix}${this.#s.dim(part)}`,
+            )
+          : []),
       ].join('\n'),
     )
     this.#spaced = false
@@ -482,17 +513,22 @@ export class Rail {
     }
   }
 
-  #placeWord(speech: Speech, word: string): void {
+  #placeWord(speech: Speech, whole: string): void {
     const width = Math.max(MIN_TEXT + 3, this.#look.width)
-    const room = speech.column + (speech.started ? 1 : 0) + word.length <= width
-    if (speech.started && !room) {
-      this.#write(`\n${this.prefix}${speech.hang}${word}`)
-      speech.column = 3 + speech.hang.length + word.length
-    } else {
-      this.#write(`${speech.started ? ' ' : ''}${word}`)
-      speech.column += (speech.started ? 1 : 0) + word.length
+    // A word longer than a whole line under the name is broken inside itself, so no row outruns
+    // the terminal and gets wrapped by it.
+    for (const word of wrap(whole, width - 3 - speech.hang.length)) {
+      const size = Array.from(word).length
+      const room = speech.column + (speech.started ? 1 : 0) + size <= width
+      if (speech.started && !room) {
+        this.#write(`\n${this.prefix}${speech.hang}${word}`)
+        speech.column = 3 + speech.hang.length + size
+      } else {
+        this.#write(`${speech.started ? ' ' : ''}${word}`)
+        speech.column += (speech.started ? 1 : 0) + size
+      }
+      speech.started = true
     }
-    speech.started = true
   }
 
   #endSpeech(): void {
