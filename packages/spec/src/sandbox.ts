@@ -338,6 +338,7 @@ const WHO: Record<RefusalLayer, string> = {
   sdk: 'the SDK',
   avow: 'Avow',
   customer: "the customer's verifier",
+  supplier: 'the supplier',
   relay: "Avow's relay",
   lock: 'the lock',
   keychain: "your account's keychain",
@@ -416,6 +417,9 @@ export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
   }
   if (r.layer === 'customer') {
     return "The customer's verifier gives the same answer until what it checked changes."
+  }
+  if (r.layer === 'supplier') {
+    return 'The supplier gives the same answer until its limits allow the booking, such as once one of its open bookings ends.'
   }
   if (r.layer === 'relay') {
     return RELAY_FOR_NOW.includes(r.code)

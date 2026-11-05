@@ -103,7 +103,7 @@ describe('session events', () => {
       { type: 'run_started', run: 1, source: 'mcp', tool: 'pay' },
       { type: 'run_started', run: 1 },
       { ...refused, code: 'mandate.too_big' },
-      { ...refused, layer: 'supplier' },
+      { ...refused, layer: 'model' },
       {
         ...refused,
         amounts: {

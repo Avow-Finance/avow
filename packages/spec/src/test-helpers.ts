@@ -8,10 +8,9 @@ import type { GpuReservationTerms } from './gpu-reservation.js'
 import { chainedJobTerms } from './job.js'
 import type { JobEvent } from './job-session.js'
 import { jobVerificationOf } from './job-verification.js'
-import { SIMULATED_RESULT_LABEL } from './job-wording.js'
 import type { RailToken } from './rail.js'
 import { termsHash } from './terms.js'
-import { TEST_CUSTOMER_LABEL } from './test-customer.js'
+import { SIMULATED_RESULT_LABEL, TEST_CUSTOMER_LABEL } from './test-customer.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
 /** Shared test setup. Keys are generated for each run and never leave memory. */
@@ -161,7 +160,7 @@ export const JOB_EVENTS: JobEvent[] = (() => {
       ...base,
       type: 'job_commitment_refused',
       code: 'approval.parties_mismatch',
-      layer: 'supplier',
+      layer: 'service',
       block: null,
       index: null,
     },
@@ -229,7 +228,7 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
     {
       ...job,
       type: 'said',
-      speaker: { kind: 'customer' },
+      speaker: { kind: 'customer', index: 0 },
       text: 'Before I accept, I need to verify your compute.',
     },
     { ...job, type: 'tool_call', call: 1, tool: 'compute_offers', summary: 'Offers for the order' },

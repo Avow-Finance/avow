@@ -9,9 +9,10 @@ import {
 } from './compute-offers.js'
 import { DEMO_GPU_SUPPLIER, demoComputeOffers, dollars, testnetDemoJobTerms } from './demo.js'
 import { jobFitsReservation } from './job.js'
+import { checkMandate } from './mandate.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import { validateTerms } from './terms.js'
-import { ARBITER, NOW, START } from './test-helpers.js'
+import { ARBITER, demoMandate, NOW, PAYEE, START, TOKEN } from './test-helpers.js'
 import { toWire } from './wire.js'
 
 const overJson = (value: unknown): unknown => JSON.parse(JSON.stringify(toWire(value)))
@@ -107,6 +108,42 @@ describe('the demo supplier’s four offers for a job', () => {
     })
     const firm = late.offers.find((o) => o.id === 'h100-firm')
     expect(firm?.expiry).toBe((firm?.startsAt ?? 0n) - 60n)
+  })
+
+  it('meet the mandate check of the starter’s $500 authority at 16 GPUs, over the cap for one commitment', () => {
+    const agentKey = '0x000000000000000000000000000000000000a9e1'
+    const mandate = {
+      ...demoMandate('0x000000000000000000000000000000000000acc1', agentKey),
+      capPerCommitment: dollars(500),
+      capOpenReserves: dollars(500),
+      suppliers: [DEMO_GPU_SUPPLIER],
+    }
+    const check = (o: string, gpus: number) =>
+      checkMandate({
+        mandate,
+        request: {
+          commitmentId: `0x${'12'.repeat(32)}`,
+          agentKey,
+          supplier: DEMO_GPU_SUPPLIER,
+          payee: PAYEE,
+          category: 'compute',
+          terms: computeOfferTerms(offer(o), gpus, settlement),
+        },
+        token: TOKEN,
+        openReserves: 0n,
+        revoked: false,
+        now: NOW,
+        profile: TESTNET_DEMO_PROFILE,
+      })
+    expect(check('h100-firm', 1)).toEqual({ result: 'approved', reason: 'approved' })
+    expect(check('h100-firm', 16)).toEqual({
+      result: 'denied',
+      reason: 'mandate.over_commitment_cap',
+    })
+    expect(check('h100-x16', 16)).toEqual({
+      result: 'denied',
+      reason: 'mandate.over_commitment_cap',
+    })
   })
 
   it('fail each of the others for a reason a check names', () => {

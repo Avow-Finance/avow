@@ -127,10 +127,11 @@ export interface JobCommitmentChecked extends JobEventBase {
 }
 
 /**
- * Who refused the customer's commitment on the developer's side. `supplier` is the developer's own
- * check, and `relay` and `lock` refused the acceptance on its way to the customer's lock.
+ * Who refused the customer's commitment on the developer's side. `service` is the developer's own
+ * check in `service.ts`, and `relay` and `lock` refused the acceptance on its way to the customer's
+ * lock.
  */
-export const COMMITMENT_REFUSAL_LAYERS = ['supplier', 'relay', 'lock'] as const
+export const COMMITMENT_REFUSAL_LAYERS = ['service', 'relay', 'lock'] as const
 export type CommitmentRefusalLayer = (typeof COMMITMENT_REFUSAL_LAYERS)[number]
 
 /** The developer's code refused the customer's commitment, so no work starts. */

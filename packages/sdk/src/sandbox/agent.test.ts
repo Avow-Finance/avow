@@ -76,6 +76,30 @@ describe('Refusal', () => {
       layer: 'unknown',
     })
   })
+
+  it('blames a relay that gave no reason on the relay, and a revert while preparing on the lock', () => {
+    const at = (stage: 'relay' | 'prepare' | 'expired' | 'submit' | 'head', message: string) =>
+      new Error('funding failed', {
+        cause: new SendError(message, 'failed', { hashes: [], signings: 1 }, { stage }),
+      })
+    expect(fundingRefusal(at('relay', "The relay didn't co-sign: fetch failed"))).toEqual({
+      code: 'service.unavailable',
+      layer: 'relay',
+    })
+    expect(
+      fundingRefusal(
+        at('prepare', 'The node refused to prepare the transaction: execution reverted'),
+      ),
+    ).toEqual({ code: 'chain.reserve_missing', layer: 'lock' })
+    // A node that refused to prepare for any other reason, or a transaction that expired, the
+    // node never took or went out without a latest block, has no layer anyone gave.
+    for (const stage of ['expired', 'submit', 'head'] as const) {
+      expect(fundingRefusal(at(stage, 'no answer')), stage).toEqual({
+        code: 'chain.reserve_missing',
+        layer: 'unknown',
+      })
+    }
+  })
 })
 
 describe("the sandbox's items", () => {

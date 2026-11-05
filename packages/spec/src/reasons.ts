@@ -227,6 +227,10 @@ export const REASON_CODES = {
   'service.unknown_booking': 'No compute booking this session made has that id',
   'service.quantity_unavailable':
     "The offer doesn't take that many GPUs in one booking, so nothing was booked",
+  'supplier.declined':
+    'The supplier declined to sign the agreement, such as for a booking over its most or past its limit of open bookings, so nothing was reserved',
+  'supplier.not_accepted':
+    "The supplier didn't accept the reserve by its acceptance deadline, so it goes back to the business then",
   'service.booking_required':
     'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
   'sandbox.closed':
@@ -238,7 +242,7 @@ export const REASON_CODES = {
   'sandbox.pool_empty':
     "The faucet's pool of test dollars can't pay another business yet, so nothing was registered",
   'sandbox.faucet_fees_low':
-    "The faucet's own fees are too low to send a payout, so nothing was registered. They refill on their own within a few minutes, so register again then",
+    "The faucet's own fees are too low to send a payout, so nothing was registered. They usually refill on their own within a few minutes, so register again then",
   'sandbox.taken':
     'The account, lock or signing key already belongs to another business or supplier Avow records',
   'sandbox.session_taken':

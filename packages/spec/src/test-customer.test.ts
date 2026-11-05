@@ -15,6 +15,7 @@ import {
   parseTestCustomerProfile,
   type QuoteRequest,
   quoteTermsProblem,
+  SIMULATED_RESULT_LABEL,
   TEST_CUSTOMER_LABEL,
   TEST_CUSTOMER_PATHS,
   type TestCustomerProfile,
@@ -202,11 +203,13 @@ describe('the test customer’s routes', () => {
 
   it('take a delivery report that hands over a labelled result with its hash', () => {
     const report = {
-      result: { label: 'Simulated result, a placeholder', hash: `0x${'ab'.repeat(32)}` },
+      result: { label: SIMULATED_RESULT_LABEL, hash: `0x${'ab'.repeat(32)}` },
     }
     expect(parseDeliveryReport(overJson(report))).toEqual({ ok: true, value: report })
     expect(parseDeliveryReport({}).ok).toBe(false)
-    expect(parseDeliveryReport({ result: { label: '', hash: report.result.hash } }).ok).toBe(false)
+    // Only the one plain label, which says the result is simulated.
+    const real = { result: { label: 'Fine-tuned model', hash: report.result.hash } }
+    expect(parseDeliveryReport(real).ok).toBe(false)
   })
 
   it('take a quote whose terms only add the compute the job relies on', () => {

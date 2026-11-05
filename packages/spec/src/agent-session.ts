@@ -28,7 +28,8 @@ import { orderIdJson } from './test-customer.js'
  * A signed event is an attributed statement. The agent key's signature says who posted it, never
  * that what it says is true. So each fact and receipt names who verified it, the commitment on the
  * chain and the block, and a reader checks from the chain what it can. The developer's own
- * messages stay in their terminal and are never posted.
+ * messages stay in their terminal and are never posted as events, but the agent's replies can
+ * repeat them, since `said` carries the model's words.
  */
 
 /** The tools the agent session gives a model, and nothing else. */
@@ -43,8 +44,26 @@ export const JOB_TOOLS = [
 ] as const
 export type JobTool = (typeof JOB_TOOLS)[number]
 
-/** Who spoke: a model by its id, `scripted` for the deterministic fixture, or the customer. */
-export type Speaker = { kind: 'model'; model: string } | { kind: 'customer' }
+/**
+ * Who spoke: a model by its id, `scripted` for the deterministic fixture, or the customer, with the
+ * index of what it said in its order's `said`, so a reader matches the two.
+ */
+export type Speaker = { kind: 'model'; model: string } | { kind: 'customer'; index: number }
+
+/**
+ * The form a model's name takes wherever it's drawn: up to 64 letters, digits, spaces and
+ * `._:'/@+-`, as `speakerName` makes one from any model id.
+ */
+export const SPEAKER_NAME = /^[A-Za-z0-9 ._:'/@+-]{1,64}$/
+
+/** A model id in the form `SPEAKER_NAME` takes, any other character replaced and cut to 64. */
+export function speakerName(model: string): string {
+  const named = model
+    .replace(/[^A-Za-z0-9 ._:'/@+-]/g, '-')
+    .trim()
+    .slice(0, 64)
+  return named === '' ? 'model' : named
+}
 
 /** The model id scripted runs speak as, so every line they draw says it was scripted. */
 export const SCRIPTED_MODEL = 'scripted'
@@ -91,8 +110,10 @@ export interface ToolLimits {
 /**
  * What a tool returned, in a summary code wrote. A refusal names its reason code and the layer
  * that refused. A listing of offers carries them and the limits that applied, so the comparison can
- * be shown as it was. A result shown again, as evidence beside an answer, names the call it records
- * and is never a new call.
+ * be shown as it was. A result shown again, as evidence beside an answer, names the run and call
+ * that made it and is never a new call. A reader shows the original event it names, and refuses a
+ * copy that differs from it, so the evidence beside an answer is the recorded result and never a
+ * new claim.
  */
 export type ToolResult = SessionEventBase & {
   type: 'tool_result'
@@ -181,8 +202,8 @@ export const AGENT_SESSION_EVENT_SCHEMAS = [
     ...base,
     type: z.literal('said'),
     speaker: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('model'), model: z.string().min(1).max(100) }),
-      z.strictObject({ kind: z.literal('customer') }),
+      z.strictObject({ kind: z.literal('model'), model: z.string().regex(SPEAKER_NAME) }),
+      z.strictObject({ kind: z.literal('customer'), index: z.number().int().min(0).max(31) }),
     ]),
     text: z.string().min(1).max(SAID_TEXT_MAX),
   }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { JOB_TOOLS } from './agent-session.js'
+import { JOB_TOOLS, speakerName } from './agent-session.js'
 import { parseSessionEvent, refusalSentence, whenRetryPasses } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, ORDER } from './test-helpers.js'
 import { toWire } from './wire.js'
@@ -32,6 +32,16 @@ describe('the agent session’s events', () => {
       const { orderId: _, ...missing } = e
       expect(reads(missing), String(e.type)).toBe(false)
     }
+  })
+
+  it('name a model the way the terminal can draw it, and the customer by what it said', () => {
+    expect(speakerName('qwen3:8b')).toBe('qwen3:8b')
+    expect(speakerName('hf.co/org/model\u001b[31m')).toBe('hf.co/org/model--31m')
+    expect(speakerName('x'.repeat(80))).toHaveLength(64)
+    const said = kind('said', (e) => (e.speaker as { kind: string }).kind === 'model')
+    expect(reads({ ...said, speaker: { kind: 'model', model: 'a\nb' } })).toBe(false)
+    const customer = kind('said', (e) => (e.speaker as { kind: string }).kind === 'customer')
+    expect(reads({ ...customer, speaker: { kind: 'customer' } })).toBe(false)
   })
 
   it('keep speech apart, from a model by its id or from the customer, and never anyone else', () => {
