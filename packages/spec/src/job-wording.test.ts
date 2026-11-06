@@ -14,8 +14,10 @@ import {
   SIMULATED_LINE,
 } from './job-wording.js'
 import { describeReason } from './reasons.js'
+import { parseSessionEvent } from './sandbox.js'
 import { SIMULATED_RESULT_LABEL } from './test-customer.js'
 import { JOB_EVENTS, READ_BLOCK } from './test-helpers.js'
+import { toWire } from './wire.js'
 
 const charges = [
   { kind: 'lateCancellation', amount: dollars(10) },
@@ -47,6 +49,19 @@ describe('the words a job’s terminal and screen share', () => {
     expect(jobEventSentence(checked)).toBe(DECISIVE_SENTENCE)
     // An acceptance an earlier attempt sent says so, since this run didn't repeat its checks.
     expect(jobEventSentence({ ...checked, acceptedIn: null })).toBe(RECOVERED_DECISIVE_SENTENCE)
+  })
+
+  it('names your business when it never accepted the customer’s reserve', () => {
+    const refused = JOB_EVENTS.find((e) => e.type === 'job_customer_refused')
+    if (!refused) throw new Error('The fixtures refuse a quote')
+    const late = {
+      ...refused,
+      refusal: { code: 'supplier.not_accepted', layer: 'supplier', block: null, index: null },
+    } as const
+    expect(jobEventSentence(late)).toMatch(
+      /^Your business didn't accept the customer's reserve in time\./,
+    )
+    expect(parseSessionEvent(JSON.parse(JSON.stringify(toWire(late))))).toMatchObject({ ok: true })
   })
 
   it('give what the customer says it verified as the customer’s statement, at its block', () => {

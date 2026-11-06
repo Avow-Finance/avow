@@ -162,10 +162,12 @@ export interface QuoteRequest {
  * Who refused for the customer. `customer` is the customer's own check of the quote. `avow` is
  * Avow's API refusing to approve the customer's reserve. `relay`, `lock` and `keychain` refused the
  * customer's reserve on its way to its lock, as they would any agent's, and `unknown` is a reserve
- * that never landed with no reason given.
+ * that never landed with no reason given. `supplier` is the developer's business never accepting
+ * the customer's reserve by its deadline, as with `supplier.not_accepted`.
  */
 export const CUSTOMER_REFUSAL_LAYERS = [
   'customer',
+  'supplier',
   'avow',
   'relay',
   'lock',
