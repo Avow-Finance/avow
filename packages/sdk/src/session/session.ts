@@ -68,6 +68,9 @@ export interface SessionDeps {
   workMs?: number
 }
 
+/** The line that takes the next order, `job` or `/job`, and nothing else does. */
+export const JOB_COMMAND = /^\/?job$/i
+
 /** The most steps a model takes in one turn before the session stops it. */
 const MAX_STEPS = 12
 
@@ -116,7 +119,7 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
   const turns: ChatTurn[] = []
   let policy = await deps.readPolicy()
   const inFlight = (what: string | null) => deps.input?.inFlight(what)
-  const toolbox = new Toolbox(world, () => policy, deps.emit, state)
+  const toolbox = new Toolbox(world, () => policy, deps.emit, state, refresh)
   const executor = new JobExecutor({
     world,
     emit: deps.emit,
@@ -126,7 +129,12 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
     ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
     ...(deps.workMs === undefined ? {} : { workMs: deps.workMs }),
   })
-  view.intro(whatGoesWhere(provider))
+  view.intro([
+    ...whatGoesWhere(provider),
+    ...(deps.input
+      ? ['Type job to take the next order. Anything else you type goes to your agent.']
+      : []),
+  ])
 
   // One model turn at a time, whichever started it.
   let queue: Promise<unknown> = Promise.resolve()
@@ -137,15 +145,16 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
   }
 
   /** Reads service.ts again, says what changed, and gives the note the model needs about it. */
-  async function refresh(): Promise<string[]> {
+  async function refresh(): Promise<void> {
     const next = await deps.readPolicy()
     for (const line of policyChanges(policy, next)) view.quiet(line)
-    const switchedOff = policy.computeSwitch === 'on' && next.computeSwitch === 'off'
+    if (policy.computeSwitch === 'on' && next.computeSwitch === 'off') {
+      notes.push(`The developer ${SWITCH_OFF_PROMPT} in service.ts and still wants a quote.`)
+    }
     policy = next
-    return switchedOff
-      ? [`The developer ${SWITCH_OFF_PROMPT} in service.ts and still wants a quote.`]
-      : []
   }
+  /** Notes the model needs about service.ts, each given once, with the next prompt. */
+  const notes: string[] = []
 
   /** One turn of the model, with each tool call run by the tool layer, until it ends its turn. */
   async function turn(run: number, orderId: string | null, prompt: string): Promise<void> {
@@ -293,13 +302,16 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       if (line === null) break
       const text = line.trim()
       if (!text) continue
-      const notes = await refresh()
-      if (/\bquote\b/i.test(text) && !openOrder()) {
-        jobs.push(job([...notes, `The developer says: ${text}`]))
+      await refresh()
+      // Only the job command takes the next order. Everything else goes to the model.
+      if (JOB_COMMAND.test(text)) {
+        if (openOrder())
+          view.quiet('An order is still waiting for its quote, so the session takes no other yet.')
+        else jobs.push(job(notes.splice(0)))
         continue
       }
       const run = deps.nextRun()
-      await oneAtATime(() => turn(run, null, [...notes, text].join(' ')))
+      await oneAtATime(() => turn(run, null, [...notes.splice(0), text].join(' ')))
       if (/\bwhy\b/i.test(text)) showEvidence(run)
     }
     await Promise.allSettled(jobs)

@@ -17,9 +17,10 @@ import { childEnv, command } from './runner.js'
 /**
  * Runs the developer's `service.ts` in a process of its own, the way the runner runs `agent.ts` and
  * reads `business.ts`. The process starts in a session of its own with no terminal, no input and
- * no `AVOW_` variable, and the business's and the agent's keys never reach it. It gets its job as a
- * file of public data and answers with one line of JSON, read here at the boundary, and nothing
- * else passes between the two.
+ * no `AVOW_` variable, and the session passes it no key. It runs as the developer's own user, so
+ * it could read the key files in `.avow` itself, since `service.ts` is the developer's own code.
+ * It gets its job as a file of public data and answers with one line of JSON, read here at the
+ * boundary, and nothing else passes between the two.
  */
 
 /** How long `checkBeforeWork` may take before the session gives up and starts nothing. */

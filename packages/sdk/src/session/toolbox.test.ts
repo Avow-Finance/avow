@@ -79,6 +79,27 @@ describe('the tool layer', () => {
     })
   })
 
+  it('reads service.ts again before each booking, so an edit mid-turn applies to it', async () => {
+    const world = fixtureWorld()
+    const events: SessionEvent[] = []
+    const state = newSessionState()
+    state.order = await world.pullOrder()
+    let policy: ServicePolicy = { budgetPerGpuHour: 3_000_000n, computeSwitch: 'on' }
+    const box = new Toolbox(
+      world,
+      () => policy,
+      (e) => events.push(e),
+      state,
+      async () => {
+        policy = { ...policy, computeSwitch: 'off' }
+      },
+    )
+    const ctx = { run: 1, orderId: state.order.orderId, call: 1 }
+    await box.run('compute_offers', {}, ctx)
+    await box.run('book_compute', { offer: 'h100-firm', quantity: 1 }, { ...ctx, call: 2 })
+    expect(last(events, 'refused')).toMatchObject({ code: 'service.compute_off', layer: 'service' })
+  })
+
   it('applies the compute budget and the compute switch before anything is booked', async () => {
     const tight = await toolbox({ budgetPerGpuHour: 2_000_000n, computeSwitch: 'on' })
     await tight.run('compute_offers')

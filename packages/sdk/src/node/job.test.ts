@@ -54,7 +54,7 @@ async function oneJob(bookCompute = true) {
     dir: '',
     session: { id: '0'.repeat(32) },
     nextRun: () => ++run,
-    prompts: { passphrase: async () => 'unused' },
+    prompts: { passphrase: async () => 'unused', confirm: async () => false },
     input: null,
     world: fixtureWorld(),
     write,

@@ -22,7 +22,7 @@ import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/business.js'
 import type { SandboxStore } from '../sandbox/store.js'
 import { loadSupplierItem } from '../sandbox/supplier-key.js'
-import { sendOwn } from '../send.js'
+import { landedReverted, sendOwn } from '../send.js'
 import type { CancelOutcome, JobWorld, LockRead, WorldBooking } from './world.js'
 
 /**
@@ -42,8 +42,12 @@ const QUOTE_VALIDITY = 120n
 export async function liveWorld(options: {
   store: SandboxStore
   deployment: SandboxDeployment
-  /** Cancels a booking on the lock before free cancellation ends, with the business's root key. */
-  cancelFree: (commitmentId: Hex) => Promise<Hex>
+  /**
+   * Shows the developer the booking and asks whether to cancel it, then cancels it on the lock
+   * before free cancellation ends, with the business's root key once they type the passphrase.
+   * Null when they decline.
+   */
+  cancelFree: (booking: WorldBooking, read: LockRead) => Promise<Hex | null>
   fetch?: typeof fetch
 }): Promise<JobWorld> {
   const { store, deployment } = options
@@ -250,8 +254,16 @@ export async function liveWorld(options: {
     },
 
     async cancel(booking): Promise<CancelOutcome> {
-      const onLock = await read(booking.reference)
-      if (!onLock || onLock.freeCancelBy <= onLock.block.timestamp) {
+      const onLock = await read(booking.reference).catch(() => null)
+      if (!onLock) {
+        return {
+          ok: false,
+          code: 'reference.unreadable',
+          layer: 'unknown',
+          why: "The booking couldn't be read on its lock, so nothing was cancelled.",
+        }
+      }
+      if (onLock.freeCancelBy <= onLock.block.timestamp) {
         return {
           ok: false,
           code: 'service.cancel_late',
@@ -259,7 +271,25 @@ export async function liveWorld(options: {
           why: 'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms.',
         }
       }
-      return { ok: true, transactionHash: await options.cancelFree(booking.reference.commitmentId) }
+      try {
+        const hash = await options.cancelFree(booking, onLock)
+        return hash
+          ? { ok: true, transactionHash: hash }
+          : {
+              ok: false,
+              code: 'service.cancel_declined',
+              layer: 'service',
+              why: 'Your developer declined the cancellation, so the booking stands.',
+            }
+      } catch (error) {
+        if (!landedReverted(error)) throw error
+        return {
+          ok: false,
+          code: 'chain.cancel_reverted',
+          layer: 'lock',
+          why: 'The lock reverted the cancellation, so the booking stands.',
+        }
+      }
     },
 
     async chainFor() {

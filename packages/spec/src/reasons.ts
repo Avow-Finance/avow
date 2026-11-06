@@ -238,6 +238,8 @@ export const REASON_CODES = {
     "checkBeforeWork in service.ts threw, took too long or gave a verdict that doesn't read, so nothing was accepted and no work started",
   'service.cancel_late':
     'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms',
+  'service.cancel_declined': 'The developer declined the cancellation, so the booking stands',
+  'chain.cancel_reverted': 'The lock reverted the cancellation, so the booking stands',
   'service.booking_required':
     'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
   'sandbox.closed':

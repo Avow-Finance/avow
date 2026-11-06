@@ -108,6 +108,8 @@ export class Toolbox {
     private readonly policy: () => ServicePolicy,
     private readonly emit: (event: SessionEvent) => void,
     readonly state: SessionState,
+    /** Reads service.ts again before a booking, so an edit made mid-turn applies to it. */
+    private readonly beforeBooking: () => Promise<void> = async () => {},
   ) {}
 
   /** Runs one tool call the model made, and gives the model what it returned. */
@@ -267,6 +269,7 @@ export class Toolbox {
         `No offer in the latest listing has the id ${offerId}. Call compute_offers for the current ones.`,
       )
     }
+    await this.beforeBooking()
     const policy = this.policy()
     const needed = offerTakes(offer, quantity) ? computeOfferCost(offer, quantity).reserve : 0n
     if (policy.computeSwitch === 'off') {

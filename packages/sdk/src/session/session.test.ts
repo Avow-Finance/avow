@@ -135,3 +135,13 @@ describe('the first job, scripted against the fixture world', () => {
     expect(quote).toMatchObject({ compute: null })
   })
 })
+
+describe('what the developer types', () => {
+  it('takes the next order only on the job command, and sends everything else to the agent', async () => {
+    const { JOB_COMMAND } = await import('./session.js')
+    for (const line of ['job', '/job', 'JOB']) expect(JOB_COMMAND.test(line), line).toBe(true)
+    for (const line of ["Don't quote yet", 'what does a quote mean?', 'take the next job']) {
+      expect(JOB_COMMAND.test(line), line).toBe(false)
+    }
+  })
+})

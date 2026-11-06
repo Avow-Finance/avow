@@ -1,4 +1,9 @@
-import type { AvowDomain, SandboxDeployment, SessionEvent } from '@avow-finance/spec'
+import {
+  type AvowDomain,
+  formatUsd,
+  type SandboxDeployment,
+  type SessionEvent,
+} from '@avow-finance/spec'
 import type { Look, Rail } from '@avow-finance/terminal'
 import { Account } from 'viem/tempo'
 import { agentRequestKey } from '../http.js'
@@ -67,7 +72,7 @@ export async function runJobSession(o: {
   dir: string
   session: { id: string }
   nextRun: () => number
-  prompts: Pick<SandboxPrompts, 'passphrase'>
+  prompts: Pick<SandboxPrompts, 'passphrase' | 'confirm'>
   input: SessionInput | null
   /** The world to run in, the live sandbox unless a test hands it another. */
   world?: JobWorld
@@ -91,8 +96,25 @@ export async function runJobSession(o: {
       (await liveWorld({
         store,
         deployment,
-        cancelFree: (commitmentId) =>
-          cancelSandboxCommitment({ commitmentId, prompts: o.prompts, store, deployment }),
+        cancelFree: async (booking, onLock) => {
+          // The developer sees what's being cancelled before the passphrase is asked for.
+          const left = Number((onLock.freeCancelBy - onLock.block.timestamp) / 60n)
+          const sure = await o.prompts.confirm(
+            `Your agent asks to cancel booking ${booking.id}. Cancel it?`,
+            [
+              `${booking.gpus} ${booking.offer.gpu} of ${booking.offer.id} from ${booking.offer.supplier}, with ${formatUsd(booking.reserve)} reserved.`,
+              `Free cancellation is still open, for about ${Math.max(left, 0)} more minutes, so cancelling gives the whole reserve back.`,
+              "Only your business's key can cancel on the lock, so it asks for your passphrase next.",
+            ],
+          )
+          if (!sure) return null
+          return cancelSandboxCommitment({
+            commitmentId: booking.reference.commitmentId,
+            prompts: o.prompts,
+            store,
+            deployment,
+          })
+        },
       }))
   } catch (error) {
     rail.fail(error instanceof Error ? error.message : String(error))
