@@ -130,6 +130,19 @@ export async function authorizeSandboxKey(
     ...(deps.remove ?? []).map((s) => removeSupplierCall(lock, s)),
     ...deps.suppliers.map((s) => approveSupplierCall(lock, s.account)),
   ]
+  // Tempo refuses a transaction with no calls, and a mandate that names no supplier, such as one
+  // whose agent approves each supplier as it books, would send none. Reading the key just put on the
+  // account gives the transaction a call that changes nothing.
+  if (calls.length === 0) {
+    calls.push({
+      to: Addresses.accountKeychain as Address,
+      data: encodeFunctionData({
+        abi: Abis.accountKeychain,
+        functionName: 'getKey',
+        args: [root.address, agent.accessKeyAddress],
+      }),
+    })
+  }
   const receipt = await sendOwn({ client, account: root, calls, keyAuthorization })
   return {
     mandate: signed,
