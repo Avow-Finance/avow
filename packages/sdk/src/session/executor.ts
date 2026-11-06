@@ -197,7 +197,7 @@ export class JobExecutor {
     emit({
       ...base,
       type: 'fact',
-      text: `Your service.ts checked the customer's commitment at block ${checked.block.number}. Its lock holds the ${formatUsd(checked.reserve)} reserve in full under the job's terms, naming your business, and your compute booking stands at that block.`,
+      text: `The customer's lock holds its ${formatUsd(checked.reserve)} reserve in full for your business, under the job's terms, and your compute booking stands.`,
       check: 'reserve',
       verifiedBy: 'service',
       reference: c,

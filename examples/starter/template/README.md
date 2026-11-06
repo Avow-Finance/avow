@@ -14,6 +14,14 @@ The first time, `npm start` sets up your business on your machine. You choose a 
 
 Each time you press Enter, it runs `agent.ts` once. Afterwards it shows what your agent's key can still move today, of its $1,000 a day.
 
+## Your agent takes jobs
+
+With `service.ts` in this folder, `npm start` goes on into a session with your agent once setup is done. Avow's test customer sends it a paid fine-tuning job that needs GPUs, and won't accept the quote until it has verified the compute behind it. Your agent compares avow-demo-gpu's offers, books one and quotes with terms that name the booking. The customer verifies the booking and reserves for the job. Then `checkBeforeWork` in `service.ts` verifies the customer's commitment and its reserve, in a process with no keys, and work starts only if it says start. The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.
+
+The first job runs on its own. Then type to your agent. Ask it why it chose that compute, and the session shows the offers it compared beside its answer. Ask it for 16 GPUs and see which layer refuses. Set `bookCompute` to `false`, ask for a quote, and the customer refuses it with `dependency.required`. Typing changes what your agent does next and never undoes a transaction already sent.
+
+The session needs a model that can call tools. It picks one Ollama runs on this machine when you've pulled a supported model, such as `ollama pull qwen3:8b`, at no charge. `npm start -- --provider anthropic` uses Claude with `ANTHROPIC_API_KEY` from your environment, billed to that key, and `--scripted` runs the same decisions every time with no model. Before the first call it says which model runs and who pays, and it switches to no other model on its own. `npm run job` runs one job with no input.
+
 ## Two files, two sides
 
 `business.ts` is your business. It names two limits and the suppliers your agent can book with. Only `npm start` reads it, and it asks you before it signs anything new from it.

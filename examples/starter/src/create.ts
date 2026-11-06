@@ -21,6 +21,7 @@ export const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 
  */
 const COPIED: Record<string, string> = {
   'agent.ts': 'agent.ts',
+  'service.ts': 'service.ts',
   'README.md': 'README.md',
   'tsconfig.json': 'tsconfig.json',
   gitignore: '.gitignore',
@@ -222,7 +223,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     const name = await askName(rail)
     writeFileSync(join(target, 'business.ts'), businessFile(TEMPLATE_DIR, name))
   }
-  rail.done(`Made ${args.folder}, with agent.ts, business.ts and a README`)
+  rail.done(`Made ${args.folder}, with agent.ts, business.ts, service.ts and a README`)
   if (!installing) {
     rail.close(`Install its packages, then set up its business:`)
     console.log(`      cd ${args.folder}\n      npm install\n      npm start\n`)

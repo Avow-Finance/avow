@@ -236,6 +236,8 @@ export const REASON_CODES = {
     "The supplier didn't accept the reserve by its acceptance deadline, so it goes back to the business then",
   'service.check_failed':
     "checkBeforeWork in service.ts threw, took too long or gave a verdict that doesn't read, so nothing was accepted and no work started",
+  'service.cancel_late':
+    'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms',
   'service.booking_required':
     'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
   'sandbox.closed':

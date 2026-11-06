@@ -16,6 +16,7 @@ import {
 } from '../sandbox/setup.js'
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
+import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   checkTerminal,
@@ -25,6 +26,7 @@ import {
   terminalPrompts,
 } from './runner.js'
 import { keepSession, sessionForNextRun } from './runner-session.js'
+import { terminalInput } from './session-input.js'
 
 /**
  * `avow-sandbox` runs a sandbox agent the way a developer works on one, with the business and the
@@ -32,7 +34,9 @@ import { keepSession, sessionForNextRun } from './runner-session.js'
  * under a passphrase, and asks before it signs a mandate. The agent's file runs in a process of
  * its own with only the agent's key, once each time Enter is pressed, and reports to the screen.
  *
- *   avow-sandbox [start]   sets up, opens the screen and runs agent.ts at each Enter
+ *   avow-sandbox [start]   sets up, opens the screen, then runs the agent session when the folder
+ *                          has service.ts, or agent.ts at each Enter when it doesn't
+ *   avow-sandbox job       runs one job with no input
  *   avow-sandbox fresh     moves the business aside and starts a fresh one
  *
  * It draws setup as one rail of steps under Avow's banner. When create-avow-agent runs it in the
@@ -43,10 +47,20 @@ const AGENT_FILE = 'agent.ts'
 const BUSINESS_FILE = 'business.ts'
 
 /** What `avow-sandbox --help` prints. */
-const HELP = `avow-sandbox [start | fresh]
+const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [--model id] [--scripted]
 
-  start    sets up your business, opens your screen, and runs agent.ts each time you press Enter
+  start    sets up your business, opens your screen, and runs your agent session when the folder
+           has service.ts, or agent.ts each time you press Enter when it doesn't
+  job      sets up when it's needed, then runs one job with no input
   fresh    moves your business aside, keys and all, and sets up a fresh one
+
+  --provider local       a model Ollama runs on this machine, at no charge
+  --provider anthropic   Claude, with ANTHROPIC_API_KEY from your environment, billed to that key
+  --model id             the model to ask for, such as qwen3:8b
+  --scripted             scripted decisions, the same every run, with no model
+
+With no provider chosen, the session picks only a supported model Ollama has pulled. AVOW_MODEL_PROVIDER
+and AVOW_MODEL choose the same as the flags.
 
 It runs on Tempo's Moderato testnet with test dollars. Your business's key stays in .avow on this
 machine, sealed under your passphrase.`
@@ -75,16 +89,25 @@ function openInBrowser(url: string): boolean {
 }
 
 async function main(args: readonly string[]): Promise<void> {
-  const command = args[0] ?? 'start'
+  const command = !args[0] || args[0].startsWith('--') ? 'start' : args[0]
+  const flags = readJobFlags(args[0] === command ? args.slice(1) : args, process.env)
+  if ('error' in flags) {
+    console.error(`${flags.error}\n\n${HELP}`)
+    process.exit(1)
+  }
   if (command === '--help' || command === '-h' || command === 'help') {
     console.log(HELP)
     return
   }
-  if (command !== 'start' && command !== 'fresh') {
+  if (command !== 'start' && command !== 'fresh' && command !== 'job') {
     console.error(`There's no command ${command} here.\n\n${HELP}`)
     process.exit(1)
   }
-  for (const file of [AGENT_FILE, BUSINESS_FILE]) {
+  // The job chapter runs when the folder has service.ts, and `job` needs it.
+  const jobs = command === 'job' || existsSync(resolve(SERVICE_FILE))
+  for (const file of command === 'job'
+    ? [BUSINESS_FILE, SERVICE_FILE]
+    : [AGENT_FILE, BUSINESS_FILE]) {
     if (!existsSync(resolve(file))) {
       console.error(`There's no ${file} in ${process.cwd()}.`)
       process.exit(1)
@@ -180,18 +203,24 @@ async function main(args: readonly string[]): Promise<void> {
       deployment,
       session: { id: session.id, run },
       announce: session.fresh,
+      supplier: jobs,
       log: show,
     })
+    if (done.supplier && !done.supplier.ok) show(done.supplier.why)
     if (done.announced) session = { ...session, fresh: false }
     return done
   }
 
+  let ready = false
   try {
-    await prepare()
-    rail.close(`${config.name} is ready.`)
+    const done = await prepare()
+    ready = !jobs || done.supplier?.ok === true
+    rail.close(
+      ready ? `${config.name} is ready.` : `${config.name} is set up, and can't take jobs yet.`,
+    )
   } catch (error) {
     rail.fail(error instanceof Error ? error.message : String(error))
-    rail.close('Fix that and press Enter to try again.')
+    rail.close(jobs ? 'Fix that and run it again.' : 'Fix that and press Enter to try again.')
   }
   // The link takes a line of its own, so the terminal never breaks it.
   const screen = sessionUrl(session.id)
@@ -199,6 +228,26 @@ async function main(args: readonly string[]): Promise<void> {
     `\n   ${openInBrowser(screen) ? 'Your screen opened in your browser, at' : 'Watch your agent on your screen, at'}`,
   )
   say(`   ${screen}`)
+
+  if (jobs) {
+    if (!ready) process.exit(1)
+    say()
+    rail.open(command === 'job' ? 'One job' : 'Your agent session')
+    const code = await runJobSession({
+      mode: command === 'job' ? 'one' : 'interactive',
+      flags,
+      rail,
+      look,
+      store,
+      deployment,
+      dir,
+      session,
+      nextRun: () => takeRun(dir, session.id),
+      prompts,
+      input: terminalInput(input, rail),
+    })
+    process.exit(code)
+  }
 
   for (;;) {
     say(`\n   Press Enter to run ${AGENT_FILE}, or Ctrl+C to stop.`)

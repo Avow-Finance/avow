@@ -1,6 +1,6 @@
 # Starter
 
-One command makes a folder holding `business.ts`, `agent.ts` and a README, then sets up its business in the same terminal, giving its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
+One command makes a folder holding `business.ts`, `agent.ts`, `service.ts` and a README, then sets up its business in the same terminal, giving its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
 
 ```sh
 npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
@@ -20,6 +20,7 @@ You need Node 20 or later. Later, `npm start` in the folder picks the business u
 - The session stays with the business in `.avow`, so a restart keeps the screen a developer has open, while Avow's relay takes its events, for a day from the first. A new session, on a first run, after `npm run fresh` or once one closes, gets the agent's current authority signed by the business's key, so the runner asks for the passphrase once and says why.
 - Each run reports to the session through Avow's API. The agent's key signs a run's events, and the root key signs an authority change. The screen at `https://try.testnet.avow.finance/#session=<id>` shows a run starting, the authority changing, each refusal with its reason code, layer and amounts, each commitment, and each acceptance.
 - `business.ts` names two limits. **$500 held at once** is what Avow refuses past and the lock checks against Avow's approval. **$1,000 a day moved by the key** is what the business sets on chain and the account's keychain holds. After each run the runner shows what the key can still move today, and `npm run fresh` moves a worn business aside for a fresh one.
+- With `service.ts` in the folder, `npm start` goes on into the agent session once setup is done, and `npm run job` runs one job with no input. The session talks to a model through one interface, picks only a free local Ollama model on its own, and says which model runs and who pays before the first call. `checkBeforeWork` in `service.ts` runs in a process of its own with no keys, the way `business.ts` is read, and work starts only on its start verdict.
 - `npm run mcp:claude-code` and `npm run mcp:claude-desktop` add the SDK's `avow-sandbox-mcp` server to Claude against the folder's agent. It runs as the agent with only the agent's key, offers three tools, `authority`, `book` and `commitments`, and posts each call's events to the runner's session marked `mcp`.
 
 ## Build the tarballs
