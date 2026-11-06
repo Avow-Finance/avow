@@ -103,9 +103,22 @@ function ended(child: ReturnType<typeof spawn>): Promise<number> {
   })
 }
 
+/** How long a package version has to have been on npm before the new folder installs it. */
+export const RELEASE_AGE_DAYS = 3
+
+/**
+ * What `npm install` runs with in the new folder. No package's install scripts run, since that's
+ * where hijacked releases run their payload, and npm takes only versions published at least
+ * `RELEASE_AGE_DAYS` before `now`, since hijacked releases are usually found and pulled within hours.
+ */
+export function installArgs(now: Date): string[] {
+  const before = new Date(now.getTime() - RELEASE_AGE_DAYS * 86_400_000).toISOString()
+  return ['install', '--no-audit', '--no-fund', '--ignore-scripts', `--before=${before}`]
+}
+
 /** Runs `npm install` in the folder, quietly, and gives what it printed when it fails. */
 export async function install(target: string): Promise<{ ok: boolean; output: string }> {
-  const child = npm(['install', '--no-audit', '--no-fund'], {
+  const child = npm(installArgs(new Date()), {
     cwd: target,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -226,7 +239,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   rail.done(`Made ${args.folder}, with agent.ts, business.ts, service.ts and a README`)
   if (!installing) {
     rail.close(`Install its packages, then set up its business:`)
-    console.log(`      cd ${args.folder}\n      npm install\n      npm start\n`)
+    console.log(`      cd ${args.folder}\n      npm install --ignore-scripts\n      npm start\n`)
     return 0
   }
   rail.wait('Installing its packages')
@@ -234,7 +247,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (!installed.ok) {
     rail.fail("npm install didn't finish. What it printed is below.")
     console.error(paint.dim(installed.output.trimEnd()))
-    console.error(`\nRun npm install in ${args.folder}, then npm start.`)
+    console.error(`\nRun npm install --ignore-scripts in ${args.folder}, then npm start.`)
     return 1
   }
   rail.done(`Installed its packages in ${Math.max(1, Math.round((Date.now() - began) / 1000))}s`)
