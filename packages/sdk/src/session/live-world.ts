@@ -253,44 +253,7 @@ export async function liveWorld(options: {
       await customer.delivery(orderId, { result })
     },
 
-    async cancel(booking): Promise<CancelOutcome> {
-      const onLock = await read(booking.reference).catch(() => null)
-      if (!onLock) {
-        return {
-          ok: false,
-          code: 'reference.unreadable',
-          layer: 'unknown',
-          why: "The booking couldn't be read on its lock, so nothing was cancelled.",
-        }
-      }
-      if (onLock.freeCancelBy <= onLock.block.timestamp) {
-        return {
-          ok: false,
-          code: 'service.cancel_late',
-          layer: 'service',
-          why: 'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms.',
-        }
-      }
-      try {
-        const hash = await options.cancelFree(booking, onLock)
-        return hash
-          ? { ok: true, transactionHash: hash }
-          : {
-              ok: false,
-              code: 'service.cancel_declined',
-              layer: 'service',
-              why: 'Your developer declined the cancellation, so the booking stands.',
-            }
-      } catch (error) {
-        if (!landedReverted(error)) throw error
-        return {
-          ok: false,
-          code: 'chain.cancel_reverted',
-          layer: 'lock',
-          why: 'The lock reverted the cancellation, so the booking stands.',
-        }
-      }
-    },
+    cancel: (booking) => cancelBooking(booking, () => read(booking.reference), options.cancelFree),
 
     async chainFor() {
       return {
@@ -303,5 +266,53 @@ export async function liveWorld(options: {
 
     now: systemClock,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  }
+}
+
+/**
+ * The session's rules for cancelling a booking a model asked to cancel. A booking that can't be
+ * read, or whose free cancellation has ended, is the tool layer's own choice to cancel nothing. Only
+ * then is the developer asked, and a cancellation the lock reverts is the lock's refusal.
+ */
+export async function cancelBooking(
+  booking: WorldBooking,
+  read: () => Promise<LockRead | null>,
+  cancelFree: (booking: WorldBooking, read: LockRead) => Promise<Hex | null>,
+): Promise<CancelOutcome> {
+  const onLock = await read().catch(() => null)
+  if (!onLock) {
+    return {
+      ok: false,
+      code: 'reference.unreadable',
+      layer: 'service',
+      why: "The booking couldn't be read on its lock, so the session cancelled nothing.",
+    }
+  }
+  if (onLock.freeCancelBy <= onLock.block.timestamp) {
+    return {
+      ok: false,
+      code: 'service.cancel_late',
+      layer: 'service',
+      why: 'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms.',
+    }
+  }
+  try {
+    const hash = await cancelFree(booking, onLock)
+    return hash
+      ? { ok: true, transactionHash: hash }
+      : {
+          ok: false,
+          code: 'service.cancel_declined',
+          layer: 'service',
+          why: 'Your developer declined the cancellation, so the booking stands.',
+        }
+  } catch (error) {
+    if (!landedReverted(error)) throw error
+    return {
+      ok: false,
+      code: 'chain.cancel_reverted',
+      layer: 'lock',
+      why: 'The lock reverted the cancellation, so the booking stands.',
+    }
   }
 }
