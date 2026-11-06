@@ -302,7 +302,15 @@ export function terminalPrompts(
         lines.question('', answered)
       } else lines.question(prompt, answered)
     })
-  return { ask, history: () => [...((lines as unknown as { history?: string[] }).history ?? [])] }
+  /** Each line typed while no question waits for it, such as one typed to a busy agent. */
+  const onLine = (listener: (line: string) => void) => {
+    lines.on('line', listener)
+  }
+  return {
+    ask,
+    onLine,
+    history: () => [...((lines as unknown as { history?: string[] }).history ?? [])],
+  }
 }
 
 /**

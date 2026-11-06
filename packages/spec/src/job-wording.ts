@@ -76,6 +76,7 @@ export const atBlock = (block: Pick<PinnedBlock, 'number'>) => `at block ${block
 
 const CUSTOMER_WHO: Record<CustomerRefusalLayer, string> = {
   customer: 'The customer refused your quote',
+  supplier: "Your business didn't accept the customer's reserve in time",
   avow: "Avow refused to approve the customer's reserve",
   relay: "Avow's relay refused to send the customer's reserve",
   lock: "The customer's lock refused its reserve",

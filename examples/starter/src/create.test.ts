@@ -16,19 +16,21 @@ import {
 const temporary = () => mkdtempSync(join(tmpdir(), 'avow-create-'))
 
 describe('create-avow-agent', () => {
-  it('makes a folder holding agent.ts and a README, with keys kept out of git', () => {
+  it('makes a folder holding agent.ts, service.ts and a README, with keys kept out of git', () => {
     const target = createAgentFolder(join(temporary(), 'My Agent'))
     const read = (f: string) => readFileSync(join(target, f), 'utf8')
     expect(read('agent.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'agent.ts'), 'utf8'))
     expect(read('README.md')).toContain('npm start')
     expect(read('business.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'business.ts'), 'utf8'))
     expect(read('agent.ts')).toContain("from '@avow-finance/sdk/agent'")
+    expect(read('service.ts')).toContain("from '@avow-finance/sdk/service'")
     expect(read('.gitignore')).toMatch(/^\.avow\/$/m)
     expect(read('.gitignore')).toMatch(/^\.avow-\*\/$/m)
     const manifest = JSON.parse(read('package.json'))
     expect(manifest.name).toBe('my-agent')
     expect(manifest.scripts).toEqual({
       start: 'avow-sandbox start',
+      job: 'avow-sandbox job',
       fresh: 'avow-sandbox fresh',
       'mcp:claude-code': 'avow-sandbox-mcp add claude-code',
       'mcp:claude-desktop': 'avow-sandbox-mcp add claude-desktop',

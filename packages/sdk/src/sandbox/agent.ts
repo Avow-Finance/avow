@@ -9,6 +9,7 @@ import {
   approvalTokenProblem,
   type CommitmentReference,
   checkEnvelope,
+  type GpuReservationTerms,
   isSessionId,
   lockTerms,
   type Mandate,
@@ -210,6 +211,11 @@ export interface SandboxAgent {
    * funded, and throws a `Refusal` when the booking is refused before any money moves.
    */
   book(booking: SandboxBooking): Promise<SandboxCommitment>
+  /**
+   * Books with one of the agent's suppliers on terms already written, such as an offer's, with the
+   * reserve those terms set. It checks, refuses and funds as `book` does.
+   */
+  bookTerms(booking: { supplier: string; terms: GpuReservationTerms }): Promise<SandboxCommitment>
 }
 
 const DAY = 86_400n
@@ -456,8 +462,24 @@ function booker(m: {
       )
     },
 
-    async book(b: SandboxBooking): Promise<SandboxCommitment> {
+    book(b: SandboxBooking): Promise<SandboxCommitment> {
       const reserve = micros(b.reserve, 'reserve')
+      const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now: systemClock() })
+      return bookOn(b.supplier, terms, reserve)
+    },
+
+    bookTerms(b: { supplier: string; terms: GpuReservationTerms }): Promise<SandboxCommitment> {
+      return bookOn(b.supplier, b.terms, b.terms.backing.amount)
+    },
+  }
+
+  async function bookOn(
+    supplierId: string,
+    terms: GpuReservationTerms,
+    reserve: bigint,
+  ): Promise<SandboxCommitment> {
+    {
+      const b = { supplier: supplierId }
       const leftBefore = await leftNow()
       const supplier = m.suppliers.find((s) => s.id === b.supplier)
       // The mandate names its suppliers, so the SDK refuses any other before anyone signs.
@@ -468,7 +490,6 @@ function booker(m: {
         )
       }
       const connection = await connectSupplier(supplier, send)
-      const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now: systemClock() })
       const avow = httpAvowApi({
         baseUrl: deployment.apiUrl,
         key: agentRequestKey(m.agentKey),
@@ -574,7 +595,7 @@ function booker(m: {
           return acceptance
         },
       }
-    },
+    }
   }
 }
 

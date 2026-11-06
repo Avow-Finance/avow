@@ -15,6 +15,10 @@
       "types": "./dist/agent-entry.d.ts",
       "node": "./dist/node-agent.js",
       "default": "./dist/agent-entry.js"
+    },
+    "./service": {
+      "types": "./dist/service-entry.d.ts",
+      "default": "./dist/service-entry.js"
     }
   },
   "bin": {
