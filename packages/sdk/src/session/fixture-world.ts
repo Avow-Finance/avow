@@ -107,6 +107,8 @@ export interface FixtureOptions {
 
 export interface FixtureWorld extends JobWorld {
   readonly kind: 'fixture'
+  /** The private keys the fixture made, so the eval can check none reaches the model. */
+  readonly secrets: readonly Hex[]
   /** Every transaction hash an acceptance sent, for tests that check which landed. */
   readonly acceptances: Hex[]
   /** Makes the next `count` acceptances throw as a send whose outcome is unknown, after landing. */
@@ -124,10 +126,14 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
   const records = new Map<string, LockedBacking>()
   const locks = new Map<string, { account: Address }>()
 
-  const root = privateKeyToAccount(generatePrivateKey())
-  const agent = privateKeyToAccount(generatePrivateKey())
-  const signing = privateKeyToAccount(generatePrivateKey())
-  const customerRoot = privateKeyToAccount(generatePrivateKey())
+  const rootKey = generatePrivateKey()
+  const root = privateKeyToAccount(rootKey)
+  const agentKey = generatePrivateKey()
+  const agent = privateKeyToAccount(agentKey)
+  const signingSecret = generatePrivateKey()
+  const signing = privateKeyToAccount(signingSecret)
+  const customerRootKey = generatePrivateKey()
+  const customerRoot = privateKeyToAccount(customerRootKey)
   const customerAgent = privateKeyToAccount(generatePrivateKey()).address
   const gpuCloud = privateKeyToAccount(generatePrivateKey()).address
   const businessLock: Address = '0x00000000000000000000000000000000000010c6'
@@ -354,6 +360,7 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
     computeSupplier: DEMO_GPU_SUPPLIER,
     supplier,
     token: { address: TOKEN.token, decimals: TOKEN.decimals },
+    secrets: [rootKey, agentKey, signingSecret, customerRootKey],
     acceptances,
     failAcceptances(count) {
       acceptFails = count

@@ -294,7 +294,7 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       const text = line.trim()
       if (!text) continue
       const notes = await refresh()
-      if (/\b(quote|order|job)\b/i.test(text) && !openOrder()) {
+      if (/\bquote\b/i.test(text) && !openOrder()) {
         jobs.push(job([...notes, `The developer says: ${text}`]))
         continue
       }
