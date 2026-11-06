@@ -29,6 +29,7 @@ import {
   signApiRequest,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
+import type { PrivateKeyAccount } from 'viem/accounts'
 import type { Account as TempoAccount } from 'viem/tempo'
 import type { AgentKey } from './agent.js'
 import type { AvowApi, AvowRecords, BusinessRecords } from './avow-api.js'
@@ -75,6 +76,16 @@ export class AvowApiError extends Error {
     this.definite = details.definite
     this.sponsorship = details.sponsorship ?? null
   }
+}
+
+/** The reason Avow gave somewhere in an error's causes, such as its relay's refusal. */
+export function relayReason(error: unknown): ReasonCode | null {
+  let e: unknown = error
+  for (let i = 0; i < 6 && e instanceof Error; i++) {
+    if (e instanceof AvowApiError && e.reason) return e.reason
+    e = e.cause
+  }
+  return null
 }
 
 /** One resend of the same bytes after no definite answer, as `onResend` receives it. */
@@ -153,6 +164,14 @@ export function agentRequestKey(key: AgentKey): RequestKey {
  */
 export function rootRequestKey(root: TempoAccount.RootAccount): RequestKey {
   return { address: root.address, signDigest: (hash) => root.sign({ hash }) }
+}
+
+/**
+ * A supplier's signing key as a request signer, for the requests a supplier signs itself, such as
+ * asking Avow for an authorization or quoting the test customer. It's a plain key, so it signs bare.
+ */
+export function signingRequestKey(key: PrivateKeyAccount): RequestKey {
+  return { address: key.address, signDigest: (hash) => key.sign({ hash }) }
 }
 
 const MAX_WAIT = 15_000

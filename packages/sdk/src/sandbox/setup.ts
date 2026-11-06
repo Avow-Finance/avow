@@ -29,6 +29,7 @@ import {
   saveAgentItem,
   saveCommitments,
 } from './store.js'
+import { ensureSandboxSupplier } from './supplier-key.js'
 import { checkSuppliers, connectSupplier } from './suppliers.js'
 import { micros, toDollars } from './terms.js'
 import { openKey, sealKey } from './vault.js'
@@ -84,6 +85,11 @@ export interface PrepareSandboxBusinessOptions {
   /** The session an authority change is reported to, signed by the business's root key. */
   session?: SandboxSession | null
   /**
+   * Whether the job chapter needs the business registered as a supplier with a signing key of its
+   * own. A registration that fails doesn't stop setup, and the result says why.
+   */
+  supplier?: boolean
+  /**
    * Whether the session hasn't had the agent's authority yet, as on a first run, after `npm run
    * fresh` or once a session has ended. Then the business's key signs the current authority into
    * it even when nothing changed, which takes the passphrase once.
@@ -110,6 +116,11 @@ export interface PreparedSandboxBusiness {
    * mandate, and with `announce` when nothing changed.
    */
   announced: boolean
+  /**
+   * The business as a supplier of jobs when `supplier` asked for it: registered with its signing
+   * key, or why it couldn't be. Null when nothing asked.
+   */
+  supplier: { ok: true; signingKey: Address } | { ok: false; why: string } | null
 }
 
 const DAY = 86_400n
@@ -309,6 +320,25 @@ export async function prepareSandboxBusiness(
     setUpAgain = !fresh
   }
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
+  // The job chapter quotes and accepts jobs as a supplier, with a signing key of its own. A failure
+  // here leaves the business set up, and the result says why it can't take jobs.
+  let supplier: PreparedSandboxBusiness['supplier'] = null
+  if (options.supplier) {
+    try {
+      const registered = await ensureSandboxSupplier({
+        store,
+        business,
+        deployment,
+        client,
+        openRoot,
+        log,
+        fetch: send,
+      })
+      supplier = { ok: true, signingKey: registered.profile.signingKey }
+    } catch (error) {
+      supplier = { ok: false, why: error instanceof Error ? error.message : String(error) }
+    }
+  }
   let agent: AgentItem | null = await loadAgentItem(store)
   if (agent && !isAddressEqual(agent.business.lock, lock)) agent = null
   // The agent's file names the mandate it holds, and the agent can write that file. So the mandate
@@ -343,6 +373,7 @@ export async function prepareSandboxBusiness(
     mandateHash: mandateHash(a.mandate.message, domain),
     signed,
     announced,
+    supplier,
   })
 
   // An authority change goes to the session signed by the root key, and the runner waits for it,

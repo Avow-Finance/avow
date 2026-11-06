@@ -1,6 +1,6 @@
-import { type AvowDomain, dollars, mandateHash } from '@avow-finance/spec'
+import { type AvowDomain, dollars, mandateHash, toWire } from '@avow-finance/spec'
 import { type Address, getAddress } from 'viem'
-import { generatePrivateKey } from 'viem/accounts'
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { MODERATO_FACTORY, MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
 import { saveBusinessItem } from '../sandbox/business-store.js'
@@ -67,6 +67,24 @@ export async function enrolledBusiness(authority = 500) {
     keyAuthorizedIn: `0x${'ab'.repeat(32)}`,
     suppliers: [supplier],
   })
+  // The business is registered as a supplier too, with a signing key of its own.
+  const signingKey = generatePrivateKey()
+  await store.write(
+    'supplier',
+    JSON.stringify(
+      toWire({
+        version: 1,
+        signingKey,
+        profile: {
+          businessId: business.businessId,
+          account: root.address,
+          payee: root.address,
+          signingKey: privateKeyToAccount(signingKey).address,
+        },
+        business,
+      }),
+    ),
+  )
   return { store, root, agentKey: agent.accessKeyAddress, witness: mandateHash(message, domain) }
 }
 

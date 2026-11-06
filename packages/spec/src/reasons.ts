@@ -160,6 +160,7 @@ export const REASON_CODES = {
   'chain.reserve_mismatch':
     'The on-chain reserve differs from the authorization, or the lock enforces other values than the terms map to',
   'chain.reserve_accepted': 'The reserve has already been accepted',
+  'chain.acceptance_reverted': 'The lock reverted the acceptance, so the reserve stays unaccepted',
   'chain.lock_unknown': "The lock isn't running the code Avow's factory deploys",
   'chain.agent_key_inactive':
     "The agent's key isn't on the chain, is revoked, or expires before the commitment's release date",
@@ -215,6 +216,8 @@ export const REASON_CODES = {
     'These terms name no booking they rely on, and their template commits only on a booking it relies on, such as the compute a job runs on',
   'dependency.elided':
     'The terms carry the dependencies section only as its digest, and this step needs its entries in clear',
+  'sandbox.taken':
+    'The account, lock or signing key already belongs to another business or supplier Avow records',
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES
