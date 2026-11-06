@@ -1,4 +1,5 @@
 import type { Address } from 'viem'
+import type { ComputeOffer, ComputeOffers } from './compute-offers.js'
 import { type GpuReservationTerms, gpuReservationTerms } from './gpu-reservation.js'
 import { type JobTerms, jobTerms } from './job.js'
 
@@ -88,4 +89,69 @@ export function testnetDemoJobTerms(startsAt: bigint, arbiter: Address): JobTerm
     arbiter,
     day90SupplierShareBps: 5000,
   })
+}
+
+/** The demo GPU supplier's business id on testnet. */
+export const DEMO_GPU_SUPPLIER = 'avow-demo-gpu'
+
+/**
+ * The four offers Avow's demo GPU supplier lists for a job's window, each reserving $40 a GPU, so
+ * the agent has a real choice. Under the starter's defaults, a $3.00 budget per GPU-hour and $500
+ * of authority for a job on one H100, one is clearly best and each other fails a check that names
+ * why.
+ *
+ * - `h100-firm` takes 1 to 16 GPUs at $2.40, firm, over the job's whole run. It's the one that fits.
+ * - `h100-flex` is cheaper at $1.60 and flexible. Its window and its free cancellation both start
+ *   and end at the job's start, so it can never pass the customer's check before the job starts,
+ *   and the customer refuses it as still cancellable (`dependency.cancellable`).
+ * - `h100-later` starts after the job's deadline, so it doesn't hold the job's run
+ *   (`dependency.does_not_fit`).
+ * - `h100-x16` takes exactly 16 GPUs at $2.00, which reserves $640, more than the mandate allows for
+ *   one commitment (`mandate.over_commitment_cap`). Sixteen GPUs of `h100-firm` reserve the same.
+ *
+ * Each window but the flexible one starts two minutes before the job, and each ends five minutes
+ * after its deadline. An offer lapses ten minutes after it's listed, or a minute before its window
+ * starts if that comes first, so no one books a window that has begun. The supplier itself signs any
+ * GPU terms within its limits, whatever it listed.
+ */
+export function demoComputeOffers(job: {
+  startsAt: bigint
+  deliverBy: bigint
+  listedAt: bigint
+}): ComputeOffers {
+  const end = job.deliverBy + 5n * MINUTE
+  const later = job.deliverBy + 10n * MINUTE
+  const hoursFrom = (start: bigint) => Number((end - start + MINUTE - 1n) / MINUTE) / 60
+  const offer = (o: Pick<ComputeOffer, 'id' | 'pricePerGpuHour'> & Partial<ComputeOffer>) => {
+    const startsAt = o.startsAt ?? job.startsAt - 2n * MINUTE
+    const lapses = job.listedAt + 10n * MINUTE
+    return {
+      supplier: DEMO_GPU_SUPPLIER,
+      gpu: 'H100',
+      region: 'demo',
+      sku: 'demo-h100',
+      gpus: { min: 1, max: 16 },
+      hours: hoursFrom(startsAt),
+      freeCancelBy: job.listedAt,
+      reservePerGpu: dollars(40),
+      ...o,
+      startsAt,
+      expiry: lapses < startsAt - MINUTE ? lapses : startsAt - MINUTE,
+    }
+  }
+  return {
+    supplier: DEMO_GPU_SUPPLIER,
+    listedAt: job.listedAt,
+    offers: [
+      offer({ id: 'h100-firm', pricePerGpuHour: 2_400_000n }),
+      offer({
+        id: 'h100-flex',
+        pricePerGpuHour: 1_600_000n,
+        startsAt: job.startsAt,
+        freeCancelBy: job.startsAt,
+      }),
+      offer({ id: 'h100-later', pricePerGpuHour: 2_200_000n, startsAt: later, hours: 0.5 }),
+      offer({ id: 'h100-x16', pricePerGpuHour: 2_000_000n, gpus: { min: 16, max: 16 } }),
+    ],
+  }
 }

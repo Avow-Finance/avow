@@ -6,13 +6,19 @@ import type { SupplierProfile, Terms } from './types.js'
 import { type Parsed, parseTerms, termsAgreementJson } from './wire.js'
 
 /**
- * The two routes a supplier's adapter serves to agents, under the base URL the supplier gives
- * them. A `GET` of `profile` answers with the supplier's `SupplierProfile`. A `POST` of an
- * `AgreementOffer` to `agreements` answers with status 200 and an `AgreementSignature`, or with a
- * status of 400 or more and a `SupplierRefusal`. Every body is JSON, with amounts and times as
- * decimal strings, as `toWire` writes them.
+ * The routes a supplier's adapter serves to agents, under the base URL the supplier gives them. A
+ * `GET` of `profile` answers with the supplier's `SupplierProfile`. A `POST` of an `AgreementOffer`
+ * to `agreements` answers with status 200 and an `AgreementSignature`, or with a status of 400 or
+ * more and a `SupplierRefusal`. A supplier that lists compute for jobs answers an unsigned `GET`
+ * of `offers`, with the job's window as `startsAt` and `deliverBy` in the query, with its
+ * `ComputeOffers`, as `computeOffersPath` builds the path. Every body is JSON, with amounts and
+ * times as decimal strings, as `toWire` writes them.
  */
-export const SUPPLIER_ADAPTER_PATHS = { profile: '/profile', agreements: '/agreements' } as const
+export const SUPPLIER_ADAPTER_PATHS = {
+  profile: '/profile',
+  agreements: '/agreements',
+  offers: '/offers',
+} as const
 
 /**
  * An agent's request that a supplier sign a terms agreement: the agreement, the terms and salt

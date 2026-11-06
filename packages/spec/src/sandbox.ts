@@ -1,5 +1,10 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
+import {
+  AGENT_SESSION_EVENT_SCHEMAS,
+  AGENT_SESSION_EVENT_TYPES,
+  type AgentSessionEvent,
+} from './agent-session.js'
 import { isApiAudience } from './api-request.js'
 import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
 import { address, bytes32, u256 } from './json-fields.js'
@@ -7,7 +12,15 @@ import { isTestnetChain } from './networks.js'
 import { describeReason, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
 import { commitmentReferenceJson } from './references.js'
-import { type AgentSource, agentSourceJson, reasonCodeJson, runJson } from './session-fields.js'
+import {
+  AGENT_SOURCES,
+  type AgentSource,
+  agentSourceJson,
+  REFUSAL_LAYERS,
+  type RefusalLayer,
+  reasonCodeJson,
+  runJson,
+} from './session-fields.js'
 import type { Parsed } from './wire.js'
 
 /**
@@ -104,26 +117,19 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
     : { ok: false, reason: 'message.invalid' }
 }
 
-/**
- * Who refused a booking. `sdk` is the agent's own SDK, which checks the mandate before anyone
- * signs. `avow` is Avow's API, which checks the mandate against what the lock holds before it
- * approves a reserve. `relay` is Avow's relay, which refuses to pay the fee for a transaction it
- * won't sponsor. `lock` is the business's lock on-chain, which reverts a reserve that breaks Avow's
- * approval, including the caps the approval carries. `keychain` is the business account's keychain,
- * which holds the agent's key to the daily limit the business's root key set. `unknown` is a
- * reserve that never landed when nothing on the way gave a reason.
- */
-export const REFUSAL_LAYERS = ['sdk', 'avow', 'relay', 'lock', 'keychain', 'unknown'] as const
-export type RefusalLayer = (typeof REFUSAL_LAYERS)[number]
-
 /** The amounts behind a refusal, each in micros of a dollar. */
 export interface RefusalAmounts {
   /** What the booking needed reserved. */
   needed: bigint
   /** The authority the agent had left: its cap on open reserves, less what its bookings hold. */
   left: bigint
-  /** The agent's whole authority, the most it can hold in bookings at once. */
+  /** The agent's whole authority, the most it can hold in bookings at once, its open-reserves cap. */
   authority: bigint
+  /**
+   * The most the agent's mandate allows for one commitment, its cap per commitment, or null in a
+   * refusal posted before refusals recorded it.
+   */
+  capPerCommitment: bigint | null
   /**
    * The most the agent's key can move in a day, the spending limit the business's root key set on
    * the account's keychain, or null when the key has no daily limit on the lock's token.
@@ -136,11 +142,12 @@ export interface RefusalAmounts {
 /**
  * Who made an event. `business` is the runner, which alone holds the business's root key and
  * changes the authority, so it marks `authority_changed` and no other event. `script` is the
- * developer's agent file, and `mcp` is the agent a model drives through the sandbox's MCP server.
- * Both act with only the agent's key, and every other event names one of them. So the source
- * follows from the event's type, and no event the agent's key signs can claim the business.
+ * developer's agent file, `mcp` is the agent a model drives through the sandbox's MCP server, and
+ * `session` is the developer's agent session. Each acts with only the agent's key, and every other
+ * event names one of them. So the source follows from the event's type, and no event the agent's
+ * key signs can claim the business.
  */
-export const SESSION_SOURCES = ['business', 'script', 'mcp'] as const
+export const SESSION_SOURCES = ['business', ...AGENT_SOURCES] as const
 export type SessionSource = (typeof SESSION_SOURCES)[number]
 
 /** The tools the sandbox's MCP server gives a model. */
@@ -207,7 +214,14 @@ export interface Accepted {
 }
 
 /** One thing a sandbox business's agent did, as its session's screen shows it. */
-export type SessionEvent = RunStarted | AuthorityChanged | Refused | Committed | Accepted | JobEvent
+export type SessionEvent =
+  | RunStarted
+  | AuthorityChanged
+  | Refused
+  | Committed
+  | Accepted
+  | JobEvent
+  | AgentSessionEvent
 
 export const SESSION_EVENT_TYPES = [
   'run_started',
@@ -216,6 +230,7 @@ export const SESSION_EVENT_TYPES = [
   'committed',
   'accepted',
   ...JOB_EVENT_TYPES,
+  ...AGENT_SESSION_EVENT_TYPES,
 ] as const satisfies readonly SessionEvent['type'][]
 
 /** The request body that posts one event to a session. */
@@ -230,7 +245,7 @@ export interface SessionEventAnswer {
 
 const businessId = z.string().min(1).max(100)
 
-export const sessionEventJson = z.discriminatedUnion('type', [
+const sandboxEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('run_started'),
     run: runJson,
@@ -256,6 +271,7 @@ export const sessionEventJson = z.discriminatedUnion('type', [
       needed: u256,
       left: u256,
       authority: u256,
+      capPerCommitment: u256.nullable().default(null),
       dailyLimit: u256.nullable(),
       dailyLeft: u256.nullable(),
     }),
@@ -275,6 +291,9 @@ export const sessionEventJson = z.discriminatedUnion('type', [
   }),
   ...JOB_EVENT_SCHEMAS,
 ])
+
+/** Every session event's JSON form: the sandbox's own, a job's and the agent session's. */
+export const sessionEventJson = z.union([sandboxEventJson, ...AGENT_SESSION_EVENT_SCHEMAS])
 
 export const sessionEventPostJson = z.strictObject({ event: sessionEventJson })
 
@@ -318,8 +337,11 @@ export function formatUsd(micros: bigint): string {
 }
 
 const WHO: Record<RefusalLayer, string> = {
+  service: 'your service.ts',
   sdk: 'the SDK',
   avow: 'Avow',
+  customer: "the customer's verifier",
+  supplier: 'the supplier',
   relay: "Avow's relay",
   lock: 'the lock',
   keychain: "your account's keychain",
@@ -344,7 +366,7 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
  */
 export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = WHO[r.layer]
-  const { needed, left, authority, dailyLimit, dailyLeft } = r.amounts
+  const { needed, left, authority, capPerCommitment, dailyLimit, dailyLeft } = r.amounts
   const onChain =
     r.layer !== 'sdk' && r.layer !== 'avow'
       ? ''
@@ -364,7 +386,7 @@ export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): s
     case 'mandate.over_open_reserves_cap':
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
-      return `This booking needs ${formatUsd(needed)}, more than your agent's ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
+      return `This booking needs ${formatUsd(needed)}, more than ${capPerCommitment === null ? 'your mandate allows' : `the ${formatUsd(capPerCommitment)} your mandate allows`} for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }
@@ -391,7 +413,21 @@ export function whenRetryPasses(r: Pick<Refused, 'code' | 'layer'>): string {
   if (r.layer === 'keychain') {
     return "The same booking can pass once the key's day starts again, or once the business raises the daily limit on chain. Reserves cancelled today still count until then."
   }
+  if (r.layer === 'service') {
+    return r.code === 'service.compute_off'
+      ? 'The same booking can pass once the compute switch in service.ts is on again.'
+      : 'The same booking can pass once service.ts allows it, such as with a compute budget that covers the rate.'
+  }
+  if (r.layer === 'customer') {
+    return "The customer's verifier gives the same answer until what it checked changes."
+  }
+  if (r.layer === 'supplier') {
+    return 'The supplier gives the same answer until its limits allow the booking, such as once one of its open bookings ends.'
+  }
   if (r.layer === 'relay') {
+    if (r.code === 'sponsorship.altered') {
+      return 'Nothing was sent, so the same booking can pass when you try again.'
+    }
     return RELAY_FOR_NOW.includes(r.code)
       ? "Avow's relay was only limiting how much it takes for now, so the same booking can pass when you try again later."
       : "Avow's relay refuses the same transaction again, so the same booking can pass only once what it checked changes."

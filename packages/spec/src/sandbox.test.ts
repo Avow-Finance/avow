@@ -15,7 +15,7 @@ import {
   type SessionEvent,
   whenRetryPasses,
 } from './sandbox.js'
-import { JOB_EVENTS } from './test-helpers.js'
+import { AGENT_SESSION_EVENTS, JOB_EVENTS } from './test-helpers.js'
 import { toWire } from './wire.js'
 
 const reference: CommitmentReference = {
@@ -50,6 +50,7 @@ const events: SessionEvent[] = [
       needed: dollars(400),
       left: dollars(300),
       authority: dollars(500),
+      capPerCommitment: dollars(500),
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     },
@@ -57,6 +58,7 @@ const events: SessionEvent[] = [
   { type: 'committed', run: 3, source: 'script', reference, amount: dollars(250) },
   { type: 'accepted', run: 3, source: 'script', reference },
   ...JOB_EVENTS,
+  ...AGENT_SESSION_EVENTS,
 ]
 
 /** The event as it crosses JSON between the starter, Avow's API and the screen. */
@@ -101,15 +103,49 @@ describe('session events', () => {
       { type: 'run_started', run: 1, source: 'mcp', tool: 'pay' },
       { type: 'run_started', run: 1 },
       { ...refused, code: 'mandate.too_big' },
-      { ...refused, layer: 'supplier' },
+      { ...refused, layer: 'model' },
       {
         ...refused,
-        amounts: { needed: '-1', left: '0', authority: '0', dailyLimit: null, dailyLeft: null },
+        amounts: {
+          needed: '-1',
+          left: '0',
+          authority: '0',
+          capPerCommitment: '0',
+          dailyLimit: null,
+          dailyLeft: null,
+        },
       },
       { ...(overJson(events[4]) as object), reference: { ...reference, kind: 'payment' } },
     ]
     for (const json of bad) expect(parseSessionEvent(json).ok).toBe(false)
     expect(parseSessionEventPost({ event: events[0], extra: 1 }).ok).toBe(false)
+  })
+
+  it('still reads a refusal posted before refusals recorded the cap per commitment', () => {
+    const refused = overJson(events[3]) as { amounts: Record<string, unknown> }
+    const { capPerCommitment: _, ...before } = refused.amounts
+    const read = parseSessionEvent({ ...refused, amounts: before })
+    if (!read.ok || read.value.type !== 'refused') throw new Error('the old refusal reads')
+    expect(read.value.amounts.capPerCommitment).toBeNull()
+    expect(
+      refusalSentence({ ...read.value, code: 'mandate.over_commitment_cap', layer: 'avow' }),
+    ).toContain('more than your mandate allows for one commitment')
+  })
+
+  it('says a relay that changed the bytes sent nothing, and the same booking can go again', () => {
+    expect(whenRetryPasses({ code: 'sponsorship.altered', layer: 'relay' })).toBe(
+      'Nothing was sent, so the same booking can pass when you try again.',
+    )
+  })
+
+  it('takes a job accepted with no transaction seen, and no transaction without its block', () => {
+    const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
+    if (!checked) throw new Error('The fixtures check a commitment')
+    const unseen = { ...checked, acceptedIn: null }
+    expect(parseSessionEvent(overJson(unseen))).toEqual({ ok: true, value: unseen })
+    const json = overJson(checked) as { acceptedIn: Record<string, unknown> }
+    const { blockNumber: _, ...noBlock } = json.acceptedIn
+    expect(parseSessionEvent({ ...json, acceptedIn: noBlock }).ok).toBe(false)
   })
 
   it('takes business on an authority change and on nothing else', () => {
@@ -136,6 +172,7 @@ describe('refusalSentence', () => {
       needed: dollars(400),
       left: dollars(300),
       authority: dollars(500),
+      capPerCommitment: dollars(500),
       dailyLimit: dollars(1000),
       dailyLeft: dollars(800),
     }
@@ -175,6 +212,7 @@ describe('refusalReason', () => {
     needed: dollars(400),
     left: dollars(300),
     authority: dollars(500),
+    capPerCommitment: dollars(350),
     dailyLimit: dollars(500),
     dailyLeft: dollars(300),
   }
@@ -185,8 +223,9 @@ describe('refusalReason', () => {
     expect(refusalReason({ code: 'mandate.over_open_reserves_cap', layer: 'avow', amounts })).toBe(
       `This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. ${onChain}`,
     )
+    // The per-commitment cap is its own number, never the held-at-once one.
     expect(refusalReason({ code: 'mandate.over_commitment_cap', layer: 'sdk', amounts })).toBe(
-      `This booking needs $400, more than your agent's $500 held at once, so the SDK refused the reserve and no money moved. ${onChain}`,
+      `This booking needs $400, more than the $350 your mandate allows for one commitment, so the SDK refused the reserve and no money moved. ${onChain}`,
     )
     expect(
       refusalReason({

@@ -6,6 +6,7 @@ import {
   type JobOffer,
   type OrderState,
   orderSignerProblem,
+  parseDeliveryReport,
   parseJobOffer,
   parseOrderAnswer,
   parseOrderRequest,
@@ -14,6 +15,7 @@ import {
   parseTestCustomerProfile,
   type QuoteRequest,
   quoteTermsProblem,
+  SIMULATED_RESULT_LABEL,
   TEST_CUSTOMER_LABEL,
   TEST_CUSTOMER_PATHS,
   type TestCustomerProfile,
@@ -78,7 +80,8 @@ const quote: QuoteRequest = {
   disclosed: [overJson(discloseSection(job, SALT, 'subject'))],
 }
 
-const reserve = { reference: JOB_REFERENCE, amount: dollars(10) }
+const FUNDED_IN = `0x${'f0'.repeat(32)}` as const
+const reserve = { reference: JOB_REFERENCE, amount: dollars(10), fundedIn: FUNDED_IN }
 const checks = [{ on: COMPUTE_REFERENCE, block: READ_BLOCK }]
 const paid = JOB_EVENTS.find((e) => e.type === 'job_paid')
 if (paid?.type !== 'job_paid') throw new Error('The fixtures have a payment')
@@ -87,6 +90,18 @@ const order = {
   commitmentId: JOB_REFERENCE.commitmentId,
   customer,
   supplierBusinessId: 'biz_developer',
+  said: [{ index: 0, text: 'Before I accept, I need to verify the compute you rely on.' }],
+  facts: [
+    {
+      index: 0,
+      text: 'Your compute booking was accepted and past its free cancellation.',
+      check: 'dependency' as const,
+      verifiedBy: 'customer' as const,
+      reference: COMPUTE_REFERENCE,
+      block: READ_BLOCK,
+      transactionHash: null,
+    },
+  ],
 }
 
 /** Where an order stands at each status. */
@@ -168,6 +183,33 @@ describe('the test customer’s routes', () => {
     const unbound = { ...order, status: 'offered' }
     const { supplierBusinessId: _, ...anyone } = unbound
     expect(parseOrderState(overJson(anyone)).ok).toBe(false)
+  })
+
+  it('number the customer’s messages and facts from 0 in order, so each is posted once', () => {
+    const skipped = { ...order, status: 'offered', said: [{ index: 1, text: 'Hello' }] }
+    expect(parseOrderState(overJson(skipped)).ok).toBe(false)
+    const twice = { ...order, status: 'offered', facts: [order.facts[0], order.facts[0]] }
+    expect(parseOrderState(overJson(twice)).ok).toBe(false)
+    // A fact the customer states is the customer's, and names its block and reference.
+    const avows = {
+      ...order,
+      status: 'offered',
+      facts: [{ ...order.facts[0], verifiedBy: 'avow' }],
+    }
+    expect(parseOrderState(overJson(avows)).ok).toBe(false)
+    const unbound = { ...order, status: 'offered', facts: [{ ...order.facts[0], block: null }] }
+    expect(parseOrderState(overJson(unbound)).ok).toBe(false)
+  })
+
+  it('take a delivery report that hands over a labelled result with its hash', () => {
+    const report = {
+      result: { label: SIMULATED_RESULT_LABEL, hash: `0x${'ab'.repeat(32)}` },
+    }
+    expect(parseDeliveryReport(overJson(report))).toEqual({ ok: true, value: report })
+    expect(parseDeliveryReport({}).ok).toBe(false)
+    // Only the one plain label, which says the result is simulated.
+    const real = { result: { label: 'Fine-tuned model', hash: report.result.hash } }
+    expect(parseDeliveryReport(real).ok).toBe(false)
   })
 
   it('take a quote whose terms only add the compute the job relies on', () => {

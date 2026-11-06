@@ -341,10 +341,12 @@ const foundAccepted = { ok: true, sent: null, checks: [{ on: computeOn, block: P
 
 /** A send whose transaction landed and reverted. */
 const reverted = () =>
-  new SendError(`The transaction ${id('tx')} reverted`, 'failed', {
-    hashes: [id('tx')],
-    signings: 1,
-  })
+  new SendError(
+    `The transaction ${id('tx')} reverted`,
+    'failed',
+    { hashes: [id('tx')], signings: 1 },
+    { stage: 'landed' },
+  )
 
 describe('accepting a job’s commitment', () => {
   it('accepts once every check passes, signed by the registered key and sent to the customer’s lock', async () => {

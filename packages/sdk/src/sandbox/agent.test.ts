@@ -34,6 +34,7 @@ describe('Refusal', () => {
       needed: dollars(400),
       left: dollars(300),
       authority: dollars(500),
+      capPerCommitment: dollars(500),
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     }
@@ -64,9 +65,13 @@ describe('Refusal', () => {
       code: 'keychain.over_daily_limit',
       layer: 'keychain',
     })
-    expect(
-      fundingRefusal(sent(new Error(`The transaction 0x${'ab'.repeat(32)} reverted`))),
-    ).toEqual({
+    const landed = new SendError(
+      `The transaction 0x${'ab'.repeat(32)} reverted`,
+      'failed',
+      { hashes: [`0x${'ab'.repeat(32)}`], signings: 1 },
+      { stage: 'landed' },
+    )
+    expect(fundingRefusal(new Error('funding failed', { cause: landed }))).toEqual({
       code: 'chain.reserve_missing',
       layer: 'lock',
     })
@@ -74,6 +79,38 @@ describe('Refusal', () => {
       code: 'chain.reserve_missing',
       layer: 'unknown',
     })
+  })
+
+  it('blames a relay that gave no reason on the relay, and a revert while preparing on the lock', () => {
+    const at = (
+      stage: 'relay' | 'altered' | 'prepare' | 'expired' | 'submit' | 'head',
+      message: string,
+    ) =>
+      new Error('funding failed', {
+        cause: new SendError(message, 'failed', { hashes: [], signings: 1 }, { stage }),
+      })
+    expect(fundingRefusal(at('relay', "The relay didn't co-sign: fetch failed"))).toEqual({
+      code: 'service.unavailable',
+      layer: 'relay',
+    })
+    // Bytes the relay changed are its own refusal, which trying again can get past.
+    expect(fundingRefusal(at('altered', "The relay's bytes aren't the transaction"))).toEqual({
+      code: 'sponsorship.altered',
+      layer: 'relay',
+    })
+    expect(
+      fundingRefusal(
+        at('prepare', 'The node refused to prepare the transaction: execution reverted'),
+      ),
+    ).toEqual({ code: 'chain.reserve_missing', layer: 'lock' })
+    // A node that refused to prepare for any other reason, or a transaction that expired, the
+    // node never took or went out without a latest block, has no layer anyone gave.
+    for (const stage of ['expired', 'submit', 'head'] as const) {
+      expect(fundingRefusal(at(stage, 'no answer')), stage).toEqual({
+        code: 'chain.reserve_missing',
+        layer: 'unknown',
+      })
+    }
   })
 })
 

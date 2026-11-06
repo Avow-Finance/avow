@@ -6,12 +6,15 @@ import {
   COMPUTE_PROVES,
   DECISIVE_SENTENCE,
   jobEventSentence,
+  RECOVERED_DECISIVE_SENTENCE,
   REFUSAL_CHALLENGE,
   REFUSAL_INSTRUCTION,
   reserveLine,
   SEPARATE_RESERVES,
+  SIMULATED_LINE,
 } from './job-wording.js'
 import { describeReason } from './reasons.js'
+import { SIMULATED_RESULT_LABEL } from './test-customer.js'
 import { JOB_EVENTS, READ_BLOCK } from './test-helpers.js'
 
 const charges = [
@@ -21,6 +24,7 @@ const charges = [
 
 const everything = [
   DECISIVE_SENTENCE,
+  RECOVERED_DECISIVE_SENTENCE,
   COMPUTE_PROVES,
   SEPARATE_RESERVES,
   CHECK_BOUNDARY,
@@ -28,6 +32,8 @@ const everything = [
   REFUSAL_CHALLENGE,
   REFUSAL_INSTRUCTION,
   reserveLine(charges),
+  SIMULATED_LINE,
+  SIMULATED_RESULT_LABEL,
   ...JOB_EVENTS.map(jobEventSentence),
 ]
 
@@ -39,6 +45,23 @@ describe('the words a job’s terminal and screen share', () => {
     const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
     if (!checked) throw new Error('The fixtures check a commitment')
     expect(jobEventSentence(checked)).toBe(DECISIVE_SENTENCE)
+    // An acceptance an earlier attempt sent says so, since this run didn't repeat its checks.
+    expect(jobEventSentence({ ...checked, acceptedIn: null })).toBe(RECOVERED_DECISIVE_SENTENCE)
+  })
+
+  it('give what the customer says it verified as the customer’s statement, at its block', () => {
+    const verified = JOB_EVENTS.find((e) => e.type === 'job_customer_verified')
+    if (!verified) throw new Error('The fixtures verify the compute')
+    expect(jobEventSentence(verified)).toBe(
+      `Avow's test customer says it verified your compute booking at block ${READ_BLOCK.number}.`,
+    )
+  })
+
+  it('say plainly what is simulated wherever the work appears', () => {
+    expect(SIMULATED_LINE).toBe(
+      'The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.',
+    )
+    expect(SIMULATED_RESULT_LABEL).toMatch(/^Simulated/)
   })
 
   it('say what the customer’s reserve backs, with each cap, and that it never secures the price', () => {

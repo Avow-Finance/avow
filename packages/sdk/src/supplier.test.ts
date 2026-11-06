@@ -97,6 +97,11 @@ describe("the agent's channel to a supplier", () => {
     await expect((await httpSupplier(refused.url)).signAgreement(offer)).rejects.toThrow(
       'the reserve is over its limit',
     )
+    // A refusal is the supplier declining, with the status it answered.
+    await expect((await httpSupplier(refused.url)).signAgreement(offer)).rejects.toMatchObject({
+      name: 'SupplierDeclined',
+      status: 422,
+    })
     await new Promise((resolve) => server?.close(resolve))
     const odd = await supplierAt({ agreement: [200, { signature: '0x1234' }] })
     await expect((await httpSupplier(odd.url)).signAgreement(offer)).rejects.toThrow('no signature')

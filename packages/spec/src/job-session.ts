@@ -21,6 +21,8 @@ import { type AgentSource, agentSourceJson, reasonCodeJson, runJson } from './se
 import {
   type CustomerRefusal,
   customerRefusalJson,
+  type DeliveryResult,
+  deliveryReportJson,
   type JobCustomer,
   type JobRequirement,
   jobCustomerJson,
@@ -120,8 +122,11 @@ export interface JobCommitmentChecked extends JobEventBase {
   releaseDate: bigint
   /** The compute booking as the acceptance check read it again, with its block. */
   checks: CheckedDependency[]
-  /** The transaction that carried the acceptance, and its block. */
-  acceptedIn: { transactionHash: Hex; blockNumber: bigint }
+  /**
+   * The transaction that carried the acceptance, and its block. Null when the lock already showed
+   * the acceptance an earlier attempt sent, and this run never saw the transaction it landed in.
+   */
+  acceptedIn: { transactionHash: Hex; blockNumber: bigint } | null
 }
 
 /**
@@ -150,10 +155,14 @@ export interface JobWorkStarted extends JobEventBase {
   reference: CommitmentReference
 }
 
-/** The developer's code reported delivery to the customer. */
+/**
+ * The developer's code reported delivery to the customer, handing over the result. The work is
+ * simulated, so the result is a placeholder whose label says so, with the hash of its content.
+ */
 export interface JobDelivered extends JobEventBase {
   type: 'job_delivered'
   reference: CommitmentReference
+  result: DeliveryResult
 }
 
 /** The customer paid the price, by a transfer whose memo is the job's commitment id. */
@@ -244,7 +253,7 @@ export const JOB_EVENT_SCHEMAS = [
       .max(4),
     releaseDate: u64,
     checks,
-    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }),
+    acceptedIn: z.strictObject({ transactionHash: bytes32, blockNumber: u64 }).nullable(),
   }),
   z.strictObject({
     ...base,
@@ -259,7 +268,12 @@ export const JOB_EVENT_SCHEMAS = [
     type: z.literal('job_work_started'),
     reference: commitmentReferenceJson,
   }),
-  z.strictObject({ ...base, type: z.literal('job_delivered'), reference: commitmentReferenceJson }),
+  z.strictObject({
+    ...base,
+    type: z.literal('job_delivered'),
+    reference: commitmentReferenceJson,
+    result: deliveryReportJson.shape.result,
+  }),
   z.strictObject({ ...base, type: z.literal('job_paid'), payment: paymentReferenceJson }),
   z.strictObject({
     ...base,

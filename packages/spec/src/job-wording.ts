@@ -18,6 +18,14 @@ import { type CustomerRefusalLayer, TEST_CUSTOMER_LABEL } from './test-customer.
 export const DECISIVE_SENTENCE =
   "Your code verified the customer's commitment and checked its reserve. Work can now begin. The customer accepted after verifying your compute booking."
 
+/**
+ * The decisive sentence when the lock already showed the acceptance an earlier attempt sent. This
+ * run read the commitment, its reserve and the compute booking again, and it didn't ask Avow for
+ * its authorization again, so the sentence says the acceptance rests on the earlier attempt.
+ */
+export const RECOVERED_DECISIVE_SENTENCE =
+  "Your code verified the customer's commitment and checked its reserve. The acceptance on the customer's lock came from an earlier attempt's checks. Work can now begin. The customer accepted after verifying your compute booking."
+
 /** What a compute booking proves, and what it doesn't. */
 export const COMPUTE_PROVES =
   "Your compute booking proves a required input is committed. It doesn't prove your agent will finish the job."
@@ -33,6 +41,10 @@ export const CHECK_BOUNDARY =
 /** What holds when the compute goes away after the customer accepted. */
 export const AFTER_ACCEPTANCE =
   "If your compute is cancelled or fails after the customer accepted, the job commitment stands, and your business still answers to the customer under the job's own terms. It finds other capacity or releases the job with the reason supplier failed."
+
+/** What's simulated and what's real, said in one plain line wherever the work appears. */
+export const SIMULATED_LINE =
+  'The GPUs and the training are simulated. Every commitment, reserve, check and payment is a real testnet operation.'
 
 /** The first challenge, which the prescribed edit answers. */
 export const REFUSAL_CHALLENGE = 'Remove the compute booking. Would the customer still accept?'
@@ -109,18 +121,18 @@ export function jobEventSentence(event: JobEvent): string {
       return 'The customer is verifying the compute booking your quote names.'
     case 'job_customer_verified': {
       const blocks = [...new Set(event.checks.map((c) => c.block.number))]
-      return `The customer verified your compute booking at block ${blocks.join(' and ')}.`
+      return `${TEST_CUSTOMER_LABEL} says it verified your compute booking at block ${blocks.join(' and ')}.`
     }
     case 'job_customer_refused':
       return `${CUSTOMER_WHO[event.refusal.layer]}. ${refusalTail(event.refusal.code, event.refusal.block)}`
     case 'job_commitment_checked':
-      return DECISIVE_SENTENCE
+      return event.acceptedIn === null ? RECOVERED_DECISIVE_SENTENCE : DECISIVE_SENTENCE
     case 'job_commitment_refused':
       return `${SUPPLIER_WHO[event.layer]}. ${refusalTail(event.code, event.block)}`
     case 'job_work_started':
       return "Work started, and the customer's free cancellation has ended."
     case 'job_delivered':
-      return 'Your code reported delivery to the customer.'
+      return 'Your code reported delivery to the customer and handed over a placeholder result, since the training is simulated.'
     case 'job_paid':
       return "The customer paid the job's price by a transfer whose memo names the job commitment. Anyone can check it on chain as a payment reference."
     case 'job_reserve_released':

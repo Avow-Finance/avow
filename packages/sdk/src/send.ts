@@ -55,30 +55,48 @@ export class SendError extends Error {
   readonly signings: number
   /** Another hash the node answered a send with, which may name any transaction. */
   readonly answered: Hex | null
+  /** Where the send stopped, or null when the thrower didn't say. */
+  readonly stage: SendStage | null
 
   constructor(
     message: string,
     outcome: 'failed' | 'unknown',
     sent: { hashes: readonly Hex[]; signings: number; answered?: Hex },
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; stage?: SendStage },
   ) {
-    super(message, options)
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause })
     this.name = 'SendError'
     this.outcome = outcome
     this.hashes = [...sent.hashes]
     this.signings = sent.signings
     this.answered = sent.answered ?? null
+    this.stage = options?.stage ?? null
   }
+}
+
+/**
+ * Where a send stopped. `prepare` is the node refusing to prepare it, a revert there included.
+ * `head` is the node not giving its latest block, `relay` Avow's relay not co-signing, and
+ * `altered` the relay handing back other bytes than the transaction the key signed. `submit` is
+ * the node never taking it, and `expired` a transaction that expired in no block. `landed` is one
+ * that landed and reverted, or whose outcome after landing the chain didn't show in time.
+ */
+export type SendStage = 'prepare' | 'head' | 'relay' | 'altered' | 'submit' | 'expired' | 'landed'
+
+/** The send error somewhere in an error's causes, such as inside a booking's error. */
+export function sendErrorIn(error: unknown): SendError | null {
+  let e: unknown = error
+  for (let i = 0; i < 6 && e instanceof Error; i++) {
+    if (e instanceof SendError) return e
+    e = e.cause
+  }
+  return null
 }
 
 /** Whether a transaction a sender sent landed and reverted, somewhere in an error's causes. */
 export function landedReverted(error: unknown): boolean {
-  let e: unknown = error
-  for (let i = 0; i < 6 && e instanceof Error; i++) {
-    if (/The transaction 0x[0-9a-fA-F]{64} reverted/.test(e.message)) return true
-    e = e.cause
-  }
-  return false
+  const stopped = sendErrorIn(error)
+  return stopped?.stage === 'landed' && stopped.outcome === 'failed'
 }
 
 /** What a send has done so far, which every error it throws carries. */
@@ -123,7 +141,7 @@ async function prepare(
           `The node refused to prepare the transaction: ${reason(error)}`,
           'failed',
           sent,
-          { cause: error },
+          { cause: error, stage: 'prepare' },
         )
       }
       await sleep(limits.wait)
@@ -196,10 +214,12 @@ async function submit(
     try {
       const answer = await client.request({ method: 'eth_sendRawTransaction', params: [bytes] })
       if (typeof answer === 'string' && answer.toLowerCase() !== hash.toLowerCase()) {
-        throw new SendError(`The node answered with the hash ${answer}, not ${hash}`, 'unknown', {
-          ...sent,
-          answered: answer as Hex,
-        })
+        throw new SendError(
+          `The node answered with the hash ${answer}, not ${hash}`,
+          'unknown',
+          { ...sent, answered: answer as Hex },
+          { stage: 'submit' },
+        )
       }
       return null
     } catch (error) {
@@ -229,6 +249,7 @@ async function latestBlock(
           sent,
           {
             cause: error,
+            stage: 'head',
           },
         )
       }
@@ -292,6 +313,7 @@ async function outcomeOf(
           : `${hash} landed in block ${includedIn}, but its receipt never came, so its outcome is unknown`,
         'unknown',
         sent,
+        { stage: 'landed' },
       )
     }
     await sleep(limits.wait)
@@ -361,6 +383,7 @@ export function sendSponsored(args: {
       } catch (error) {
         throw new SendError(`The relay didn't co-sign: ${reason(error)}`, 'failed', sent, {
           cause: error,
+          stage: 'relay',
         })
       }
       const problem = cosignProblem(signed, bytes)
@@ -369,6 +392,7 @@ export function sendSponsored(args: {
           `The relay's bytes aren't the transaction the key signed: ${problem}`,
           'failed',
           sent,
+          { stage: 'altered' },
         )
       }
       return bytes
@@ -443,7 +467,7 @@ async function send(
     const outcome = await outcomeOf(args.client, hash, from, request.validBefore, limits, sent)
     if (outcome !== 'expired') {
       if (outcome.status !== 'success') {
-        throw new SendError(`The transaction ${hash} reverted`, 'failed', sent)
+        throw new SendError(`The transaction ${hash} reverted`, 'failed', sent, { stage: 'landed' })
       }
       return outcome
     }
@@ -454,6 +478,7 @@ async function send(
         sent,
         {
           cause: refused,
+          stage: 'submit',
         },
       )
     }
@@ -462,6 +487,7 @@ async function send(
         `The transaction expired in no block, ${sent.signings} times`,
         'failed',
         sent,
+        { stage: 'expired' },
       )
     }
   }

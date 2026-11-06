@@ -1,6 +1,7 @@
 import {
   type BuyerSideReference,
   checkSectionDisclosure,
+  type DeliveryReport,
   digestOf,
   JOB_CATEGORY,
   type JobOffer,
@@ -8,6 +9,7 @@ import {
   parseSectionDisclosure,
   quoteTermsProblem,
   type RequestKey,
+  SIMULATED_RESULT_LABEL,
   type SupplierProfile,
   TEST_CUSTOMER_LABEL,
   type TestCustomerProfile,
@@ -157,7 +159,15 @@ function customerServer(change: { profile?: object; offer?: object } = {}) {
     if (url.pathname === '/v1/orders') return reply({ ...offer, ...change.offer })
     if (url.pathname === `/v1/orders/${ORDER}`) {
       const { orderId, commitmentId, customer, supplierBusinessId } = offer
-      return reply({ orderId, commitmentId, customer, supplierBusinessId, status: 'verifying' })
+      return reply({
+        orderId,
+        commitmentId,
+        customer,
+        supplierBusinessId,
+        status: 'verifying',
+        said: [],
+        facts: [],
+      })
     }
     if (url.pathname.startsWith(`/v1/orders/${ORDER}/`)) {
       const status = url.pathname.endsWith('/quote') ? 'verifying' : 'delivered'
@@ -184,7 +194,10 @@ describe('the test customer client', () => {
     expect(customer.profile).toEqual(profile)
     expect(await customer.order(supplier)).toEqual(offer)
     expect(await customer.state(ORDER)).toMatchObject({ orderId: ORDER, status: 'verifying' })
-    expect(await customer.delivery(ORDER)).toEqual({ orderId: ORDER, status: 'delivered' })
+    const report: DeliveryReport = {
+      result: { label: SIMULATED_RESULT_LABEL, hash: id('the placeholder result') },
+    }
+    expect(await customer.delivery(ORDER, report)).toEqual({ orderId: ORDER, status: 'delivered' })
     expect(server.sent.map((s) => [s.method, s.path, s.authorized])).toEqual([
       ['GET', '/v1/profile', false],
       ['POST', '/v1/orders', true],
@@ -192,6 +205,7 @@ describe('the test customer client', () => {
       ['POST', `/v1/orders/${ORDER}/delivery`, true],
     ])
     expect(server.sent[1]?.body).toEqual({ supplier: overJson(supplier) })
+    expect(server.sent[3]?.body).toEqual(report)
   })
 
   it('refuses a customer on another chain, and an offer made to another supplier', async () => {

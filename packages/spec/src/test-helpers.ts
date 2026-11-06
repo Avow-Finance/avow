@@ -1,12 +1,16 @@
 import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { dollars, testnetDemoTerms } from './demo.js'
+import type { AgentSessionEvent } from './agent-session.js'
+import { demoComputeOffers, dollars, testnetDemoJobTerms, testnetDemoTerms } from './demo.js'
 import type { BuyerSideReference, PinnedBlock } from './dependencies.js'
 import type { AvowDomain } from './eip712.js'
 import type { GpuReservationTerms } from './gpu-reservation.js'
+import { chainedJobTerms } from './job.js'
 import type { JobEvent } from './job-session.js'
+import { jobVerificationOf } from './job-verification.js'
 import type { RailToken } from './rail.js'
-import { TEST_CUSTOMER_LABEL } from './test-customer.js'
+import { termsHash } from './terms.js'
+import { SIMULATED_RESULT_LABEL, TEST_CUSTOMER_LABEL } from './test-customer.js'
 import type { Mandate, ReserveRequest } from './types.js'
 
 /** Shared test setup. Keys are generated for each run and never leave memory. */
@@ -161,7 +165,12 @@ export const JOB_EVENTS: JobEvent[] = (() => {
       index: null,
     },
     { ...base, type: 'job_work_started', reference: JOB_REFERENCE },
-    { ...base, type: 'job_delivered', reference: JOB_REFERENCE },
+    {
+      ...base,
+      type: 'job_delivered',
+      reference: JOB_REFERENCE,
+      result: { label: SIMULATED_RESULT_LABEL, hash: id('the placeholder result') },
+    },
     {
       ...base,
       type: 'job_paid',
@@ -184,6 +193,122 @@ export const JOB_EVENTS: JobEvent[] = (() => {
       reference: COMPUTE_REFERENCE,
       release: { way: 'consent', reason: 'kept' },
       transactionHash: id('the compute release'),
+    },
+  ]
+})()
+
+/** The job's version 3 terms as the developer quoted them, relying on the compute booking. */
+export function quotedJobTerms() {
+  return chainedJobTerms(testnetDemoJobTerms(START, ARBITER), [
+    { on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' },
+  ])
+}
+
+/** One event of each agent session kind, as the developer's session posts them. */
+export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
+  const job = { run: 3, source: 'session', orderId: ORDER } as const
+  const turn = { run: 4, source: 'session', orderId: null } as const
+  const listing = demoComputeOffers({ startsAt: START, deliverBy: START + 600n, listedAt: NOW })
+  const terms = quotedJobTerms()
+  const jobReference = { ...JOB_REFERENCE, termsHash: termsHash(terms, SALT) }
+  const limits = {
+    budgetPerGpuHour: dollars(3),
+    computeSwitch: 'on',
+    capPerCommitment: dollars(500),
+    capOpenReserves: dollars(500),
+    openReservesLeft: dollars(500),
+  } as const
+  return [
+    {
+      ...job,
+      type: 'said',
+      speaker: { kind: 'model', model: 'qwen3:8b' },
+      text: 'I will book the firm H100.',
+    },
+    {
+      ...job,
+      type: 'said',
+      speaker: { kind: 'customer', index: 0 },
+      text: 'Before I accept, I need to verify your compute.',
+    },
+    { ...job, type: 'tool_call', call: 1, tool: 'compute_offers', summary: 'Offers for the order' },
+    {
+      ...job,
+      type: 'tool_call',
+      call: 2,
+      tool: 'book_compute',
+      summary: '1 GPU of h100-firm',
+      offer: 'h100-firm',
+      quantity: 1,
+    },
+    {
+      ...job,
+      type: 'tool_result',
+      call: 1,
+      tool: 'compute_offers',
+      summary: 'Four offers from avow-demo-gpu',
+      recalled: null,
+      listing,
+      limits,
+      ok: true,
+    },
+    {
+      ...job,
+      type: 'tool_result',
+      call: 2,
+      tool: 'book_compute',
+      summary: 'Refused by the SDK, over the authority for one commitment',
+      recalled: null,
+      listing: null,
+      limits: null,
+      ok: false,
+      code: 'mandate.over_commitment_cap',
+      layer: 'sdk',
+    },
+    {
+      ...turn,
+      type: 'tool_result',
+      call: 1,
+      tool: 'compute_offers',
+      summary: 'The offers the agent compared for the order',
+      recalled: { run: 3, call: 1 },
+      listing,
+      limits,
+      ok: true,
+    },
+    {
+      ...job,
+      type: 'fact',
+      text: 'Your compute booking is accepted and past its free cancellation.',
+      check: 'dependency',
+      verifiedBy: 'service',
+      reference: COMPUTE_REFERENCE,
+      block: READ_BLOCK,
+      transactionHash: null,
+    },
+    {
+      ...job,
+      type: 'commitment',
+      role: 'compute',
+      reference: COMPUTE_REFERENCE,
+      amount: dollars(40),
+      state: 'accepted',
+      verifiedBy: 'service',
+      block: READ_BLOCK,
+      transactionHash: id('the reserve transaction'),
+      verification: null,
+    },
+    {
+      ...job,
+      type: 'commitment',
+      role: 'job',
+      reference: jobReference,
+      amount: dollars(10),
+      state: 'accepted',
+      verifiedBy: 'service',
+      block: READ_BLOCK,
+      transactionHash: id('the acceptance transaction'),
+      verification: jobVerificationOf(terms, SALT, jobReference),
     },
   ]
 })()
