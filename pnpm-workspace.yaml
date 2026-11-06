@@ -1,3 +1,7 @@
 packages:
   - "packages/*"
   - "examples/*"
+
+# Resolve only package versions published at least three days ago. Malicious releases from hijacked
+# maintainer accounts are usually found and pulled within hours, so a new one never reaches us.
+minimumReleaseAge: 4320

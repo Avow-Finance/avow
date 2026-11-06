@@ -7,9 +7,11 @@ import {
   createAgentFolder,
   DEFAULT_NAME,
   HELP,
+  installArgs,
   main,
   packageName,
   parseArgs,
+  RELEASE_AGE_DAYS,
   TEMPLATE_DIR,
 } from './create.js'
 
@@ -110,5 +112,14 @@ describe('create-avow-agent', () => {
       expect(business).toContain(`  name: ${quoted},`)
       expect(business.split('\n').filter((l) => l.startsWith('  name:'))).toHaveLength(1)
     }
+  })
+})
+
+describe('installArgs', () => {
+  it('runs no install scripts and takes only versions at least three days old', () => {
+    const args = installArgs(new Date('2026-11-07T00:00:00.000Z'))
+    expect(args).toContain('--ignore-scripts')
+    expect(args).toContain('--before=2026-11-04T00:00:00.000Z')
+    expect(RELEASE_AGE_DAYS).toBe(3)
   })
 })
