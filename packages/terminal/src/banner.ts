@@ -1,5 +1,5 @@
 import { BANNER, BANNER_WIDTH } from './banner-art.js'
-import { type Look, stylesOf } from './look.js'
+import { type Look, stylesOf, wrap } from './look.js'
 
 /**
  * The environment setting create-avow-agent sets when it runs setup in the folder it made, having
@@ -20,4 +20,18 @@ export function banner(look: Look): string {
   const art =
     look.width >= BANNER_WIDTH + 4 ? BANNER.map((line) => `  ${line}`) : [`  ${s.bold('avow')}`]
   return ['', ...art, '', `  ${s.dim(TESTNET_LINE)}`, ''].join('\n')
+}
+
+/** What a first run is for, said once under the banner before anything is asked. */
+export const FIRST_RUN_LINES = [
+  'You want your AI agent to buy and sell for you, and nobody can trust it with money yet.',
+  "In about two minutes, you give it limits it can't break and watch it win a paid job.",
+] as const
+
+/** The first run's lines, laid to the terminal's width under the banner. */
+export function firstRunIntro(look: Look): string {
+  const room = Math.max(1, look.width - 4)
+  return [...FIRST_RUN_LINES.flatMap((line) => wrap(line, room).map((l) => `  ${l}`)), ''].join(
+    '\n',
+  )
 }

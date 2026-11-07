@@ -145,6 +145,31 @@ setTimeout(() => process.exit(0), 300)
     expect(prompts.history()).toEqual([])
   })
 
+  it('draws output that arrives mid-question above the prompt, with what was typed kept', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let shown = ''
+    output.on('data', (chunk: Buffer) => {
+      shown += chunk.toString()
+    })
+    const prompts = terminalPrompts(input, output, true)
+    const asked = prompts.ask('you › ')
+    input.write('why did')
+    await new Promise((resolve) => setImmediate(resolve))
+    shown = ''
+    prompts.print('customer › Thanks for the quote.\n')
+    // The prompt's row is cleared, the output takes it, and the prompt comes back under it with
+    // the words typed so far.
+    expect(shown.startsWith('\r\u001b[2Kcustomer › Thanks for the quote.\n')).toBe(true)
+    expect(shown.slice(shown.indexOf('\n'))).toContain('you › why did')
+    input.write(' you pick that?\r')
+    expect(await asked).toBe('why did you pick that?')
+    // With no question waiting, output goes out as it is.
+    shown = ''
+    prompts.print('done\n')
+    expect(shown).toBe('done\n')
+  })
+
   it.skipIf(!canMakeTerminal)(
     "won't ask for the passphrase while a process that left its group holds the terminal",
     () => {

@@ -1,4 +1,10 @@
-export { banner, RAIL_OPEN_ENV, TESTNET_LINE } from './banner.js'
+export {
+  banner,
+  FIRST_RUN_LINES,
+  firstRunIntro,
+  RAIL_OPEN_ENV,
+  TESTNET_LINE,
+} from './banner.js'
 export { BANNER, BANNER_WIDTH } from './banner-art.js'
 export {
   charWidth,

@@ -8,9 +8,15 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { banner, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
+import {
+  banner,
+  firstRunIntro,
+  lookOf,
+  RAIL_OPEN_ENV,
+  Rail,
+  stylesOf,
+} from '@avow-finance/terminal'
 
 /** What a new agent folder starts with, which travels beside this script in the tarball. */
 export const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'template')
@@ -149,7 +155,7 @@ Makes a folder holding an Avow sandbox agent, installs its packages, and sets up
 Tempo's Moderato testnet with test dollars.
 
   folder           where to make it, my-agent by default
-  --name <name>    the business's name, so nothing asks for it
+  --name <name>    the business's name, Starter Test Co when left out
   --no-install     stop once the folder is made
   --no-start       stop once its packages are installed`
 
@@ -174,37 +180,10 @@ export function parseArgs(args: readonly string[]): CreateArgs {
   }
 }
 
-/** Asks for the business's name on the rail, and takes the default for an empty answer. */
-async function askName(rail: Rail): Promise<string> {
-  rail.ask(`Name your sandbox business, or press Enter for ${DEFAULT_NAME}`)
-  const lines = createInterface({ input: process.stdin, output: process.stdout, historySize: 0 })
-  try {
-    for (;;) {
-      const answer = await new Promise<string | null>((done) => {
-        lines.once('close', () => done(null))
-        lines.question(rail.prefix, done)
-      })
-      if (answer === null) throw new Error('No name was given.')
-      if (answer.trim() === '') {
-        rail.answered(DEFAULT_NAME)
-        return DEFAULT_NAME
-      }
-      try {
-        businessFile(TEMPLATE_DIR, answer)
-        return answer.trim()
-      } catch (error) {
-        rail.answered(error instanceof Error ? error.message : String(error), 'bad')
-      }
-    }
-  } finally {
-    lines.close()
-  }
-}
-
 /**
- * Draws Avow's banner and opens the rail, makes the folder and installs its packages while asking
- * the business's name, then runs setup in it, which carries the same rail on. It waits for setup
- * to end, so a Ctrl+C there stops setup, and then says where the folder is.
+ * Draws Avow's banner and says what the first run is for, makes the folder and installs its
+ * packages, then runs setup in it, which carries the same rail on through its numbered steps. It
+ * waits for setup to end, so a Ctrl+C there stops setup, and then says where the folder is.
  */
 export async function main(argv: readonly string[]): Promise<number> {
   const major = Number(process.versions.node.split('.')[0])
@@ -221,7 +200,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const paint = stylesOf(look)
   const rail = new Rail(look)
   console.log(banner(look))
-  rail.open(`Make ${args.folder}`)
+  console.log(firstRunIntro(look))
   let target: string
   try {
     target = createAgentFolder(args.folder, TEMPLATE_DIR, args.name ?? DEFAULT_NAME)
@@ -229,28 +208,22 @@ export async function main(argv: readonly string[]): Promise<number> {
     rail.fail(error instanceof Error ? error.message : String(error))
     return 1
   }
-  // The packages install while the developer names the business, since neither needs the other.
-  const began = Date.now()
-  const installing = args.install ? install(target) : null
-  if (args.name === null && process.stdin.isTTY) {
-    const name = await askName(rail)
-    writeFileSync(join(target, 'business.ts'), businessFile(TEMPLATE_DIR, name))
-  }
-  rail.done(`Made ${args.folder}, with agent.ts, business.ts, service.ts and a README`)
-  if (!installing) {
-    rail.close(`Install its packages, then set up its business:`)
+  if (!args.install) {
+    rail.done(`Made ${args.folder}`)
+    rail.close('Install its packages, then set up its business:')
     console.log(`      cd ${args.folder}\n      npm install --ignore-scripts\n      npm start\n`)
     return 0
   }
-  rail.wait('Installing its packages')
-  const installed = await installing
+  const began = Date.now()
+  rail.wait(`Making ${args.folder} and installing its packages`)
+  const installed = await install(target)
   if (!installed.ok) {
     rail.fail("npm install didn't finish. What it printed is below.")
     console.error(paint.dim(installed.output.trimEnd()))
     console.error(`\nRun npm install --ignore-scripts in ${args.folder}, then npm start.`)
     return 1
   }
-  rail.done(`Installed its packages in ${Math.max(1, Math.round((Date.now() - began) / 1000))}s`)
+  rail.done(`Made ${args.folder} in ${Math.max(1, Math.round((Date.now() - began) / 1000))}s`)
   if (!args.start) {
     rail.close('Set up its business:')
     console.log(`      cd ${args.folder}\n      npm start\n`)
@@ -264,7 +237,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     npm(['start', '--silent'], {
       cwd: target,
       stdio: 'inherit',
-      env: { ...process.env, [RAIL_OPEN_ENV]: '1' },
+      env: { ...process.env, [RAIL_OPEN_ENV]: '1', npm_config_update_notifier: 'false' },
     }),
   )
   process.off('SIGINT', ignore)

@@ -18,6 +18,8 @@ import type {
 export const ORDER_PROMPT = 'New order'
 /** What the session says when the developer switched compute off and still wants a quote. */
 export const SWITCH_OFF_PROMPT = 'switched compute off'
+/** How the session's prompt starts when the customer refused a quote and the agent explains it. */
+export const CUSTOMER_REFUSED_PROMPT = 'The customer refused the quote'
 
 interface OfferSeen {
   id: string
@@ -123,7 +125,11 @@ const call = (name: string, input: Record<string, unknown> = {}): ModelToolCall 
   input,
 })
 
-/** A refusal a tool gave, said in a sentence. */
+/**
+ * A refusal a tool gave, said as its layer and code and what would let it pass. The refusal's own
+ * sentence is already on the screen, so only its last sentence, which says what would let the same
+ * thing pass, is said again.
+ */
 function refusalLine(content: string): string {
   try {
     const r = JSON.parse(content) as {
@@ -132,7 +138,8 @@ function refusalLine(content: string): string {
       sentence?: string
       why?: string
     }
-    return `It was refused at the ${r.layer} layer with ${r.code}. ${r.sentence ?? r.why ?? ''}`.trim()
+    const passes = (r.sentence ?? r.why ?? '').split(/(?<=\.)\s+/).at(-1) ?? ''
+    return `It was refused at the ${r.layer} layer with ${r.code}. ${passes}`.trim()
   } catch {
     return 'It was refused.'
   }
@@ -178,6 +185,17 @@ function decide(turns: readonly ChatTurn[]): { text: string; calls: ModelToolCal
       return { text: `I couldn't book the compute. ${refusalLine(booked.content)}`, calls: [] }
     const booking = (JSON.parse(booked.content) as { booking: string }).booking
     return { text: '', calls: [call('submit_quote', { booking })] }
+  }
+
+  // The quote went out and the customer answered it, so the agent explains and quotes nothing again.
+  if (prompt.startsWith(CUSTOMER_REFUSED_PROMPT)) {
+    const refused = /with ([a-z_.]+), at the ([a-z]+) layer/.exec(prompt)
+    return {
+      text: refused
+        ? `The customer refused my quote with ${refused[1]} at the ${refused[2]} layer, so no work started and nothing was charged. The order is closed, and the next one comes with job.`
+        : 'The customer refused my quote, so no work started and nothing was charged.',
+      calls: [],
+    }
   }
 
   if (/\bwhy\b/i.test(prompt)) {

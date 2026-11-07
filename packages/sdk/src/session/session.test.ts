@@ -133,6 +133,10 @@ describe('the first job, scripted against the fixture world', () => {
     expect(types(s.events)).not.toContain('job_compute_secured')
     const quote = s.events.find((e) => e.type === 'job_quote_sent')
     expect(quote).toMatchObject({ compute: null })
+    // Once the customer has answered, the agent explains the refusal and sends no second quote.
+    const quotes = s.events.filter((e) => e.type === 'tool_call' && e.tool === 'submit_quote')
+    expect(quotes).toHaveLength(1)
+    expect(s.events.some((e) => e.type === 'tool_result' && e.ok === false)).toBe(false)
   })
 })
 

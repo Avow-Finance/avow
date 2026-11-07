@@ -231,6 +231,11 @@ export class Rail {
   #spaced = false
   /** Words still arriving from a model, and where the line they're on has got to. */
   #speech: Speech | null = null
+  /**
+   * The numbered step under way, such as `2/4`, and how many rows it has drawn since it began, so
+   * `stepDone` can take them back and leave the step as one line.
+   */
+  #step: { label: string; rows: number } | null = null
 
   constructor(look: Look, write: Write = (text) => void process.stdout.write(text)) {
     this.#look = look
@@ -252,6 +257,35 @@ export class Rail {
   stage(title: string): void {
     this.#space()
     this.#block(this.#s.dim('◇'), clean(title), this.#s.bold)
+  }
+
+  /**
+   * A numbered step starting, such as `2/4`, with one sentence on why it matters. While it runs,
+   * everything it draws stays on screen. Once `stepDone` is called, a terminal that can draw lines
+   * again takes those rows back, so the screen keeps one line for each step that's done.
+   */
+  step(at: number, of: number, title: string, why?: string): void {
+    this.#space()
+    this.#step = { label: `${at}/${of}`, rows: 0 }
+    this.#block(this.#s.accent('◆'), `${this.#step.label}  ${clean(title)}`, this.#s.bold)
+    if (why) this.#block(this.#s.dim('│'), clean(why), this.#s.dim)
+  }
+
+  /**
+   * The step under way, done, as one line saying what it left. Each answer typed during the step
+   * has to have been passed to `answered`, which is how the rail counts the row it took. With
+   * `keep`, the step's rows stay above its line, for a step whose rows are worth reading again.
+   */
+  stepDone(text: string, options: { keep?: boolean } = {}): void {
+    this.settle()
+    this.#endSpeech()
+    const step = this.#step
+    this.#step = null
+    if (step && this.#look.live && step.rows > 0 && !options.keep) {
+      this.#out(`\u001b[${step.rows}A\r\u001b[J`)
+    }
+    const label = step ? `${step.label}  ` : ''
+    this.#block(this.#s.ok('✓'), `${label}${clean(text)}`, plain)
   }
 
   /** A question, whose answer is typed on the line after it. */
@@ -532,6 +566,7 @@ export class Rail {
    * measured too narrow is cut at the margin, and input typed between rows still wraps as usual.
    */
   #out(text: string): void {
+    if (this.#step) this.#step.rows += text.split('\n').length - 1
     this.#write(this.#look.live ? `${NO_WRAP}${text}${WRAP}` : text)
   }
 

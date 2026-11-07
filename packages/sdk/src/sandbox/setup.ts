@@ -71,7 +71,12 @@ export interface SandboxPrompts {
  * What a line setup reports is: a stage starting, a step done, something under way until the next
  * line, or a sentence to read. A log that ignores it still reads in order.
  */
-export type SetupLineKind = 'stage' | 'done' | 'wait' | 'note'
+/**
+ * How a setup line draws. A first setup runs as numbered steps: `step` starts one, its title and a
+ * sentence on why it matters on two lines, and `step_done` ends it with what it left. A `detail`
+ * line, such as an address, shows only when the developer asks for details.
+ */
+export type SetupLineKind = 'stage' | 'done' | 'wait' | 'note' | 'step' | 'step_done' | 'detail'
 
 export interface PrepareSandboxBusinessOptions {
   config: SandboxBusinessConfig
@@ -136,21 +141,26 @@ const NEXT_STEP: Record<SandboxBusinessStep['step'], string | null> = {
   funded: null,
 }
 
-/** An address as the terminal shortens it, with enough of each end to tell it apart. */
-const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`
-
 const stepLine = (s: SandboxBusinessStep): string => {
   switch (s.step) {
     case 'fees':
       return s.hashes.length > 0 ? "Fees funded from Moderato's faucet" : 'Fees already covered'
     case 'lock':
-      return s.createdIn ? `Lock created at ${short(s.lock)}` : `Lock found at ${short(s.lock)}`
+      return s.createdIn ? 'Lock created on chain' : 'Lock found on chain'
     case 'registered':
-      return `Registered with Avow's sandbox as ${s.businessId}`
+      return "Registered with Avow's sandbox"
     case 'funded':
       return `${formatUsd(s.balance)} of test dollars in your account`
   }
 }
+
+/** What a step on chain leaves that the developer can look up, shown when they ask for details. */
+const stepDetail = (s: SandboxBusinessStep): string | null =>
+  s.step === 'lock'
+    ? `Your business's lock is ${s.lock}.`
+    : s.step === 'registered'
+      ? `Avow's sandbox knows your business as ${s.businessId}.`
+      : null
 
 const authorityText = (cap: bigint, daily: bigint | null, suppliers: readonly string[]) =>
   `${formatUsd(cap)} held at once, ${daily === null ? 'no daily limit' : `${formatUsd(daily)} a day moved by the key`}, ${suppliers.join(', ')} only`
@@ -225,10 +235,9 @@ export async function prepareSandboxBusiness(
         "The business's file is gone from .avow but its agent's file is there, so the business's key is missing. Restore .avow/business.json, or start over with npm run fresh.",
       )
     }
-    log("Your business's key", 'stage')
     log(
-      "It's made on this machine and sealed under a passphrase you choose, so Avow never holds it.",
-      'note',
+      'Your business\nYour business holds the money, in a lock of its own on chain. Its key is made on this machine, sealed under a passphrase you choose, and never leaves it.',
+      'step',
     )
     const passphrase = await prompts.newPassphrase()
     const privateKey = generatePrivateKey()
@@ -268,6 +277,7 @@ export async function prepareSandboxBusiness(
       ? recorded
       : null
   let setUpAgain = false
+  let fundedNow: bigint | null = null
   if (!business) {
     if (!fresh) {
       const [question, ...details] = lockMade
@@ -287,10 +297,10 @@ export async function prepareSandboxBusiness(
         )
       }
     }
-    log('Your business on Tempo testnet', 'stage')
-    log('The first time takes a minute or two.', 'note')
+    if (!fresh) log('Your business on Tempo testnet', 'stage')
     const root = await openRoot()
     log("Funding the account's fees", 'wait')
+    let funded: bigint | null = null
     const made = await createSandboxBusiness({
       deployment,
       client,
@@ -299,8 +309,11 @@ export async function prepareSandboxBusiness(
       country,
       onStep: (s) => {
         log(stepLine(s), 'done')
+        const detail = stepDetail(s)
+        if (detail) log(detail, 'detail')
         const next = NEXT_STEP[s.step]
         if (next) log(next, 'wait')
+        if (s.step === 'funded') funded = s.balance
       },
       fetch: send,
     })
@@ -315,6 +328,7 @@ export async function prepareSandboxBusiness(
     }
     item = { ...item, business }
     await saveBusinessItem(store, item)
+    fundedNow = funded
     // Commitments from another deployment belong to another lock.
     if (recorded && !madeOn(recorded, deployment)) await saveCommitments(store, [])
     setUpAgain = !fresh
@@ -338,6 +352,14 @@ export async function prepareSandboxBusiness(
     } catch (error) {
       supplier = { ok: false, why: error instanceof Error ? error.message : String(error) }
     }
+  }
+  if (fresh) {
+    log(
+      fundedNow === null
+        ? 'Your business is set up, with its own lock on chain'
+        : `Your business has ${formatUsd(fundedNow)} in test dollars, held in its own lock`,
+      'step_done',
+    )
   }
   let agent: AgentItem | null = await loadAgentItem(store)
   if (agent && !isAddressEqual(agent.business.lock, lock)) agent = null
@@ -438,13 +460,28 @@ export async function prepareSandboxBusiness(
     return prepared(agent, false, await announceCurrent(agent))
   }
 
-  const question = changed
-    ? `Sign a new mandate as ${config.name}?`
-    : `Your agent's mandate expires within the hour. Sign a new one as ${config.name}?`
-  const details = [
-    `${authorityText(authority, dailyLimit, ids)}.`,
-    'It revokes every other key on the account.',
-  ]
+  // A first setup shows the limits as the step that teaches them, one to a line with who holds it.
+  if (fresh) {
+    log(
+      "Your agent's limits\nYour agent gets a key of its own, and Avow and the chain refuse anything it tries past these limits.",
+      'step',
+    )
+  }
+  const question = fresh
+    ? 'Sign these limits for your agent?'
+    : changed
+      ? `Sign a new mandate as ${config.name}?`
+      : `Your agent's mandate expires within the hour. Sign a new one as ${config.name}?`
+  const details = fresh
+    ? [
+        `${formatUsd(authority)} held at once, which Avow holds it to`,
+        `${formatUsd(dailyLimit)} a day moved by its key, which the chain holds it to`,
+        `Books only with ${ids.join(', ')}`,
+      ]
+    : [
+        `${authorityText(authority, dailyLimit, ids)}.`,
+        'It revokes every other key on the account.',
+      ]
   if (!(await prompts.confirm(question, details))) {
     if (agent && current) {
       log(
@@ -536,6 +573,12 @@ export async function prepareSandboxBusiness(
   await showHeldBookings({ store, client, current: enrolled.mandateHash, log })
   const announced = await postAuthority(root, next, current?.capOpenReserves ?? null)
   opened = null
+  if (fresh) {
+    log(
+      `Your agent can commit up to ${formatUsd(authority)} at once and move ${formatUsd(dailyLimit)} a day`,
+      'step_done',
+    )
+  }
   return prepared(next, true, announced)
 }
 

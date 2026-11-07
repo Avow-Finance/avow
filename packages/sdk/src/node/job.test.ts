@@ -46,7 +46,7 @@ async function oneJob(bookCompute = true) {
   let run = 0
   const code = await runJobSession({
     mode: 'one',
-    flags: { provider: null, model: null, scripted: true },
+    flags: { provider: null, model: null, scripted: true, details: true },
     rail: new Rail(look, write),
     look,
     store: memoryStore(),
@@ -63,6 +63,52 @@ async function oneJob(bookCompute = true) {
   return { code, drawn }
 }
 
+describe('a first run', () => {
+  it('runs the job as step 3, then step 4 until a refusal, drawing each thing once', async () => {
+    let drawn = ''
+    const write = (text: string) => {
+      drawn += text
+    }
+    const look = lookOf({ isTTY: false, columns: 100 }, { NO_COLOR: '1' })
+    const typed = ['book 16 GPUs']
+    let run = 0
+    const code = await runJobSession({
+      mode: 'interactive',
+      firstRun: true,
+      flags: { provider: null, model: null, scripted: true, details: false },
+      rail: new Rail(look, write),
+      look,
+      store: memoryStore(),
+      deployment,
+      dir: '',
+      session: { id: '0'.repeat(32) },
+      nextRun: () => ++run,
+      prompts: { passphrase: async () => 'unused', confirm: async () => false },
+      input: { inFlight: () => {}, next: async () => typed.shift() ?? null },
+      world: fixtureWorld(),
+      write,
+      service: { file: 'service.mjs', cwd: serviceFolder(true) },
+    })
+    expect(code).toBe(0)
+    const at = (text: string) => drawn.indexOf(text)
+    expect(at('3/4  A paid job')).toBeGreaterThan(-1)
+    const decisive = DECISIVE_SENTENCE.split(' and ')[0] as string
+    expect(at(decisive)).toBeGreaterThan(at('3/4  A paid job'))
+    expect(at('✓  3/4  The job is done and paid.')).toBeGreaterThan(at(decisive))
+    expect(at('4/4  Try to break it')).toBeGreaterThan(at('✓  3/4'))
+    expect(at("4/4  Refused, and no money moved. Your agent's limits held.")).toBeGreaterThan(
+      at('4/4  Try to break it'),
+    )
+    expect(at("You're set up.")).toBeGreaterThan(at('4/4  Refused'))
+    // A brief view leaves the tool calls and the receipts to the details and the screen.
+    expect(drawn).not.toContain('↳ read_order')
+    expect(drawn).not.toContain('#verify=')
+    expect(drawn).not.toContain('Type job to take the next order')
+    // The refusal draws once from code, and the agent's words about it follow.
+    expect(drawn.split('✗ This booking needs $640').length - 1).toBe(1)
+  })
+})
+
 describe('npm run job', () => {
   it('reads its flags from the command line, over the environment', () => {
     expect(
@@ -73,13 +119,16 @@ describe('npm run job', () => {
       provider: 'anthropic',
       model: 'claude-sonnet-5-5',
       scripted: false,
+      details: false,
     })
     expect(readJobFlags([], { AVOW_MODEL_PROVIDER: 'local', AVOW_MODEL: 'qwen3:8b' })).toEqual({
       provider: 'local',
       model: 'qwen3:8b',
       scripted: false,
+      details: false,
     })
     expect(readJobFlags(['--scripted'], {})).toMatchObject({ scripted: true })
+    expect(readJobFlags(['--details'], {})).toMatchObject({ details: true })
     expect(readJobFlags(['--provider'], {})).toEqual({ error: '--provider needs a value' })
     expect(readJobFlags(['--fast'], {})).toEqual({ error: "There's no option --fast here." })
   })
