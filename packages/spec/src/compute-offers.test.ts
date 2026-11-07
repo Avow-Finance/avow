@@ -44,13 +44,13 @@ describe('compute offers', () => {
     expect(parseComputeOffers(overJson(mixed)).ok).toBe(false)
     const backwards = { ...listing, offers: [{ ...offer('h100-firm'), gpus: { min: 4, max: 2 } }] }
     expect(parseComputeOffers(overJson(backwards)).ok).toBe(false)
-    const oddMinutes = { ...listing, offers: [{ ...offer('h100-firm'), hours: 0.0101 }] }
+    const oddMinutes = { ...listing, offers: [{ ...offer('h100-firm'), minutes: 0.5 }] }
     expect(parseComputeOffers(overJson(oddMinutes)).ok).toBe(false)
   })
 
   it('cost the usage for the whole window apart from the reserve, per GPU', () => {
     const firm = offer('h100-firm')
-    const minutes = BigInt(Math.round(firm.hours * 60))
+    const minutes = BigInt(firm.minutes)
     expect(computeOfferCost(firm, 1)).toEqual({
       price: (2_400_000n * minutes) / 60n,
       reserve: dollars(40),
