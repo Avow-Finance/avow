@@ -27,6 +27,16 @@ const COPIED: Record<string, string> = {
   gitignore: '.gitignore',
 }
 
+/**
+ * Every file in the template that making a folder reads, so the tarball npx runs carries each one.
+ * business.ts and package.json are rewritten on the way, and the rest are copied.
+ */
+export const TEMPLATE_FILES: readonly string[] = [
+  ...Object.keys(COPIED),
+  'business.ts',
+  'package.json',
+]
+
 /** The business's name in the template's business.ts, which the developer's own replaces. */
 export const DEFAULT_NAME = 'Starter Test Co'
 const NAME_LINE = `  name: '${DEFAULT_NAME}',`
