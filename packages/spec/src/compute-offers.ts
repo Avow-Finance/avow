@@ -25,8 +25,8 @@ export interface ComputeOffer {
   sku: string
   /** How many GPUs one booking of the offer can take. */
   gpus: { min: number; max: number }
-  /** How long the window lasts, in hours, a whole number of minutes. */
-  hours: number
+  /** How long the window lasts, in whole minutes. */
+  minutes: number
   /** When the window starts, in unix seconds. */
   startsAt: bigint
   /** Until this moment a booking can be cancelled at no charge. At or before `listedAt`, firm. */
@@ -66,8 +66,8 @@ export const isFirmOffer = (offer: ComputeOffer, listedAt: bigint): boolean =>
   offer.freeCancelBy <= listedAt
 
 /** An offer's window in seconds. */
-export const offerSeconds = (offer: Pick<ComputeOffer, 'hours'>): bigint =>
-  BigInt(Math.round(offer.hours * 3600))
+export const offerSeconds = (offer: Pick<ComputeOffer, 'minutes'>): bigint =>
+  BigInt(offer.minutes) * 60n
 
 /** Whether one booking of the offer can take this many GPUs. */
 export const offerTakes = (offer: Pick<ComputeOffer, 'gpus'>, gpus: number): boolean =>
@@ -144,11 +144,11 @@ export const computeOfferJson = z
       min: z.number().int().min(1).max(1024),
       max: z.number().int().min(1).max(1024),
     }),
-    hours: z
+    minutes: z
       .number()
-      .positive()
-      .max(24 * 7)
-      .refine((h) => Math.abs(h * 60 - Math.round(h * 60)) < 1e-9, 'a whole number of minutes'),
+      .int()
+      .min(1)
+      .max(7 * 24 * 60),
     startsAt: u64,
     freeCancelBy: u64,
     pricePerGpuHour: u256,

@@ -121,7 +121,7 @@ export function demoComputeOffers(job: {
 }): ComputeOffers {
   const end = job.deliverBy + 5n * MINUTE
   const later = job.deliverBy + 10n * MINUTE
-  const hoursFrom = (start: bigint) => Number((end - start + MINUTE - 1n) / MINUTE) / 60
+  const minutesFrom = (start: bigint) => Number((end - start + MINUTE - 1n) / MINUTE)
   const offer = (o: Pick<ComputeOffer, 'id' | 'pricePerGpuHour'> & Partial<ComputeOffer>) => {
     const startsAt = o.startsAt ?? job.startsAt - 2n * MINUTE
     const lapses = job.listedAt + 10n * MINUTE
@@ -131,7 +131,7 @@ export function demoComputeOffers(job: {
       region: 'demo',
       sku: 'demo-h100',
       gpus: { min: 1, max: 16 },
-      hours: hoursFrom(startsAt),
+      minutes: minutesFrom(startsAt),
       freeCancelBy: job.listedAt,
       reservePerGpu: dollars(40),
       ...o,
@@ -150,7 +150,7 @@ export function demoComputeOffers(job: {
         startsAt: job.startsAt,
         freeCancelBy: job.startsAt,
       }),
-      offer({ id: 'h100-later', pricePerGpuHour: 2_200_000n, startsAt: later, hours: 0.5 }),
+      offer({ id: 'h100-later', pricePerGpuHour: 2_200_000n, startsAt: later, minutes: 30 }),
       offer({ id: 'h100-x16', pricePerGpuHour: 2_000_000n, gpus: { min: 16, max: 16 } }),
     ],
   }
