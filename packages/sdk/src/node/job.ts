@@ -10,6 +10,7 @@ import { agentRequestKey } from '../http.js'
 import { sessionReporter } from '../sandbox/agent.js'
 import { cancelSandboxCommitment, type SandboxPrompts } from '../sandbox/setup.js'
 import { loadAgentItem, type SandboxStore } from '../sandbox/store.js'
+import type { JobOutcome } from '../session/executor.js'
 import { liveWorld } from '../session/live-world.js'
 import { selectProvider } from '../session/selection.js'
 import { runSession, type SessionInput } from '../session/session.js'
@@ -30,9 +31,11 @@ export interface JobFlags {
   provider: string | null
   model: string | null
   scripted: boolean
+  /** `--details`: every tool call, receipt, address and link, as the screen shows them. */
+  details: boolean
 }
 
-/** Reads `--provider`, `--model` and `--scripted`, refusing anything else. */
+/** Reads `--provider`, `--model`, `--scripted` and `--details`, refusing anything else. */
 export function readJobFlags(
   args: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
@@ -41,6 +44,7 @@ export function readJobFlags(
     provider: env.AVOW_MODEL_PROVIDER?.trim() || null,
     model: env.AVOW_MODEL?.trim() || null,
     scripted: false,
+    details: false,
   }
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] as string
@@ -52,6 +56,7 @@ export function readJobFlags(
     }
     try {
       if (name === '--scripted') flags.scripted = true
+      else if (name === '--details') flags.details = true
       else if (name === '--provider') flags.provider = value()
       else if (name === '--model') flags.model = value()
       else return { error: `There's no option ${arg} here.` }
@@ -79,6 +84,8 @@ export async function runJobSession(o: {
   write?: (text: string) => void
   /** The service file and the folder it's in, `service.ts` in the working directory by default. */
   service?: { file: string; cwd: string }
+  /** A first run, which goes on from setup's two steps as steps 3 and 4 of 4. */
+  firstRun?: boolean
 }): Promise<number> {
   const { rail, store, deployment } = o
   const write = o.write ?? ((text: string) => void process.stdout.write(text))
@@ -137,12 +144,53 @@ export async function runJobSession(o: {
         log: (line) => rail.quiet(line),
       })
     : () => {}
-  const view = railView(rail, o.look, { fixture: world.kind === 'fixture', write })
+  const brief = !o.flags.details
+  const view = railView(rail, o.look, { fixture: world.kind === 'fixture', write, brief })
+  // A first run's step 4 ends at the first refusal, once the agent has said its piece.
+  const guided = o.firstRun === true && o.mode === 'interactive' && o.input !== null
+  let breaking: 'not yet' | 'waiting' | 'refused' | 'done' = 'not yet'
   const emit = (event: SessionEvent) => {
     view.event(event)
     if (world.kind === 'live') post(event)
+    if (breaking === 'waiting' && isRefusal(event)) breaking = 'refused'
   }
-  rail.stage(o.mode === 'one' ? 'One job, with no input' : 'Your agent session')
+  if (guided) {
+    rail.step(
+      3,
+      4,
+      'A paid job',
+      "Avow's test customer offers your agent a paid job, and checks the money behind your agent's promise before it agrees.",
+    )
+  } else if (o.mode === 'one') rail.stage('One job, with no input')
+  // A guided run's Model line names the scripted decisions, and how to get a model comes at the end.
+  if (chosen.fallback && !guided) {
+    rail.quiet(chosen.fallback.why)
+    for (const line of chosen.fallback.help) rail.quiet(line)
+  }
+  const input: SessionInput | null =
+    guided && o.input
+      ? {
+          inFlight: (what) => o.input?.inFlight(what),
+          next: () => {
+            if (breaking === 'refused') {
+              breaking = 'done'
+              rail.stepDone("Refused, and no money moved. Your agent's limits held.", {
+                keep: true,
+              })
+              rail.quiet(
+                "You're set up. Ask your agent why it chose that compute, or set bookCompute to false in service.ts and type job for the next order.",
+              )
+              rail.quiet(
+                'npm run mcp:claude-code lets Claude drive your agent too. Ctrl+C ends the session.',
+              )
+              if (chosen.fallback) rail.quiet(chosen.fallback.help[0] as string)
+            }
+            return (o.input as SessionInput).next()
+          },
+        }
+      : o.mode === 'one'
+        ? null
+        : o.input
   const result = await runSession({
     world,
     provider: chosen.provider,
@@ -151,24 +199,46 @@ export async function runJobSession(o: {
       runCheckBeforeWork(service.file, job, await world.chainFor(job), service.cwd),
     emit,
     view,
-    input: o.mode === 'one' ? null : o.input,
+    input,
     nextRun: o.nextRun,
+    brief,
+    ...(guided
+      ? {
+          afterFirstJob: (outcome: JobOutcome | null) => {
+            rail.stepDone(outcomeLine(outcome), { keep: true })
+            rail.step(
+              4,
+              4,
+              'Try to break it',
+              'Ask your agent for more than its limits allow. Type book 16 GPUs and press Enter.',
+            )
+            breaking = 'waiting'
+          },
+        }
+      : {}),
   })
   if (result.stopped) return 1
   const ended = result.firstJob
   if (o.mode === 'one') {
-    rail.close(
-      ended?.kind === 'paid'
-        ? 'The job is done and paid. Both reserves come back by themselves at their release dates.'
-        : ended?.kind === 'refused'
-          ? `The customer refused the quote with ${ended.refusal.code}, so no work started.`
-          : ended?.kind === 'not_started'
-            ? `Your side didn't accept the job, with ${ended.code} at the ${ended.layer} layer, so no work started.`
-            : ended?.kind === 'stopped'
-              ? ended.why
-              : 'No quote went out, so the job ended there.',
-    )
+    rail.close(outcomeLine(ended))
     return ended?.kind === 'paid' ? 0 : 1
   }
   return 0
 }
+
+/** How a job ended, in one line. */
+function outcomeLine(ended: JobOutcome | null): string {
+  return ended?.kind === 'paid'
+    ? 'The job is done and paid. Both reserves come back by themselves at their release dates.'
+    : ended?.kind === 'refused'
+      ? `The customer refused the quote with ${ended.refusal.code}, so no work started.`
+      : ended?.kind === 'not_started'
+        ? `Your side didn't accept the job, with ${ended.code} at the ${ended.layer} layer, so no work started.`
+        : ended?.kind === 'stopped'
+          ? ended.why
+          : 'No quote went out, so the job ended there.'
+}
+
+/** A refusal by any layer, as a tool's result or as the session's own refusal event. */
+const isRefusal = (event: SessionEvent): boolean =>
+  (event.type === 'tool_result' && event.ok === false) || event.type === 'refused'

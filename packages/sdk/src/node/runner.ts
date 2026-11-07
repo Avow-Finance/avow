@@ -279,6 +279,8 @@ export function terminalPrompts(
   })
   const lines = createInterface({ input, output: shown, terminal: tty, historySize: 0 })
   let closed = false
+  /** Whether a visible question's prompt is on the screen, waiting for its answer. */
+  let asking = false
   const waiting = new Set<(line: string | null) => void>()
   lines.on('close', () => {
     closed = true
@@ -290,6 +292,7 @@ export function terminalPrompts(
       waiting.add(resolve)
       const answered = (answer: string) => {
         muted = false
+        asking = false
         waiting.delete(resolve)
         if (hidden && tty) output.write('\n')
         resolve(answer)
@@ -300,8 +303,26 @@ export function terminalPrompts(
         output.write(prompt)
         muted = true
         lines.question('', answered)
-      } else lines.question(prompt, answered)
+      } else {
+        asking = true
+        lines.question(prompt, answered)
+      }
     })
+  /**
+   * Writes output that arrives while a question may be waiting, such as the customer's reply while
+   * the developer types to the agent. The prompt's row is cleared first and drawn again under the
+   * output with whatever was typed so far, so output and typing never share a row.
+   */
+  const print = (text: string) => {
+    if (!asking || !tty || closed) {
+      output.write(text)
+      return
+    }
+    output.write(`\r\u001b[2K${text}`)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the rail's autowrap switches
+    const bare = text.replace(/\u001b\[\?7[lh]/g, '')
+    if (bare.endsWith('\n') || bare === '\r\u001b[2K') lines.prompt(true)
+  }
   /** Each line typed while no question waits for it, such as one typed to a busy agent. */
   const onLine = (listener: (line: string) => void) => {
     lines.on('line', listener)
@@ -309,6 +330,7 @@ export function terminalPrompts(
   return {
     ask,
     onLine,
+    print,
     history: () => [...((lines as unknown as { history?: string[] }).history ?? [])],
   }
 }

@@ -127,7 +127,7 @@ export async function ensureSandboxSupplier(m: {
   deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl' | 'factory'>
   client: SandboxClient
   openRoot: () => Promise<TempoAccount.RootAccount>
-  log: (line: string) => void
+  log: (line: string, kind?: 'wait' | 'done' | 'detail') => void
   fetch?: typeof fetch
 }): Promise<SupplierItem> {
   const held = await loadSupplierItem(m.store)
@@ -135,8 +135,10 @@ export async function ensureSandboxSupplier(m: {
     await fundFees(m.client, held.profile.signingKey)
     return held
   }
+  m.log('Giving your business a signing key to quote jobs', 'wait')
   m.log(
-    "Your business needs a signing key of its own to quote and accept jobs. It's made on this machine and stays here. It accepts jobs and reports charges for your business, and it can't move your business's own money or change its authority.",
+    "Your business's signing key is made on this machine and stays here. It quotes and accepts jobs and reports charges for your business, and it can't move your business's own money or change its authority.",
+    'detail',
   )
   const sameAccount = held !== null && isAddressEqual(held.business.account, m.business.account)
   const signingKey = sameAccount ? held.signingKey : generatePrivateKey()
@@ -162,7 +164,8 @@ export async function ensureSandboxSupplier(m: {
   }
   const item: SupplierItem = { signingKey, profile, business: m.business }
   await saveSupplierItem(m.store, item)
-  m.log(`Registered your business as a sandbox supplier, signing with ${profile.signingKey}.`)
+  m.log('Your business can quote jobs, with a signing key of its own', 'done')
+  m.log(`Its signing key is ${profile.signingKey}.`, 'detail')
   // The signing key sends the business's acceptances and pays their fees itself, so Moderato's
   // faucet funds its fees as it funds the account's, and tops them up whenever they run low.
   await fundFees(m.client, profile.signingKey)

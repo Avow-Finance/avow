@@ -244,18 +244,20 @@ describe('choosing the model', () => {
       provider: { kind: 'local', model: 'qwen3:8b' },
     })
     const none = await selectProvider({ ...base, fetch: ollama(['mistral:7b']) })
-    expect(none).toMatchObject({ ok: false })
+    expect(none).toMatchObject({ ok: true, provider: { kind: 'scripted' }, fallback: {} })
   })
 
   it('never turns to a paid model unless it was chosen, whatever the environment holds', async () => {
     const env = { ANTHROPIC_API_KEY: 'sk-test' }
+    // With no free model ready, the free scripted decisions run, and it says how to get a model.
     const picked = await selectProvider({ ...base, env, fetch: ollama(null) })
-    if (picked.ok) throw new Error('nothing should be picked')
-    expect(picked.why).toBe('No model is ready for the session.')
-    expect(picked.help.join(' ')).toContain(
+    if (!picked.ok || !picked.fallback) throw new Error('the scripted decisions should run')
+    expect(picked).toMatchObject({ chosen: 'automatic', provider: { kind: 'scripted' } })
+    expect(picked.fallback.why).toContain('scripted decisions')
+    expect(picked.fallback.help.join(' ')).toContain(
       'The key is set, but the session uses it only when you choose it.',
     )
-    expect(picked.help.join(' ')).toContain('--scripted')
+    expect(picked.fallback.help.join(' ')).toContain('ollama pull')
     const chosen = await selectProvider({
       ...base,
       env,

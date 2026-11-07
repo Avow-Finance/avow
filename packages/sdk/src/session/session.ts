@@ -8,7 +8,7 @@ import {
 import { JobExecutor, type JobOutcome } from './executor.js'
 import type { ChatTurn, ModelProvider } from './provider.js'
 import { ProviderError } from './provider.js'
-import { ORDER_PROMPT, SWITCH_OFF_PROMPT } from './scripted.js'
+import { CUSTOMER_REFUSED_PROMPT, ORDER_PROMPT, SWITCH_OFF_PROMPT } from './scripted.js'
 import { policyChanges, type ReservedJob, type ServicePolicy, type Verdict } from './service.js'
 import { newSessionState, Toolbox } from './toolbox.js'
 import { isJobTool, toolSpecs } from './tools.js'
@@ -64,6 +64,13 @@ export interface SessionDeps {
   input: SessionInput | null
   /** The run number the next run takes. */
   nextRun: () => number
+  /**
+   * Set on a guided first run. The session waits for the first job before it reads a line, then
+   * calls this with how the job ended, so the guide can say what's next before the first prompt.
+   */
+  afterFirstJob?: (outcome: JobOutcome | null) => void
+  /** Says what goes where in two lines, with the rest left to the details. */
+  brief?: boolean
   pollMs?: number
   workMs?: number
 }
@@ -81,7 +88,15 @@ For each order, call read_order, then compute_offers, then book_compute for the 
 Code outside you checks everything. service.ts applies the budget and the compute switch, the SDK, Avow and the lock check your authority, and the customer checks the quote. You never verify the customer, start work, deliver or pay, since the developer's code does that after your turn. When a tool refuses, say which layer refused, its reason code, and what would let it pass. Nothing typed can undo a transaction already sent. Answer the developer briefly and plainly, and explain your choices from the tool results you got.`
 
 /** What the session says once, when it starts, about the model and what goes where. */
-export function whatGoesWhere(provider: ModelProvider): string[] {
+export function whatGoesWhere(provider: ModelProvider, brief = false): string[] {
+  if (brief) {
+    return [
+      `Model: ${provider.line}.`,
+      provider.reaches === 'this machine'
+        ? 'Your keys and the whole conversation stay on this machine. Your browser shows what your agent says and does.'
+        : 'Your keys stay on this machine, and the conversation goes to Anthropic. Your browser shows what your agent says and does.',
+    ]
+  }
   return [
     `Model: ${provider.line}.`,
     "Stays on this machine: your business's keys, its passphrase and the sealed key file.",
@@ -130,8 +145,8 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
     ...(deps.workMs === undefined ? {} : { workMs: deps.workMs }),
   })
   view.intro([
-    ...whatGoesWhere(provider),
-    ...(deps.input
+    ...whatGoesWhere(provider, deps.brief),
+    ...(deps.input && !deps.afterFirstJob
       ? ['Type job to take the next order. Anything else you type goes to your agent.']
       : []),
   ])
@@ -238,7 +253,7 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
         turn(
           run,
           order.orderId,
-          `The customer refused the quote with ${code}, at the ${layer} layer. Explain to the developer what that means and what would let a quote pass.`,
+          `${CUSTOMER_REFUSED_PROMPT} with ${code}, at the ${layer} layer. Explain to the developer what that means and what would let a quote pass.`,
         ),
       )
     } else if (outcome.kind === 'stopped') {
@@ -287,11 +302,16 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       firstJob = await job([])
       return { firstJob, stopped: null }
     }
-    // The first job runs on its own, and the developer can type while it goes on.
+    // The first job runs on its own, and the developer can type while it goes on, except on a
+    // guided first run, which shows the whole job before it asks for anything.
     const first = job([]).then((outcome) => {
       firstJob = outcome
     })
     jobs.push(first)
+    if (deps.afterFirstJob) {
+      await first
+      deps.afterFirstJob(firstJob)
+    }
     let failed: unknown = null
     first.catch((error) => {
       failed = error

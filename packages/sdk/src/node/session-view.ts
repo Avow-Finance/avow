@@ -51,12 +51,27 @@ const WHO = {
   avow: "checked by Avow's API",
 }
 
+/** The tools whose result a code-written job line already says, so a brief view leaves it out. */
+const SAID_BY_JOB_LINES = new Set(['book_compute', 'submit_quote', 'cancel_compute'])
+
+/** A 32-character id, such as an order's, cut to its first six characters for a brief view. */
+const LONG_ID = /\b([0-9a-f]{6})[0-9a-f]{26}\b/g
+
+/**
+ * The rail view. A brief one, the default, draws each thing once, in the job lines code writes,
+ * and leaves the tool calls, the customer's words and the commitment receipts to the details and
+ * to the screen, which shows everything.
+ */
 export function railView(
   rail: Rail,
   look: Look,
-  options: { fixture: boolean; write: (text: string) => void },
+  options: { fixture: boolean; write: (text: string) => void; brief?: boolean },
 ): SessionView {
   const { fixture } = options
+  const brief = options.brief === true
+  const shown = (text: string) => (brief ? text.replace(LONG_ID, '$1') : text)
+  /** The last refusal drawn, so a brief view leaves out the tool result that says it again. */
+  let refusal: string | null = null
   const fixtureLine = (
     e: { verifiedBy: keyof typeof WHO; block: { number: bigint } },
     text: string,
@@ -66,14 +81,16 @@ export function railView(
     switch (e.type) {
       case 'said':
         // A model's words drew as they arrived. The customer's draw now, under its name.
-        if (e.speaker.kind === 'customer') rail.said(TEST_CUSTOMER_LABEL, e.text)
+        if (e.speaker.kind === 'customer' && !brief) rail.said(TEST_CUSTOMER_LABEL, e.text)
         return
       case 'tool_call':
-        rail.call(e.tool, e.summary)
+        if (!brief) rail.call(e.tool, e.summary)
         return
       case 'tool_result':
         if (e.recalled) return
-        rail.returned(e.ok, e.ok ? e.summary : `${e.summary} (${e.layer}, ${e.code})`)
+        if (brief && e.ok && SAID_BY_JOB_LINES.has(e.tool)) return
+        if (brief && !e.ok && refusal?.startsWith(e.summary)) return
+        rail.returned(e.ok, shown(e.ok ? e.summary : `${e.summary} (${e.layer}, ${e.code})`))
         return
       case 'fact':
         if (fixture) fixtureLine(e, e.text)
@@ -88,6 +105,7 @@ export function railView(
           fixtureLine(e, `${title} is ${e.state}, with ${formatUsd(e.amount)} reserved.`)
           return
         }
+        if (brief) return
         const at = JOB_STATES.indexOf(e.state as (typeof JOB_STATES)[number])
         rail.receipt({
           title,
@@ -103,7 +121,8 @@ export function railView(
         return
       }
       case 'refused':
-        rail.fail(refusalSentence(e))
+        refusal = refusalSentence(e)
+        rail.fail(shown(refusal))
         return
       case 'job_commitment_checked': {
         const sentence = e.acceptedIn === null ? RECOVERED_DECISIVE_SENTENCE : DECISIVE_SENTENCE
@@ -113,15 +132,15 @@ export function railView(
       }
       case 'job_commitment_refused':
       case 'job_customer_refused':
-        rail.fail(jobEventSentence(e))
+        rail.fail(shown(jobEventSentence(e)))
         return
       case 'job_work_started':
-        rail.done(jobEventSentence(e))
+        rail.done(shown(jobEventSentence(e)))
         rail.quiet(SIMULATED_LINE)
         return
       default:
         if (e.type.startsWith('job_'))
-          rail.done(jobEventSentence(e as Parameters<typeof jobEventSentence>[0]))
+          rail.done(shown(jobEventSentence(e as Parameters<typeof jobEventSentence>[0])))
     }
   }
 
@@ -140,7 +159,7 @@ export function railView(
         write: (piece) => {
           if (!piece) return
           speech ??= rail.speak(model)
-          speech.write(piece)
+          speech.write(shown(piece))
         },
         end: () => speech?.end(),
       }
