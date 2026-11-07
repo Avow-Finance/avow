@@ -106,7 +106,8 @@ describe('a first run', () => {
     expect(drawn).not.toContain('Type job to take the next order')
     // The refusal draws once from code, and the agent's words about it follow.
     expect(drawn.split('✗ This booking needs $640').length - 1).toBe(1)
-  })
+    // A first job and a second turn, each checked by service.ts in a child process of its own.
+  }, 30_000)
 })
 
 describe('npm run job', () => {
