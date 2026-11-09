@@ -472,6 +472,48 @@ describe('what a real terminal shows', () => {
     }
   }, 120_000)
 
+  it('draws a commitment as a card, its rows hanging beside their labels', () => {
+    const out = recorder()
+    const rail = new Rail(still(64), out.write)
+    const card = {
+      name: 'JOB',
+      from: "Avow's test customer",
+      to: 'your business',
+      state: 'accepted',
+      rows: [
+        { label: 'Promise', text: 'Pay $40 on delivery, with nothing prepaid, for fine-tuning' },
+        { label: 'Backed by', text: "$10 reserved in the customer's lock, for your business" },
+      ],
+    }
+    rail.card(card)
+    expect(out.text().split('\n')).toEqual([
+      '│',
+      "│  JOB  Avow's test customer → your business  ● accepted",
+      '│    Promise    Pay $40 on delivery, with nothing prepaid, for',
+      '│               fine-tuning',
+      "│    Backed by  $10 reserved in the customer's lock, for your",
+      '│               business',
+      '│',
+      '',
+    ])
+    // Too narrow for a label column, each row's text goes under its label, and no row runs over.
+    const narrow = recorder()
+    new Rail(still(30), narrow.write).card(card)
+    const rows = narrow.text().split('\n')
+    expect(rows.slice(0, 5)).toEqual([
+      '│',
+      "│  JOB  Avow's test customer →",
+      '│  your business',
+      '│  ● accepted',
+      '│    Promise',
+    ])
+    expect(Math.max(...rows.map((row) => displayWidth(row)))).toBeLessThanOrEqual(30)
+    // Text from outside can't draw the card's arrow or its dot.
+    const forged = recorder()
+    new Rail(still(64), forged.write).card({ ...card, to: 'x → y ● released', rows: [] })
+    expect(forged.text()).toContain("JOB  Avow's test customer → x  y  released  ● accepted")
+  })
+
   it('leaves a finished step as one line, its typed answers and wrapped lines taken back', async () => {
     const out = recorder()
     const rail = new Rail({ colors: 0, live: true, width: 40 }, out.write)

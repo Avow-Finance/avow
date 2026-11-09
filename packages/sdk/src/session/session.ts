@@ -65,10 +65,15 @@ export interface SessionDeps {
   /** The run number the next run takes. */
   nextRun: () => number
   /**
-   * Set on a guided first run. The session waits for the first job before it reads a line, then
-   * calls this with how the job ended, so the guide can say what's next before the first prompt.
+   * Set on a guided first run. The session waits for each job to end before it reads a line, and
+   * calls this with how the job ended, so the guide can say what's next before the next prompt.
    */
-  afterFirstJob?: (outcome: JobOutcome | null) => void
+  afterJob?: (outcome: JobOutcome | null) => void
+  /**
+   * Whether the next order is taken with the compute booking off, whatever service.ts says. A
+   * guided first run asks for that once, to show the customer refusing a quote that names none.
+   */
+  withoutCompute?: () => boolean
   /** Says what goes where in two lines, with the rest left to the details. */
   brief?: boolean
   pollMs?: number
@@ -146,7 +151,7 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
   })
   view.intro([
     ...whatGoesWhere(provider, deps.brief),
-    ...(deps.input && !deps.afterFirstJob
+    ...(deps.input && !deps.afterJob
       ? ['Type job to take the next order. Anything else you type goes to your agent.']
       : []),
   ])
@@ -159,12 +164,30 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
     return next
   }
 
-  /** Reads service.ts again, says what changed, and gives the note the model needs about it. */
+  /** What service.ts held when it was last read, apart from a switch a guide holds off. */
+  let inFile = policy
+  /**
+   * Reads service.ts again, says what changed, and gives the note the model needs about it. A
+   * guide can hold the compute switch off for an order, which is said as the guide's doing and
+   * never as a change to the file.
+   */
   async function refresh(): Promise<void> {
-    const next = await deps.readPolicy()
-    for (const line of policyChanges(policy, next)) view.quiet(line)
+    const read = await deps.readPolicy()
+    for (const line of policyChanges(inFile, read)) view.quiet(line)
+    inFile = read
+    const held = read.computeSwitch === 'on' && deps.withoutCompute?.() === true
+    const next: ServicePolicy = held ? { ...read, computeSwitch: 'off' } : read
     if (policy.computeSwitch === 'on' && next.computeSwitch === 'off') {
-      notes.push(`The developer ${SWITCH_OFF_PROMPT} in service.ts and still wants a quote.`)
+      if (held) {
+        view.quiet(
+          'For this order your agent books no compute, as bookCompute: false in service.ts would have it.',
+        )
+      }
+      notes.push(
+        `The developer ${SWITCH_OFF_PROMPT} ${held ? 'for this order' : 'in service.ts'} and still wants a quote.`,
+      )
+    } else if (policy.computeSwitch === 'off' && next.computeSwitch === 'on') {
+      notes.push('Compute booking is on again.')
     }
     policy = next
   }
@@ -308,9 +331,9 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       firstJob = outcome
     })
     jobs.push(first)
-    if (deps.afterFirstJob) {
+    if (deps.afterJob) {
       await first
-      deps.afterFirstJob(firstJob)
+      deps.afterJob(firstJob)
     }
     let failed: unknown = null
     first.catch((error) => {
@@ -327,7 +350,11 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       if (JOB_COMMAND.test(text)) {
         if (openOrder())
           view.quiet('An order is still waiting for its quote, so the session takes no other yet.')
-        else jobs.push(job(notes.splice(0)))
+        else {
+          const next = job(notes.splice(0))
+          jobs.push(next)
+          if (deps.afterJob) deps.afterJob(await next)
+        }
         continue
       }
       const run = deps.nextRun()

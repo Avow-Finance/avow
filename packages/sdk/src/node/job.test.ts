@@ -64,13 +64,13 @@ async function oneJob(bookCompute = true) {
 }
 
 describe('a first run', () => {
-  it('runs the job as step 3, then step 4 until a refusal, drawing each thing once', async () => {
+  it('shows the job as two commitments with nothing prepaid, then breaks the chain between them', async () => {
     let drawn = ''
     const write = (text: string) => {
       drawn += text
     }
     const look = lookOf({ isTTY: false, columns: 100 }, { NO_COLOR: '1' })
-    const typed = ['book 16 GPUs']
+    const typed = ['job']
     let run = 0
     const code = await runJobSession({
       mode: 'interactive',
@@ -91,22 +91,39 @@ describe('a first run', () => {
     })
     expect(code).toBe(0)
     const at = (text: string) => drawn.indexOf(text)
-    expect(at('3/4  A paid job')).toBeGreaterThan(-1)
-    const decisive = DECISIVE_SENTENCE.split(' and ')[0] as string
-    expect(at(decisive)).toBeGreaterThan(at('3/4  A paid job'))
-    expect(at('✓  3/4  The job is done and paid.')).toBeGreaterThan(at(decisive))
-    expect(at('4/4  Try to break it')).toBeGreaterThan(at('✓  3/4'))
-    expect(at("4/4  Refused, and no money moved. Your agent's limits held.")).toBeGreaterThan(
-      at('4/4  Try to break it'),
+    const inOrder = (...texts: string[]) => {
+      for (const [i, text] of texts.entries()) {
+        expect(at(text), text).toBeGreaterThan(i === 0 ? -1 : at(texts[i - 1] as string))
+      }
+    }
+    // Step 3 draws the compute booking's card, then the job's, then says nothing was prepaid.
+    inOrder(
+      '3/4  Two commitments, nothing prepaid',
+      'COMPUTE  Your business → avow-demo-gpu  ● accepted in the fixture world',
+      "JOB  Avow's test customer → your business  ● accepted in the fixture world",
+      'Pay $40 on delivery, with nothing prepaid, for fine-tuning due by',
+      "$10 reserved in the customer's lock, for your business",
+      'Your compute commitment, which the customer says it checked at block',
+      DECISIVE_SENTENCE.split(' and ')[0] as string,
+      '✓  3/4  Delivered, and paid $40 on delivery with nothing prepaid. The $10 and $40 set aside never',
     )
-    expect(at("You're set up.")).toBeGreaterThan(at('4/4  Refused'))
+    // Step 4 takes one more order with the compute booking held off, and the customer refuses it.
+    inOrder(
+      '4/4  Break the chain',
+      'For this order your agent books no compute',
+      'Your code quoted the job without naming any compute booking.',
+      'The customer refused your quote.',
+      '✓  4/4  The customer refused. Its commitment depends on your compute commitment',
+      "You're set up.",
+    )
+    // The switch in service.ts never changed, so nothing says it did.
+    expect(drawn).not.toContain('service.ts changed')
     // A brief view leaves the tool calls and the receipts to the details and the screen.
     expect(drawn).not.toContain('↳ read_order')
+    expect(drawn).not.toContain('In the fixture world at block')
     expect(drawn).not.toContain('#verify=')
     expect(drawn).not.toContain('Type job to take the next order')
-    // The refusal draws once from code, and the agent's words about it follow.
-    expect(drawn.split('✗ This booking needs $640').length - 1).toBe(1)
-    // A first job and a second turn, each checked by service.ts in a child process of its own.
+    // A first job and a second order, each checked by service.ts in a child process of its own.
   }, 30_000)
 })
 

@@ -1,4 +1,10 @@
-import { type AvowDomain, formatUsd, mandateHash, type SandboxDeployment } from '@avow-finance/spec'
+import {
+  type AvowDomain,
+  formatUsd,
+  mandateHash,
+  REFUSED_BY,
+  type SandboxDeployment,
+} from '@avow-finance/spec'
 import { readAgentKey, readBacking } from '@avow-finance/verifier'
 import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
@@ -12,7 +18,9 @@ import {
   dailyLimitOf,
   platformSession,
   platformStore,
+  Refusal,
   type SandboxSession,
+  sandboxAgent,
 } from './agent.js'
 import { createSandboxBusiness, type SandboxBusinessStep, type SandboxClient } from './business.js'
 import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
@@ -574,12 +582,47 @@ export async function prepareSandboxBusiness(
   const announced = await postAuthority(root, next, current?.capOpenReserves ?? null)
   opened = null
   if (fresh) {
+    // The new key's first act is a booking a dollar past its limit, so the step ends on proof.
+    log('Trying a booking past the limit', 'wait')
+    const tried = await limitTry(authority, async (reserve) => {
+      const agent = await sandboxAgent({
+        store,
+        deployment,
+        session: null,
+        log: () => {},
+        fetch: send,
+      })
+      await agent.book({
+        supplier: ids[0] as string,
+        resource: { gpu: 'H100', count: 1, hours: 1 },
+        reserve,
+      })
+    })
     log(
-      `Your agent can commit up to ${formatUsd(authority)} at once and move ${formatUsd(dailyLimit)} a day`,
+      `Your agent can hold ${formatUsd(authority)} at once and move ${formatUsd(dailyLimit)} a day.${tried ? ` ${tried}` : ''}`,
       'step_done',
     )
   }
   return prepared(next, true, announced)
+}
+
+/**
+ * Has the agent try to hold a dollar more than its business just allowed, and says who refused
+ * it. A first setup doesn't stop for a try that couldn't run, such as one whose supplier didn't
+ * answer, so that gives null and the step ends without it.
+ */
+export async function limitTry(
+  authority: bigint,
+  book: (reserve: number) => Promise<unknown>,
+): Promise<string | null> {
+  const over = authority + 1_000_000n
+  try {
+    await book(toDollars(over))
+  } catch (error) {
+    if (!(error instanceof Refusal)) return null
+    return `It asked to hold ${formatUsd(over)}, and ${REFUSED_BY[error.layer]} refused, so no money moved.`
+  }
+  return `It asked to hold ${formatUsd(over)} and nothing refused it, which should never happen, so tell Avow.`
 }
 
 /** Lists what the lock still holds under an earlier authority, which stays until its release. */

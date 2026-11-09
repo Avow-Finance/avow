@@ -168,7 +168,7 @@ function decide(turns: readonly ChatTurn[]): { text: string; calls: ModelToolCal
     }
     if (listing.limits.computeSwitch === 'off') {
       return {
-        text: 'The compute switch in service.ts is off, so I book nothing and quote without a booking, as you asked. The customer requires a compute booking, so I expect it to refuse.',
+        text: 'Compute booking is off for this order, so I book nothing and quote without a booking, as you asked. The customer requires a compute booking, so I expect it to refuse.',
         calls: [call('submit_quote')],
       }
     }

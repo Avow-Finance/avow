@@ -20,6 +20,7 @@ export {
   wrap,
 } from './look.js'
 export {
+  type Card,
   clean,
   type Evidence,
   type Fact,

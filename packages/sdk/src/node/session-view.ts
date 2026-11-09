@@ -1,5 +1,8 @@
 import {
+  type CardClock,
+  type CommitmentCard,
   type CommitmentReference,
+  commitmentCards,
   DECISIVE_SENTENCE,
   formatUsd,
   jobEventSentence,
@@ -51,24 +54,57 @@ const WHO = {
   avow: "checked by Avow's API",
 }
 
+/** A moment as the terminal says it, in the clock of the machine it runs on. */
+export const localClock: CardClock = (seconds) =>
+  new Date(Number(seconds) * 1000).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+
+const CARD_NAMES: Record<CommitmentCard['role'], string> = { job: 'JOB', compute: 'COMPUTE' }
+
 /** The tools whose result a code-written job line already says, so a brief view leaves it out. */
-const SAID_BY_JOB_LINES = new Set(['book_compute', 'submit_quote', 'cancel_compute'])
+const SAID_BY_JOB_LINES = new Set(['read_order', 'book_compute', 'submit_quote', 'cancel_compute'])
 
 /** A 32-character id, such as an order's, cut to its first six characters for a brief view. */
 const LONG_ID = /\b([0-9a-f]{6})[0-9a-f]{26}\b/g
 
 /**
- * The rail view. A brief one, the default, draws each thing once, in the job lines code writes,
- * and leaves the tool calls, the customer's words and the commitment receipts to the details and
- * to the screen, which shows everything.
+ * The rail view. Each commitment draws as a card once it's accepted, the compute booking when its
+ * supplier accepted it and the job when the business's own code did. A brief view, the default,
+ * draws each thing once beside the cards, in the job lines code writes, and leaves the tool calls,
+ * the customer's words and the commitment receipts to the details and to the screen, which shows
+ * everything.
  */
 export function railView(
   rail: Rail,
   look: Look,
-  options: { fixture: boolean; write: (text: string) => void; brief?: boolean },
+  options: {
+    fixture: boolean
+    write: (text: string) => void
+    brief?: boolean
+    /** How a card says a moment, the machine's own clock by default. */
+    clock?: CardClock
+  },
 ): SessionView {
   const { fixture } = options
   const brief = options.brief === true
+  const clock = options.clock ?? localClock
+  /** Every event so far, which a card's rows are read from. */
+  const seen: SessionEvent[] = []
+  /** Draws the card of an order's commitment, saying so when it's the fixture world's. */
+  const card = (orderId: string, role: CommitmentCard['role']) => {
+    const drawn = commitmentCards(seen, orderId, clock).find((c) => c.role === role)
+    if (!drawn) return
+    rail.card({
+      name: CARD_NAMES[role],
+      from: drawn.from,
+      to: drawn.to,
+      state: fixture ? `${drawn.state} in the fixture world` : drawn.state,
+      rows: drawn.rows,
+    })
+  }
   const shown = (text: string) => (brief ? text.replace(LONG_ID, '$1') : text)
   /** The last refusal drawn, so a brief view leaves out the tool result that says it again. */
   let refusal: string | null = null
@@ -78,6 +114,7 @@ export function railView(
   ) => rail.line(`In the fixture world at block ${e.block.number}, ${WHO[e.verifiedBy]}. ${text}`)
 
   function draw(e: SessionEvent): void {
+    seen.push(e)
     switch (e.type) {
       case 'said':
         // A model's words drew as they arrived. The customer's draw now, under its name.
@@ -93,6 +130,8 @@ export function railView(
         rail.returned(e.ok, shown(e.ok ? e.summary : `${e.summary} (${e.layer}, ${e.code})`))
         return
       case 'fact':
+        // A brief view leaves each check's own line to the details, since the cards carry them.
+        if (brief) return
         if (fixture) fixtureLine(e, e.text)
         else rail.fact({ ...evidenceOf(e, e.reference), text: e.text })
         return
@@ -101,11 +140,11 @@ export function railView(
           e.role === 'job'
             ? "The job: the customer's commitment to your business"
             : 'Your compute booking'
+        if (brief) return
         if (fixture) {
           fixtureLine(e, `${title} is ${e.state}, with ${formatUsd(e.amount)} reserved.`)
           return
         }
-        if (brief) return
         const at = JOB_STATES.indexOf(e.state as (typeof JOB_STATES)[number])
         rail.receipt({
           title,
@@ -124,8 +163,22 @@ export function railView(
         refusal = refusalSentence(e)
         rail.fail(shown(refusal))
         return
+      case 'job_customer_verifying':
+        // The customer's answer follows at once, so a brief view waits for it.
+        if (!brief) rail.done(jobEventSentence(e))
+        return
+      case 'job_compute_secured':
+        // The card says what the sentence does, so a brief view draws the card alone.
+        if (!brief) rail.done(jobEventSentence(e))
+        card(e.orderId, 'compute')
+        return
       case 'job_commitment_checked': {
         const sentence = e.acceptedIn === null ? RECOVERED_DECISIVE_SENTENCE : DECISIVE_SENTENCE
+        card(e.orderId, 'job')
+        if (brief) {
+          rail.done(sentence)
+          return
+        }
         rail.settle()
         options.write(`${setApart(look, [sentence])}\n`)
         return

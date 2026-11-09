@@ -147,6 +147,23 @@ export interface Receipt {
 }
 
 /**
+ * A commitment as a card: who promises whom, where it stands, and a few rows that each pair a
+ * label with what it says. The rail draws the arrow and the state's dot itself, so no text a
+ * model or a supplier wrote can draw a card's furniture.
+ */
+export interface Card {
+  /** What the card is, in a word or two, such as JOB. */
+  readonly name: string
+  /** Who made the promise. */
+  readonly from: string
+  /** Who it's made to. */
+  readonly to: string
+  /** Where the commitment stands, such as accepted. */
+  readonly state: string
+  readonly rows: readonly { readonly label: string; readonly text: string }[]
+}
+
+/**
  * A small table of recorded results, such as the offers a model compared, with the row it chose
  * marked and quiet notes under it, such as the limits that applied then. Cells are plain text.
  */
@@ -525,6 +542,46 @@ export class Rail {
       ].join('\n'),
     )
     this.#spaced = false
+  }
+
+  /**
+   * A commitment as a card, set apart from the lines around it. Its name is bold, its state takes
+   * the colour of a tick, and each row's text hangs under itself beside its label.
+   */
+  card(card: Card): void {
+    const room = Math.max(1, this.#look.width - 3)
+    const name = clean(card.name)
+    const head = `${name}  ${clean(card.from)} → ${clean(card.to)}`
+    const state = `● ${clean(card.state)}`
+    const title =
+      displayWidth(head) + 2 + displayWidth(state) <= room
+        ? [`${this.#s.bold(name)}${head.slice(name.length)}  ${this.#s.ok(state)}`]
+        : [
+            ...painted(head, wrap(head, room), name.length, this.#s.bold, plain),
+            ...wrap(state, room).map((part) => this.#s.ok(part)),
+          ]
+    const labels = card.rows.map((row) => clean(row.label))
+    const column = Math.max(0, ...labels.map((label) => displayWidth(label))) + 2
+    // A terminal too narrow for the label column gives each row's text the whole width.
+    const beside = room - 2 - column >= 16
+    const rows = card.rows.flatMap((row, i) => {
+      const label = labels[i] as string
+      if (!beside) {
+        return [this.#s.dim(label), ...wrap(clean(row.text), room - 4).map((part) => `  ${part}`)]
+      }
+      const pad = ' '.repeat(column - displayWidth(label))
+      return wrap(clean(row.text), room - 2 - column).map(
+        (part, at) => `${at === 0 ? `${this.#s.dim(label)}${pad}` : ' '.repeat(column)}${part}`,
+      )
+    })
+    this.#space()
+    this.#emit(
+      [...title, ...rows.map((row) => `  ${row}`)]
+        .map((line) => `${this.prefix}${line}`)
+        .join('\n'),
+    )
+    this.#spaced = false
+    this.#space()
   }
 
   /** A commitment as a compact receipt: what it is, its states so far, and where to check it. */
