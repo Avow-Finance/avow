@@ -28,6 +28,7 @@ export const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 
 const COPIED: Record<string, string> = {
   'agent.ts': 'agent.ts',
   'service.ts': 'service.ts',
+  'bypass.ts': 'bypass.ts',
   'README.md': 'README.md',
   'tsconfig.json': 'tsconfig.json',
   gitignore: '.gitignore',

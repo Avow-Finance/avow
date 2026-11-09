@@ -6,12 +6,14 @@
     "start": "avow-sandbox start",
     "job": "avow-sandbox job",
     "fresh": "avow-sandbox fresh",
+    "bypass": "tsx bypass.ts",
     "mcp:claude-code": "avow-sandbox-mcp add claude-code",
     "mcp:claude-desktop": "avow-sandbox-mcp add claude-desktop"
   },
   "dependencies": {
     "@avow-finance/sdk": "https://try.testnet.avow.finance/avow-finance-sdk.tgz",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "viem": "2.57.11"
   },
   "engines": {
     "node": ">=20"
