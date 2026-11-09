@@ -1,8 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { createAgentFolder, TEMPLATE_FILES } from './create.js'
 import { createTarball, sdkTarball, type TarEntry, tarball } from './pack.js'
 
 const STARTER = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -72,6 +74,26 @@ describe('the host tarballs', () => {
     expect(manifest(files, 'package/template/package.json').dependencies['@avow-finance/sdk']).toBe(
       'http://localhost:8080/avow-finance-sdk.tgz',
     )
+  })
+
+  it('carries every template file, so a folder made from the tarball is whole', () => {
+    const files = untar(createTarball('http://localhost:8080/'))
+    for (const f of TEMPLATE_FILES) expect(files.has(`package/template/${f}`), f).toBe(true)
+    // The folder is made from the unpacked tarball, as npx runs it, not from this repo's template.
+    const dir = mkdtempSync(join(tmpdir(), 'avow-pack-'))
+    try {
+      for (const [path, data] of files) {
+        if (!path.startsWith('package/template/')) continue
+        mkdirSync(dirname(join(dir, path)), { recursive: true })
+        writeFileSync(join(dir, path), data)
+      }
+      const made = createAgentFolder(join(dir, 'my-agent'), join(dir, 'package', 'template'))
+      for (const f of ['agent.ts', 'service.ts', 'business.ts', 'package.json', '.gitignore']) {
+        expect(existsSync(join(made, f)), f).toBe(true)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('packs the SDK with the spec, the verifier and the terminal inside, every package private', () => {
