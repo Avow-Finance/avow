@@ -185,6 +185,14 @@ export interface JobCustomerCancelled extends JobEventBase {
 }
 
 /**
+ * How long a business waits after a customer's cancellation before it reports the charge, in
+ * seconds. Avow confirms a late-cancellation charge from its own record of the cancellation, and
+ * only when that record shows the cancellation clearly before the report, on Avow's clock and on
+ * the chain's. A report filed sooner goes to a ruling.
+ */
+export const REPORT_AFTER_CANCELLATION = 45n
+
+/**
  * The business reported a charge on the customer's reserve, signed by its supplier signing key.
  * Nothing has moved yet. Avow answers the report from its own records before the report's deadline.
  */

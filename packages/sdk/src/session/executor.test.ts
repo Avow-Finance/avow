@@ -243,6 +243,39 @@ describe('the executor', () => {
       expect(world.now()).toBeGreaterThanOrEqual(1_800_000_000n + 600n)
     })
 
+    it('waits before it reports, since a report filed at once is referred', async () => {
+      const { world, events } = await cancelled()
+      const at = (type: SessionEvent['type']) => events.findIndex((e) => e.type === type)
+      const said = events[at('job_customer_cancelled')]
+      if (said?.type !== 'job_customer_cancelled') throw new Error('the customer cancelled')
+      // The executor waited, so the report sits well after the cancellation and Avow confirmed it.
+      expect(world.now() - said.cancelledAt).toBeGreaterThanOrEqual(45n)
+      expect(at('job_charge_confirmed')).toBeGreaterThan(at('job_charge_reported'))
+
+      // The same cancellation reported at once is referred, since the two clocks could disagree.
+      const hasty = fixtureWorld()
+      const order = await hasty.pullOrder('cancels_late')
+      const firm = (await hasty.offers(order)).offers.find((o) => o.id === 'h100-firm')
+      if (!firm) throw new Error('the demo lists a firm offer')
+      const booked = await hasty.book(firm, 1)
+      if (!booked.ok) throw new Error(booked.code)
+      const sent = await hasty.quote(order, { ...booked.booking, id: 'b1' })
+      if (!sent.ok) throw new Error(sent.code)
+      // The customer verifies and reserves on its second read, and the business accepts.
+      await hasty.orderState(order.orderId)
+      await hasty.orderState(order.orderId)
+      expect((await hasty.accept(order, sent.quote)).ok).toBe(true)
+      let state = await hasty.orderState(order.orderId)
+      while (state.status !== 'cancelled') {
+        await hasty.sleep(5000)
+        state = await hasty.orderState(order.orderId)
+      }
+      const report = await hasty.reportCharge(order, 'lateCancellation')
+      if (!report.ok) throw new Error(report.code)
+      await hasty.sleep(10_000)
+      expect(await hasty.charge(order, report)).toEqual({ state: 'paused', cause: 'referred' })
+    })
+
     it('stops following a charge when the session ends', async () => {
       const { world, executor, events } = await cancelled('pays')
       const before = world.now()

@@ -10,6 +10,7 @@ import {
   type OrderState,
   type PinnedBlock,
   type QuoteRequest,
+  REPORT_AFTER_CANCELLATION,
   type ReasonCode,
   type SessionEvent,
   SIMULATED_RESULT_LABEL,
@@ -369,6 +370,17 @@ export class JobExecutor {
       reference: job,
       cancelledAt: cancelled.cancellation.cancelledAt,
     })
+    // Avow confirms only a cancellation its record shows clearly before the report, so the report
+    // waits. One filed at once would go to a ruling.
+    const reportFrom = cancelled.cancellation.cancelledAt + REPORT_AFTER_CANCELLATION
+    if (world.now() < reportFrom) {
+      this.deps.note(
+        `Your code waits ${REPORT_AFTER_CANCELLATION} seconds before it reports the charge, since Avow confirms only a cancellation its record shows clearly before the report.`,
+      )
+      while (world.now() < reportFrom && !this.#stopped) {
+        await world.sleep(Math.min(Number(reportFrom - world.now()) * 1000, this.#pollMs))
+      }
+    }
     busy('the report of the cancellation charge')
     let reported: Awaited<ReturnType<JobWorld['reportCharge']>>
     try {

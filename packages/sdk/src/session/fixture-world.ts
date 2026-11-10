@@ -85,6 +85,16 @@ const TOKEN: RailToken = {
 export const FIXTURE_START = 1_800_000_000n
 const LEAD = 300n
 
+/**
+ * When Avow records a job's cancellation: from its start, when free cancellation ends, until its
+ * no-show charge can be reported.
+ */
+function cancellationWindow(offer: JobOffer): { opens: bigint; closes: bigint } {
+  const r = offer.terms.remedies
+  const noShow = r.charges.find((c) => c.kind === 'noShow')
+  return { opens: r.freeCancelBy, closes: noShow?.earliest ?? r.chargeDeadline }
+}
+
 const key = (lock: Address, commitmentId: Hex, side: Side) =>
   `${lock.toLowerCase()}:${commitmentId.toLowerCase()}:${side}`
 const bytes32 = (label: string) => keccak256(stringToHex(label))
@@ -124,8 +134,12 @@ export interface FixtureOptions {
 export const FIXTURE_CONFIRM_WINDOW = 600n
 /** How long after a report the fixture world's Avow answers it, in seconds. */
 const AVOW_ANSWERS_AFTER = 6n
-/** How long after its start a job asked to cancel late is cancelled, in seconds. */
-const CANCELS_AFTER = 10n
+/**
+ * How far a cancellation has to sit from the report and from each end of the time Avow records
+ * one in, in seconds, before the fixture world's Avow confirms a charge from it. Closer than that,
+ * Avow's clock and the chain's could disagree about the order, so the report is referred.
+ */
+const AVOW_CLOCK_MARGIN = 30n
 
 export interface FixtureWorld extends JobWorld {
   readonly kind: 'fixture'
@@ -553,12 +567,10 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
       o.reads++
       if (o.status === 'verifying' && o.reads > 1) await verify(o)
       // A customer asked to cancel late does, shortly after the start and before the no-show charge.
-      const s = o.offer.terms.subject
-      if (
-        o.status === 'accepted' &&
-        o.scenario === 'cancels_late' &&
-        now >= s.startsAt + CANCELS_AFTER
-      ) {
+      // It cancels halfway through the time Avow records a cancellation in, clear of both ends.
+      const window = cancellationWindow(o.offer)
+      const cancelsAt = window.opens + (window.closes - window.opens) / 2n
+      if (o.status === 'accepted' && o.scenario === 'cancels_late' && now >= cancelsAt) {
         o.status = 'cancelled'
         o.cancelled = { at: now, recorded: options.charge !== 'referred' }
         o.said.push({
@@ -750,8 +762,17 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
       if (r && reportedAt !== undefined) {
         const answerDue = now >= reportedAt + AVOW_ANSWERS_AFTER
         if (r.state === 'accepted' && r.hasReport && how !== 'unanswered' && answerDue) {
-          // Avow confirms only from its own record of the customer's signed cancellation.
-          r = o?.cancelled?.recorded
+          // Avow confirms only from its own record of the customer's signed cancellation, and only
+          // one clear of the report and of both ends of the time it records cancellations in.
+          const at = o?.cancelled?.recorded ? o.cancelled.at : null
+          const window = o ? cancellationWindow(o.offer) : null
+          const clear =
+            at !== null &&
+            window !== null &&
+            at <= reportedAt - AVOW_CLOCK_MARGIN &&
+            at >= window.opens + AVOW_CLOCK_MARGIN &&
+            at <= window.closes - AVOW_CLOCK_MARGIN
+          r = clear
             ? { ...r, state: 'charge_pending', chargeStart: now, held: r.reportAmount }
             : { ...r, state: 'paused', pausedAt: now }
         } else if (
