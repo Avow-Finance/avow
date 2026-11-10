@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src", "template/agent.ts", "template/business.ts"]
+  "include": ["src", "template/agent.ts", "template/business.ts", "template/bypass.ts"]
 }

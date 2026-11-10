@@ -181,6 +181,9 @@ export async function runJobSession(o: {
                 "You're set up. Ask your agent why it chose that compute, or set bookCompute to false in service.ts and type job for the next order.",
               )
               rail.quiet(
+                "npm run bypass signs with your agent's key without Avow's SDK, and the chain reverts what your mandate forbids.",
+              )
+              rail.quiet(
                 'npm run mcp:claude-code lets Claude drive your agent too. Ctrl+C ends the session.',
               )
               if (chosen.fallback) rail.quiet(chosen.fallback.help[0] as string)

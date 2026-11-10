@@ -88,7 +88,14 @@ describe('the host tarballs', () => {
         writeFileSync(join(dir, path), data)
       }
       const made = createAgentFolder(join(dir, 'my-agent'), join(dir, 'package', 'template'))
-      for (const f of ['agent.ts', 'service.ts', 'business.ts', 'package.json', '.gitignore']) {
+      for (const f of [
+        'agent.ts',
+        'service.ts',
+        'bypass.ts',
+        'business.ts',
+        'package.json',
+        '.gitignore',
+      ]) {
         expect(existsSync(join(made, f)), f).toBe(true)
       }
     } finally {

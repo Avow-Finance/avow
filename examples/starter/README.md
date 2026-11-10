@@ -1,6 +1,6 @@
 # Starter
 
-One command makes a folder holding `business.ts`, `agent.ts`, `service.ts` and a README, then sets up its business in the same terminal, giving its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
+One command makes a folder holding `business.ts`, `agent.ts`, `service.ts`, `bypass.ts` and a README, then sets up its business in the same terminal, giving its agent $500 of authority on Tempo's Moderato testnet. Developers leave with a small example they can edit and lift into their own agent. [template](template) holds what the folder starts with.
 
 ```sh
 npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent

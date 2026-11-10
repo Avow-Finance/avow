@@ -26,6 +26,8 @@ describe('create-avow-agent', () => {
     expect(read('business.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'business.ts'), 'utf8'))
     expect(read('agent.ts')).toContain("from '@avow-finance/sdk/agent'")
     expect(read('service.ts')).toContain("from '@avow-finance/sdk/service'")
+    // The bypass script proves the chain holds the key, so it takes nothing of Avow's.
+    expect(read('bypass.ts')).not.toContain('@avow-finance')
     expect(read('.gitignore')).toMatch(/^\.avow\/$/m)
     expect(read('.gitignore')).toMatch(/^\.avow-\*\/$/m)
     const manifest = JSON.parse(read('package.json'))
@@ -34,6 +36,7 @@ describe('create-avow-agent', () => {
       start: 'avow-sandbox start',
       job: 'avow-sandbox job',
       fresh: 'avow-sandbox fresh',
+      bypass: 'tsx bypass.ts',
       'mcp:claude-code': 'avow-sandbox-mcp add claude-code',
       'mcp:claude-desktop': 'avow-sandbox-mcp add claude-desktop',
     })
