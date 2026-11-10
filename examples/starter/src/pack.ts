@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
+import { TEMPLATE_FILES } from './create.js'
 
 /**
  * Builds what the sandbox's host serves for the starter. `create-avow-agent.tgz` is the command
@@ -243,7 +244,7 @@ export function createTarball(host: string = DEFAULT_HOST): Buffer {
     { path: 'package.json', data: json(manifest) },
     { path: 'dist/bin.js', data: file('dist/bin.js'), mode: 0o755 },
     { path: 'dist/create.js', data: file('dist/create.js') },
-    ...['agent.ts', 'business.ts', 'README.md', 'tsconfig.json', 'gitignore'].map((f) => ({
+    ...TEMPLATE_FILES.filter((f) => f !== 'package.json').map((f) => ({
       path: `template/${f}`,
       data: file(`template/${f}`),
     })),
