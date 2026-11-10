@@ -101,7 +101,8 @@ export function railView(
       name: CARD_NAMES[role],
       from: drawn.from,
       to: drawn.to,
-      state: fixture ? `${drawn.state} in the fixture world` : drawn.state,
+      state: fixture ? `${drawn.promise} in the fixture world` : drawn.promise,
+      ...(drawn.promise === 'broken' ? { broken: true } : {}),
       rows: drawn.rows,
     })
   }
@@ -186,6 +187,13 @@ export function railView(
       case 'job_commitment_refused':
       case 'job_customer_refused':
         rail.fail(shown(jobEventSentence(e)))
+        return
+      case 'job_charge_confirmed':
+      case 'job_charge_paused':
+      case 'job_charge_paid':
+        // The card says the promise is broken and where the money stands, each on its own row.
+        rail.done(shown(jobEventSentence(e)))
+        card(e.orderId, 'job')
         return
       case 'job_work_started':
         rail.done(shown(jobEventSentence(e)))

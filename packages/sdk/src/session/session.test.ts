@@ -141,11 +141,63 @@ describe('the first job, scripted against the fixture world', () => {
 })
 
 describe('what the developer types', () => {
-  it('takes the next order only on the job command, and sends everything else to the agent', async () => {
-    const { JOB_COMMAND } = await import('./session.js')
-    for (const line of ['job', '/job', 'JOB']) expect(JOB_COMMAND.test(line), line).toBe(true)
-    for (const line of ["Don't quote yet", 'what does a quote mean?', 'take the next job']) {
-      expect(JOB_COMMAND.test(line), line).toBe(false)
+  it("goes on when the customer won't offer a job it cancels, and takes the next plain order", async () => {
+    const real = fixtureWorld()
+    // A customer whose agent has no authority to cancel refuses the scenario and offers plain jobs.
+    const world: FixtureWorld = {
+      ...real,
+      pullOrder: async (scenario) => {
+        if (scenario) throw new Error("The test customer's agent has no authority to cancel")
+        return real.pullOrder()
+      },
     }
+    const events: SessionEvent[] = []
+    const { lines, view } = recordingView()
+    const svc = service()
+    const typed = ['job cancels', 'job']
+    const ended: unknown[] = []
+    const whys: string[] = []
+    let run = 0
+    const result = await runSession({
+      world,
+      provider: scriptedProvider(),
+      readPolicy: async () => svc.policy,
+      checkBeforeWork: async (job) => {
+        const chain = await world.chainFor(job)
+        if (chain.kind !== 'snapshot') throw new Error('the fixture world hands over a snapshot')
+        return svc.checkBeforeWork(job, serviceChecks(snapshotChain(chain.snapshot), world.now))
+      },
+      emit: (e) => events.push(e),
+      view,
+      input: { inFlight: () => {}, next: async () => typed.shift() ?? null },
+      afterJob: (outcome) => {
+        ended.push(outcome?.kind)
+        if (outcome?.kind === 'stopped') whys.push(outcome.why)
+      },
+      nextRun: () => ++run,
+      pollMs: 1000,
+      workMs: 5000,
+    })
+    expect(result.stopped).toBeNull()
+    expect(ended).toEqual(['paid', 'stopped', 'paid'])
+    expect(whys).toEqual([
+      "Avow's test customer didn't offer a job it cancels. The test customer's agent has no authority to cancel",
+    ])
+    // The guide that asked says how the job ended, so the session doesn't say it twice.
+    expect(lines.join('\n')).not.toContain("didn't offer a job it cancels")
+    expect(types(events).filter((t) => t === 'job_order_received')).toHaveLength(2)
+  })
+
+  it('takes the next order only on the job command, and sends everything else to the agent', async () => {
+    const { JOB_COMMAND, scenarioOf } = await import('./session.js')
+    for (const line of ['job', '/job', 'JOB', 'job cancels']) {
+      expect(JOB_COMMAND.test(line), line).toBe(true)
+    }
+    const others = ["Don't quote yet", 'what does a quote mean?', 'take the next job', 'job late']
+    for (const line of others) expect(JOB_COMMAND.test(line), line).toBe(false)
+    // Only `job cancels` asks the customer to cancel, and a plain job runs to payment.
+    expect(scenarioOf('job cancels')).toBe('cancels_late')
+    expect(scenarioOf(' /JOB  cancels ')).toBe('cancels_late')
+    expect(scenarioOf('job')).toBeNull()
   })
 })

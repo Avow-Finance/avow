@@ -1,10 +1,13 @@
 import type {
   BuyerSideReference,
+  ChargeKind,
+  ChargePauseCause,
   ComputeOffer,
   ComputeOffers,
   DeliveryResult,
   GpuReservationTerms,
   JobOffer,
+  OrderScenario,
   OrderState,
   PinnedBlock,
   QuoteRequest,
@@ -37,8 +40,11 @@ export interface JobWorld {
   readonly supplier: ReservedJob['supplier']
   /** The token the business's and the customer's locks hold. */
   readonly token: ReservedJob['token']
-  /** Asks the test customer for a new order. */
-  pullOrder(): Promise<JobOffer>
+  /**
+   * Asks the test customer for a new order. With a scenario, the customer plays it out, as when it
+   * cancels the job after its start.
+   */
+  pullOrder(scenario?: OrderScenario): Promise<JobOffer>
   /** The compute supplier's offers for an order's window. */
   offers(order: JobOffer): Promise<ComputeOffers>
   /**
@@ -66,6 +72,14 @@ export interface JobWorld {
   landed(hashes: readonly Hex[]): Promise<{ transactionHash: Hex; blockNumber: bigint } | null>
   /** Reports delivery, handing over the result. */
   deliver(orderId: string, result: DeliveryResult): Promise<void>
+  /**
+   * Reports a charge of one kind on the customer's reserve for an order, for the most the job's
+   * terms allow, signed by the supplier signing key. The verifier builds the report only when the
+   * lock would take it. A send whose outcome is unknown throws.
+   */
+  reportCharge(order: JobOffer, kind: ChargeKind): Promise<ChargeReport>
+  /** Where a report stands on the customer's lock now. */
+  charge(order: JobOffer, report: ReportedCharge): Promise<ChargeStanding>
   /**
    * Cancels a booking on the lock, which needs the business's root key, or says why it can't here.
    */
@@ -121,6 +135,34 @@ export type BookOutcome =
 export type QuoteOutcome =
   | { ok: true; quote: QuoteRequest }
   | { ok: false; code: ReasonCode; layer: 'customer' | 'service' }
+
+/** A report the customer's lock took. */
+export interface ReportedCharge {
+  /** The charge reported, in micros. */
+  amount: bigint
+  /** Which of the commitment's reports it is, 1 or 2. */
+  reportNumber: number
+  transactionHash: Hex
+  /** The time of the block the report landed in, which Avow's deadline to answer counts from. */
+  reportedAt: bigint
+}
+
+export type ChargeReport =
+  | ({ ok: true } & ReportedCharge)
+  | { ok: false; code: ReasonCode; layer: 'service' | 'lock' }
+
+/**
+ * Where a reported charge stands. `waiting` is a report Avow hasn't answered. `confirmed` is one
+ * Avow confirmed, which the customer can contest until `contestableUntil` and which is payable
+ * then. `paused` waits for a ruling. `paid` reached the business, and `ended` is a report withdrawn
+ * or a commitment that ended another way.
+ */
+export type ChargeStanding =
+  | { state: 'waiting' }
+  | { state: 'confirmed'; contestableUntil: bigint }
+  | { state: 'paused'; cause: ChargePauseCause }
+  | { state: 'paid' }
+  | { state: 'ended' }
 
 export type CancelOutcome =
   | { ok: true; transactionHash: Hex }

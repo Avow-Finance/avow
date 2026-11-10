@@ -153,6 +153,152 @@ describe('the executor', () => {
     expect(verdicts).toHaveLength(1)
     expect(world.acceptances).toHaveLength(1)
   })
+
+  describe('a customer that cancels after work starts', () => {
+    /** Follows an order the customer cancels late, in a world that treats the charge one way. */
+    async function cancelled(charge?: 'pays' | 'contested' | 'referred' | 'unanswered') {
+      const world = fixtureWorld(charge ? { charge } : {})
+      const { executor, events } = executorOver(world)
+      const order = await world.pullOrder('cancels_late')
+      const listing = await world.offers(order)
+      const firm = listing.offers.find((o) => o.id === 'h100-firm')
+      if (!firm) throw new Error('the demo lists a firm offer')
+      const booked = await world.book(firm, 1)
+      if (!booked.ok) throw new Error(booked.code)
+      const sent = await world.quote(order, { ...booked.booking, id: 'b1' })
+      if (!sent.ok) throw new Error(sent.code)
+      const outcome = await executor.follow({
+        run: 1,
+        order,
+        quote: sent.quote,
+        scenario: 'cancels_late',
+      })
+      return { world, executor, events, order, outcome }
+    }
+    const charges = (events: SessionEvent[]) =>
+      events.map((e) => e.type).filter((t) => t.startsWith('job_charge') || t.includes('cancel'))
+
+    it('stops the work, reports the charge and ends once Avow confirmed it, with nothing paid yet', async () => {
+      const { world, events, order, outcome } = await cancelled()
+      expect(outcome).toMatchObject({
+        kind: 'cancelled',
+        charge: { amount: 10_000_000n, standing: { state: 'confirmed' } },
+      })
+      expect(charges(events)).toEqual([
+        'job_customer_cancelled',
+        'job_charge_reported',
+        'job_charge_confirmed',
+      ])
+      expect(count(events, 'job_delivered')).toBe(0)
+      // The charge is open to a contest for the whole window the job's terms set.
+      const confirmed = events.find((e) => e.type === 'job_charge_confirmed')
+      if (confirmed?.type !== 'job_charge_confirmed') throw new Error('the charge was confirmed')
+      expect(confirmed.contestableUntil - world.now()).toBeGreaterThan(
+        order.terms.resolution.contestWindow - 30n,
+      )
+    })
+
+    it('pays the charge once its contest window closes with no contest, and not before', async () => {
+      const { world, executor, events } = await cancelled('pays')
+      const confirmed = events.find((e) => e.type === 'job_charge_confirmed')
+      if (confirmed?.type !== 'job_charge_confirmed') throw new Error('the charge was confirmed')
+      await executor.charges()
+      expect(charges(events).at(-1)).toBe('job_charge_paid')
+      expect(count(events, 'job_charge_paid')).toBe(1)
+      expect(world.now()).toBeGreaterThanOrEqual(confirmed.contestableUntil)
+    })
+
+    it('pauses a confirmed charge the customer contests, and pays nothing', async () => {
+      const { executor, events } = await cancelled('contested')
+      await executor.charges()
+      expect(charges(events)).toEqual([
+        'job_customer_cancelled',
+        'job_charge_reported',
+        'job_charge_confirmed',
+        'job_charge_paused',
+      ])
+      expect(events.at(-1)).toMatchObject({ type: 'job_charge_paused', cause: 'contested' })
+    })
+
+    it("refers a report Avow's records don't support, with no confirmation", async () => {
+      const { events, outcome } = await cancelled('referred')
+      expect(outcome).toMatchObject({
+        kind: 'cancelled',
+        charge: { standing: { state: 'paused', cause: 'referred' } },
+      })
+      expect(count(events, 'job_charge_confirmed')).toBe(0)
+      expect(count(events, 'job_charge_paid')).toBe(0)
+    })
+
+    it('escalates a report Avow never answers to a ruling at its deadline', async () => {
+      const { world, events, outcome } = await cancelled('unanswered')
+      expect(outcome).toMatchObject({
+        kind: 'cancelled',
+        charge: { standing: { state: 'paused', cause: 'unanswered' } },
+      })
+      const reported = events.findIndex((e) => e.type === 'job_charge_reported')
+      expect(reported).toBeGreaterThan(-1)
+      expect(count(events, 'job_charge_confirmed')).toBe(0)
+      // The pause comes no sooner than Avow's deadline to answer.
+      expect(world.now()).toBeGreaterThanOrEqual(1_800_000_000n + 600n)
+    })
+
+    it('waits before it reports, since a report filed at once is referred', async () => {
+      const { world, events } = await cancelled()
+      const at = (type: SessionEvent['type']) => events.findIndex((e) => e.type === type)
+      const said = events[at('job_customer_cancelled')]
+      if (said?.type !== 'job_customer_cancelled') throw new Error('the customer cancelled')
+      // The executor waited, so the report sits well after the cancellation and Avow confirmed it.
+      expect(world.now() - said.cancelledAt).toBeGreaterThanOrEqual(45n)
+      expect(at('job_charge_confirmed')).toBeGreaterThan(at('job_charge_reported'))
+
+      // The same cancellation reported at once is referred, since the two clocks could disagree.
+      const hasty = fixtureWorld()
+      const order = await hasty.pullOrder('cancels_late')
+      const firm = (await hasty.offers(order)).offers.find((o) => o.id === 'h100-firm')
+      if (!firm) throw new Error('the demo lists a firm offer')
+      const booked = await hasty.book(firm, 1)
+      if (!booked.ok) throw new Error(booked.code)
+      const sent = await hasty.quote(order, { ...booked.booking, id: 'b1' })
+      if (!sent.ok) throw new Error(sent.code)
+      // The customer verifies and reserves on its second read, and the business accepts.
+      await hasty.orderState(order.orderId)
+      await hasty.orderState(order.orderId)
+      expect((await hasty.accept(order, sent.quote)).ok).toBe(true)
+      let state = await hasty.orderState(order.orderId)
+      while (state.status !== 'cancelled') {
+        await hasty.sleep(5000)
+        state = await hasty.orderState(order.orderId)
+      }
+      const report = await hasty.reportCharge(order, 'lateCancellation')
+      if (!report.ok) throw new Error(report.code)
+      await hasty.sleep(10_000)
+      expect(await hasty.charge(order, report)).toEqual({ state: 'paused', cause: 'referred' })
+    })
+
+    it('stops following a charge when the session ends', async () => {
+      const { world, executor, events } = await cancelled('pays')
+      const before = world.now()
+      executor.stop()
+      await executor.charges()
+      expect(count(events, 'job_charge_paid')).toBe(0)
+      expect(world.now() - before).toBeLessThan(10n)
+    })
+
+    it('files no second report and no report on a job nobody cancelled', async () => {
+      const { world, order } = await cancelled()
+      expect(await world.reportCharge(order, 'lateCancellation')).toMatchObject({
+        ok: false,
+        code: 'report.not_reportable',
+      })
+      const plain = fixtureWorld()
+      const fresh = await plain.pullOrder()
+      expect(await plain.reportCharge(fresh, 'lateCancellation')).toMatchObject({
+        ok: false,
+        code: 'chain.reserve_missing',
+      })
+    })
+  })
 })
 
 /** A payment the order claims, for a customer that says it paid before anything was delivered. */

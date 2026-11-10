@@ -1,19 +1,21 @@
 import type { ToolCall, ToolResult } from './agent-session.js'
 import type { ComputeOffers } from './compute-offers.js'
 import type { ChargeKind } from './eip712.js'
-import type { JobCharge } from './job-session.js'
+import type { ChargePauseCause, JobCharge } from './job-session.js'
 import { formatUsd, type SessionEvent } from './sandbox.js'
 import { TEST_CUSTOMER_LABEL } from './test-customer.js'
 
 /**
  * A commitment as one card, which the terminal and the screen both draw, so a commitment reads
  * the same in each. A card says who promises whom, what the promise is, what breaking it costs,
- * what money stands behind it and which other commitment it rests on. Every row comes from the
- * events a job recorded, so a card claims nothing the session didn't record.
+ * what money stands behind it and which other commitment it rests on. It keeps the promise's
+ * status apart from the money's, since a promise can be broken while the charge for breaking it is
+ * still open to a contest. Every row comes from the events a job recorded, so a card claims nothing
+ * the session didn't record.
  */
 
 /** A card's rows, in the order every card keeps them. */
-export const CARD_LABELS = ['Promise', 'If broken', 'Backed by', 'Depends on'] as const
+export const CARD_LABELS = ['Promise', 'If broken', 'Backed by', 'Depends on', 'Money now'] as const
 export type CardLabel = (typeof CARD_LABELS)[number]
 
 export interface CommitmentCard {
@@ -23,10 +25,27 @@ export interface CommitmentCard {
   from: string
   /** Who the money is reserved for. */
   to: string
-  /** Accepted by the other side, or ended with its reserve back with whoever made it. */
-  state: 'accepted' | 'released'
+  /**
+   * Where the promise stands. `accepted` is in force, `kept` is a job delivered and paid, `broken`
+   * is a job its customer cancelled after the start, and `ended` is over with neither.
+   */
+  promise: 'accepted' | 'kept' | 'broken' | 'ended'
+  /** Where the money behind it stands, which the `Money now` row says in words. */
+  money: CardMoney
   rows: { label: CardLabel; text: string }[]
 }
+
+/**
+ * The money behind a commitment. A charge goes from reported, to confirmed by Avow and open to a
+ * contest, to paid. A contest or a report Avow doesn't confirm pauses it for a ruling instead.
+ */
+export type CardMoney =
+  | 'reserved'
+  | 'released'
+  | 'charge_reported'
+  | 'charge_confirmed'
+  | 'charge_paused'
+  | 'charged'
 
 /** A moment as a card says it. The default is UTC, and a screen or a terminal passes its own. */
 export type CardClock = (unixSeconds: bigint) => string
@@ -43,6 +62,12 @@ const JOB_BREACH: Record<ChargeKind, (cap: string) => string> = {
 function jobBreach(charges: readonly JobCharge[]): string {
   const ways = charges.map((c) => JOB_BREACH[c.kind](formatUsd(c.amount)))
   return `If the customer ${ways.join('. If it ')}.`
+}
+
+const PAUSED: Record<ChargePauseCause, string> = {
+  contested: 'paused for a ruling since the customer contested the charge',
+  referred: 'paused for a ruling since Avow referred the report',
+  unanswered: "paused for a ruling since Avow didn't answer the report in time",
 }
 
 const plural = (count: number, one: string) => `${count} ${one}${count === 1 ? '' : 's'}`
@@ -62,6 +87,7 @@ export function commitmentCards(
     mine.findLast((e): e is Extract<SessionEvent, { type: T }> => e.type === type)
   const released = (role: CommitmentCard['role']) =>
     mine.some((e) => e.type === 'job_reserve_released' && e.role === role)
+  const row = (label: CardLabel, text: string) => ({ label, text })
   const cards: CommitmentCard[] = []
 
   const secured = last('job_compute_secured')
@@ -84,7 +110,8 @@ export function commitmentCards(
       role: 'compute',
       from: 'Your business',
       to: secured.supplier,
-      state: released('compute') ? 'released' : 'accepted',
+      promise: released('compute') ? 'ended' : 'accepted',
+      money: released('compute') ? 'released' : 'reserved',
       rows: [
         { label: 'Promise', text: promise },
         {
@@ -95,6 +122,7 @@ export function commitmentCards(
           label: 'Backed by',
           text: `${formatUsd(secured.amount)} reserved in your lock, for ${secured.supplier}`,
         },
+        row('Money now', released('compute') ? 'Back with your business' : 'Held in your lock'),
       ],
     })
   }
@@ -112,11 +140,40 @@ export function commitmentCards(
         : checked.checks.length > 0
           ? `Your compute commitment, which your code checked at block ${blocksOf(checked.checks)}`
           : null
+    // The charge's own steps, the latest of which says where the money stands.
+    const reported = last('job_charge_reported')
+    const confirmed = last('job_charge_confirmed')
+    const paused = last('job_charge_paused')
+    const charged = last('job_charge_paid')
+    const money: { state: CardMoney; text: string } = charged
+      ? { state: 'charged', text: `${formatUsd(charged.amount)} paid to your business` }
+      : paused
+        ? { state: 'charge_paused', text: `Held in the customer's lock, ${PAUSED[paused.cause]}` }
+        : confirmed
+          ? {
+              state: 'charge_confirmed',
+              text: `${formatUsd(confirmed.amount)} charge confirmed by Avow. The customer can contest it until ${clock(confirmed.contestableUntil)}, and it's payable then if it hasn't`,
+            }
+          : reported
+            ? {
+                state: 'charge_reported',
+                text: `${formatUsd(reported.amount)} charge reported by your business, waiting for Avow's answer`,
+              }
+            : released('job')
+              ? { state: 'released', text: 'Back with the customer' }
+              : { state: 'reserved', text: "Held in the customer's lock" }
     cards.push({
       role: 'job',
       from: TEST_CUSTOMER_LABEL,
       to: 'your business',
-      state: released('job') ? 'released' : 'accepted',
+      promise: last('job_customer_cancelled')
+        ? 'broken'
+        : last('job_paid')
+          ? 'kept'
+          : released('job')
+            ? 'ended'
+            : 'accepted',
+      money: money.state,
       rows: [
         {
           label: 'Promise',
@@ -127,7 +184,8 @@ export function commitmentCards(
           label: 'Backed by',
           text: `${formatUsd(checked.amount)} reserved in the customer's lock, for your business`,
         },
-        ...(dependsOn ? [{ label: 'Depends on' as const, text: dependsOn }] : []),
+        ...(dependsOn ? [row('Depends on', dependsOn)] : []),
+        row('Money now', money.text),
       ],
     })
   }

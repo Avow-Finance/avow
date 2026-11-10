@@ -9,8 +9,15 @@ import {
   type SandboxDeployment,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
-import { readBacking, tempoChainReader, tempoLockReader } from '@avow-finance/verifier'
-import { type Address, type Hex, parseAbi } from 'viem'
+import {
+  prepareReport,
+  readBacking,
+  reportCall,
+  signReport,
+  tempoChainReader,
+  tempoLockReader,
+} from '@avow-finance/verifier'
+import { type Address, type Hex, keccak256, parseAbi, stringToHex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { AvowApiError, requestSupplierAuthorization, signingRequestKey } from '../http.js'
@@ -22,7 +29,8 @@ import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/business.js'
 import type { SandboxStore } from '../sandbox/store.js'
 import { loadSupplierItem } from '../sandbox/supplier-key.js'
-import { landedReverted, sendOwn } from '../send.js'
+import { landedReverted, sendErrorIn, sendOwn } from '../send.js'
+import { chargeStanding } from './charge.js'
 import type { CancelOutcome, JobWorld, LockRead, WorldBooking } from './world.js'
 
 /**
@@ -77,6 +85,12 @@ export async function liveWorld(options: {
     chainId: deployment.chainId,
   })
 
+  const chain = tempoChainReader(client, {
+    factory: deployment.factory,
+    chainId: deployment.chainId,
+  })
+  const latestTime = async () => (await client.getBlock()).timestamp
+
   /** A commitment at the latest finalized block. */
   async function read(reference: BuyerSideReference): Promise<LockRead | null> {
     const block = await lockReader.head()
@@ -95,7 +109,7 @@ export async function liveWorld(options: {
     supplier: { account: profile.account, signingKey: profile.signingKey, payee: profile.payee },
     token: { address: token.token, decimals: token.decimals },
 
-    pullOrder: () => customer.order(profile),
+    pullOrder: (scenario) => customer.order(profile, scenario),
 
     async offers(order): Promise<ComputeOffers> {
       const s = order.terms.subject
@@ -218,10 +232,7 @@ export async function liveWorld(options: {
             account: profile.account,
             signingKey: profile.signingKey,
           },
-          chain: tempoChainReader(client, {
-            factory: deployment.factory,
-            chainId: deployment.chainId,
-          }),
+          chain,
           dependencies: { readers: [lockReader] },
           authorize: (commitment) =>
             requestSupplierAuthorization(
@@ -251,6 +262,66 @@ export async function liveWorld(options: {
 
     async deliver(orderId, result) {
       await customer.delivery(orderId, { result })
+    },
+
+    async reportCharge(order, kind) {
+      const c = customer.profile
+      const at = await latestTime()
+      // The evidence a report names is this note's hash. Avow confirms from its own record.
+      const note = `A ${kind} charge on job ${order.commitmentId}, lock ${c.lock} on chain ${c.chainId}, reported at ${at}.`
+      const prepared = await prepareReport(
+        {
+          lock: c.lock,
+          commitmentId: order.commitmentId,
+          kind,
+          evidenceHash: keccak256(stringToHex(note)),
+          now: at,
+        },
+        {
+          config: {
+            chainId: deployment.chainId,
+            signingKey: profile.signingKey,
+            acceptedTokens: [token],
+          },
+          chain,
+        },
+      )
+      if (!prepared.ok) return { ok: false, code: prepared.reason, layer: 'service' }
+      const signed = await signReport(prepared, signing, { disclosureId: prepared.disclosure.id })
+      const report = { amount: prepared.report.amount, reportNumber: prepared.reportNumber }
+      // The signing key pays its own fee, as it does for an acceptance.
+      await fundFees(client, signing.address)
+      const sender = Account.fromSecp256k1(supplierItem.signingKey)
+      try {
+        const receipt = await sendOwn({ client, account: sender, calls: [reportCall(signed)] })
+        const block = await client.getBlock({ blockNumber: receipt.blockNumber })
+        return {
+          ok: true,
+          ...report,
+          transactionHash: receipt.transactionHash,
+          reportedAt: block.timestamp,
+        }
+      } catch (error) {
+        if (landedReverted(error))
+          return { ok: false, code: 'chain.report_reverted', layer: 'lock' }
+        // A send whose outcome nobody saw may still have landed, which the lock's count shows.
+        const hash = sendErrorIn(error)?.hashes.at(-1)
+        const held = await chain.backing(c.lock, order.commitmentId, 'buyer').catch(() => null)
+        if (hash && held?.hasReport && held.reportCount === report.reportNumber) {
+          return { ok: true, ...report, transactionHash: hash, reportedAt: at }
+        }
+        throw error
+      }
+    },
+
+    async charge(order, report) {
+      const c = customer.profile
+      const [held, lock] = await Promise.all([
+        chain.backing(c.lock, order.commitmentId, 'buyer'),
+        chain.lock(c.lock),
+      ])
+      if (!lock) throw new Error(`The customer's lock ${c.lock} can't be read`)
+      return chargeStanding(held, report, lock.timing.confirmWindow)
     },
 
     cancel: (booking) => cancelBooking(booking, () => read(booking.reference), options.cancelFree),

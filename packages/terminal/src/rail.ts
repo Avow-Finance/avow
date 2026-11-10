@@ -158,8 +158,10 @@ export interface Card {
   readonly from: string
   /** Who it's made to. */
   readonly to: string
-  /** Where the commitment stands, such as accepted. */
+  /** Where the promise stands, such as accepted or broken. */
   readonly state: string
+  /** True for a promise that was broken, which draws its state as a failure. */
+  readonly broken?: boolean
   readonly rows: readonly { readonly label: string; readonly text: string }[]
 }
 
@@ -553,12 +555,13 @@ export class Rail {
     const name = clean(card.name)
     const head = `${name}  ${clean(card.from)} → ${clean(card.to)}`
     const state = `● ${clean(card.state)}`
+    const tone = card.broken ? this.#s.bad : this.#s.ok
     const title =
       displayWidth(head) + 2 + displayWidth(state) <= room
-        ? [`${this.#s.bold(name)}${head.slice(name.length)}  ${this.#s.ok(state)}`]
+        ? [`${this.#s.bold(name)}${head.slice(name.length)}  ${tone(state)}`]
         : [
             ...painted(head, wrap(head, room), name.length, this.#s.bold, plain),
-            ...wrap(state, room).map((part) => this.#s.ok(part)),
+            ...wrap(state, room).map((part) => tone(part)),
           ]
     const labels = card.rows.map((row) => clean(row.label))
     const column = Math.max(0, ...labels.map((label) => displayWidth(label))) + 2

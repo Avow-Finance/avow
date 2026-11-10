@@ -1,12 +1,14 @@
 /**
  * Tries to get past your agent's limits without Avow.
  *
- * This file imports nothing of Avow's. It signs four transactions with your agent's own key and
+ * This file imports nothing of Avow's. It signs five transactions with your agent's own key and
  * sends them straight to Tempo's public node, the way an agent that ignored the SDK could. A
  * throwaway account, funded by the testnet faucet, pays the fees, so Avow's relay takes no part
- * either. The first transaction is one the key allows, which shows the key works. The other three
- * are ones your mandate forbids. Each is sent with a fixed gas limit, so it lands in a block and
- * you can open its revert in the explorer.
+ * either. The first transaction is one the key allows, which shows the key works. The next three
+ * are ones your mandate forbids, which Tempo's keychain reverts. The last asks your lock for a
+ * reserve under an approval your agent wrote for itself, with a limit of its own choosing, which
+ * the lock reverts since Avow's key didn't sign it. Each is sent with a fixed gas limit, so it
+ * lands in a block and you can open its revert in the explorer.
  *
  * Run it with `npm run bypass` once `npm start` has set your agent up. The allowed transaction
  * leaves your lock approved for $1, which counts against today's limit and moves no money.
@@ -17,11 +19,15 @@ import { pathToFileURL } from 'node:url'
 import {
   type Address,
   createClient,
+  decodeErrorResult,
   encodeFunctionData,
   type Hex,
   http,
   isAddress,
+  keccak256,
+  parseAbi,
   publicActions,
+  stringToHex,
   walletActions,
 } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
@@ -35,6 +41,37 @@ const FEE_TOKEN: Address = '0x20C0000000000000000000000000000000000001'
 /** Enough for any one call here. A fixed limit skips the node's estimate, which a revert fails. */
 const GAS = 400_000n
 const DOLLAR = 1_000_000n
+
+/**
+ * Your lock's `reserve`, which takes a reserve only under an approval Avow's key signed. The
+ * approval carries the limits Avow checked your mandate for, and the lock enforces those.
+ */
+const LOCK_ABI = parseAbi([
+  'struct Charge { uint8 kind; uint256 most; uint64 earliest; }',
+  'struct Approval { bytes32 commitmentId; uint8 side; address token; uint256 amount; address supplier; address supplierSigner; address payee; uint64 freeCancelBy; uint64 acceptBy; uint64 chargeDeadline; uint64 releaseDate; uint64 contestWindow; Charge[] charges; uint16 day90SupplierShareBps; address arbiter; bytes32 termsHash; bytes32 mandateHash; uint256 capPerCommitment; uint256 capOpenReserves; address fundingKey; uint256 nonce; uint64 expiry; }',
+  'function reserve(Approval a, bytes avowSignature)',
+  ...[
+    'NotAccount',
+    'TooLate',
+    'Expired',
+    'WrongSide',
+    'WrongToken',
+    'CommitmentExists',
+    'NonceUsed',
+    'BadSignature',
+    'TimesOutOfOrder',
+    'ContestWindowShort',
+    'BadShare',
+    'BadCharges',
+    'BadAddress',
+    'BadArbiter',
+    'BadAmount',
+    'SupplierNotApproved',
+    'AboveCapPerCommitment',
+    'AboveCapOpenReserves',
+    'WrongFundingKey',
+  ].map((name) => `error ${name}()` as const),
+])
 
 const usd = (micros: bigint) =>
   `$${(Number(micros) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
@@ -98,7 +135,7 @@ function reasonOf(error: unknown): string {
 }
 
 /**
- * Sends the four transactions and says what happened to each. It returns every attempt with your
+ * Sends the five transactions and says what happened to each. It returns every attempt with your
  * business's balance before and after, so a caller can check that nothing moved.
  */
 export async function tryToBypass(
@@ -131,12 +168,34 @@ export async function tryToBypass(
     data: encodeFunctionData({ abi: Abis.tip20, functionName, args: [to, amount] }),
   })
 
+  /** The lock's own name for why it reverts a call from your business's account, when it does. */
+  async function lockReason(call: { to: Address; data: Hex }): Promise<string | null> {
+    try {
+      await node.call({ account, ...call })
+      return null
+    } catch (error) {
+      for (
+        let e = error as { data?: unknown; cause?: unknown } | undefined;
+        e;
+        e = e.cause as never
+      ) {
+        if (typeof e.data !== 'string' || !/^0x[0-9a-f]{8}/i.test(e.data)) continue
+        try {
+          return decodeErrorResult({ abi: LOCK_ABI, data: e.data as Hex }).errorName
+        } catch {}
+      }
+      return null
+    }
+  }
+
   const attempts: Attempt[] = []
   async function attempt(title: string, allowed: boolean, call: { to: Address; data: Hex }) {
     // Preparing the transaction has the node run it, which gives the chain's reason for a revert.
+    // A call to your lock is run again for the lock's own error, which the node doesn't name.
     let reason = await signer
       .prepareTransactionRequest({ calls: [call], feePayer: payer } as never)
       .then(() => null, reasonOf)
+    if (reason && call.to === lock) reason = (await lockReason(call)) ?? reason
     let outcome: Attempt['outcome']
     let link: string | null = null
     try {
@@ -200,6 +259,47 @@ export async function tryToBypass(
     false,
     tokenCall('approve', lock, approved + left + DOLLAR),
   )
+  // The last attempt goes to your lock. Your agent writes its own approval for a reserve of $501,
+  // with limits of a million dollars, and signs it with its own key where Avow's belongs.
+  const now = (await node.getBlock()).timestamp
+  const label = (text: string) => keccak256(stringToHex(text))
+  const own = {
+    commitmentId: label(`a reserve nobody approved, at ${now}`),
+    side: 0,
+    token,
+    amount: 501n * DOLLAR,
+    supplier: stranger,
+    supplierSigner: stranger,
+    payee: stranger,
+    freeCancelBy: now + 600n,
+    acceptBy: now + 900n,
+    chargeDeadline: now + 1800n,
+    releaseDate: now + 1800n,
+    contestWindow: 600n,
+    charges: [{ kind: 0, most: DOLLAR, earliest: now + 600n }],
+    day90SupplierShareBps: 5000,
+    arbiter: payer.address,
+    termsHash: label('terms nobody agreed'),
+    mandateHash: label('a mandate nobody signed'),
+    capPerCommitment: 1_000_000n * DOLLAR,
+    capOpenReserves: 1_000_000n * DOLLAR,
+    fundingKey: agent.accessKeyAddress,
+    nonce: now,
+    expiry: now + 900n,
+  } as const
+  const ownSignature = await agent.sign({ hash: label('an approval the agent wrote for itself') })
+  await attempt(
+    `Reserve ${usd(own.amount)} in your lock under an approval your agent wrote for itself`,
+    false,
+    {
+      to: lock,
+      data: encodeFunctionData({
+        abi: LOCK_ABI,
+        functionName: 'reserve',
+        args: [own, ownSignature],
+      }),
+    },
+  )
   const after = await balance()
 
   say('')
@@ -212,7 +312,10 @@ export async function tryToBypass(
   } else {
     say("Tempo's keychain holds your agent's key to its mandate, whatever code signs with it.")
     say(
-      "The cap on what your agent holds at once is Avow's to check, and your lock takes no reserve without Avow's approval.",
+      "Your lock takes a reserve only under an approval Avow's key signed, and enforces the limits that approval carries.",
+    )
+    say(
+      'Avow checks those limits against your mandate before it signs, so that check is the one you rely on Avow for.',
     )
   }
   return { attempts, before, after }

@@ -85,7 +85,7 @@ export async function runJobSession(o: {
   write?: (text: string) => void
   /** The service file and the folder it's in, `service.ts` in the working directory by default. */
   service?: { file: string; cwd: string }
-  /** A first run, which goes on from setup's two steps as steps 3 and 4 of 4. */
+  /** A first run, which goes on from setup's two steps as steps 3 to 5 of 5. */
   firstRun?: boolean
 }): Promise<number> {
   const { rail, store, deployment } = o
@@ -147,7 +147,7 @@ export async function runJobSession(o: {
     : () => {}
   const brief = !o.flags.details
   const view = railView(rail, o.look, { fixture: world.kind === 'fixture', write, brief })
-  // A first run goes on from setup's two steps, with a guide for steps 3 and 4.
+  // A first run goes on from setup's two steps, with a guide for steps 3 to 5.
   const guide =
     o.firstRun === true && o.mode === 'interactive' && o.input !== null
       ? firstRunGuide({
@@ -183,13 +183,17 @@ export async function runJobSession(o: {
     nextRun: o.nextRun,
     brief,
     ...(guide
-      ? { afterJob: (outcome) => guide.afterJob(outcome), withoutCompute: guide.withoutCompute }
+      ? {
+          afterJob: (outcome) => guide.afterJob(outcome),
+          withoutCompute: guide.withoutCompute,
+          scenario: guide.scenario,
+        }
       : {}),
   })
   if (result.stopped) return 1
   const ended = result.firstJob
   if (o.mode === 'one') {
-    rail.close(outcomeLine(ended))
+    rail.close(outcomeLine(ended, localClock))
     return ended?.kind === 'paid' ? 0 : 1
   }
   return 0

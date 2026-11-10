@@ -186,6 +186,31 @@ export const JOB_EVENTS: JobEvent[] = (() => {
         memo: JOB_REFERENCE.commitmentId,
       },
     },
+    // A job its customer cancels posts these in place of the delivery and the payment.
+    {
+      ...base,
+      type: 'job_customer_cancelled',
+      reference: JOB_REFERENCE,
+      cancelledAt: START + 10n,
+    },
+    {
+      ...base,
+      type: 'job_charge_reported',
+      reference: JOB_REFERENCE,
+      kind: 'lateCancellation',
+      amount: dollars(10),
+      reportNumber: 1,
+      transactionHash: id('the report'),
+    },
+    {
+      ...base,
+      type: 'job_charge_confirmed',
+      reference: JOB_REFERENCE,
+      amount: dollars(10),
+      contestableUntil: START + 660n,
+    },
+    { ...base, type: 'job_charge_paused', reference: JOB_REFERENCE, cause: 'contested' },
+    { ...base, type: 'job_charge_paid', reference: JOB_REFERENCE, amount: dollars(10) },
     {
       ...base,
       type: 'job_reserve_released',

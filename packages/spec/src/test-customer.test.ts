@@ -116,6 +116,7 @@ const states: OrderState[] = [
   },
   { ...order, status: 'reserved', checks, reserve },
   { ...order, status: 'accepted', checks, reserve },
+  { ...order, status: 'cancelled', checks, reserve, cancellation: { cancelledAt: 1_800_000_010n } },
   { ...order, status: 'delivered', checks, reserve },
   { ...order, status: 'paid', checks, reserve, payment: paid.payment },
 ]
@@ -141,6 +142,10 @@ describe('the test customer’s routes', () => {
       signingKey: '0x000000000000000000000000000000000000519e',
     }
     expect(parseOrderRequest(overJson({ supplier }))).toEqual({ ok: true, value: { supplier } })
+    // An order can be asked to go one named way, and no other.
+    const cancels = { supplier, scenario: 'cancels_late' as const }
+    expect(parseOrderRequest(overJson(cancels))).toEqual({ ok: true, value: cancels })
+    expect(parseOrderRequest(overJson({ supplier, scenario: 'never_pays' })).ok).toBe(false)
     expect(parseJobOffer(overJson(offer))).toEqual({ ok: true, value: offer })
     expect(parseQuoteRequest(overJson(quote))).toEqual({ ok: true, value: quote })
     // A quote whose terms name no compute still reads, so the customer can refuse it by reason.
@@ -166,6 +171,17 @@ describe('the test customer’s routes', () => {
     expect(parseOrderState(overJson(reservedPaid)).ok).toBe(false)
     const unpaid = { ...order, status: 'paid', checks, reserve }
     expect(parseOrderState(overJson(unpaid)).ok).toBe(false)
+    // A cancelled order says when, and an accepted one never carries a cancellation.
+    const undated = { ...order, status: 'cancelled', checks, reserve }
+    expect(parseOrderState(overJson(undated)).ok).toBe(false)
+    const both = {
+      ...order,
+      status: 'accepted',
+      checks,
+      reserve,
+      cancellation: { cancelledAt: 1n },
+    }
+    expect(parseOrderState(overJson(both)).ok).toBe(false)
   })
 
   it('take a quote or a delivery report only from the supplier the order was offered to', () => {

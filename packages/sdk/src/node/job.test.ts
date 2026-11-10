@@ -64,13 +64,13 @@ async function oneJob(bookCompute = true) {
 }
 
 describe('a first run', () => {
-  it('shows the job as two commitments with nothing prepaid, then breaks the chain between them', async () => {
+  it('shows two commitments with nothing prepaid, then a broken promise, then breaks the chain between them', async () => {
     let drawn = ''
     const write = (text: string) => {
       drawn += text
     }
     const look = lookOf({ isTTY: false, columns: 100 }, { NO_COLOR: '1' })
-    const typed = ['job']
+    const typed = ['job', 'job']
     let run = 0
     const code = await runJobSession({
       mode: 'interactive',
@@ -98,24 +98,40 @@ describe('a first run', () => {
     }
     // Step 3 draws the compute booking's card, then the job's, then says nothing was prepaid.
     inOrder(
-      '3/4  Two commitments, nothing prepaid',
+      '3/5  Two commitments, nothing prepaid',
       'COMPUTE  Your business → avow-demo-gpu  ● accepted in the fixture world',
       "JOB  Avow's test customer → your business  ● accepted in the fixture world",
       'Pay $40 on delivery, with nothing prepaid, for fine-tuning due by',
       "$10 reserved in the customer's lock, for your business",
       'Your compute commitment, which the customer says it checked at block',
       DECISIVE_SENTENCE.split(' and ')[0] as string,
-      '✓  3/4  Delivered, and paid $40 on delivery with nothing prepaid. The $10 and $40 set aside never',
+      '✓  3/5  Delivered, and paid $40 on delivery with nothing prepaid. The $10 and $40 set aside never',
     )
-    // Step 4 takes one more order with the compute booking held off, and the customer refuses it.
+    // Step 4 takes an order the customer cancels after work starts. The promise is broken at once,
+    // and the charge is confirmed and still open to a contest when the step ends.
     inOrder(
-      '4/4  Break the chain',
+      '4/5  A broken promise',
+      'The customer told your code it cancelled after work started',
+      "Your code reported a $10 late-cancellation charge on the customer's reserve",
+      'Avow confirmed the $10 charge against its record of the cancellation.',
+      "JOB  Avow's test customer → your business  ● broken in the fixture world",
+      '$10 charge confirmed by Avow. The customer can contest it until',
+      '✓  4/5  The customer cancelled after work started. Your code reported the $10 charge its terms',
+    )
+    expect(drawn.replace(/\n│\s+/g, ' ')).toContain("and it's payable to you then if it hasn't.")
+    // Step 5 takes one more order with the compute booking held off, and the customer refuses it.
+    inOrder(
+      '5/5  Break the chain',
       'For this order your agent books no compute',
       'Your code quoted the job without naming any compute booking.',
       'The customer refused your quote.',
-      '✓  4/4  The customer refused. Its commitment depends on your compute commitment',
+      "✓  5/5  The customer refused, and nobody's money moved.",
+      "It doesn't promise the compute gets delivered.",
       "You're set up.",
     )
+    // Nothing says the charge was paid before its contest window closed.
+    const paid = at('paid your business $10')
+    expect(paid === -1 || paid > at('5/5  Break the chain')).toBe(true)
     // The switch in service.ts never changed, so nothing says it did.
     expect(drawn).not.toContain('service.ts changed')
     // A brief view leaves the tool calls and the receipts to the details and the screen.
