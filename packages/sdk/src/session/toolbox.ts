@@ -6,6 +6,7 @@ import {
   isFirmOffer,
   type JobOffer,
   type JobTool,
+  offerSeconds,
   offerTakes,
   type QuoteRequest,
   type ReasonCode,
@@ -83,7 +84,7 @@ function againstStart(unix: bigint, order: JobOffer | null): string {
 
 /** An offer as the model reads it. */
 function offerView(o: ComputeOffer, listedAt: bigint, order: JobOffer | null) {
-  const windowEnd = o.startsAt + BigInt(Math.round(o.hours * 3600))
+  const windowEnd = o.startsAt + offerSeconds(o)
   return {
     id: o.id,
     gpu: o.gpu,

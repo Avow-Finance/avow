@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { JOB_TOOLS, SPEAKER_NAME, speakerName, toolResultProblem } from './agent-session.js'
+import { encodeApiBody } from './api-request.js'
 import { parseSessionEvent, refusalSentence, whenRetryPasses } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, ORDER } from './test-helpers.js'
 import { toWire } from './wire.js'
@@ -96,6 +97,14 @@ describe('the agent session’s events', () => {
     expect(toolResultProblem(call, { ...result, recalled: { run: 1, call: 2 } })).toBe(
       'message.invalid',
     )
+  })
+
+  it('encode for the relay as they are, a listing’s offers included', () => {
+    // The relay signs each event as canonical JSON, which holds no fractions, so every number in
+    // an event, an offer's window among them, is a whole number.
+    for (const e of AGENT_SESSION_EVENTS) {
+      expect(() => encodeApiBody({ event: e }), String(e.type)).not.toThrow()
+    }
   })
 
   it('carry the listing and its limits only on a listing’s result, and a refusal’s code and layer only on a refusal', () => {
