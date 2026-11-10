@@ -16,7 +16,7 @@ const prompts = {
 }
 
 describe.skipIf(!live)('npm run bypass on Moderato', () => {
-  it("lands the call the key allows and has the chain revert the three it doesn't, moving nothing", async () => {
+  it("lands the call the key allows and has the chain revert the four it doesn't, moving nothing", async () => {
     const store = sandbox.memoryStore()
     await sandbox.business({
       config: {
@@ -39,10 +39,12 @@ describe.skipIf(!live)('npm run bypass on Moderato', () => {
       [false, 'reverted', 'CallNotAllowed'],
       [false, 'reverted', 'CallNotAllowed'],
       [false, 'reverted', 'SpendingLimitExceeded'],
+      [false, 'reverted', 'BadSignature'],
     ])
     // Each one reached a block, so each has a page in the explorer.
     for (const a of attempts) expect(a.link).toMatch(/\/tx\/0x[0-9a-f]{64}$/)
     expect(after).toBe(before)
     expect(lines.join('\n')).toContain("Tempo's keychain holds your agent's key to its mandate")
+    expect(lines.join('\n')).toContain("only under an approval Avow's key signed")
   }, 300_000)
 })

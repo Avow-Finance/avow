@@ -240,6 +240,7 @@ export const REASON_CODES = {
     'Free cancellation has ended, so the session cancels nothing and the booking stands under its terms',
   'service.cancel_declined': 'The developer declined the cancellation, so the booking stands',
   'chain.cancel_reverted': 'The lock reverted the cancellation, so the booking stands',
+  'chain.report_reverted': 'The lock reverted the report, so no charge was filed',
   'service.booking_required':
     'service.ts books compute for every quote while its compute switch is on, so a quote has to name a booking',
   'sandbox.closed':

@@ -1,6 +1,7 @@
 import {
   formatUsd,
   type JobOffer,
+  type OrderScenario,
   SAID_TEXT_MAX,
   type SessionEvent,
   speakerName,
@@ -74,14 +75,26 @@ export interface SessionDeps {
    * guided first run asks for that once, to show the customer refusing a quote that names none.
    */
   withoutCompute?: () => boolean
+  /**
+   * The scenario the next order is asked for, or null for none. A guided first run asks for one the
+   * customer cancels late, to show a broken promise and the charge that follows.
+   */
+  scenario?: () => OrderScenario | null
   /** Says what goes where in two lines, with the rest left to the details. */
   brief?: boolean
   pollMs?: number
   workMs?: number
 }
 
-/** The line that takes the next order, `job` or `/job`, and nothing else does. */
-export const JOB_COMMAND = /^\/?job$/i
+/**
+ * The lines that take the next order. `job` or `/job` takes one that runs to payment, and
+ * `job cancels` takes one the test customer cancels after work starts.
+ */
+export const JOB_COMMAND = /^\/?job(\s+cancels)?$/i
+
+/** The scenario a job command asks for, or null for a plain order. */
+export const scenarioOf = (line: string): OrderScenario | null =>
+  JOB_COMMAND.exec(line.trim())?.[1] ? 'cancels_late' : null
 
 /** The most steps a model takes in one turn before the session stops it. */
 const MAX_STEPS = 12
@@ -152,7 +165,9 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
   view.intro([
     ...whatGoesWhere(provider, deps.brief),
     ...(deps.input && !deps.afterJob
-      ? ['Type job to take the next order. Anything else you type goes to your agent.']
+      ? [
+          'Type job to take the next order, or job cancels for one the customer cancels after work starts. Anything else you type goes to your agent.',
+        ]
       : []),
   ])
 
@@ -249,8 +264,11 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
   }
 
   /** A job: the order comes in, the model quotes it, then the executor follows the quote. */
-  async function job(notes: readonly string[]): Promise<JobOutcome | null> {
-    const order: JobOffer = await world.pullOrder()
+  async function job(
+    notes: readonly string[],
+    scenario: OrderScenario | null = null,
+  ): Promise<JobOutcome | null> {
+    const order: JobOffer = await world.pullOrder(scenario ?? undefined)
     state.order = order
     const run = deps.nextRun()
     const t = order.terms
@@ -269,7 +287,12 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
     await oneAtATime(() => turn(run, order.orderId, prompt.join(' ')))
     const quoted = state.quotes.get(order.orderId)
     if (!quoted) return null
-    const outcome = await executor.follow({ run, order, quote: quoted.quote })
+    const outcome = await executor.follow({
+      run,
+      order,
+      quote: quoted.quote,
+      ...(scenario ? { scenario } : {}),
+    })
     if (outcome.kind === 'refused') {
       const { code, layer } = outcome.refusal
       await oneAtATime(() =>
@@ -351,7 +374,7 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
         if (openOrder())
           view.quiet('An order is still waiting for its quote, so the session takes no other yet.')
         else {
-          const next = job(notes.splice(0))
+          const next = job(notes.splice(0), scenarioOf(text) ?? deps.scenario?.() ?? null)
           jobs.push(next)
           if (deps.afterJob) deps.afterJob(await next)
         }
@@ -369,5 +392,8 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
       return { firstJob, stopped: error.message }
     }
     throw error
+  } finally {
+    // A charge still inside its contest window is followed only while the session runs.
+    executor.stop()
   }
 }

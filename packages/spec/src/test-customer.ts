@@ -112,6 +112,8 @@ export interface TestCustomerProfile extends JobCustomer {
 /** The body of POST `/v1/orders`: the developer's business as Avow registered it as a supplier. */
 export interface OrderRequest {
   supplier: SupplierProfile
+  /** How the order should go, when the developer asks for one. Left out, the job runs to payment. */
+  scenario?: OrderScenario | undefined
 }
 
 /**
@@ -246,6 +248,7 @@ export const ORDER_STATUSES = [
   'refused',
   'reserved',
   'accepted',
+  'cancelled',
   'delivered',
   'paid',
 ] as const
@@ -280,10 +283,27 @@ export function orderSignerProblem(
 }
 
 /**
+ * How an order is asked to go, for a developer who wants to see a promise broken. A test customer
+ * asked for `cancels_late` cancels the job shortly after its work starts, which its reserve backs.
+ */
+export const ORDER_SCENARIOS = ['cancels_late'] as const
+export type OrderScenario = (typeof ORDER_SCENARIOS)[number]
+
+/**
+ * The customer's word that it cancelled a job after its start, with the time Avow recorded for its
+ * signed request. Avow confirms a late-cancellation charge from its own record of that request and
+ * never from this statement.
+ */
+export interface OrderCancellation {
+  cancelledAt: bigint
+}
+
+/**
  * What GET `/v1/orders/{orderId}` answers. A refused order says why, and every order past the
  * customer's check lists each booking relied on with the block it was read at. From `reserved` on
  * it names the customer's reserve, and a paid order names the transfer, whose memo is the
- * commitment id. The reserve doesn't secure that payment.
+ * commitment id. The reserve doesn't secure that payment. A cancelled order says when the customer
+ * cancelled, after the job's start, so the supplier can report the charge its terms allow.
  */
 export type OrderState =
   | (OrderBase & { status: 'offered' | 'verifying' })
@@ -292,6 +312,12 @@ export type OrderState =
       status: 'reserved' | 'accepted' | 'delivered'
       checks: CheckedDependency[]
       reserve: CustomerReserve
+    })
+  | (OrderBase & {
+      status: 'cancelled'
+      checks: CheckedDependency[]
+      reserve: CustomerReserve
+      cancellation: OrderCancellation
     })
   | (OrderBase & {
       status: 'paid'
@@ -328,7 +354,10 @@ export const testCustomerProfileJson = z.strictObject({
   }),
 })
 
-export const orderRequestJson = z.strictObject({ supplier: supplierProfileJson })
+export const orderRequestJson = z.strictObject({
+  supplier: supplierProfileJson,
+  scenario: z.enum(ORDER_SCENARIOS).optional(),
+})
 
 /** The booking a quote has to rely on, as JSON. */
 export const jobRequirementJson = z.strictObject({
@@ -418,6 +447,13 @@ export const orderStateJson = z.discriminatedUnion('status', [
   ...(['reserved', 'accepted', 'delivered'] as const).map((status) =>
     z.strictObject({ ...base, status: z.literal(status), checks, reserve: reserveJson }),
   ),
+  z.strictObject({
+    ...base,
+    status: z.literal('cancelled'),
+    checks,
+    reserve: reserveJson,
+    cancellation: z.strictObject({ cancelledAt: u64 }),
+  }),
   z.strictObject({
     ...base,
     status: z.literal('paid'),

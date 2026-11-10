@@ -36,7 +36,9 @@ import { jobSubjectJson, paymentReferenceJson } from './wire.js'
  * so the screen shows what the developer's code does. Each names the order it belongs to. In order
  * they are the order received, the compute secured, the quote sent, the customer verifying, the
  * customer verified or refused, the developer's own check of the customer's commitment passed or
- * refused, work started, delivered, the payment received and each reserve released.
+ * refused, work started, delivered, the payment received and each reserve released. A job the
+ * customer cancels after its start posts the cancellation and each step of the charge instead:
+ * reported, confirmed by Avow, then paid or paused for a ruling.
  *
  * An event about the customer reports what the customer's order said, with each check's block, so
  * the screen can read the chain at that block itself. Every statement names the block it rests on
@@ -171,6 +173,65 @@ export interface JobPaid extends JobEventBase {
   payment: PaymentReference
 }
 
+/**
+ * The customer cancelled the job after its start, by a signed request Avow timestamped. Work stops,
+ * and the job's terms let the business report a late-cancellation charge on the customer's reserve.
+ */
+export interface JobCustomerCancelled extends JobEventBase {
+  type: 'job_customer_cancelled'
+  reference: CommitmentReference
+  /** When the customer says Avow recorded its cancellation. */
+  cancelledAt: bigint
+}
+
+/**
+ * The business reported a charge on the customer's reserve, signed by its supplier signing key.
+ * Nothing has moved yet. Avow answers the report from its own records before the report's deadline.
+ */
+export interface JobChargeReported extends JobEventBase {
+  type: 'job_charge_reported'
+  reference: CommitmentReference
+  kind: ChargeKind
+  /** The charge reported, in micros, within the cap the job's terms set for its kind. */
+  amount: bigint
+  /** Which of the commitment's reports this is, 1 or 2. */
+  reportNumber: number
+  transactionHash: Hex
+}
+
+/**
+ * Avow confirmed the charge against its record of the cancellation. The charge isn't paid yet. The
+ * customer can contest it until `contestableUntil`, and it becomes payable then if it hasn't.
+ */
+export interface JobChargeConfirmed extends JobEventBase {
+  type: 'job_charge_confirmed'
+  reference: CommitmentReference
+  amount: bigint
+  contestableUntil: bigint
+}
+
+/**
+ * Why a reported charge waits for a ruling. `contested` is the customer's contest of a confirmed
+ * charge, `referred` is Avow sending the report to a ruling since its records don't support it, and
+ * `unanswered` is a report Avow didn't answer before its deadline.
+ */
+export const CHARGE_PAUSE_CAUSES = ['contested', 'referred', 'unanswered'] as const
+export type ChargePauseCause = (typeof CHARGE_PAUSE_CAUSES)[number]
+
+/** The charge is paused for a ruling, so nothing pays until one is posted. */
+export interface JobChargePaused extends JobEventBase {
+  type: 'job_charge_paused'
+  reference: CommitmentReference
+  cause: ChargePauseCause
+}
+
+/** The contest window closed with no contest, and the lock paid the charge to the business. */
+export interface JobChargePaid extends JobEventBase {
+  type: 'job_charge_paid'
+  reference: CommitmentReference
+  amount: bigint
+}
+
 /** How a reserve came back. A consent carries the reason the supplier gave, as it gave it. */
 export type JobRelease =
   | { way: 'consent'; reason: ReleaseReason }
@@ -201,6 +262,11 @@ export type JobEvent =
   | JobWorkStarted
   | JobDelivered
   | JobPaid
+  | JobCustomerCancelled
+  | JobChargeReported
+  | JobChargeConfirmed
+  | JobChargePaused
+  | JobChargePaid
   | JobReserveReleased
 
 const base = { run: runJson, source: agentSourceJson, orderId: orderIdJson }
@@ -277,6 +343,40 @@ export const JOB_EVENT_SCHEMAS = [
   z.strictObject({ ...base, type: z.literal('job_paid'), payment: paymentReferenceJson }),
   z.strictObject({
     ...base,
+    type: z.literal('job_customer_cancelled'),
+    reference: commitmentReferenceJson,
+    cancelledAt: u64,
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal('job_charge_reported'),
+    reference: commitmentReferenceJson,
+    kind: chargeKind,
+    amount: u256,
+    reportNumber: z.number().int().min(1).max(2),
+    transactionHash: bytes32,
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal('job_charge_confirmed'),
+    reference: commitmentReferenceJson,
+    amount: u256,
+    contestableUntil: u64,
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal('job_charge_paused'),
+    reference: commitmentReferenceJson,
+    cause: z.enum(CHARGE_PAUSE_CAUSES),
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal('job_charge_paid'),
+    reference: commitmentReferenceJson,
+    amount: u256,
+  }),
+  z.strictObject({
+    ...base,
     type: z.literal('job_reserve_released'),
     role: z.enum(['job', 'compute']),
     reference: commitmentReferenceJson,
@@ -303,6 +403,11 @@ export const JOB_EVENT_TYPES = [
   'job_work_started',
   'job_delivered',
   'job_paid',
+  'job_customer_cancelled',
+  'job_charge_reported',
+  'job_charge_confirmed',
+  'job_charge_paused',
+  'job_charge_paid',
   'job_reserve_released',
 ] as const satisfies readonly JobEvent['type'][]
 

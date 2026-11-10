@@ -6,6 +6,7 @@ import {
   isChainedTerms,
   type JobOffer,
   jobVerificationOf,
+  type OrderScenario,
   type OrderState,
   type PinnedBlock,
   type QuoteRequest,
@@ -17,7 +18,7 @@ import { type Hex, keccak256, stringToHex } from 'viem'
 import type { JobAcceptance } from '../job/accept.js'
 import { sendErrorIn } from '../send.js'
 import type { ReservedJob, Verdict } from './service.js'
-import type { JobWorld } from './world.js'
+import type { ChargeStanding, JobWorld, ReportedCharge } from './world.js'
 
 /**
  * What happens after a quote goes out, which no model drives. The executor follows the order, posts
@@ -26,6 +27,12 @@ import type { JobWorld } from './world.js'
  * landed, or that the lock shows landed, leads to work. Repeated states, states out of order and an
  * acceptance seen twice never verify, accept or start a job twice, since every step is the
  * executor's own and keyed by the order.
+ *
+ * A customer that cancels after the start breaks its promise. The executor stops the work, reports
+ * the late-cancellation charge the job's terms allow, and follows the charge on the customer's
+ * lock: reported, then confirmed by Avow, then paid once its contest window closes, or paused for
+ * a ruling. The job ends for the session once Avow has answered, and the executor goes on following
+ * the charge until it's paid or paused, without holding anything else up.
  */
 
 export interface ExecutorDeps {
@@ -48,6 +55,14 @@ export type JobOutcome =
   | { kind: 'refused'; refusal: CustomerRefusal }
   | { kind: 'not_started'; code: ReasonCode; layer: 'service' | 'avow' | 'relay' | 'lock' }
   | { kind: 'paid' }
+  /**
+   * The customer cancelled after the start. `charge` is where the reported charge stood when the
+   * job ended for the session, or the reason no report could be filed.
+   */
+  | {
+      kind: 'cancelled'
+      charge: { amount: bigint; standing: ChargeStanding } | { refused: ReasonCode }
+    }
   | { kind: 'stopped'; why: string }
 
 /** What a quote that went out carries for the executor. */
@@ -55,6 +70,8 @@ export interface Quoted {
   run: number
   order: JobOffer
   quote: QuoteRequest
+  /** The scenario the order was asked for, when it was asked for one. */
+  scenario?: OrderScenario
 }
 
 const RANK: Record<OrderState['status'], number> = {
@@ -63,14 +80,21 @@ const RANK: Record<OrderState['status'], number> = {
   refused: 2,
   reserved: 3,
   accepted: 4,
-  delivered: 5,
-  paid: 6,
+  cancelled: 5,
+  delivered: 6,
+  paid: 7,
 }
+
+/** How long the simulated work runs, in milliseconds, unless a test sets another. */
+const WORK_MS = 15_000
 
 const sameHex = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 export class JobExecutor {
   readonly #jobs = new Map<string, Promise<JobOutcome>>()
+  /** Charges still being followed to their end after their jobs ended for the session. */
+  readonly #charges = new Set<Promise<void>>()
+  #stopped = false
 
   constructor(private readonly deps: ExecutorDeps) {}
 
@@ -89,7 +113,17 @@ export class JobExecutor {
     return job
   }
 
-  async #run({ run, order, quote }: Quoted): Promise<JobOutcome> {
+  /** Stops following charges, so a session that ends doesn't wait out a contest window. */
+  stop(): void {
+    this.#stopped = true
+  }
+
+  /** Resolves once every charge being followed has been paid, paused or ended. */
+  async charges(): Promise<void> {
+    await Promise.allSettled([...this.#charges])
+  }
+
+  async #run({ run, order, quote, scenario }: Quoted): Promise<JobOutcome> {
     const { world, emit, note } = this.deps
     const busy = this.deps.busy ?? (() => {})
     const orderId = order.orderId
@@ -131,7 +165,8 @@ export class JobExecutor {
     const until = async (at: OrderState['status'], giveUpAt: bigint) => {
       for (;;) {
         const state = await read()
-        if (state.status === 'refused' || RANK[state.status] >= RANK[at]) return state
+        if (state.status === 'refused' || state.status === 'cancelled') return state
+        if (RANK[state.status] >= RANK[at]) return state
         if (world.now() > giveUpAt) return null
         await world.sleep(this.#pollMs)
       }
@@ -148,7 +183,7 @@ export class JobExecutor {
       once({ ...base, type: 'job_customer_refused', refusal: reserved.refusal })
       return { kind: 'refused', refusal: reserved.refusal }
     }
-    if (!('reserve' in reserved)) {
+    if (!('reserve' in reserved) || reserved.status === 'cancelled') {
       return { kind: 'stopped', why: `Order ${orderId} went back to ${reserved.status}.` }
     }
     once({ ...base, type: 'job_customer_verified', checks: reserved.checks })
@@ -271,7 +306,20 @@ export class JobExecutor {
       await world.sleep(Math.min(Number(startsAt - world.now()) * 1000, 5000))
     }
     once({ ...base, type: 'job_work_started', reference: job })
-    await world.sleep(this.deps.workMs ?? 15_000)
+    // The customer can cancel while the work runs. An order asked to cancel late is worked on
+    // until the customer's cancellation can no longer change the charge, so the work never ends
+    // before the cancellation it was asked for.
+    const workEnds = world.now() + BigInt(Math.ceil((this.deps.workMs ?? WORK_MS) / 1000))
+    const noShow = terms.remedies.charges.find((ch) => ch.kind === 'noShow')
+    const worksUntil =
+      scenario === 'cancels_late' && noShow && noShow.earliest > workEnds
+        ? noShow.earliest
+        : workEnds
+    while (world.now() < worksUntil) {
+      const state = await read()
+      if (state.status === 'cancelled') return this.#charge(base, order, job, state, once)
+      await world.sleep(Math.min(this.#pollMs, Number(worksUntil - world.now()) * 1000))
+    }
     const result = {
       label: SIMULATED_RESULT_LABEL,
       hash: keccak256(stringToHex(`${SIMULATED_RESULT_LABEL} for order ${orderId}`)),
@@ -293,11 +341,98 @@ export class JobExecutor {
     once({ ...base, type: 'job_delivered', reference: job, result })
 
     const paid = await until('paid', terms.subject.deliverBy + 1800n)
+    if (paid?.status === 'cancelled') return this.#charge(base, order, job, paid, once)
     if (paid?.status !== 'paid') {
       return { kind: 'stopped', why: `The customer hasn't paid for order ${orderId} yet.` }
     }
     once({ ...base, type: 'job_paid', payment: paid.payment })
     return { kind: 'paid' }
+  }
+
+  /**
+   * The broken promise. The customer says it cancelled, so the work stops and the business reports
+   * the late-cancellation charge. Avow answers from its own record of the customer's signed
+   * cancellation, so a customer that only says it cancelled gets the report referred to a ruling.
+   */
+  async #charge(
+    base: { run: number; source: 'session'; orderId: string },
+    order: JobOffer,
+    job: CommitmentReference,
+    cancelled: Extract<OrderState, { status: 'cancelled' }>,
+    once: (event: SessionEvent) => void,
+  ): Promise<JobOutcome> {
+    const { world } = this.deps
+    const busy = this.deps.busy ?? (() => {})
+    once({
+      ...base,
+      type: 'job_customer_cancelled',
+      reference: job,
+      cancelledAt: cancelled.cancellation.cancelledAt,
+    })
+    busy('the report of the cancellation charge')
+    let reported: Awaited<ReturnType<JobWorld['reportCharge']>>
+    try {
+      reported = await world.reportCharge(order, 'lateCancellation')
+    } finally {
+      busy(null)
+    }
+    if (!reported.ok) {
+      this.deps.note(
+        `The report of the charge wasn't filed (${reported.code}, at the ${reported.layer} layer), so the customer's reserve stands as it was.`,
+      )
+      return { kind: 'cancelled', charge: { refused: reported.code } }
+    }
+    const { amount, reportNumber, transactionHash, reportedAt } = reported
+    const report: ReportedCharge = { amount, reportNumber, transactionHash, reportedAt }
+    once({
+      ...base,
+      type: 'job_charge_reported',
+      reference: job,
+      kind: 'lateCancellation',
+      amount,
+      reportNumber,
+      transactionHash,
+    })
+    /** Posts where the charge stands, and says whether that's its end. */
+    const post = (standing: ChargeStanding): boolean => {
+      if (standing.state === 'confirmed') {
+        once({
+          ...base,
+          type: 'job_charge_confirmed',
+          reference: job,
+          amount,
+          contestableUntil: standing.contestableUntil,
+        })
+        return false
+      }
+      if (standing.state === 'paused') {
+        once({ ...base, type: 'job_charge_paused', reference: job, cause: standing.cause })
+      } else if (standing.state === 'paid') {
+        once({ ...base, type: 'job_charge_paid', reference: job, amount })
+      }
+      return standing.state !== 'waiting'
+    }
+    /** Reads the charge until `done` says to stop, the session ends or the terms' last date passes. */
+    const follow = async (done: (standing: ChargeStanding) => boolean): Promise<ChargeStanding> => {
+      const giveUpAt =
+        order.terms.backing.releaseDate + order.terms.resolution.contestWindow + 3600n
+      let standing: ChargeStanding = { state: 'waiting' }
+      for (;;) {
+        standing = await world.charge(order, report).catch(() => standing)
+        const ended = post(standing)
+        if (done(standing) || ended || this.#stopped || world.now() > giveUpAt) return standing
+        await world.sleep(this.#pollMs)
+      }
+    }
+    // The job ends for the session once Avow has answered the report, one way or the other.
+    const standing = await follow((s) => s.state !== 'waiting')
+    if (standing.state === 'confirmed') {
+      // A confirmed charge pays, or pauses on a contest, after the session has moved on.
+      const rest = follow(() => false).then(() => undefined)
+      this.#charges.add(rest)
+      void rest.finally(() => this.#charges.delete(rest))
+    }
+    return { kind: 'cancelled', charge: { amount, standing } }
   }
 
   get #pollMs(): number {

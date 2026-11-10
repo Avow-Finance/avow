@@ -1,6 +1,12 @@
 import type { PinnedBlock } from './dependencies.js'
 import type { ChargeKind } from './eip712.js'
-import type { CommitmentRefusalLayer, JobCharge, JobEvent, JobRelease } from './job-session.js'
+import type {
+  ChargePauseCause,
+  CommitmentRefusalLayer,
+  JobCharge,
+  JobEvent,
+  JobRelease,
+} from './job-session.js'
 import { describeReason, type ReasonCode } from './reasons.js'
 import { formatUsd } from './sandbox.js'
 import { type CustomerRefusalLayer, TEST_CUSTOMER_LABEL } from './test-customer.js'
@@ -104,6 +110,17 @@ function released(release: JobRelease): string {
   return `${RELEASED.consent}, which gave the reason ${reason}`
 }
 
+const CHARGE_NAMES_PLAIN: Record<ChargeKind, string> = {
+  lateCancellation: 'late-cancellation',
+  noShow: 'no-show',
+}
+
+const PAUSED: Record<ChargePauseCause, string> = {
+  contested: 'The customer contested the charge.',
+  referred: "Avow's records didn't support the report, so Avow referred it.",
+  unanswered: "Avow didn't answer the report before its deadline.",
+}
+
 const refusalTail = (code: ReasonCode, block: PinnedBlock | null) =>
   `${describeReason(code)}${block ? `, ${atBlock(block)}` : ''}.`
 
@@ -136,6 +153,16 @@ export function jobEventSentence(event: JobEvent): string {
       return 'Your code reported delivery to the customer and handed over a placeholder result, since the training is simulated.'
     case 'job_paid':
       return "The customer paid the job's price by a transfer whose memo names the job commitment. Anyone can check it on chain as a payment reference."
+    case 'job_customer_cancelled':
+      return "The customer told your code it cancelled after work started, and your code stopped the work. Avow confirms a charge for that only from its own record of the customer's signed cancellation."
+    case 'job_charge_reported':
+      return `Your code reported a ${formatUsd(event.amount)} ${CHARGE_NAMES_PLAIN[event.kind]} charge on the customer's reserve, signed by your supplier signing key. Nothing has moved yet.`
+    case 'job_charge_confirmed':
+      return `Avow confirmed the ${formatUsd(event.amount)} charge against its record of the cancellation. The customer can still contest it, and it becomes payable once that window closes.`
+    case 'job_charge_paused':
+      return `${PAUSED[event.cause]} The charge waits for a ruling, and nothing pays until one is posted.`
+    case 'job_charge_paid':
+      return `The contest window closed with no contest, and the customer's lock paid your business ${formatUsd(event.amount)}.`
     case 'job_reserve_released':
       return event.role === 'job'
         ? `The customer's reserve came back to it ${released(event.release)}.`

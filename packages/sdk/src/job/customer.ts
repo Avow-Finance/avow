@@ -3,6 +3,7 @@ import {
   type DeliveryReport,
   type JobOffer,
   type OrderAnswer,
+  type OrderScenario,
   type OrderState,
   type Parsed,
   parseApiError,
@@ -38,8 +39,11 @@ export class TestCustomerError extends Error {
 export interface TestCustomer {
   /** The customer's profile, labelled as Avow's test customer, read when the client connected. */
   readonly profile: TestCustomerProfile
-  /** Asks for a new order for this supplier, the developer's business as Avow registered it. */
-  order(supplier: SupplierProfile): Promise<JobOffer>
+  /**
+   * Asks for a new order for this supplier, the developer's business as Avow registered it. With a
+   * scenario, the customer plays it out on that order.
+   */
+  order(supplier: SupplierProfile, scenario?: OrderScenario): Promise<JobOffer>
   /** Sends the quote for an order. The customer answers while it checks it. */
   quote(orderId: string, quote: QuoteRequest): Promise<OrderAnswer>
   /** Where an order stands now. */
@@ -99,11 +103,11 @@ export async function connectTestCustomer(config: TestCustomerConfig): Promise<T
   const fromThisCustomer = (businessId: string) => businessId === profile.businessId
   return {
     profile,
-    order: (supplier) =>
+    order: (supplier, scenario) =>
       send({
         domain,
         path: TEST_CUSTOMER_PATHS.orders,
-        body: { supplier },
+        body: scenario ? { supplier, scenario } : { supplier },
         read: (json): Parsed<JobOffer> => {
           const offer = parseJobOffer(json)
           if (!offer.ok) return offer

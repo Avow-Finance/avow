@@ -142,10 +142,15 @@ describe('the first job, scripted against the fixture world', () => {
 
 describe('what the developer types', () => {
   it('takes the next order only on the job command, and sends everything else to the agent', async () => {
-    const { JOB_COMMAND } = await import('./session.js')
-    for (const line of ['job', '/job', 'JOB']) expect(JOB_COMMAND.test(line), line).toBe(true)
-    for (const line of ["Don't quote yet", 'what does a quote mean?', 'take the next job']) {
-      expect(JOB_COMMAND.test(line), line).toBe(false)
+    const { JOB_COMMAND, scenarioOf } = await import('./session.js')
+    for (const line of ['job', '/job', 'JOB', 'job cancels']) {
+      expect(JOB_COMMAND.test(line), line).toBe(true)
     }
+    const others = ["Don't quote yet", 'what does a quote mean?', 'take the next job', 'job late']
+    for (const line of others) expect(JOB_COMMAND.test(line), line).toBe(false)
+    // Only `job cancels` asks the customer to cancel, and a plain job runs to payment.
+    expect(scenarioOf('job cancels')).toBe('cancels_late')
+    expect(scenarioOf(' /JOB  cancels ')).toBe('cancels_late')
+    expect(scenarioOf('job')).toBeNull()
   })
 })

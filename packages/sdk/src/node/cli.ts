@@ -24,6 +24,7 @@ import {
 } from '../sandbox/setup.js'
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
+import { FIRST_RUN_STEPS } from './first-run.js'
 import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
 import {
@@ -190,7 +191,7 @@ async function main(args: readonly string[]): Promise<void> {
   }
   // Setup's steps take the first two of the first run's numbers, and a run with no service.ts
   // has only those two.
-  const steps = { at: 0, of: jobs && firstRun ? 4 : 2 }
+  const steps = { at: 0, of: jobs && firstRun ? FIRST_RUN_STEPS : 2 }
   const show = (line: string, kind: SetupLineKind = 'note') => {
     if (kind === 'step') {
       const [title = '', why] = line.split('\n')

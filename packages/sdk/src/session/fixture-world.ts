@@ -22,6 +22,7 @@ import {
   type Mandate,
   mandateHash,
   newSalt,
+  type OrderScenario,
   type OrderState,
   type PaymentReference,
   type PinnedBlock,
@@ -47,11 +48,14 @@ import type { JobAcceptance } from '../job/accept.js'
 import { quoteJob } from '../job/quote.js'
 import { sandboxMandate } from '../sandbox/mandate.js'
 import { SendError } from '../send.js'
+import { chargeStanding } from './charge.js'
 import type { ChainSnapshot } from './service-check.js'
 import type {
   AuthorityNow,
   BookOutcome,
   CancelOutcome,
+  ChargeReport,
+  ChargeStanding,
   ChildChain,
   JobWorld,
   LockRead,
@@ -96,6 +100,9 @@ interface Order {
   checks: CheckedDependency[]
   reserve: { reference: BuyerSideReference; amount: bigint; fundedIn: Hex } | null
   payment: PaymentReference | null
+  scenario: OrderScenario | null
+  /** When the customer cancelled, and whether Avow recorded its signed cancellation. */
+  cancelled: { at: bigint; recorded: boolean } | null
   /** How many reads the customer takes before it moves the order on, as a real one takes time. */
   reads: number
 }
@@ -103,7 +110,22 @@ interface Order {
 export interface FixtureOptions {
   /** The agent's authority in dollars, $500 by default. */
   authority?: number
+  /**
+   * What becomes of a charge reported on a job the customer cancelled. `pays` is Avow confirming it
+   * and the lock paying it once its contest window closes, the default. `contested` is the customer
+   * contesting the confirmed charge. `referred` is a customer that says it cancelled without Avow
+   * holding its signed cancellation, so Avow refers the report. `unanswered` is Avow never
+   * answering, so the report times out at its deadline.
+   */
+  charge?: 'pays' | 'contested' | 'referred' | 'unanswered'
 }
+
+/** How long Avow has to answer a report in the fixture world, in seconds. */
+export const FIXTURE_CONFIRM_WINDOW = 600n
+/** How long after a report the fixture world's Avow answers it, in seconds. */
+const AVOW_ANSWERS_AFTER = 6n
+/** How long after its start a job asked to cancel late is cancelled, in seconds. */
+const CANCELS_AFTER = 10n
 
 export interface FixtureWorld extends JobWorld {
   readonly kind: 'fixture'
@@ -173,6 +195,8 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
   }
   const orders = new Map<string, Order>()
   const bookings: { reference: BuyerSideReference; reserve: bigint }[] = []
+  /** When each report landed, by the commitment it's on. */
+  const reports = new Map<string, bigint>()
   let acceptFails = 0
   const acceptances: Hex[] = []
   let orderCount = 0
@@ -366,7 +390,7 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
       acceptFails = count
     },
 
-    async pullOrder() {
+    async pullOrder(scenario) {
       const n = ++orderCount
       const orderId = orderIdOf(n)
       const startsAt = now + LEAD
@@ -389,6 +413,8 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         checks: [],
         reserve: null,
         payment: null,
+        scenario: scenario ?? null,
+        cancelled: null,
         reads: 0,
       })
       return offer
@@ -526,6 +552,20 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
       if (!o) throw new Error(`No order ${orderId}`)
       o.reads++
       if (o.status === 'verifying' && o.reads > 1) await verify(o)
+      // A customer asked to cancel late does, shortly after the start and before the no-show charge.
+      const s = o.offer.terms.subject
+      if (
+        o.status === 'accepted' &&
+        o.scenario === 'cancels_late' &&
+        now >= s.startsAt + CANCELS_AFTER
+      ) {
+        o.status = 'cancelled'
+        o.cancelled = { at: now, recorded: options.charge !== 'referred' }
+        o.said.push({
+          index: o.said.length,
+          text: "I'm cancelling this job after its start. My reserve backs the late-cancellation charge our terms set.",
+        })
+      }
       if (o.status === 'delivered' && o.reads > 1 && o.reserve) {
         o.status = 'paid'
         const price =
@@ -556,6 +596,15 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         return { ...common, status: 'refused', refusal: o.refusal, checks: o.checks }
       }
       if (!o.reserve) throw new Error(`Order ${orderId} has no reserve`)
+      if (o.status === 'cancelled' && o.cancelled) {
+        return {
+          ...common,
+          status: 'cancelled',
+          checks: o.checks,
+          reserve: o.reserve,
+          cancellation: { cancelledAt: o.cancelled.at },
+        }
+      }
       if (o.status === 'paid' && o.payment) {
         return {
           ...common,
@@ -655,9 +704,76 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
       return found ? { transactionHash: found, blockNumber: block } : null
     },
 
+    async reportCharge(order, kind): Promise<ChargeReport> {
+      // The lock's own rules for a report, as the verifier checks them before it builds one.
+      const k = key(customerLock, order.commitmentId, 'buyer')
+      const r = records.get(k)
+      const refuse = (code: Extract<ChargeReport, { ok: false }>['code']): ChargeReport => ({
+        ok: false,
+        code,
+        layer: 'service',
+      })
+      if (!r) return refuse('chain.reserve_missing')
+      if (r.state !== 'accepted') return refuse('report.not_reportable')
+      if (r.hasReport) return refuse('report.open')
+      const charge = r.charges.find((c) => c.kind === kind)
+      if (!charge) return refuse('report.kind_not_allowed')
+      if (now < charge.earliest) return refuse('report.too_early')
+      if (now >= r.chargeDeadline) return refuse('commitment.ended')
+      now += 2n
+      block += 2n
+      const reportNumber = r.reportCount + 1
+      records.set(k, {
+        ...r,
+        hasReport: true,
+        reportCount: reportNumber,
+        reportKind: kind,
+        reportAmount: charge.most,
+      })
+      reports.set(k, now)
+      return {
+        ok: true,
+        amount: charge.most,
+        reportNumber,
+        transactionHash: tx('the report'),
+        reportedAt: now,
+      }
+    },
+
+    async charge(order, report): Promise<ChargeStanding> {
+      // What Avow, the customer and the lock's own clock do to a report, each step once.
+      const k = key(customerLock, order.commitmentId, 'buyer')
+      const o = orders.get(order.orderId)
+      const reportedAt = reports.get(k)
+      let r = records.get(k)
+      const how = options.charge ?? 'pays'
+      if (r && reportedAt !== undefined) {
+        const answerDue = now >= reportedAt + AVOW_ANSWERS_AFTER
+        if (r.state === 'accepted' && r.hasReport && how !== 'unanswered' && answerDue) {
+          // Avow confirms only from its own record of the customer's signed cancellation.
+          r = o?.cancelled?.recorded
+            ? { ...r, state: 'charge_pending', chargeStart: now, held: r.reportAmount }
+            : { ...r, state: 'paused', pausedAt: now }
+        } else if (
+          r.state === 'accepted' &&
+          r.hasReport &&
+          now >= reportedAt + FIXTURE_CONFIRM_WINDOW
+        ) {
+          r = { ...r, state: 'paused', pausedAt: reportedAt + FIXTURE_CONFIRM_WINDOW }
+        } else if (r.state === 'charge_pending' && how === 'contested' && now > r.chargeStart) {
+          r = { ...r, state: 'paused', contested: true, pausedAt: now }
+        } else if (r.state === 'charge_pending' && now >= r.chargeStart + r.contestWindow) {
+          r = { ...r, state: 'charged', held: 0n }
+        }
+        records.set(k, r)
+      }
+      return chargeStanding(r ?? null, report, FIXTURE_CONFIRM_WINDOW)
+    },
+
     async deliver(orderId, _result: DeliveryResult) {
       const o = orders.get(orderId)
       if (!o) throw new Error(`No order ${orderId}`)
+      if (o.status === 'cancelled') throw new Error(`Order ${orderId} was cancelled`)
       o.status = 'delivered'
       o.reads = 0
     },
