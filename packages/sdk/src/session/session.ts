@@ -268,7 +268,17 @@ export async function runSession(deps: SessionDeps): Promise<SessionResult> {
     notes: readonly string[],
     scenario: OrderScenario | null = null,
   ): Promise<JobOutcome | null> {
-    const order: JobOffer = await world.pullOrder(scenario ?? undefined)
+    let order: JobOffer
+    try {
+      order = await world.pullOrder(scenario ?? undefined)
+    } catch (error) {
+      // A customer that can't play a scenario out refuses the order, and the session goes on.
+      if (scenario === null) throw error
+      const why = `Avow's test customer didn't offer a job it cancels. ${error instanceof Error ? error.message : String(error)}`
+      // A guide says how each job ended itself.
+      if (!deps.afterJob) view.quiet(why)
+      return { kind: 'stopped', why }
+    }
     state.order = order
     const run = deps.nextRun()
     const t = order.terms
