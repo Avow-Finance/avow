@@ -12,8 +12,9 @@ import {
   LOCK_BLOCK,
   recordingPrompts,
 } from '../test/sandbox-business.js'
+import { Refusal } from './agent.js'
 import { liveKeys, lockCreatedIn } from './keys.js'
-import { prepareSandboxBusiness } from './setup.js'
+import { limitTry, prepareSandboxBusiness } from './setup.js'
 
 describe("the business's side, when the agent writes to .avow", () => {
   it('stands on a mandate the chain holds, and asks nothing', async () => {
@@ -259,5 +260,36 @@ describe('the keys the runner revokes', () => {
       ],
     })
     expect(await liveKeys(chain.client, account, LOCK_BLOCK)).toEqual([key(1), key(3)])
+  })
+})
+
+describe("a first setup's try past the limit", () => {
+  const authority = 500_000_000n
+  const amounts = {
+    needed: 501_000_000n,
+    left: authority,
+    authority,
+    capPerCommitment: authority,
+    dailyLimit: null,
+    dailyLeft: null,
+  }
+
+  it('asks for a dollar more than the agent may hold, and says who refused it', async () => {
+    const asked: number[] = []
+    const said = await limitTry(authority, async (reserve) => {
+      asked.push(reserve)
+      throw new Refusal({ code: 'mandate.over_commitment_cap', layer: 'avow', amounts })
+    })
+    expect(asked).toEqual([501])
+    expect(said).toBe('It asked to hold $501, and Avow refused, so no money moved.')
+  })
+
+  it("says nothing when the try couldn't run, and says so loudly if nothing refused it", async () => {
+    expect(
+      await limitTry(authority, async () => {
+        throw new Error('the supplier never answered')
+      }),
+    ).toBeNull()
+    expect(await limitTry(authority, async () => {})).toContain('which should never happen')
   })
 })

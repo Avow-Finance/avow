@@ -336,7 +336,8 @@ export function formatUsd(micros: bigint): string {
   return `${sign}$${whole}.${digits}`
 }
 
-const WHO: Record<RefusalLayer, string> = {
+/** Who refused, as a sentence names each layer. */
+export const REFUSED_BY: Record<RefusalLayer, string> = {
   service: 'your service.ts',
   sdk: 'the SDK',
   avow: 'Avow',
@@ -365,7 +366,7 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
  * never says the lock would refuse what Avow approved.
  */
 export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
-  const who = WHO[r.layer]
+  const who = REFUSED_BY[r.layer]
   const { needed, left, authority, capPerCommitment, dailyLimit, dailyLeft } = r.amounts
   const onChain =
     r.layer !== 'sdk' && r.layer !== 'avow'

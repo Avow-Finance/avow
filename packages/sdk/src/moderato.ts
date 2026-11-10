@@ -3,6 +3,7 @@ import {
   type Address,
   type Chain,
   createClient,
+  type Hex,
   type HttpTransport,
   http,
   type PublicClient,
@@ -21,6 +22,10 @@ export const MODERATO_FACTORY: Address = '0x8fa7177c84BE069df2a51F096ED28d5D661B
 
 /** The block that factory was created in, the first with its code, so no lock it made is older. */
 export const MODERATO_FACTORY_CREATED_IN = 41_801_818n
+
+/** A transaction's page in Moderato's explorer. */
+export const moderatoTransactionUrl = (hash: Hex): string =>
+  `${tempoModerato.blockExplorers.default.url}/tx/${hash}`
 
 /** AlphaUSD, which pays Moderato's fees and comes from its faucet. */
 export const MODERATO_FEE_TOKEN: Address = '0x20C0000000000000000000000000000000000001'

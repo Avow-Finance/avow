@@ -24,8 +24,8 @@ export function banner(look: Look): string {
 
 /** What a first run is for, said once under the banner before anything is asked. */
 export const FIRST_RUN_LINES = [
-  'You want your AI agent to buy and sell for you, and nobody can trust it with money yet.',
-  "In about two minutes, you give it limits it can't break and watch it win a paid job.",
+  'You want your AI agent to buy and sell for you, and strangers have no reason to take its word.',
+  'In about two minutes, it makes commitments a stranger can check and wins a job with nothing prepaid.',
 ] as const
 
 /** The first run's lines, laid to the terminal's width under the banner. */
