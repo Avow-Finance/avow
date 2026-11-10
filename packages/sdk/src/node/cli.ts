@@ -3,7 +3,15 @@ import { spawn } from 'node:child_process'
 import { existsSync, renameSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { formatUsd, type SandboxDeployment } from '@avow-finance/spec'
-import { banner, clean, lookOf, RAIL_OPEN_ENV, Rail, stylesOf } from '@avow-finance/terminal'
+import {
+  banner,
+  clean,
+  firstRunIntro,
+  lookOf,
+  RAIL_OPEN_ENV,
+  Rail,
+  stylesOf,
+} from '@avow-finance/terminal'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
 import { loadBusinessItem } from '../sandbox/business-store.js'
@@ -58,9 +66,10 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
   --provider anthropic   Claude, with ANTHROPIC_API_KEY from your environment, billed to that key
   --model id             the model to ask for, such as qwen3:8b
   --scripted             scripted decisions, the same every run, with no model
+  --details              every tool call, receipt, address and link, as your screen shows them
 
-With no provider chosen, the session picks only a supported model Ollama has pulled. AVOW_MODEL_PROVIDER
-and AVOW_MODEL choose the same as the flags.
+With no provider chosen, the session picks a supported model Ollama has pulled, and runs the scripted
+decisions when there's none. AVOW_MODEL_PROVIDER and AVOW_MODEL choose the same as the flags.
 
 It runs on Tempo's Moderato testnet with test dollars. Your business's key stays in .avow on this
 machine, sealed under your passphrase.`
@@ -115,27 +124,32 @@ async function main(args: readonly string[]): Promise<void> {
   }
   const look = lookOf(process.stdout, process.env, process.stderr)
   const paint = stylesOf(look)
-  const rail = new Rail(look)
+  const input = terminalPrompts()
+  // The rail writes through the prompts, so output that arrives while the developer types never
+  // lands on the row they're typing on.
+  const rail = new Rail(look, (text) => input.print(text))
   const say = (line = '') => {
     rail.settle()
     console.log(line)
   }
-  if (!CONTINUED) say(banner(look))
 
   const dir = join(process.cwd(), SANDBOX_DIR)
   const store = fileStore(dir)
-  const config = await readBusinessConfig(BUSINESS_FILE)
+  // A first run teaches as it goes, in four numbered steps, the last two in the agent session.
+  const firstRun =
+    command === 'fresh' || (command === 'start' && (await loadBusinessItem(store)) === null)
   if (!CONTINUED) {
-    const known = command === 'start' && (await loadBusinessItem(store)) !== null
-    rail.open(known ? config.name : `Set up ${config.name}`)
+    say(banner(look))
+    if (firstRun) say(firstRunIntro(look))
   }
+  const config = await readBusinessConfig(BUSINESS_FILE)
+  if (!CONTINUED && !firstRun) rail.open(config.name)
   if (command === 'fresh' && existsSync(dir)) {
     const aside = `${SANDBOX_DIR}-${new Date().toISOString().replace(/[:.]/g, '-')}`
     renameSync(dir, join(process.cwd(), aside))
     rail.done(`Moved your previous business to ${aside}, keys and all.`)
   }
 
-  const input = terminalPrompts()
   const prompts: SandboxPrompts = {
     async newPassphrase() {
       await ensureChildrenGone()
@@ -169,11 +183,23 @@ async function main(args: readonly string[]): Promise<void> {
       rail.ask(question)
       for (const detail of details) rail.line(detail)
       const answer = await input.ask(`${rail.prefix}${paint.dim('y/N')} `)
-      return /^y(es)?$/i.test((answer ?? '').trim())
+      const yes = /^y(es)?$/i.test((answer ?? '').trim())
+      rail.answered(yes ? 'Yes' : 'No', 'quiet')
+      return yes
     },
   }
+  // Setup's steps take the first two of the first run's numbers, and a run with no service.ts
+  // has only those two.
+  const steps = { at: 0, of: jobs && firstRun ? 4 : 2 }
   const show = (line: string, kind: SetupLineKind = 'note') => {
-    if (kind === 'stage') rail.stage(line)
+    if (kind === 'step') {
+      const [title = '', why] = line.split('\n')
+      steps.at += 1
+      rail.step(steps.at, steps.of, title, why)
+    } else if (kind === 'step_done') rail.stepDone(line)
+    else if (kind === 'detail') {
+      if (flags.details) rail.quiet(line)
+    } else if (kind === 'stage') rail.stage(line)
     else if (kind === 'done') rail.done(line)
     else if (kind === 'wait') rail.wait(line)
     else rail.line(line)
@@ -215,25 +241,41 @@ async function main(args: readonly string[]): Promise<void> {
   try {
     const done = await prepare()
     ready = !jobs || done.supplier?.ok === true
-    rail.close(
-      ready ? `${config.name} is ready.` : `${config.name} is set up, and can't take jobs yet.`,
-    )
+    // A first run goes straight on to its next step, and only a stop gets the rail's last line.
+    if (!(firstRun && jobs && ready)) {
+      rail.close(
+        ready ? `${config.name} is ready.` : `${config.name} is set up, and can't take jobs yet.`,
+      )
+    }
   } catch (error) {
     rail.fail(error instanceof Error ? error.message : String(error))
     rail.close(jobs ? 'Fix that and run it again.' : 'Fix that and press Enter to try again.')
   }
   // The link takes a line of its own, so the terminal never breaks it.
   const screen = sessionUrl(session.id)
-  say(
-    `\n   ${openInBrowser(screen) ? 'Your screen opened in your browser, at' : 'Watch your agent on your screen, at'}`,
-  )
-  say(`   ${screen}`)
+  const opened = openInBrowser(screen)
+  if (firstRun && jobs && ready) {
+    rail.quiet(
+      opened
+        ? 'Your browser opened your screen, which shows every step as it happens, at'
+        : 'Your screen shows every step as it happens, at',
+    )
+    say(`${rail.prefix}${screen}`)
+  } else {
+    say(
+      `\n   ${opened ? 'Your screen opened in your browser, at' : 'Watch your agent on your screen, at'}`,
+    )
+    say(`   ${screen}`)
+  }
 
   if (jobs) {
     if (!ready) process.exit(1)
-    say()
-    rail.open(command === 'job' ? 'One job' : 'Your agent session')
+    if (!firstRun) {
+      say()
+      rail.open(command === 'job' ? 'One job' : 'Your agent session')
+    }
     const code = await runJobSession({
+      firstRun,
       mode: command === 'job' ? 'one' : 'interactive',
       flags,
       rail,

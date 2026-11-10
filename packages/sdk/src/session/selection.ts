@@ -14,8 +14,9 @@ import { scriptedProvider } from './scripted.js'
  * Picks the model the session talks to, so nobody is surprised by a bill. An explicit choice wins,
  * and when it can't be used it stays a visible failure and nothing switches. With nothing explicit,
  * only a free model on this machine is picked: Ollama, running, with a supported model pulled. A
- * paid provider runs only once it's chosen, so a key in the environment is never enough. Nothing
- * falls back to the scripted decisions without being asked.
+ * paid provider runs only once it's chosen, so a key in the environment is never enough. With no
+ * free model ready, it runs the scripted decisions, which cost nothing, and says so before the first
+ * turn, with how to get a model.
  */
 
 export interface SelectionInput {
@@ -32,17 +33,30 @@ export interface SelectionInput {
 }
 
 export type Selection =
-  | { ok: true; provider: ModelProvider; chosen: 'explicit' | 'automatic' }
+  | {
+      ok: true
+      provider: ModelProvider
+      chosen: 'explicit' | 'automatic'
+      /** Set when no free model was ready and the scripted decisions run in its place. */
+      fallback?: { why: string; help: string[] }
+    }
   | { ok: false; why: string; help: string[] }
 
 /** How to get a model, said when none is ready. */
 function helpLines(env: SelectionInput['env']): string[] {
   return [
-    `Install Ollama from https://ollama.com, then pull a supported model with ollama pull ${SUPPORTED_LOCAL_MODELS[0]}. It runs on this machine at no charge.`,
-    `Or choose Claude with --provider anthropic and ANTHROPIC_API_KEY set in your environment. Each call is billed to that key.${env.ANTHROPIC_API_KEY ? ' The key is set, but the session uses it only when you choose it.' : ''}`,
-    'Or run the scripted decisions, the same every run, with --scripted.',
+    `For a model on this machine at no charge, install Ollama from https://ollama.com and run ollama pull ${SUPPORTED_LOCAL_MODELS[0]}.`,
+    `For Claude, run npm start -- --provider anthropic with ANTHROPIC_API_KEY set. Each call is billed to that key.${env.ANTHROPIC_API_KEY ? ' The key is set, but the session uses it only when you choose it.' : ''}`,
   ]
 }
+
+/** The scripted decisions, run because no free model was ready and nothing was chosen. */
+const scriptedInstead = (why: string, env: SelectionInput['env']): Selection => ({
+  ok: true,
+  provider: scriptedProvider(),
+  chosen: 'automatic',
+  fallback: { why, help: helpLines(env) },
+})
 
 async function local(
   model: string | null,
@@ -52,13 +66,16 @@ async function local(
   const base = input.ollamaUrl ?? OLLAMA_URL
   const pulled = await localModels(base, input.fetch)
   if (pulled === null) {
-    return {
-      ok: false,
-      why: explicit
-        ? `You chose Ollama, and it isn't answering at ${base}. Open the Ollama app or run ollama serve.`
-        : 'No model is ready for the session.',
-      help: explicit ? [] : helpLines(input.env),
-    }
+    return explicit
+      ? {
+          ok: false,
+          why: `You chose Ollama, and it isn't answering at ${base}. Open the Ollama app or run ollama serve.`,
+          help: [],
+        }
+      : scriptedInstead(
+          'No model is running on this machine, so your agent runs scripted decisions, the same every run and free.',
+          input.env,
+        )
   }
   const name = model
     ? pulled.find((p) => sameLocalModel(p, model))
@@ -70,11 +87,10 @@ async function local(
           why: `Ollama has no model ${model}. Pull it with ollama pull ${model}.`,
           help: [],
         }
-      : {
-          ok: false,
-          why: `Ollama is running with none of the supported models pulled: ${SUPPORTED_LOCAL_MODELS.join(', ')}.`,
-          help: helpLines(input.env),
-        }
+      : scriptedInstead(
+          `Ollama has none of the supported models pulled (${SUPPORTED_LOCAL_MODELS.join(', ')}), so your agent runs scripted decisions, the same every run and free.`,
+          input.env,
+        )
   }
   const capabilities = await localCapabilities(name, base, input.fetch)
   if (capabilities && !capabilities.includes('tools')) {

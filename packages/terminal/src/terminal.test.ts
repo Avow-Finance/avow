@@ -472,6 +472,42 @@ describe('what a real terminal shows', () => {
     }
   }, 120_000)
 
+  it('leaves a finished step as one line, its typed answers and wrapped lines taken back', async () => {
+    const out = recorder()
+    const rail = new Rail({ colors: 0, live: true, width: 40 }, out.write)
+    rail.done('Made my-agent')
+    rail.step(
+      1,
+      4,
+      'Your business',
+      'Your business holds the money, in a lock of its own on chain.',
+    )
+    rail.ask('Choose a passphrase')
+    // What a terminal shows of a hidden answer: the prompt, then a new line once Enter is pressed.
+    out.write(`${rail.prefix}\n`)
+    rail.answered('Set', 'quiet')
+    rail.wait('Creating the lock')
+    rail.done('$1,500 of test dollars arrived in your account, which holds them in its lock')
+    rail.stepDone('Your business has $1,500 in test dollars')
+    rail.step(2, 4, "Your agent's limits")
+    const rows = (await screen(out.text(), 40, '11')).map((row) => row.text)
+    expect(rows).toEqual([
+      '│  ✓ Made my-agent',
+      '│',
+      '✓  1/4  Your business has $1,500 in test',
+      '│  dollars',
+      '│',
+      "◆  2/4  Your agent's limits",
+    ])
+    // Where lines can't be drawn again, the step's rows stay and its line follows them.
+    const piped = recorder()
+    const still40 = new Rail(still(40), piped.write)
+    still40.step(1, 4, 'Your business')
+    still40.stepDone('Your business has $1,500 in test dollars')
+    expect(piped.text()).toContain('◆  1/4  Your business\n')
+    expect(piped.text()).toContain('✓  1/4  Your business has $1,500 in test\n')
+  })
+
   it('keeps a spinner on one row, so clearing it leaves nothing behind', async () => {
     vi.useFakeTimers()
     const out = recorder()
