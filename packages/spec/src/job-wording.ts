@@ -19,10 +19,11 @@ import { type CustomerRefusalLayer, TEST_CUSTOMER_LABEL } from './test-customer.
 
 /**
  * The decisive moment. The customer made its reserve, the developer's code checked it, and the
- * customer accepted only after it verified the compute booking.
+ * customer accepted only after it verified the compute booking. Work waits for the job's start,
+ * when the customer's free cancellation ends.
  */
 export const DECISIVE_SENTENCE =
-  "Your code verified the customer's commitment and checked its reserve. Work can now begin. The customer accepted after verifying your compute booking."
+  "Your code verified the customer's commitment and checked its reserve. The customer accepted after verifying your compute booking. Work starts when the customer's free cancellation ends."
 
 /**
  * The decisive sentence when the lock already showed the acceptance an earlier attempt sent. This
@@ -30,7 +31,7 @@ export const DECISIVE_SENTENCE =
  * its authorization again, so the sentence says the acceptance rests on the earlier attempt.
  */
 export const RECOVERED_DECISIVE_SENTENCE =
-  "Your code verified the customer's commitment and checked its reserve. The acceptance on the customer's lock came from an earlier attempt's checks. Work can now begin. The customer accepted after verifying your compute booking."
+  "Your code verified the customer's commitment and checked its reserve. The acceptance on the customer's lock came from an earlier attempt's checks. The customer accepted after verifying your compute booking. Work starts when the customer's free cancellation ends."
 
 /** What a compute booking proves, and what it doesn't. */
 export const COMPUTE_PROVES =

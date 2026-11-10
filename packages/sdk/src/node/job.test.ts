@@ -107,6 +107,10 @@ describe('a first run', () => {
       DECISIVE_SENTENCE.split(' and ')[0] as string,
       '✓  3/5  Delivered, and paid $40 on delivery with nothing prepaid. The $10 and $40 set aside never',
     )
+    // Work waits for the job's start, and the run says how long and why.
+    expect(drawn.replace(/\n│\s+/g, ' ')).toMatch(
+      /Work starts in 1 minute( \d+ seconds?)?, when the job's start ends the customer's free cancellation\./,
+    )
     // Step 4 takes an order the customer cancels after work starts. The promise is broken at once,
     // and the charge is confirmed and still open to a contest when the step ends.
     inOrder(

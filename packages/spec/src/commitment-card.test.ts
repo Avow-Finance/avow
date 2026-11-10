@@ -31,8 +31,8 @@ describe('a commitment as a card', () => {
         rows: [
           {
             label: 'Promise',
-            // The firm offer holds the GPU from two minutes before the job's start.
-            text: 'Use 1 H100 from -2m to 15m, at $2.40 a GPU-hour paid as used',
+            // The firm offer holds the GPU from the job's start to five minutes past its deadline.
+            text: 'Use 1 H100 from 0m to 15m, at $2.40 a GPU-hour paid as used',
           },
           {
             label: 'If broken',
