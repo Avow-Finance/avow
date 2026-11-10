@@ -91,6 +91,16 @@ export function testnetDemoJobTerms(startsAt: bigint, arbiter: Address): JobTerm
   })
 }
 
+/**
+ * How the demo job's clock runs from its offer, in seconds. Avow's test customer keeps an offer
+ * open for `quote` seconds by default, which leaves the developer's agent time to compare compute,
+ * book it and quote. Work starts `accept` seconds after the offer lapses, which leaves the customer
+ * time to verify the quote and fund its reserve, and the developer time to accept before the start.
+ * A scripted agent quotes in about ten seconds and the rest takes about fifteen, so both leave room
+ * for a slower model and a slow block.
+ */
+export const DEMO_JOB_TIMING = { quote: 60n, accept: 60n } as const
+
 /** The demo GPU supplier's business id on testnet. */
 export const DEMO_GPU_SUPPLIER = 'avow-demo-gpu'
 
@@ -109,10 +119,11 @@ export const DEMO_GPU_SUPPLIER = 'avow-demo-gpu'
  * - `h100-x16` takes exactly 16 GPUs at $2.00, which reserves $640, more than the mandate allows for
  *   one commitment (`mandate.over_commitment_cap`). Sixteen GPUs of `h100-firm` reserve the same.
  *
- * Each window but the flexible one starts two minutes before the job, and each ends five minutes
- * after its deadline. An offer lapses ten minutes after it's listed, or a minute before its window
- * starts if that comes first, so no one books a window that has begun. The supplier itself signs any
- * GPU terms within its limits, whatever it listed.
+ * Each window but the later one starts when the job does, and each ends five minutes after its
+ * deadline. An offer lapses ten minutes after it's listed, or the test customer's acceptance window
+ * before the job starts if that comes first. That's when the job's own offer lapses, so the agent
+ * books compute by the time it has to quote, and the supplier has that window to accept before its
+ * booking starts. The supplier itself signs any GPU terms within its limits, whatever it listed.
  */
 export function demoComputeOffers(job: {
   startsAt: bigint
@@ -123,8 +134,9 @@ export function demoComputeOffers(job: {
   const later = job.deliverBy + 10n * MINUTE
   const minutesFrom = (start: bigint) => Number((end - start + MINUTE - 1n) / MINUTE)
   const offer = (o: Pick<ComputeOffer, 'id' | 'pricePerGpuHour'> & Partial<ComputeOffer>) => {
-    const startsAt = o.startsAt ?? job.startsAt - 2n * MINUTE
+    const startsAt = o.startsAt ?? job.startsAt
     const lapses = job.listedAt + 10n * MINUTE
+    const booksBy = job.startsAt - DEMO_JOB_TIMING.accept
     return {
       supplier: DEMO_GPU_SUPPLIER,
       gpu: 'H100',
@@ -136,7 +148,7 @@ export function demoComputeOffers(job: {
       reservePerGpu: dollars(40),
       ...o,
       startsAt,
-      expiry: lapses < startsAt - MINUTE ? lapses : startsAt - MINUTE,
+      expiry: lapses < booksBy ? lapses : booksBy,
     }
   }
   return {
@@ -144,12 +156,7 @@ export function demoComputeOffers(job: {
     listedAt: job.listedAt,
     offers: [
       offer({ id: 'h100-firm', pricePerGpuHour: 2_400_000n }),
-      offer({
-        id: 'h100-flex',
-        pricePerGpuHour: 1_600_000n,
-        startsAt: job.startsAt,
-        freeCancelBy: job.startsAt,
-      }),
+      offer({ id: 'h100-flex', pricePerGpuHour: 1_600_000n, freeCancelBy: job.startsAt }),
       offer({ id: 'h100-later', pricePerGpuHour: 2_200_000n, startsAt: later, minutes: 30 }),
       offer({ id: 'h100-x16', pricePerGpuHour: 2_000_000n, gpus: { min: 16, max: 16 } }),
     ],

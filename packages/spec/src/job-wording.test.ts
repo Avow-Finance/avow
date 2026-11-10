@@ -42,7 +42,7 @@ const everything = [
 describe('the words a job’s terminal and screen share', () => {
   it('say the decisive moment exactly', () => {
     expect(DECISIVE_SENTENCE).toBe(
-      "Your code verified the customer's commitment and checked its reserve. Work can now begin. The customer accepted after verifying your compute booking.",
+      "Your code verified the customer's commitment and checked its reserve. The customer accepted after verifying your compute booking. Work starts when the customer's free cancellation ends.",
     )
     const checked = JOB_EVENTS.find((e) => e.type === 'job_commitment_checked')
     if (!checked) throw new Error('The fixtures check a commitment')

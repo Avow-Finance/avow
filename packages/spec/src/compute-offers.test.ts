@@ -7,7 +7,13 @@ import {
   offerTakes,
   parseComputeOffers,
 } from './compute-offers.js'
-import { DEMO_GPU_SUPPLIER, demoComputeOffers, dollars, testnetDemoJobTerms } from './demo.js'
+import {
+  DEMO_GPU_SUPPLIER,
+  DEMO_JOB_TIMING,
+  demoComputeOffers,
+  dollars,
+  testnetDemoJobTerms,
+} from './demo.js'
 import { jobFitsReservation } from './job.js'
 import { checkMandate } from './mandate.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
@@ -100,14 +106,38 @@ describe('the demo supplier’s four offers for a job', () => {
       expect(o.expiry <= o.startsAt - 60n, o.id).toBe(true)
       expect(o.expiry <= listing.listedAt + 600n, o.id).toBe(true)
     }
-    // A listing made close to the job's start lapses a minute before the window.
+    // A listing made close to the job's start lapses the acceptance window before it.
     const late = demoComputeOffers({
       startsAt: job.subject.startsAt,
       deliverBy: job.subject.deliverBy,
       listedAt: job.subject.startsAt - 150n,
     })
     const firm = late.offers.find((o) => o.id === 'h100-firm')
-    expect(firm?.expiry).toBe((firm?.startsAt ?? 0n) - 60n)
+    expect(firm?.expiry).toBe(job.subject.startsAt - DEMO_JOB_TIMING.accept)
+  })
+
+  it("lapse with the test customer's own offer, so the agent books compute by the time it quotes", () => {
+    // An order on the test customer's clock: open for a quote, then the acceptance window.
+    const offeredAt = NOW
+    const startsAt = offeredAt + DEMO_JOB_TIMING.quote + DEMO_JOB_TIMING.accept
+    const quick = testnetDemoJobTerms(startsAt, ARBITER)
+    const seen = demoComputeOffers({
+      startsAt,
+      deliverBy: quick.subject.deliverBy,
+      listedAt: offeredAt + 1n,
+    })
+    for (const id of ['h100-firm', 'h100-flex', 'h100-x16']) {
+      const o = seen.offers.find((x) => x.id === id)
+      expect(o?.expiry, id).toBe(offeredAt + DEMO_JOB_TIMING.quote)
+      expect(o?.startsAt, id).toBe(startsAt)
+    }
+    // The firm offer still fits the whole job and passes the customer's check.
+    const firm = seen.offers.find((o) => o.id === 'h100-firm')
+    if (!firm) throw new Error('the demo lists a firm offer')
+    expect(isFirmOffer(firm, seen.listedAt)).toBe(true)
+    expect(jobFitsReservation(quick.subject, computeOfferTerms(firm, 1, settlement).subject)).toBe(
+      true,
+    )
   })
 
   it('meet the mandate check of the starter’s $500 authority at 16 GPUs, over the cap for one commitment', () => {

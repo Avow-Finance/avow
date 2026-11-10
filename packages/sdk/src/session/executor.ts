@@ -86,6 +86,15 @@ const RANK: Record<OrderState['status'], number> = {
   paid: 7,
 }
 
+/** A wait in whole minutes and seconds, as a person says it. */
+function waitText(seconds: bigint): string {
+  const m = seconds / 60n
+  const s = seconds % 60n
+  const part = (n: bigint, one: string) => `${n} ${one}${n === 1n ? '' : 's'}`
+  if (m === 0n) return part(s, 'second')
+  return s === 0n ? part(m, 'minute') : `${part(m, 'minute')} ${part(s, 'second')}`
+}
+
 /** How long the simulated work runs, in milliseconds, unless a test sets another. */
 const WORK_MS = 15_000
 
@@ -303,6 +312,12 @@ export class JobExecutor {
 
     // The work, which is simulated, starts once the customer's free cancellation ends.
     const startsAt = terms.subject.startsAt
+    const left = startsAt - world.now()
+    if (left > 0n) {
+      this.deps.note(
+        `Work starts in ${waitText(left)}, when the job's start ends the customer's free cancellation. Until then the customer can still cancel for nothing.`,
+      )
+    }
     while (world.now() < startsAt) {
       await world.sleep(Math.min(Number(startsAt - world.now()) * 1000, 5000))
     }

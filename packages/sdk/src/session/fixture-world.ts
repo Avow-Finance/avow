@@ -12,6 +12,7 @@ import {
   computeOfferCost,
   computeOfferTerms,
   DEMO_GPU_SUPPLIER,
+  DEMO_JOB_TIMING,
   type DeliveryResult,
   demoComputeOffers,
   dollars,
@@ -83,7 +84,6 @@ const TOKEN: RailToken = {
 }
 /** Where the fixture's clock starts, in unix seconds, so every run reads the same. */
 export const FIXTURE_START = 1_800_000_000n
-const LEAD = 300n
 
 /**
  * When Avow records a job's cancellation: from its start, when free cancellation ends, until its
@@ -407,7 +407,8 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
     async pullOrder(scenario) {
       const n = ++orderCount
       const orderId = orderIdOf(n)
-      const startsAt = now + LEAD
+      // The test customer's own clock: open for a quote, then the acceptance window, then work.
+      const startsAt = now + DEMO_JOB_TIMING.quote + DEMO_JOB_TIMING.accept
       const offer: JobOffer = {
         orderId,
         commitmentId: bytes32(`job ${n}`),
@@ -415,7 +416,7 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         supplierBusinessId: 'fixture-business',
         terms: testnetDemoJobTerms(startsAt, ARBITER),
         requirement: { template: GPU_RESERVATION, condition: 'accepted', disclosed: 'subject' },
-        expiry: now + 240n,
+        expiry: now + DEMO_JOB_TIMING.quote,
       }
       orders.set(orderId, {
         offer,
