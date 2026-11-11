@@ -2,6 +2,7 @@ import { formatUsd, type OrderScenario, type SessionEvent } from '@avow-finance/
 import type { Rail } from '@avow-finance/terminal'
 import type { JobOutcome } from '../session/executor.js'
 import { JOB_COMMAND, type SessionInput } from '../session/session.js'
+import type { ServiceExcerpt } from './service-excerpt.js'
 
 /** How many steps a first run has, two of setup's and three of the agent session's. */
 export const FIRST_RUN_STEPS = 5
@@ -90,6 +91,8 @@ export function firstRunGuide(deps: {
   transactionUrl: ((hash: `0x${string}`) => string) | null
   /** How to get a model, said at the end when the scripted decisions ran for want of one. */
   modelHelp: string | null
+  /** The service file's deciding lines, which the run ends on, or null when it has none to show. */
+  code: { file: string; excerpt: ServiceExcerpt } | null
 }): FirstRunGuide {
   const { rail } = deps
   let stage: 'first job' | 'asking to cancel' | 'cancelling' | 'asking' | 'breaking' | 'done' =
@@ -117,7 +120,22 @@ export function firstRunGuide(deps: {
     return `Delivered, and paid ${formatUsd(job.price)} on delivery with nothing prepaid. ${set} never moved, and go back on their own by ${deps.clock(latest)}.`
   }
 
+  /** The code that held the agent to its rules, and one change to try. */
+  function yourCode(code: { file: string; excerpt: ServiceExcerpt }): void {
+    rail.stage('Your code')
+    rail.quiet(
+      `${code.file} decided what your agent could book and when work could start. Your agent can't read or change it.`,
+    )
+    rail.code(code.excerpt.lines)
+    if (code.excerpt.budget !== null && code.excerpt.budget > 2) {
+      rail.quiet(
+        `Try it. Set computeBudgetPerGpuHour to 2, save, and type job. Every firm offer costs more than that, so your agent books nothing and says why.`,
+      )
+    }
+  }
+
   function end(): void {
+    if (deps.code) yourCode(deps.code)
     rail.quiet(
       "You're set up. Type job for another order, job cancels for one the customer cancels, or ask your agent why it chose that compute.",
     )

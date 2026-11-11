@@ -315,7 +315,7 @@ export class JobExecutor {
     const left = startsAt - world.now()
     if (left > 0n) {
       this.deps.note(
-        `Work starts in ${waitText(left)}, when the job's start ends the customer's free cancellation. Until then the customer can still cancel for nothing.`,
+        `Work starts in ${waitText(left)}. Until then the customer can still cancel for nothing.`,
       )
     }
     while (world.now() < startsAt) {

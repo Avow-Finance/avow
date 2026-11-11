@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import {
   type AvowDomain,
   formatUsd,
@@ -16,6 +18,7 @@ import { selectProvider } from '../session/selection.js'
 import { runSession, type SessionInput } from '../session/session.js'
 import type { JobWorld } from '../session/world.js'
 import { firstRunGuide, outcomeLine } from './first-run.js'
+import { serviceExcerpt } from './service-excerpt.js'
 import { readServicePolicy, runCheckBeforeWork } from './service-process.js'
 import { localClock, railView } from './session-view.js'
 
@@ -147,9 +150,14 @@ export async function runJobSession(o: {
     : () => {}
   const brief = !o.flags.details
   const view = railView(rail, o.look, { fixture: world.kind === 'fixture', write, brief })
-  // A first run goes on from setup's two steps, with a guide for steps 3 to 5.
+  // A first run goes on from setup's two steps, with a guide for steps 3 to 5, and ends on the
+  // service file's deciding lines.
+  const guided = o.firstRun === true && o.mode === 'interactive' && o.input !== null
+  const excerpt = guided
+    ? await readFile(resolve(service.cwd, service.file), 'utf8').then(serviceExcerpt, () => null)
+    : null
   const guide =
-    o.firstRun === true && o.mode === 'interactive' && o.input !== null
+    guided && o.input !== null
       ? firstRunGuide({
           rail,
           input: o.input,
@@ -157,6 +165,7 @@ export async function runJobSession(o: {
           write,
           transactionUrl: world.kind === 'live' ? moderatoTransactionUrl : null,
           modelHelp: chosen.fallback ? (chosen.fallback.help[0] ?? null) : null,
+          code: excerpt ? { file: service.file, excerpt } : null,
         })
       : null
   const emit = (event: SessionEvent) => {
