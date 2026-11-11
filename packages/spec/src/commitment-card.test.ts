@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitmentCards } from './commitment-card.js'
+import { type CardLockRead, type CommitmentCard, commitmentCards } from './commitment-card.js'
 import type { SessionEvent } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, JOB_EVENTS, ORDER, READ_BLOCK, START } from './test-helpers.js'
 
@@ -24,6 +24,7 @@ describe('a commitment as a card', () => {
     expect(cards).toEqual([
       {
         role: 'compute',
+        reference: expect.objectContaining({ side: 'buyer' }),
         from: 'Your business',
         to: 'avow-demo-gpu',
         promise: 'accepted',
@@ -49,6 +50,7 @@ describe('a commitment as a card', () => {
     const [, job] = commitmentCards(before('job_delivered'), ORDER, clock)
     expect(job).toEqual({
       role: 'job',
+      reference: expect.objectContaining({ side: 'buyer' }),
       from: "Avow's test customer",
       to: 'your business',
       promise: 'accepted',
@@ -141,5 +143,80 @@ describe('a commitment as a card', () => {
       'released',
     ])
     expect(cards[0]?.rows[0]?.text).toMatch(/from \d\d:\d\d UTC to \d\d:\d\d UTC/)
+  })
+
+  describe("with the lock's own reading", () => {
+    const accepted = before('job_delivered')
+    const lock = (changes: Partial<CardLockRead>): CardLockRead => ({
+      state: 'accepted',
+      hasReport: false,
+      reportAmount: 0n,
+      contested: false,
+      chargeStart: 0n,
+      contestWindow: 600n,
+      ...changes,
+    })
+    const job = (read: CardLockRead, events = accepted) =>
+      commitmentCards(events, ORDER, clock, { job: read })[1]
+    const money = (card: CommitmentCard | undefined) => [
+      card?.promise,
+      card?.money,
+      card?.rows.at(-1)?.text,
+    ]
+
+    it('says where the money stands from the chain, after the session stopped posting', () => {
+      // The session ended at the report, and the lock went on to confirm and pay the charge.
+      expect(money(job(lock({ hasReport: true, reportAmount: 10_000_000n })))).toEqual([
+        'broken',
+        'charge_reported',
+        "$10 charge reported by your business, waiting for Avow's answer",
+      ])
+      const confirmed = lock({
+        state: 'charge_pending',
+        hasReport: true,
+        reportAmount: 10_000_000n,
+        chargeStart: START + 100n,
+      })
+      expect(money(job(confirmed))).toEqual([
+        'broken',
+        'charge_confirmed',
+        "$10 charge confirmed by Avow. The customer can contest it until 11m, and it's payable then if it hasn't",
+      ])
+      const paid = lock({ state: 'charged', hasReport: true, reportAmount: 10_000_000n })
+      expect(money(job(paid))).toEqual(['broken', 'charged', '$10 paid to your business'])
+    })
+
+    it('keeps a kept promise kept, and reads the reserve coming back from the chain', () => {
+      const paidJob = before('job_customer_cancelled')
+      expect(money(job(lock({ state: 'released' }), paidJob))).toEqual([
+        'kept',
+        'released',
+        'Back with the customer',
+      ])
+      expect(money(job(lock({ state: 'accepted' }), paidJob))).toEqual([
+        'kept',
+        'reserved',
+        "Held in the customer's lock",
+      ])
+    })
+
+    it('names who contested a paused charge from the lock when the session never said', () => {
+      const paused = lock({ state: 'paused', hasReport: true, reportAmount: 1n, contested: true })
+      expect(job(paused)?.rows.at(-1)?.text).toBe(
+        "Held in the customer's lock, paused for a ruling since the customer contested the charge",
+      )
+      const compute = commitmentCards(accepted, ORDER, clock, { compute: paused })[0]
+      expect(compute?.rows.at(-1)?.text).toBe(
+        'Held in your lock, paused for a ruling since your business contested the charge',
+      )
+    })
+
+    it('falls back to the events for a lock that holds nothing', () => {
+      expect(money(job(lock({ state: 'none' })))).toEqual([
+        'accepted',
+        'reserved',
+        "Held in the customer's lock",
+      ])
+    })
   })
 })
