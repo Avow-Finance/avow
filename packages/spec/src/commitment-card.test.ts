@@ -29,6 +29,9 @@ describe('a commitment as a card', () => {
         to: 'avow-demo-gpu',
         promise: 'accepted',
         money: 'reserved',
+        brief: '1 H100, 0m to 15m',
+        reserved: 5_000_000n,
+        charge: null,
         rows: [
           {
             label: 'Promise',
@@ -55,6 +58,9 @@ describe('a commitment as a card', () => {
       to: 'your business',
       promise: 'accepted',
       money: 'reserved',
+      brief: '$40 on delivery',
+      reserved: 10_000_000n,
+      charge: null,
       rows: [
         {
           label: 'Promise',
@@ -184,6 +190,11 @@ describe('a commitment as a card', () => {
       ])
       const paid = lock({ state: 'charged', hasReport: true, reportAmount: 10_000_000n })
       expect(money(job(paid))).toEqual(['broken', 'charged', '$10 paid to your business'])
+      expect(job(confirmed)?.charge).toEqual({
+        amount: 10_000_000n,
+        contestableUntil: START + 700n,
+      })
+      expect(job(paid)?.charge).toEqual({ amount: 10_000_000n, contestableUntil: null })
     })
 
     it('keeps a kept promise kept, and reads the reserve coming back from the chain', () => {

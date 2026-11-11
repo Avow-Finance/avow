@@ -37,6 +37,12 @@ export interface CommitmentCard {
   promise: 'accepted' | 'kept' | 'broken' | 'ended'
   /** Where the money behind it stands, which the `Money now` row says in words. */
   money: CardMoney
+  /** The promise in a few words, such as "$40 on delivery" or "1 H100, 20:54 to 21:09". */
+  brief: string
+  /** The money reserved behind the promise, in micros. */
+  reserved: bigint
+  /** The charge on it, where there is one, with when its contest window closes once confirmed. */
+  charge: { amount: bigint; contestableUntil: bigint | null } | null
   rows: { label: CardLabel; text: string }[]
 }
 
@@ -134,6 +140,19 @@ function moneyWords(facts: MoneyFacts, sides: MoneySides, clock: CardClock): str
   }
 }
 
+/** The charge a card's money carries, for a screen that says it in fewer words. */
+function chargeOf(facts: MoneyFacts): CommitmentCard['charge'] {
+  switch (facts.state) {
+    case 'charge_reported':
+    case 'charged':
+      return { amount: facts.amount, contestableUntil: null }
+    case 'charge_confirmed':
+      return { amount: facts.amount, contestableUntil: facts.contestableUntil }
+    default:
+      return null
+  }
+}
+
 /** Whether the lock shows a charge on a commitment, which only a broken promise brings. */
 const chargedOnLock = (read: CardLockRead | null | undefined) =>
   !!read && (read.hasReport || ['charge_pending', 'paused', 'charged'].includes(read.state))
@@ -194,6 +213,10 @@ export function commitmentCards(
         e.type === 'tool_result' && e.tool === 'compute_offers' && e.listing !== null,
     )
     const offer = call && listing?.listing.offers.find((o) => o.id === call.offer)
+    const window =
+      offer && call
+        ? `${plural(call.quantity, offer.gpu)}, ${clock(offer.startsAt)} to ${clock(offer.startsAt + BigInt(offer.minutes) * 60n)}`
+        : null
     const promise =
       offer && call
         ? `Use ${plural(call.quantity, offer.gpu)} from ${clock(offer.startsAt)} to ${clock(offer.startsAt + BigInt(offer.minutes) * 60n)}, at ${formatUsd(offer.pricePerGpuHour)} a GPU-hour paid as used`
@@ -214,6 +237,9 @@ export function commitmentCards(
           ? 'ended'
           : 'accepted',
       money: facts.state,
+      brief: window ?? `Compute with ${secured.supplier}`,
+      reserved: secured.amount,
+      charge: chargeOf(facts),
       rows: [
         { label: 'Promise', text: promise },
         {
@@ -278,6 +304,9 @@ export function commitmentCards(
               ? 'ended'
               : 'accepted',
       money: facts.state,
+      brief: `${formatUsd(order.price)} on delivery`,
+      reserved: checked.amount,
+      charge: chargeOf(facts),
       rows: [
         {
           label: 'Promise',
