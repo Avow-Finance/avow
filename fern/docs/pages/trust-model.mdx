@@ -1,0 +1,88 @@
+---
+title: Trust model
+slug: docs/get-started/trust-model
+subtitle: Who holds which key, what the lock holds Avow to, and what a reserve leaves unbacked
+---
+
+Avow never holds a business's money. Every reserve sits in the business's own lock, and the lock sends it to two places only, back to the business or to the payee the terms name. You do trust Avow with three decisions on each commitment. Avow approves the reserve, confirms or refers a charge the supplier reports, and rules on a disputed charge for the first 30 days. The lock caps what each of those decisions can move.
+
+This page lists the keys, what the lock enforces whatever Avow does, the most a dishonest Avow could cost each side, what happens when Avow stops answering, and what a reserve leaves unbacked.
+
+## Who holds which key
+
+| Key | Held by | What it can do |
+| --- | --- | --- |
+| Root key | The business's administrator | Approve and remove suppliers on the lock, enroll and revoke the agent's key with its daily limit, sign the agent's mandate, contest a charge |
+| Access key | The business's agent | Fund a reserve Avow approved, within the daily limit the root key set in the account's keychain, and cancel a commitment while cancelling is free |
+| Signing key | The supplier | Accept a reserve, report a charge inside the terms' caps and times, file evidence |
+| Approval key | Avow | Sign the approval the lock needs before it takes a reserve, and cancel one that hasn't been used |
+| Settlement key | Avow | Confirm a report, refer it to a ruling, pause a confirmed charge, return a reserve the supplier never accepted |
+| Ruling key | Avow | Rule on a paused charge until day 30, for no more than the reported charge |
+| Arbiter | A party each approval names, apart from Avow's keys and both sides | Rule from day 30 until day 90 when Avow hasn't |
+| Fee payer | Avow | Pay the chain's fee for a transaction the agent signed |
+
+None of Avow's keys can put money into a lock or take it out to an address of Avow's choosing. The lock pulls a reserve only from the business account that calls it, and it pays only that account or the payee fixed when the reserve was made. The fee payer adds its signature to a transaction the agent already signed, so it can pay for the transaction and can't change it.
+
+## What the lock enforces whatever Avow does
+
+- **The business chooses its suppliers.** The lock reserves only for a supplier the root key approved on it, so Avow's approval can't point a reserve at anyone else.
+- **Every charge has a cap and an earliest time.** Both are fixed in the terms when the reserve is made. The lock reverts a report above the cap with `BadAmount` and one sent early with `TooEarly`, and it takes at most two reports on a commitment.
+- **A charge needs three things before it pays.** The supplier signs a report, Avow confirms it, and the contest window closes with no contest. The lock's factory sets the shortest window a commitment can have.
+- **The business can always contest.** The root key calls `contest` on its own lock and pays its own fee, or signs the contest for any account to send. The contest pauses the charge, and Avow has no way to block it.
+- **A ruling is capped.** It moves no more than the reported charge, and the rest of the reserve goes back to the business.
+- **Deadlines need nobody's permission.** Any account can send `trigger` once a deadline has passed, and the lock then returns the reserve, pays the charge or applies the ruling.
+- **The lock can't be changed.** Avow's three key addresses and every timing are fixed when the lock is created. It has no owner, no upgrade path and no switch that freezes it.
+
+The limits on the agent sit under these. The account's keychain holds the access key to its daily limit, and the root key revokes it there, whatever Avow's API says. [Limits that hold](/docs/walkthroughs/limits) walks through each check.
+
+## The most a dishonest Avow could cost you
+
+Avow's decisions are bounded, and inside those bounds you rely on Avow to decide honestly. Nothing on the lock overturns a ruling Avow posts in the first 30 days. The ruling delay gives both sides notice before the money moves, and that is all it does.
+
+- **A business** can lose the charge its terms cap, on a commitment its supplier reports against. For that to happen the supplier signs a false report, Avow confirms it, and Avow rules against the business's contest. The business can't lose more than the reserve, and it can't lose anything on a commitment with no report.
+- **A supplier** can lose a charge it was owed. Avow can refer a true report or leave it unanswered, and then rule that the supplier gets nothing.
+
+Avow can also refuse to approve a reserve. That stops new commitments and moves no money.
+
+## If Avow stops answering
+
+Money already reserved keeps to its dates. What stops is anything that needs a decision.
+
+| Where the commitment stands | What happens without Avow |
+| --- | --- |
+| Nothing reserved yet | No reserve can be made, since the lock takes none without Avow's approval |
+| Reserved, not yet accepted | The reserve goes back to the business at the acceptance deadline |
+| Accepted, nothing reported | The reserve goes back at the release date. Until free cancellation ends, the business can still cancel on the lock |
+| A charge reported, with no answer from Avow | At the report's deadline the charge pauses for a ruling. The arbiter can rule from day 30. With no ruling by day 90, the whole reserve goes back to the business |
+| A charge Avow confirmed, not contested | The supplier is paid when the contest window closes |
+| A charge Avow confirmed, then contested | The arbiter can rule from day 30. With no ruling by day 90, the supplier gets the share the terms fixed, half by default, and the business gets the rest |
+| A ruling already posted | It pays after the ruling delay |
+
+Each row needs one `trigger` transaction. A scheduled workflow in this repository sends them for the testnet locks every ten minutes, with a key it makes for itself, and either side can send its own.
+
+A supplier carries most of an outage. A true charge reported while Avow is away pays only if the arbiter rules for it. A business gets its reserve back on the dates in its terms.
+
+Days 30 and 90 count from the moment a charge pauses. The testnet demo locks shorten them to 30 and 90 minutes so a dispute runs in one sitting, and [the walkthroughs](/docs/walkthroughs/overview) list every testnet timing.
+
+## What a reserve leaves unbacked
+
+A reserve backs the charges its terms list and nothing else.
+
+- **Payment for the work.** The reserve pays for a late cancellation or a no-show. A customer that takes delivery and doesn't pay owes the price under the agreement, and the reserve pays none of it. The same holds for usage on a compute booking, which is paid separately.
+- **The supplier's side.** This release reserves only the buyer's money. When a supplier fails to provide, the buyer can contest a charge with `supplier_did_not_provide`, and nothing is reserved to pay the buyer.
+- **Losses above the cap.** The lock pays up to the cap in the terms. A loss larger than that is outside it.
+- **Facts the chain can't see.** The lock doesn't know whether GPUs ran or a job started. Avow confirms a report from the records each side signs, and the contest and the ruling exist for the cases where those records disagree.
+
+## What's different on testnet
+
+- **Sandbox businesses are unverified.** Giving a company name creates a sandbox business with no verification behind it. Its authorization marks the verification as test data, and Avow refuses test data on any chain that isn't a testnet.
+- **The administrator's key sits on the developer's machine**, sealed under a passphrase. In production it stays off the agent's machine.
+- **The arbiter is a stand-in address Avow supplies**, so the fallback from day 30 isn't independent yet.
+- **The lock is unaudited testnet code.** This repository publishes the lock's interface and the verifier that reads it. The lock's source isn't published yet, so today you check the rules on this page by calling the deployed lock.
+- **Nothing here moves real money.**
+
+## Check it yourself
+
+- `npm run bypass` in the starter signs five transactions with your agent's own key, with none of Avow's code, and shows which ones the chain refuses.
+- Any lock answers `approvalKey`, `settlementKey`, `rulingKey`, `minContestWindow`, `confirmWindow`, `rulingDelay`, `rulingKeyEnd` and `day90`, and `commitment(commitmentId, side)` returns everything it holds for a commitment.
+- [Contesting a charge](/docs/charges-and-disputes/contesting) sets out the contest and the ruling in full.

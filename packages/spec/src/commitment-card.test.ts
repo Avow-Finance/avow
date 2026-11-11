@@ -12,6 +12,9 @@ const before = (type: SessionEvent['type']) =>
   )
 // Minutes from the job's start, so a card's moments read against it.
 const clock = (seconds: bigint) => `${(seconds - START) / 60n}m`
+// What the job's card says its reserve leaves unbacked.
+const UNBACKED =
+  "The $40 itself. If the customer takes delivery and doesn't pay, the reserve pays you nothing."
 
 describe('a commitment as a card', () => {
   it('shows nothing before a commitment was accepted', () => {
@@ -31,6 +34,7 @@ describe('a commitment as a card', () => {
         money: 'reserved',
         brief: '1 H100, 0m to 15m',
         reserved: 5_000_000n,
+        unbacked: null,
         charge: null,
         rows: [
           {
@@ -60,6 +64,7 @@ describe('a commitment as a card', () => {
       money: 'reserved',
       brief: '$40 on delivery',
       reserved: 10_000_000n,
+      unbacked: UNBACKED,
       charge: null,
       rows: [
         {
@@ -71,6 +76,7 @@ describe('a commitment as a card', () => {
           text: 'If the customer cancels after work starts, you charge up to $10. If it never hands over the inputs, you charge up to $6.',
         },
         { label: 'Backed by', text: "$10 reserved in the customer's lock, for your business" },
+        { label: 'Not backed', text: UNBACKED },
         {
           label: 'Depends on',
           text: `Your compute commitment, which the customer says it checked at block ${READ_BLOCK.number}`,
