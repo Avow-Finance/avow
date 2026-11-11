@@ -2,6 +2,8 @@ import type { ToolCall, ToolResult } from './agent-session.js'
 import type { ComputeOffers } from './compute-offers.js'
 import type { ChargeKind } from './eip712.js'
 import type { ChargePauseCause, JobCharge } from './job-session.js'
+import type { RailState } from './rail.js'
+import type { CommitmentReference } from './references.js'
 import { formatUsd, type SessionEvent } from './sandbox.js'
 import { TEST_CUSTOMER_LABEL } from './test-customer.js'
 
@@ -11,7 +13,8 @@ import { TEST_CUSTOMER_LABEL } from './test-customer.js'
  * what money stands behind it and which other commitment it rests on. It keeps the promise's
  * status apart from the money's, since a promise can be broken while the charge for breaking it is
  * still open to a contest. Every row comes from the events a job recorded, so a card claims nothing
- * the session didn't record.
+ * the session didn't record. A screen that reads the lock hands its reading over, and the card
+ * then says where the money stands from the chain, which goes on after the session ends.
  */
 
 /** A card's rows, in the order every card keeps them. */
@@ -21,6 +24,8 @@ export type CardLabel = (typeof CARD_LABELS)[number]
 export interface CommitmentCard {
   /** `compute` is the business's booking of compute, and `job` the customer's commitment. */
   role: 'job' | 'compute'
+  /** The commitment on its lock, which a screen reads and anyone can check. */
+  reference: CommitmentReference
   /** Who made the promise and reserved the money behind it. */
   from: string
   /** Who the money is reserved for. */
@@ -32,6 +37,12 @@ export interface CommitmentCard {
   promise: 'accepted' | 'kept' | 'broken' | 'ended'
   /** Where the money behind it stands, which the `Money now` row says in words. */
   money: CardMoney
+  /** The promise in a few words, such as "$40 on delivery" or "1 H100, 20:54 to 21:09". */
+  brief: string
+  /** The money reserved behind the promise, in micros. */
+  reserved: bigint
+  /** The charge on it, where there is one, with when its contest window closes once confirmed. */
+  charge: { amount: bigint; contestableUntil: bigint | null } | null
   rows: { label: CardLabel; text: string }[]
 }
 
@@ -46,6 +57,105 @@ export type CardMoney =
   | 'charge_confirmed'
   | 'charge_paused'
   | 'charged'
+  | 'resolved'
+
+/**
+ * What a lock holds for a commitment, as far as a card reads it. The verifier's `LockedBacking`
+ * carries every field, so a screen hands its reading straight over.
+ */
+export interface CardLockRead {
+  state: RailState
+  hasReport: boolean
+  reportAmount: bigint
+  contested: boolean
+  chargeStart: bigint
+  contestWindow: bigint
+}
+
+/** The lock's reading for each of an order's commitments, where a screen has one. */
+export type CardChain = Partial<Record<CommitmentCard['role'], CardLockRead | null>>
+
+/** Where a card's money stands, before it's put in words. */
+type MoneyFacts =
+  | { state: 'reserved' | 'released' | 'resolved' }
+  | { state: 'charge_reported' | 'charged'; amount: bigint }
+  | { state: 'charge_confirmed'; amount: bigint; contestableUntil: bigint }
+  | { state: 'charge_paused'; cause: ChargePauseCause | null }
+
+/** Where the money stands from the lock's own reading, or null for a lock that holds nothing. */
+function moneyOnLock(read: CardLockRead, cause: ChargePauseCause | null): MoneyFacts | null {
+  switch (read.state) {
+    case 'reserved':
+    case 'accepted':
+      return read.hasReport
+        ? { state: 'charge_reported', amount: read.reportAmount }
+        : { state: 'reserved' }
+    case 'charge_pending':
+      return {
+        state: 'charge_confirmed',
+        amount: read.reportAmount,
+        contestableUntil: read.chargeStart + read.contestWindow,
+      }
+    case 'paused':
+      return { state: 'charge_paused', cause: cause ?? (read.contested ? 'contested' : null) }
+    case 'charged':
+      return { state: 'charged', amount: read.reportAmount }
+    case 'released':
+      return { state: 'released' }
+    case 'resolved':
+      return { state: 'resolved' }
+    case 'none':
+      return null
+  }
+}
+
+/** Who stands where around one card's money: whose lock holds it and whom a charge pays. */
+interface MoneySides {
+  /** Who made the promise, as a sentence names them. */
+  owner: string
+  /** Whose lock holds the reserve. */
+  lock: string
+  /** Who reports a charge and is paid by one. */
+  payee: string
+}
+
+/** The money row in words, for whichever side of the commitment holds it. */
+function moneyWords(facts: MoneyFacts, sides: MoneySides, clock: CardClock): string {
+  const contester = sides.owner.charAt(0).toUpperCase() + sides.owner.slice(1)
+  switch (facts.state) {
+    case 'reserved':
+      return `Held in ${sides.lock}`
+    case 'released':
+      return `Back with ${sides.owner}`
+    case 'resolved':
+      return 'Settled by a ruling'
+    case 'charge_reported':
+      return `${formatUsd(facts.amount)} charge reported by ${sides.payee}, waiting for Avow's answer`
+    case 'charge_confirmed':
+      return `${formatUsd(facts.amount)} charge confirmed by Avow. ${contester} can contest it until ${clock(facts.contestableUntil)}, and it's payable then if it hasn't`
+    case 'charge_paused':
+      return `Held in ${sides.lock}, ${facts.cause ? PAUSED[facts.cause](sides.owner) : 'paused for a ruling'}`
+    case 'charged':
+      return `${formatUsd(facts.amount)} paid to ${sides.payee}`
+  }
+}
+
+/** The charge a card's money carries, for a screen that says it in fewer words. */
+function chargeOf(facts: MoneyFacts): CommitmentCard['charge'] {
+  switch (facts.state) {
+    case 'charge_reported':
+    case 'charged':
+      return { amount: facts.amount, contestableUntil: null }
+    case 'charge_confirmed':
+      return { amount: facts.amount, contestableUntil: facts.contestableUntil }
+    default:
+      return null
+  }
+}
+
+/** Whether the lock shows a charge on a commitment, which only a broken promise brings. */
+const chargedOnLock = (read: CardLockRead | null | undefined) =>
+  !!read && (read.hasReport || ['charge_pending', 'paused', 'charged'].includes(read.state))
 
 /** A moment as a card says it. The default is UTC, and a screen or a terminal passes its own. */
 export type CardClock = (unixSeconds: bigint) => string
@@ -64,10 +174,10 @@ function jobBreach(charges: readonly JobCharge[]): string {
   return `If the customer ${ways.join('. If it ')}.`
 }
 
-const PAUSED: Record<ChargePauseCause, string> = {
-  contested: 'paused for a ruling since the customer contested the charge',
-  referred: 'paused for a ruling since Avow referred the report',
-  unanswered: "paused for a ruling since Avow didn't answer the report in time",
+const PAUSED: Record<ChargePauseCause, (owner: string) => string> = {
+  contested: (owner) => `paused for a ruling since ${owner} contested the charge`,
+  referred: () => 'paused for a ruling since Avow referred the report',
+  unanswered: () => "paused for a ruling since Avow didn't answer the report in time",
 }
 
 const plural = (count: number, one: string) => `${count} ${one}${count === 1 ? '' : 's'}`
@@ -81,6 +191,7 @@ export function commitmentCards(
   events: readonly SessionEvent[],
   orderId: string,
   clock: CardClock = utcClock,
+  onChain: CardChain = {},
 ): CommitmentCard[] {
   const mine = events.filter((e) => 'orderId' in e && e.orderId === orderId)
   const last = <T extends SessionEvent['type']>(type: T) =>
@@ -102,16 +213,33 @@ export function commitmentCards(
         e.type === 'tool_result' && e.tool === 'compute_offers' && e.listing !== null,
     )
     const offer = call && listing?.listing.offers.find((o) => o.id === call.offer)
+    const window =
+      offer && call
+        ? `${plural(call.quantity, offer.gpu)}, ${clock(offer.startsAt)} to ${clock(offer.startsAt + BigInt(offer.minutes) * 60n)}`
+        : null
     const promise =
       offer && call
         ? `Use ${plural(call.quantity, offer.gpu)} from ${clock(offer.startsAt)} to ${clock(offer.startsAt + BigInt(offer.minutes) * 60n)}, at ${formatUsd(offer.pricePerGpuHour)} a GPU-hour paid as used`
         : `Use the compute booked with ${secured.supplier}`
+    const read = onChain.compute
+    const facts: MoneyFacts = (read && moneyOnLock(read, null)) ?? {
+      state: released('compute') ? 'released' : 'reserved',
+    }
+    const sides = { owner: 'your business', lock: 'your lock', payee: secured.supplier }
     cards.push({
       role: 'compute',
+      reference: secured.reference,
       from: 'Your business',
       to: secured.supplier,
-      promise: released('compute') ? 'ended' : 'accepted',
-      money: released('compute') ? 'released' : 'reserved',
+      promise: chargedOnLock(read)
+        ? 'broken'
+        : facts.state === 'released' || facts.state === 'resolved'
+          ? 'ended'
+          : 'accepted',
+      money: facts.state,
+      brief: window ?? `Compute with ${secured.supplier}`,
+      reserved: secured.amount,
+      charge: chargeOf(facts),
       rows: [
         { label: 'Promise', text: promise },
         {
@@ -122,7 +250,7 @@ export function commitmentCards(
           label: 'Backed by',
           text: `${formatUsd(secured.amount)} reserved in your lock, for ${secured.supplier}`,
         },
-        row('Money now', released('compute') ? 'Back with your business' : 'Held in your lock'),
+        row('Money now', moneyWords(facts, sides, clock)),
       ],
     })
   }
@@ -140,40 +268,45 @@ export function commitmentCards(
         : checked.checks.length > 0
           ? `Your compute commitment, which your code checked at block ${blocksOf(checked.checks)}`
           : null
-    // The charge's own steps, the latest of which says where the money stands.
+    // The charge's own steps, the latest of which says where the money stands, unless the lock's
+    // own reading is at hand, which goes on after the session ends.
     const reported = last('job_charge_reported')
     const confirmed = last('job_charge_confirmed')
     const paused = last('job_charge_paused')
     const charged = last('job_charge_paid')
-    const money: { state: CardMoney; text: string } = charged
-      ? { state: 'charged', text: `${formatUsd(charged.amount)} paid to your business` }
+    const read = onChain.job
+    const fromEvents: MoneyFacts = charged
+      ? { state: 'charged', amount: charged.amount }
       : paused
-        ? { state: 'charge_paused', text: `Held in the customer's lock, ${PAUSED[paused.cause]}` }
+        ? { state: 'charge_paused', cause: paused.cause }
         : confirmed
           ? {
               state: 'charge_confirmed',
-              text: `${formatUsd(confirmed.amount)} charge confirmed by Avow. The customer can contest it until ${clock(confirmed.contestableUntil)}, and it's payable then if it hasn't`,
+              amount: confirmed.amount,
+              contestableUntil: confirmed.contestableUntil,
             }
           : reported
-            ? {
-                state: 'charge_reported',
-                text: `${formatUsd(reported.amount)} charge reported by your business, waiting for Avow's answer`,
-              }
-            : released('job')
-              ? { state: 'released', text: 'Back with the customer' }
-              : { state: 'reserved', text: "Held in the customer's lock" }
+            ? { state: 'charge_reported', amount: reported.amount }
+            : { state: released('job') ? 'released' : 'reserved' }
+    const facts = (read && moneyOnLock(read, paused?.cause ?? null)) ?? fromEvents
+    const sides = { owner: 'the customer', lock: "the customer's lock", payee: 'your business' }
     cards.push({
       role: 'job',
+      reference: checked.reference,
       from: TEST_CUSTOMER_LABEL,
       to: 'your business',
-      promise: last('job_customer_cancelled')
-        ? 'broken'
-        : last('job_paid')
-          ? 'kept'
-          : released('job')
-            ? 'ended'
-            : 'accepted',
-      money: money.state,
+      promise:
+        last('job_customer_cancelled') || chargedOnLock(read)
+          ? 'broken'
+          : last('job_paid')
+            ? 'kept'
+            : facts.state === 'released' || facts.state === 'resolved'
+              ? 'ended'
+              : 'accepted',
+      money: facts.state,
+      brief: `${formatUsd(order.price)} on delivery`,
+      reserved: checked.amount,
+      charge: chargeOf(facts),
       rows: [
         {
           label: 'Promise',
@@ -185,7 +318,7 @@ export function commitmentCards(
           text: `${formatUsd(checked.amount)} reserved in the customer's lock, for your business`,
         },
         ...(dependsOn ? [row('Depends on', dependsOn)] : []),
-        row('Money now', money.text),
+        row('Money now', moneyWords(facts, sides, clock)),
       ],
     })
   }
