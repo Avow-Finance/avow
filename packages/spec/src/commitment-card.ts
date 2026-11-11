@@ -18,7 +18,14 @@ import { TEST_CUSTOMER_LABEL } from './test-customer.js'
  */
 
 /** A card's rows, in the order every card keeps them. */
-export const CARD_LABELS = ['Promise', 'If broken', 'Backed by', 'Depends on', 'Money now'] as const
+export const CARD_LABELS = [
+  'Promise',
+  'If broken',
+  'Backed by',
+  'Not backed',
+  'Depends on',
+  'Money now',
+] as const
 export type CardLabel = (typeof CARD_LABELS)[number]
 
 export interface CommitmentCard {
@@ -41,6 +48,11 @@ export interface CommitmentCard {
   brief: string
   /** The money reserved behind the promise, in micros. */
   reserved: bigint
+  /**
+   * What the reserve leaves unbacked, which the `Not backed` row says, or null where the card names
+   * nothing. A job's reserve pays its listed charges and none of the price.
+   */
+  unbacked: string | null
   /** The charge on it, where there is one, with when its contest window closes once confirmed. */
   charge: { amount: bigint; contestableUntil: bigint | null } | null
   rows: { label: CardLabel; text: string }[]
@@ -239,6 +251,7 @@ export function commitmentCards(
       money: facts.state,
       brief: window ?? `Compute with ${secured.supplier}`,
       reserved: secured.amount,
+      unbacked: null,
       charge: chargeOf(facts),
       rows: [
         { label: 'Promise', text: promise },
@@ -290,6 +303,8 @@ export function commitmentCards(
             : { state: released('job') ? 'released' : 'reserved' }
     const facts = (read && moneyOnLock(read, paused?.cause ?? null)) ?? fromEvents
     const sides = { owner: 'the customer', lock: "the customer's lock", payee: 'your business' }
+    // The reserve pays the charges the terms list. The price rests on the agreement alone.
+    const unbacked = `The ${formatUsd(order.price)} itself. If the customer takes delivery and doesn't pay, the reserve pays you nothing.`
     cards.push({
       role: 'job',
       reference: checked.reference,
@@ -306,6 +321,7 @@ export function commitmentCards(
       money: facts.state,
       brief: `${formatUsd(order.price)} on delivery`,
       reserved: checked.amount,
+      unbacked,
       charge: chargeOf(facts),
       rows: [
         {
@@ -317,6 +333,7 @@ export function commitmentCards(
           label: 'Backed by',
           text: `${formatUsd(checked.amount)} reserved in the customer's lock, for your business`,
         },
+        row('Not backed', unbacked),
         ...(dependsOn ? [row('Depends on', dependsOn)] : []),
         row('Money now', moneyWords(facts, sides, clock)),
       ],

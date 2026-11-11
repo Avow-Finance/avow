@@ -10,6 +10,8 @@ navigation:
         path: ./docs/pages/introduction.mdx
       - page: Avow Explained Simply
         path: ./docs/pages/avow-explained-simply.mdx
+      - page: Trust model
+        path: ./docs/pages/trust-model.mdx
   - section: Walkthroughs
     contents:
       - page: Run all four in an hour
