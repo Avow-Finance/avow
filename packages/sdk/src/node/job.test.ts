@@ -107,9 +107,9 @@ describe('a first run', () => {
       DECISIVE_SENTENCE.split(' and ')[0] as string,
       '✓  3/5  Delivered, and paid $40 on delivery with nothing prepaid. The $10 and $40 set aside never',
     )
-    // Work waits for the job's start, and the run says how long and why.
+    // Work waits for the job's start, and the run says how long, once.
     expect(drawn.replace(/\n│\s+/g, ' ')).toMatch(
-      /Work starts in 1 minute( \d+ seconds?)?, when the job's start ends the customer's free cancellation\./,
+      /Work starts in 1 minute( \d+ seconds?)?\. Until then the customer can still cancel for nothing\./,
     )
     // Step 4 takes an order the customer cancels after work starts. The promise is broken at once,
     // and the charge is confirmed and still open to a contest when the step ends.
@@ -131,6 +131,15 @@ describe('a first run', () => {
       'The customer refused your quote.',
       "✓  5/5  The customer refused, and nobody's money moved.",
       "It doesn't promise the compute gets delivered.",
+      '◇  Your code',
+      "service.mjs decided what your agent could book and when work could start. Your agent can't",
+      '│  3    computeBudgetPerGpuHour: 3,',
+      '│  4    bookCompute: true,',
+      '│  5    async checkBeforeWork(job, avow) {',
+      '│  6      const check = await avow.verifyCommitment(job)',
+      '│  7      return check.ok ? start(check) : dontStart(check)',
+      '│  8    },',
+      'Try it. Set computeBudgetPerGpuHour to 2, save, and type job.',
       "You're set up.",
     )
     // Nothing says the charge was paid before its contest window closed.

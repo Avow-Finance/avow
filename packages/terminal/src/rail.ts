@@ -423,6 +423,18 @@ export class Rail {
     return `${this.prefix}${this.#s.dim('you ›')} `
   }
 
+  /**
+   * Lines of code, numbered as their file numbers them. Each is drawn whole and unwrapped, so it
+   * reads as the code it is and can be copied back.
+   */
+  code(lines: readonly { line: number; text: string }[]): void {
+    this.settle()
+    const width = String(lines.at(-1)?.line ?? 0).length
+    for (const { line, text } of lines) {
+      this.#out(`${this.prefix}${this.#s.dim(String(line).padStart(width))}  ${clean(text)}\n`)
+    }
+  }
+
   /** A quieter line, such as what typing to the agent can and can't change. */
   quiet(text: string): void {
     this.#block(this.#s.dim('│'), clean(text), this.#s.dim)
