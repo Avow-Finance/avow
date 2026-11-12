@@ -36,6 +36,7 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
     pairingCode: pairingCode(agentKey),
     requestedAt: '1800000000',
     expiresAt: '1800003600',
+    signingKey: null,
     state,
     ...extra,
   })
@@ -84,6 +85,7 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
       return json(
         status('approved', agentKey, {
           approval: wire({ mandate, keyAuthorizedIn: `0x${'ab'.repeat(32)}` }),
+          supplierRegistration: null,
         }),
       )
     }

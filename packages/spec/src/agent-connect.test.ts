@@ -28,6 +28,10 @@ describe('an agent request', () => {
     expect(parseAgentRequest({ businessId: 'sandbox-ab', label: 'x'.repeat(61) })).toBeNull()
     expect(parseAgentRequest({ businessId: 'sandbox-ab', label: 'bad\u0007name' })).toBeNull()
     expect(parseAgentRequest({ businessId: 'sandbox-ab', label: 'a', limits: 1 })).toBeNull()
+    // An agent that sells names the signing key it made.
+    expect(
+      parseAgentRequest({ businessId: 'sandbox-ab', label: 'Seller', signingKey: KEY })?.signingKey,
+    ).toBe(KEY.toLowerCase())
   })
 
   it('carries an approval only once it is approved', () => {
@@ -39,12 +43,12 @@ describe('an agent request', () => {
       pairingCode: pairingCode(KEY),
       requestedAt: '1800000000',
       expiresAt: '1800003600',
+      signingKey: null,
     }
     expect(parseAgentRequestStatus({ ...base, state: 'pending' })?.state).toBe('pending')
     const approval = { mandate: { type: 'Mandate' }, keyAuthorizedIn: `0x${'ab'.repeat(32)}` }
-    expect(parseAgentRequestStatus({ ...base, state: 'approved', approval })?.state).toBe(
-      'approved',
-    )
+    const approved = { ...base, state: 'approved', approval, supplierRegistration: null }
+    expect(parseAgentRequestStatus(approved)?.state).toBe('approved')
     expect(parseAgentRequestStatus({ ...base, state: 'approved' })).toBeNull()
     expect(parseAgentRequestStatus({ ...base, state: 'pending', approval })).toBeNull()
   })

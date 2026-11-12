@@ -4,12 +4,12 @@ import {
   type CommitmentRefusalLayer,
   type HashSigner,
   isChainedTerms,
+  type JobBuyer,
   type PinnedBlock,
   type QuoteRequest,
   type ReasonCode,
   type Signed,
   type SupplierAuthorizationAnswer,
-  type TestCustomerProfile,
   toWire,
 } from '@avow-finance/spec'
 import {
@@ -102,7 +102,7 @@ const MAY_BE_ACCEPTED: readonly ReasonCode[] = [
  */
 export async function acceptJob(
   deps: JobAcceptanceDeps,
-  job: { customer: TestCustomerProfile; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: QuoteRequest },
 ): Promise<JobAcceptance> {
   const outcome = await signAndSend(deps, job)
   if (outcome.ok || !MAY_BE_ACCEPTED.includes(outcome.code)) return outcome
@@ -111,7 +111,7 @@ export async function acceptJob(
 
 async function signAndSend(
   deps: JobAcceptanceDeps,
-  job: { customer: TestCustomerProfile; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: QuoteRequest },
 ): Promise<JobAcceptance> {
   const refuse = (
     code: ReasonCode,
@@ -182,7 +182,7 @@ async function signAndSend(
  */
 async function acceptedEarlier(
   deps: JobAcceptanceDeps,
-  job: { customer: TestCustomerProfile; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: QuoteRequest },
 ): Promise<JobAcceptance | null> {
   const { customer, quote } = job
   const a = quote.agreement

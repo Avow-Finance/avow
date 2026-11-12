@@ -43,6 +43,11 @@ export function newSessionId(): string {
 }
 
 /** Where a sandbox business and a sandbox supplier register, and where a session's events go. */
+const mailboxOrderId = (orderId: string) => {
+  if (!/^[0-9a-f]{32}$/.test(orderId)) throw new RangeError(`${orderId} isn't an order id`)
+  return orderId
+}
+
 export const SANDBOX_PATHS = {
   businesses: '/v1/sandbox/businesses',
   suppliers: '/v1/sandbox/suppliers',
@@ -58,6 +63,20 @@ export const SANDBOX_PATHS = {
   /** Where the business's console sends the administrator's approval of one agent's request. */
   agentApproval: (agentKey: Address) =>
     `/v1/sandbox/agent-requests/${agentKey.toLowerCase()}/approval`,
+  /** Where a buyer's agent sends an order to another business. */
+  mailboxOrders: '/v1/sandbox/mailbox/orders',
+  /** Where a supplier's agent reads the orders waiting on it. */
+  mailboxInbox: '/v1/sandbox/mailbox/inbox',
+  /** Where either side reads one order. */
+  mailboxOrder: (orderId: string) => `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}`,
+  /** Where the supplier's agent sends its quote. */
+  mailboxQuote: (orderId: string) => `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/quote`,
+  /** Where the buyer's agent says its reserve landed. */
+  mailboxReserved: (orderId: string) =>
+    `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/reserved`,
+  /** Where the supplier's agent says its acceptance landed. */
+  mailboxAccepted: (orderId: string) =>
+    `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/accepted`,
   sessionEvents: (sessionId: string) => {
     if (!isSessionId(sessionId)) throw new RangeError(`${sessionId} isn't a session id`)
     return `/v1/sandbox/sessions/${sessionId}/events`
