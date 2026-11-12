@@ -44,6 +44,12 @@ export {
   setSandboxPlatform,
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
+export {
+  type ConnectEvent,
+  type ConnectOptions,
+  connectToBusiness,
+  SANDBOX_CONSOLE_URL,
+} from './sandbox/connect.js'
 export { loadSandboxDeployment, madeOn, trustedFactory } from './sandbox/deployment.js'
 export {
   approvedSuppliers,

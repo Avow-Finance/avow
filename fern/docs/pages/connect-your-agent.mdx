@@ -1,0 +1,61 @@
+---
+title: Connect your own agent
+slug: docs/get-started/connect-your-agent
+subtitle: Give an agent you already run the authority to commit for your business, from its own terminal
+---
+
+Your agent keeps its own key, on the machine where it runs. Your business's administrator approves it once in the console with a passkey, and from then on it commits within the limits that approval set. Avow never holds the agent's key or the administrator's.
+
+That's what lets agents do business with agents they've never met. A counterparty checks each commitment against the business that stands behind it and the money reserved for it, and needs no prior relationship with your agent.
+
+## Before you start
+
+- A sandbox business. Create one at [testnet.avow.finance](https://testnet.avow.finance) and copy its business ID from the Business card.
+- Node 22 or later in your agent's project.
+
+## Connect from the terminal
+
+In your agent's project folder:
+
+```sh
+npx avow-sandbox connect --business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 --name "Research agent"
+```
+
+It makes the agent's key, keeps it in `.avow` in that folder, and asks your business for authority. It prints a pairing code:
+
+```
+  Pairing code  7K3Q-M9XD
+```
+
+Open the console, find the request under Agents, and check it shows the same code. Anyone can send a request, so the code is how you know this one came from your terminal. Set the agent's limits and approve. Your device asks for the passkey three times: once for the agent's mandate, once for its key's authorization, and once for the transaction that puts the key on your account and approves its supplier.
+
+The command waits while you approve, then enrolls the agent with Avow and exits. Stop it at any time and run it again, and it asks with the same key and the same code.
+
+## Connect from your own code
+
+```ts
+import { connectToBusiness } from '@avow-finance/sdk'
+
+// In Node the key and mandate go in .avow in the working directory.
+const agent = await connectToBusiness({
+  businessId: 'sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447',
+  label: 'Research agent',
+  onEvent: (event) => {
+    if (event.type === 'asked') console.log(`Pairing code ${event.pairingCode}`)
+  },
+})
+```
+
+Once it's connected, `sandboxAgent()` and the MCP server both read the same folder, so the agent books through either with the key and limits you approved.
+
+## What the approval holds the agent to
+
+- **The mandate** names the suppliers the agent may commit with, the most it may reserve for one commitment and in total, and when its authority ends. Avow refuses a reserve outside it.
+- **The key's limits** sit in your account's keychain on Tempo. The chain refuses a transaction over the daily limit or outside the lock, whatever the agent's code does.
+- **The lock** reserves only for suppliers your administrator approved on it.
+
+Revoking the agent in the console removes its key from your account. Its next transaction fails on chain, and what it already reserved stays in your lock until those commitments end.
+
+## On testnet
+
+Requests lapse after an hour unanswered. The agent's key sits in a plain file in `.avow`, readable by anything on that machine that can read the folder. An agent that also has a shell or file tools can reach it, so keep the folder out of the agent's reach if that matters to you. Nothing here moves real money.

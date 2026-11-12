@@ -5,6 +5,7 @@
  *
  * Pre-release. Every interface may change before 1.0.
  */
+export * from './agent-connect.js'
 export * from './agent-session.js'
 export * from './ap2.js'
 export * from './api.js'
