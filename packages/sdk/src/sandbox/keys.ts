@@ -10,7 +10,7 @@ import { Abis, type Account, Addresses } from 'viem/tempo'
 import { ADMINISTRATOR_ABI, type Call } from '../lock.js'
 import { MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
 import { sendOwn } from '../send.js'
-import type { SandboxClient } from './business.js'
+import type { SandboxClient } from './fees.js'
 
 /** The widest block range one log query takes on Moderato's public node, with room to spare. */
 const STEP = 90_000n

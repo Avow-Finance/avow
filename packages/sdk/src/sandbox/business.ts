@@ -4,27 +4,15 @@ import {
   type SandboxDeployment,
   signBusinessRegistration,
 } from '@avow-finance/spec'
-import {
-  type Address,
-  type Chain,
-  erc20Abi,
-  type Hex,
-  type PublicClient,
-  type Transport,
-} from 'viem'
-import { Actions, type Account as TempoAccount } from 'viem/tempo'
+import type { Address, Hex } from 'viem'
+import type { Account as TempoAccount } from 'viem/tempo'
 import { AvowApiError, avowRequests, rootRequestKey } from '../http.js'
 import { createLockCall, FACTORY_ABI } from '../lock.js'
-import { MODERATO_FEE_TOKEN } from '../moderato.js'
 import { sendOwn } from '../send.js'
-
-/** The client a sandbox business reads the chain and sends its own transactions through. */
-export type SandboxClient = PublicClient<Transport, Chain>
+import { balanceOf, fundFees, type SandboxClient } from './fees.js'
 
 /** How long a registration the root key signs stays valid, well inside the API's five minutes. */
 const REGISTRATION_VALIDITY = 120n
-/** Enough of the fee token for every fee a sandbox business pays, many times over. */
-const ENOUGH_FOR_FEES = 1_000_000n
 /** How long to wait for the sandbox's test dollars to land, by default. */
 const PAYOUT_WAIT_MS = 4 * 60_000
 
@@ -67,20 +55,6 @@ export interface SandboxBusinessDeps {
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
-
-/** The account's balance of a token, in base units. */
-export const balanceOf = (client: SandboxClient, token: Address, account: Address) =>
-  client.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [account] })
-
-/**
- * Has Moderato's faucet fund an account's fees when it holds less than enough for them, and gives
- * the faucet's transactions, none when it held enough already.
- */
-export async function fundFees(client: SandboxClient, account: Address): Promise<Hex[]> {
-  if ((await balanceOf(client, MODERATO_FEE_TOKEN, account)) >= ENOUGH_FOR_FEES) return []
-  const receipts = await Actions.faucet.fundSync(client, { account, timeout: 60_000 })
-  return receipts.map((r) => r.transactionHash)
-}
 
 /**
  * Makes a sandbox business from its root key and registers it, in a browser or in Node.

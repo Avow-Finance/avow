@@ -41,8 +41,8 @@ import { readOpenReserves } from '../lock.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { landedReverted, sendErrorIn, sendSponsored } from '../send.js'
 import { SupplierDeclined } from '../supplier.js'
-import type { SandboxClient } from './business.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
+import type { SandboxClient } from './fees.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
 import {
   addCommitment,

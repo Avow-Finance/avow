@@ -18,7 +18,7 @@ import {
 import { Abis, Addresses } from 'viem/tempo'
 import { FACTORY_ABI } from '../lock.js'
 import { MODERATO_FEE_TOKEN } from '../moderato.js'
-import type { SandboxClient } from '../sandbox/business.js'
+import type { SandboxClient } from '../sandbox/fees.js'
 
 const KEYCHAIN = Addresses.accountKeychain as Address
 const LOCK_CREATED = parseAbiItem('event LockCreated(address indexed account, address lock)')
