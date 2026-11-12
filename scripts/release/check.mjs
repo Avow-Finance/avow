@@ -8,6 +8,21 @@ import { publicPackages, tarballOf } from './packages.mjs'
 // checks that the command runs and every entry point loads. A dependency left out of a manifest
 // shows up here, where the workspace would have hidden it.
 const dir = resolve(process.argv[2] ?? 'packed')
+
+// npm checks each package's repository against the provenance GitHub signs, letter for letter, and
+// refuses the publish when they differ. In a workflow, GitHub names the repository it runs in.
+const repository = process.env.GITHUB_REPOSITORY
+if (repository) {
+  const expected = `git+https://github.com/${repository}.git`
+  for (const { manifest } of publicPackages()) {
+    if (manifest.repository?.url !== expected) {
+      throw new Error(
+        `${manifest.name} names ${manifest.repository?.url}, and npm expects ${expected}`,
+      )
+    }
+  }
+  console.log(`Every package names ${repository}`)
+}
 const tarballs = publicPackages().map(({ manifest }) => join(dir, tarballOf(manifest)))
 const project = mkdtempSync(join(tmpdir(), 'avow-packages-'))
 writeFileSync(join(project, 'package.json'), '{ "private": true, "type": "module" }\n')

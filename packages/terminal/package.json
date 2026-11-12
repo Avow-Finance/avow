@@ -27,7 +27,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/avow-finance/avow.git",
+    "url": "git+https://github.com/Avow-Finance/avow.git",
     "directory": "packages/terminal"
   },
   "devDependencies": {
