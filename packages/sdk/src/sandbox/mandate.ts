@@ -80,8 +80,11 @@ export interface SandboxAuthorizeDeps {
   deployment: Pick<SandboxDeployment, 'chainId'>
   client: SandboxClient
   root: Account.RootAccount
-  /** The agent's access key on the account, which the mandate names. */
-  agent: AgentKey
+  /**
+   * The agent's access key on the account, which the mandate names. Only its address and type are
+   * read, so a business's console can authorize a key that lives on the developer's machine.
+   */
+  agent: Pick<AgentKey, 'accessKeyAddress' | 'keyType'>
   lock: Address
   mandate: Mandate
   /** The suppliers the mandate names, each approved on the lock. */
@@ -157,6 +160,7 @@ export async function authorizeSandboxKey(
  */
 export async function enrollSandboxAgent(
   deps: SandboxAuthorizeDeps & {
+    agent: AgentKey
     deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl'>
     fetch?: typeof fetch
   },

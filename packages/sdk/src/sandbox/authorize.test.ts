@@ -70,4 +70,29 @@ describe('authorizeSandboxKey', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]?.to.toLowerCase()).toBe(LOCK)
   })
+
+  it("authorizes a key known only by its address and type, as a console does for a developer's agent", async () => {
+    const elsewhere = { accessKeyAddress: agent.accessKeyAddress, keyType: agent.keyType }
+    const authorized = await authorizeSandboxKey({
+      deployment: { chainId: 42431 },
+      client: {} as never,
+      root,
+      agent: elsewhere,
+      lock: LOCK,
+      mandate: sandboxMandate({
+        businessId: 'sandbox-customer',
+        agentId: 'agt_test',
+        account: root.address,
+        agentKey: agent.accessKeyAddress,
+        suppliers: [],
+        token: TOKEN,
+        capPerCommitment: dollars(10),
+        capOpenReserves: dollars(30),
+        expiry: 1_900_000_000n,
+      }),
+      suppliers: [],
+    })
+    expect(authorized.mandate.message.agentKey).toBe(agent.accessKeyAddress)
+    expect(authorized.keyAuthorizedIn).toBe(`0x${'ab'.repeat(32)}`)
+  })
 })
