@@ -22,9 +22,10 @@ import {
   type SandboxSession,
   sandboxAgent,
 } from './agent.js'
-import { createSandboxBusiness, type SandboxBusinessStep, type SandboxClient } from './business.js'
+import { createSandboxBusiness, type SandboxBusinessStep } from './business.js'
 import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
 import { loadSandboxDeployment, madeOn } from './deployment.js'
+import type { SandboxClient } from './fees.js'
 import { approvedSuppliers, lockCreatedIn, revokeOtherKeys } from './keys.js'
 import { enrollSandboxAgent, SANDBOX_DAILY_LIMIT, sandboxMandate } from './mandate.js'
 import { SANDBOX_SCREEN_URL, sessionRelay } from './session.js'

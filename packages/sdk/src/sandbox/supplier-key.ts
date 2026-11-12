@@ -13,7 +13,7 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import type { Account as TempoAccount } from 'viem/tempo'
 import { AvowApiError, avowRequests, rootRequestKey, signingRequestKey } from '../http.js'
-import { fundFees, type SandboxClient } from './business.js'
+import { fundFees, type SandboxClient } from './fees.js'
 import { readBusiness, readJson, type SandboxStore, type StoredBusiness, write } from './store.js'
 
 /**

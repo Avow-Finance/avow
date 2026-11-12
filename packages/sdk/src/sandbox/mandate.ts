@@ -15,7 +15,7 @@ import { agentRequestKey, enrollAgent } from '../http.js'
 import { approveSupplierCall, RESERVE_SELECTOR, removeSupplierCall } from '../lock.js'
 import { sendOwn } from '../send.js'
 import { accountSigner, signMandate } from '../sign.js'
-import type { SandboxClient } from './business.js'
+import type { SandboxClient } from './fees.js'
 
 const DAY = 86_400n
 

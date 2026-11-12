@@ -23,6 +23,9 @@ describe('create-avow-agent', () => {
     const read = (f: string) => readFileSync(join(target, f), 'utf8')
     expect(read('agent.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'agent.ts'), 'utf8'))
     expect(read('README.md')).toContain('npm start')
+    // A coding agent working in the folder reads its rules there, whichever file it looks for.
+    expect(read('AGENTS.md')).toContain('You propose, Avow checks, and your person signs.')
+    expect(read('CLAUDE.md').trim()).toBe('@AGENTS.md')
     expect(read('business.ts')).toBe(readFileSync(join(TEMPLATE_DIR, 'business.ts'), 'utf8'))
     expect(read('agent.ts')).toContain("from '@avow-finance/sdk/agent'")
     expect(read('service.ts')).toContain("from '@avow-finance/sdk/service'")

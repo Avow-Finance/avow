@@ -28,6 +28,7 @@ import { connectCommand } from './connect.js'
 import { FIRST_RUN_STEPS } from './first-run.js'
 import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
 import { listenCommand, orderCommand } from './mailbox.js'
+import { mcpCommand } from './mcp.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   checkTerminal,
@@ -69,6 +70,8 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
   order    orders the demo job from another business with --supplier <id>, then checks the
            quote, funds it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it
+  mcp      add claude-code or add claude-desktop gives a model in Claude this folder's agent,
+           with tools to connect it to a business and commit within the limits approved
   fresh    moves your business aside, keys and all, and sets up a fresh one
 
   --provider local       a model Ollama runs on this machine, at no charge
@@ -112,6 +115,8 @@ async function main(args: readonly string[]): Promise<void> {
   // Its agent ordering from another business, or listening for orders to its own.
   if (args[0] === 'order') return orderCommand(args.slice(1))
   if (args[0] === 'listen') return listenCommand()
+  // The MCP server, so a model in Claude can connect the folder's agent and commit with it.
+  if (args[0] === 'mcp') return mcpCommand(args.slice(1))
   const command = !args[0] || args[0].startsWith('--') ? 'start' : args[0]
   const flags = readJobFlags(args[0] === command ? args.slice(1) : args, process.env)
   if ('error' in flags) {

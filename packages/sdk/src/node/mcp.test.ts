@@ -28,22 +28,40 @@ async function connect(dir: string): Promise<Client> {
 }
 
 describe('avow-sandbox-mcp', () => {
-  it("speaks MCP to the official client, with the starter's three tools and no others", async () => {
+  it('speaks MCP to the official client, with the tools to connect and commit and no others', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
     expect(c.getServerVersion()?.name).toBe('avow-sandbox')
     const { tools } = await c.listTools()
-    expect(tools.map((t) => t.name)).toEqual(['authority', 'book', 'commitments'])
+    expect(tools.map((t) => t.name)).toEqual([
+      'connect',
+      'status',
+      'authority',
+      'book',
+      'commitments',
+    ])
+    expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual(['business'])
     expect(tools.find((t) => t.name === 'book')?.inputSchema.required).toEqual(['reserve'])
   }, 30_000)
 
-  it('answers a folder with no agent by saying so, as an error the model sees', async () => {
+  it('tells a model in a folder with no agent to connect it, and the tools that commit refuse', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
+    const status = await c.callTool({ name: 'status', arguments: {} })
+    expect(status.isError).toBe(false)
+    expect(status.structuredContent).toEqual({ at: 'none' })
+    expect(JSON.stringify(status.content)).toMatch(/call connect/)
     for (const name of ['authority', 'commitments']) {
       const answer = await c.callTool({ name, arguments: {} })
       expect(answer.isError).toBe(true)
-      expect(JSON.stringify(answer.content)).toMatch(/no agent yet/)
+      expect(JSON.stringify(answer.content)).toMatch(/isn't connected to a business yet/)
     }
     const unknown = await c.callTool({ name: 'pay', arguments: {} })
     expect(unknown.isError).toBe(true)
+  }, 30_000)
+
+  it('asks for the business ID before it asks anyone for authority', async () => {
+    const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
+    const answer = await c.callTool({ name: 'connect', arguments: { business: ' ' } })
+    expect(answer.isError).toBe(true)
+    expect(JSON.stringify(answer.content)).toMatch(/business ID from the console/)
   }, 30_000)
 })
