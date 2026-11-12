@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import { type Address, getAddress, type Hex } from 'viem'
 import { z } from 'zod'
 import {
   AGENT_SESSION_EVENT_SCHEMAS,
@@ -43,6 +43,19 @@ export function newSessionId(): string {
 }
 
 /** Where a sandbox business and a sandbox supplier register, and where a session's events go. */
+/**
+ * The id Avow gives a sandbox business, made from its account: `sandbox-` and the account's
+ * address in lowercase hex. So an agent that knows the id knows the account, and from the factory
+ * the lock, with nothing to look up.
+ */
+export const sandboxBusinessId = (account: Address) => `sandbox-${account.slice(2).toLowerCase()}`
+
+/** The account a sandbox business id was made from, or null when it isn't one. */
+export function accountOfSandboxId(businessId: string): Address | null {
+  const match = /^sandbox-([0-9a-f]{40})$/.exec(businessId.trim())
+  return match ? getAddress(`0x${match[1]}`) : null
+}
+
 const mailboxOrderId = (orderId: string) => {
   if (!/^[0-9a-f]{32}$/.test(orderId)) throw new RangeError(`${orderId} isn't an order id`)
   return orderId

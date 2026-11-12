@@ -1,7 +1,9 @@
+import { getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import type { CommitmentReference } from './references.js'
 import {
+  accountOfSandboxId,
   formatUsd,
   isSessionId,
   newSessionId,
@@ -13,6 +15,7 @@ import {
   SANDBOX_PATHS,
   SESSION_EVENT_TYPES,
   type SessionEvent,
+  sandboxBusinessId,
   whenRetryPasses,
 } from './sandbox.js'
 import { AGENT_SESSION_EVENTS, JOB_EVENTS } from './test-helpers.js'
@@ -63,6 +66,18 @@ const events: SessionEvent[] = [
 
 /** The event as it crosses JSON between the starter, Avow's API and the screen. */
 const overJson = (value: unknown): unknown => JSON.parse(JSON.stringify(toWire(value)))
+
+describe('sandbox business ids', () => {
+  it('name the account they were made from, and nothing else', () => {
+    const account = getAddress('0x9df2eec2a472a1819d20fba1f8a6f70a232f6447')
+    const id = sandboxBusinessId(account)
+    expect(id).toBe('sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447')
+    expect(accountOfSandboxId(id)).toBe(account)
+    expect(accountOfSandboxId('sandbox-nobody')).toBeNull()
+    expect(accountOfSandboxId('avow-demo-gpu')).toBeNull()
+    expect(accountOfSandboxId(`${id}0`)).toBeNull()
+  })
+})
 
 describe('session ids', () => {
   it('makes ids of 32 lower-case hex characters, a new one each time', () => {
