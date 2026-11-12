@@ -12,6 +12,8 @@ navigation:
         path: ./docs/pages/avow-explained-simply.mdx
       - page: Trust model
         path: ./docs/pages/trust-model.mdx
+      - page: Connect your own agent
+        path: ./docs/pages/connect-your-agent.mdx
   - section: Walkthroughs
     contents:
       - page: Run all four in an hour

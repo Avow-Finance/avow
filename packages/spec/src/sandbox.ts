@@ -46,6 +46,18 @@ export function newSessionId(): string {
 export const SANDBOX_PATHS = {
   businesses: '/v1/sandbox/businesses',
   suppliers: '/v1/sandbox/suppliers',
+  /** The profile Avow registered for a sandbox business, which anyone may read. */
+  supplier: (businessId: string) => {
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(businessId)) {
+      throw new RangeError(`${businessId} isn't a business id`)
+    }
+    return `/v1/sandbox/suppliers/${businessId}`
+  },
+  /** Where an agent asks a business for authority, and asks again to hear the answer. */
+  agentRequests: '/v1/sandbox/agent-requests',
+  /** Where the business's console sends the administrator's approval of one agent's request. */
+  agentApproval: (agentKey: Address) =>
+    `/v1/sandbox/agent-requests/${agentKey.toLowerCase()}/approval`,
   sessionEvents: (sessionId: string) => {
     if (!isSessionId(sessionId)) throw new RangeError(`${sessionId} isn't a session id`)
     return `/v1/sandbox/sessions/${sessionId}/events`

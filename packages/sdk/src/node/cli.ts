@@ -24,6 +24,7 @@ import {
 } from '../sandbox/setup.js'
 import { loadAgentItem } from '../sandbox/store.js'
 import { MIN_PASSPHRASE } from '../sandbox/vault.js'
+import { connectCommand } from './connect.js'
 import { FIRST_RUN_STEPS } from './first-run.js'
 import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
@@ -61,6 +62,8 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
   start    sets up your business, opens your screen, and runs your agent session when the folder
            has service.ts, or agent.ts each time you press Enter when it doesn't
   job      sets up when it's needed, then runs one job with no input
+  connect  connects the agent in this folder to a business you run from the console, with
+           --business <id> from the console and --name for what the console calls it
   fresh    moves your business aside, keys and all, and sets up a fresh one
 
   --provider local       a model Ollama runs on this machine, at no charge
@@ -99,6 +102,8 @@ function openInBrowser(url: string): boolean {
 }
 
 async function main(args: readonly string[]): Promise<void> {
+  // An agent connecting to a business it doesn't hold the key of, from any folder.
+  if (args[0] === 'connect') return connectCommand(args.slice(1))
   const command = !args[0] || args[0].startsWith('--') ? 'start' : args[0]
   const flags = readJobFlags(args[0] === command ? args.slice(1) : args, process.env)
   if ('error' in flags) {
