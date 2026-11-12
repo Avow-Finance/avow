@@ -1,4 +1,11 @@
-import { dollars, encodeApiBody, mandateHash, pairingCode, SANDBOX_PATHS } from '@avow-finance/spec'
+import {
+  dollars,
+  encodeApiBody,
+  mandateHash,
+  pairingCode,
+  SANDBOX_PATHS,
+  sandboxBusinessId,
+} from '@avow-finance/spec'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,7 +21,9 @@ vi.mock('../moderato.js', async (original) => ({
 
 const { connectToBusiness } = await import('./connect.js')
 
-const BUSINESS = 'sandbox-business'
+// The business's account, whose address its sandbox id is made from.
+const root = Account.fromSecp256k1(generatePrivateKey())
+const BUSINESS = sandboxBusinessId(root.address)
 const wire = (value: unknown) => JSON.parse(new TextDecoder().decode(encodeApiBody(value)))
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -25,7 +34,6 @@ const json = (body: unknown, status = 200) =>
  * for whatever key the agent asked with, as the console does.
  */
 function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
-  const root = Account.fromSecp256k1(generatePrivateKey())
   const asks: { body: unknown; signer: string | null }[] = []
   const enrollments: unknown[] = []
   const status = (state: 'pending' | 'approved', agentKey: `0x${string}`, extra = {}) => ({
@@ -44,14 +52,6 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
     const url = new URL(String(input))
     const path = url.pathname
     if (path === '/config.json') return json(wire(deployment))
-    if (path === SANDBOX_PATHS.supplier(BUSINESS)) {
-      return json({
-        businessId: BUSINESS,
-        account: root.address,
-        payee: root.address,
-        signingKey: privateKeyToAccount(generatePrivateKey()).address,
-      })
-    }
     if (url.origin === new URL(supplier.url).origin && path === '/profile') {
       return json({
         businessId: supplier.id,
@@ -63,6 +63,9 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
     if (!init?.body) return json({ error: { reason: 'supplier.unknown' } }, 404)
     const body = JSON.parse(new TextDecoder().decode(init.body as Uint8Array))
     if (path === SANDBOX_PATHS.agentRequests) {
+      if ((body as { businessId: string }).businessId !== BUSINESS) {
+        return json({ error: { reason: 'business.unknown', message: 'No such business' } }, 404)
+      }
       asks.push({ body, signer: new Headers(init?.headers).get('authorization') })
       const held = JSON.parse((await store.read('request')) ?? '{}') as { agentKey: `0x${string}` }
       const agentKey = Account.fromSecp256k1(held.agentKey, {
@@ -228,5 +231,10 @@ describe('connecting an agent to a business', () => {
     await expect(
       connectToBusiness({ businessId: 'sandbox-nobody', label: 'x', store, fetch: world.fetch }),
     ).rejects.toThrow(/no sandbox business sandbox-nobody/)
+    // An id of the right form that Avow holds no business under is named the same way.
+    const stranger = sandboxBusinessId(privateKeyToAccount(generatePrivateKey()).address)
+    await expect(
+      connectToBusiness({ businessId: stranger, label: 'x', store, fetch: world.fetch }),
+    ).rejects.toThrow(`no sandbox business ${stranger}`)
   })
 })

@@ -1,17 +1,17 @@
 import {
   type AgentRequestStatus,
+  accountOfSandboxId,
   type Enrollment,
   pairingCode,
   parseAgentRequestStatus,
   parseEnrollmentRequest,
-  parseSupplierProfile,
   SANDBOX_PATHS,
 } from '@avow-finance/spec'
-import { type Address, getAddress, type Hex, isAddressEqual } from 'viem'
+import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
-import { agentRequestKey, avowRequests, enrollAgent } from '../http.js'
+import { AvowApiError, agentRequestKey, avowRequests, enrollAgent } from '../http.js'
 import { FACTORY_ABI } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
@@ -121,14 +121,11 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   }
   const deployment = await loadSandboxDeployment(o.screenUrl ?? SANDBOX_SCREEN_URL, send)
 
-  // The business's account from Avow's public profile, and its lock from the factory on chain.
-  const profileUrl = `${deployment.apiUrl}${SANDBOX_PATHS.supplier(o.businessId)}`
-  const profileResponse = await send(profileUrl, { signal: AbortSignal.timeout(15_000) })
-  const profile = parseSupplierProfile(await profileResponse.json().catch(() => null))
-  if (!profileResponse.ok || !profile.ok) {
-    throw new Error(`Avow has no sandbox business ${o.businessId}. Copy its ID from the console.`)
-  }
-  const account = getAddress(profile.value.account)
+  // The business's account from its id, and its lock from the factory on chain. Avow refuses the
+  // ask for a business it doesn't hold at that lock.
+  const account = accountOfSandboxId(o.businessId)
+  const unknown = `Avow has no sandbox business ${o.businessId}. Copy its ID from the console.`
+  if (!account) throw new Error(unknown)
   const client = moderatoClient(deployment.rpcUrl)
   const lock: Address = await client.readContract({
     address: deployment.factory,
@@ -178,6 +175,11 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
         const read = parseAgentRequestStatus(json)
         return read ? { ok: true, value: read } : { ok: false, reason: 'message.invalid' }
       },
+    }).catch((error: unknown) => {
+      if (error instanceof AvowApiError && error.reason === 'business.unknown') {
+        throw new Error(unknown)
+      }
+      throw error
     })
     if (status.state === 'approved') break
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
