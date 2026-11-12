@@ -79,7 +79,7 @@ export interface StoredCommitment {
 
 const isKey = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/i.test(v)
 export const isAddressText = (v: unknown): v is Address => typeof v === 'string' && isAddress(v)
-const isRecord = (v: unknown): v is Record<string, unknown> =>
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 export function readJson(text: string, item: SandboxStoreItem): Record<string, unknown> {

@@ -1,9 +1,12 @@
 import {
+  type BuyerSideReference,
   type ComputeOffer,
+  commitmentReferenceJson,
   computeOffersPath,
   computeOfferTerms,
   DEMO_JOB_TIMING,
   GPU_RESERVATION,
+  type GpuReservationTerms,
   isChainedTerms,
   isFirmOffer,
   type MailboxOrder,
@@ -12,7 +15,9 @@ import {
   parseComputeOffers,
   parseMailboxInbox,
   parseMailboxOrder,
+  parseMailboxOrderRequest,
   parseSupplierProfile,
+  parseTerms,
   quoteTermsProblem,
   type ReasonCode,
   SANDBOX_PATHS,
@@ -27,6 +32,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { type AgentKey, createAgent } from '../agent.js'
 import {
+  AvowApiError,
   agentRequestKey,
   avowRequests,
   httpAvowApi,
@@ -34,7 +40,7 @@ import {
   signingRequestKey,
 } from '../http.js'
 import { acceptJob } from '../job/accept.js'
-import { quoteJob } from '../job/quote.js'
+import { type ComputeBooking, quoteJob } from '../job/quote.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { sendOwn, sendSponsored } from '../send.js'
 import { platformStore, sandboxAgent } from './agent.js'
@@ -42,7 +48,14 @@ import { fundFees } from './business.js'
 import { pause } from './connect.js'
 import { loadSandboxDeployment } from './deployment.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
-import { type AgentItem, loadAgentItem, readJson, type SandboxStore, write } from './store.js'
+import {
+  type AgentItem,
+  isRecord,
+  loadAgentItem,
+  readJson,
+  type SandboxStore,
+  write,
+} from './store.js'
 import { loadSupplierItem } from './supplier-key.js'
 
 /**
@@ -86,23 +99,59 @@ export interface MailboxOptions {
   fetch?: typeof fetch
 }
 
-/** A supplier's progress on one order, kept so a restart never books its compute twice. */
+/** The compute a seller booked for one order, kept so a restart never books it twice. */
 interface SaleRecord {
-  compute: { lock: Address; commitmentId: Hex; terms: unknown; salt: Hex; termsHash: Hex } | null
+  compute: ComputeBooking
+}
+
+/** The sales kept in the store, read back to the types they were written from. */
+function readSales(json: Record<string, unknown>): Record<string, SaleRecord> {
+  const sales: Record<string, SaleRecord> = {}
+  for (const [orderId, value] of Object.entries(isRecord(json.sales) ? json.sales : {})) {
+    const kept = isRecord(value) && isRecord(value.compute) ? value.compute : {}
+    const reference = commitmentReferenceJson.safeParse(kept.reference)
+    const terms = parseTerms(kept.terms)
+    const salt = typeof kept.salt === 'string' && /^0x[0-9a-f]{64}$/i.test(kept.salt)
+    if (
+      !reference.success ||
+      reference.data.side !== 'buyer' ||
+      !terms.ok ||
+      terms.value.template !== GPU_RESERVATION ||
+      !salt
+    ) {
+      throw new Error(`The sandbox's mailbox file holds a sale it can't read, for ${orderId}.`)
+    }
+    sales[orderId] = {
+      compute: {
+        reference: { ...reference.data, side: 'buyer' },
+        terms: terms.value as GpuReservationTerms,
+        salt: kept.salt as Hex,
+      },
+    }
+  }
+  return sales
 }
 
 export interface SandboxMailbox {
   readonly businessId: string
-  /** Sends an order for the demo job to another business, with nothing reserved. */
+  /**
+   * Sends an order for the demo job to another business, with nothing reserved. The order is kept
+   * in the store before it's sent, so `buy` can pick it up after a restart.
+   */
   order(o: { supplier: string; expiresIn?: bigint }): Promise<MailboxOrder>
+  /** The orders this agent sent and hasn't seen through, oldest first, for `buy` to resume. */
+  unfinished(): Promise<MailboxOrderRequest[]>
   /** Reads one order, as either side. */
   read(orderId: string): Promise<MailboxOrder>
   /**
    * Orders a job and sees it through: waits for the quote, checks it, funds the commitment, tells
    * the mailbox, and waits for the supplier to accept. An order nobody quotes lapses unfunded.
+   * With `resume`, it picks up an unfinished order from where it stands instead of sending one,
+   * and never funds a commitment the lock already holds.
    */
   buy(o: {
     supplier: string
+    resume?: string
     expiresIn?: bigint
     onStep?: (step: BuyStep) => void
     pollEvery?: number
@@ -170,6 +219,34 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
 
   // The buyer's side.
 
+  /** What the store keeps for the mailbox: a seller's bookings, and a buyer's unfinished orders. */
+  async function kept(): Promise<{
+    sales: Record<string, SaleRecord>
+    buying: MailboxOrderRequest[]
+  }> {
+    const text = await store.read('mailbox')
+    const json = text ? readJson(text, 'mailbox') : {}
+    const buying = (Array.isArray(json.buying) ? json.buying : []).map((r: unknown) => {
+      const request = parseMailboxOrderRequest(r)
+      if (!request) throw new Error("The sandbox's mailbox file holds an order it can't read.")
+      return request
+    })
+    return { sales: readSales(json), buying }
+  }
+
+  async function keep(
+    change: (k: Awaited<ReturnType<typeof kept>>) => Partial<Awaited<ReturnType<typeof kept>>>,
+  ) {
+    const now = await kept()
+    await write(store, 'mailbox', { ...now, ...change(now) })
+  }
+
+  const finish = (orderId: string) =>
+    keep((k) => ({ buying: k.buying.filter((r) => r.orderId !== orderId) }))
+
+  const place = (request: MailboxOrderRequest) =>
+    asAgent({ domain, path: SANDBOX_PATHS.mailboxOrders, body: request, read: orderReader })
+
   async function order(p: { supplier: string; expiresIn?: bigint }): Promise<MailboxOrder> {
     const expiry = systemClock() + (p.expiresIn ?? MAILBOX_ORDER_SECONDS)
     const request: MailboxOrderRequest = {
@@ -180,22 +257,45 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
       requirement: { template: GPU_RESERVATION, condition: 'accepted', disclosed: 'subject' },
       expiry,
     }
-    return asAgent({ domain, path: SANDBOX_PATHS.mailboxOrders, body: request, read: orderReader })
+    await keep((k) => ({ buying: [...k.buying, request] }))
+    return place(request)
   }
+
+  const unfinished = async () => (await kept()).buying
 
   const read = (orderId: string) =>
     asAgent({ domain, path: SANDBOX_PATHS.mailboxOrder(orderId), body: {}, read: orderReader })
 
   async function buy(p: Parameters<SandboxMailbox['buy']>[0]): Promise<BuyOutcome> {
     const every = p.pollEvery ?? 3000
-    let current = await order(p)
+    const resumed = p.resume ? (await unfinished()).find((r) => r.orderId === p.resume) : null
+    if (p.resume && !resumed) throw new Error(`This agent has no unfinished order ${p.resume}.`)
+    // Sending a kept order again is answered with where it stands.
+    let current = resumed ? await place(resumed) : await order(p)
     p.onStep?.({ step: 'ordered', order: current })
+    const end = async (outcome: BuyOutcome) => {
+      await finish(current.orderId)
+      return outcome
+    }
     while (current.status === 'requested') {
       await pause(every, p.signal)
       current = await read(current.orderId)
     }
-    if (current.status === 'expired') return { ok: false, reason: 'order.expired', order: current }
-    if (current.status !== 'quoted') return { ok: false, reason: 'message.invalid', order: current }
+    if (current.status === 'expired')
+      return end({ ok: false, reason: 'order.expired', order: current })
+    if (current.status === 'quoted') {
+      const funded = await fund(current, p)
+      if ('reason' in funded) return end(funded)
+      current = funded.order
+    }
+    return end(await awaitAcceptance(current, every, p))
+  }
+
+  /** Checks the quote and funds it, unless the lock already holds it, and tells the mailbox. */
+  async function fund(
+    current: Extract<MailboxOrder, { status: 'quoted' }>,
+    p: Parameters<SandboxMailbox['buy']>[0],
+  ): Promise<{ order: MailboxOrder } | Extract<BuyOutcome, { ok: false }>> {
     p.onStep?.({ step: 'quoted', order: current })
     const quote = current.quote
 
@@ -249,15 +349,32 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
       if (!result.ok) return { ok: false, reason: result.reason, order: current }
       fundedIn = result.commitment.reservedIn ?? null
     }
-    current = await asAgent({
-      domain,
-      path: SANDBOX_PATHS.mailboxReserved(current.orderId),
-      body: { fundedIn },
-      read: orderReader,
-    })
-    p.onStep?.({ step: 'reserved', fundedIn })
+    // A node that lags can hide a reserve that landed for a few seconds, so Avow is asked again.
+    for (let tries = 0; ; tries++) {
+      try {
+        const reported = await asAgent({
+          domain,
+          path: SANDBOX_PATHS.mailboxReserved(current.orderId),
+          body: { fundedIn },
+          read: orderReader,
+        })
+        p.onStep?.({ step: 'reserved', fundedIn })
+        return { order: reported }
+      } catch (error) {
+        const lagging = error instanceof AvowApiError && error.reason === 'chain.reserve_missing'
+        if (!lagging || tries >= 12) throw error
+        await pause(5000, p.signal)
+      }
+    }
+  }
 
-    // The supplier accepts under the lock's rules. Past its deadline the reserve goes back.
+  /** Waits for the seller to accept, under the lock's rules. Past its deadline the reserve goes back. */
+  async function awaitAcceptance(
+    from: MailboxOrder,
+    every: number,
+    p: Parameters<SandboxMailbox['buy']>[0],
+  ): Promise<BuyOutcome> {
+    let current = from
     const acceptBy = current.status === 'reserved' ? current.reserve.acceptBy : 0n
     while (current.status === 'reserved') {
       if (systemClock() > acceptBy)
@@ -303,11 +420,6 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     })
   }
 
-  async function sales(): Promise<Record<string, SaleRecord>> {
-    const text = await store.read('mailbox')
-    return text ? (readJson(text, 'mailbox') as Record<string, SaleRecord>) : {}
-  }
-
   /** A firm offer that holds the job's GPUs for its whole run, the cheapest per GPU-hour. */
   async function computeFor(job: MailboxOrder): Promise<{ offer: ComputeOffer; gpus: number }> {
     const s = job.terms.subject
@@ -332,8 +444,7 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
   async function sell(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = needSupplier()
     if (job.status === 'requested') {
-      const records = await sales()
-      let compute = records[job.orderId]?.compute ?? null
+      let compute = (await kept()).sales[job.orderId]?.compute ?? null
       if (!compute) {
         const agent = await sandboxAgent({
           store,
@@ -343,19 +454,16 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
           fetch: send,
         })
         const { offer, gpus } = await computeFor(job)
-        const booked = await agent.bookTerms({
-          supplier: offer.supplier,
-          terms: computeOfferTerms(offer, gpus, deployment),
-        })
+        const terms = computeOfferTerms(offer, gpus, deployment)
+        const booked = await agent.bookTerms({ supplier: offer.supplier, terms })
         if (!(await booked.accepted())) throw new Error('The compute supplier never accepted')
         compute = {
-          lock: business.lock,
-          commitmentId: booked.commitment.commitmentId,
-          terms: booked.commitment.terms,
+          reference: booked.reference as BuyerSideReference,
+          terms,
           salt: booked.commitment.salt,
-          termsHash: booked.commitment.termsHash,
         }
-        await write(store, 'mailbox', { ...records, [job.orderId]: { compute } })
+        const booking = compute
+        await keep((k) => ({ sales: { ...k.sales, [job.orderId]: { compute: booking } } }))
         onStep?.({ step: 'compute', reservedIn: booked.commitment.reservedIn })
       }
       const quote = await quoteJob({
@@ -363,18 +471,7 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
         customer: job.buyer,
         supplier: supplier.profile,
         signingKey: signingRequestKey(signing),
-        compute: {
-          reference: {
-            kind: 'commitment',
-            chainId: deployment.chainId,
-            lock: compute.lock,
-            commitmentId: compute.commitmentId,
-            side: 'buyer',
-            termsHash: compute.termsHash,
-          },
-          terms: compute.terms as never,
-          salt: compute.salt,
-        },
+        compute,
         expiry: systemClock() + QUOTE_VALIDITY,
       })
       await asSupplier({
@@ -453,5 +550,5 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     }
   }
 
-  return { businessId: business.businessId, order, read, buy, inbox, sell, listen }
+  return { businessId: business.businessId, order, unfinished, read, buy, inbox, sell, listen }
 }

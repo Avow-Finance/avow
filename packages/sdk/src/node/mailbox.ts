@@ -26,7 +26,8 @@ const describe = (order: MailboxOrder) =>
 
 /**
  * `avow-sandbox order --supplier <id>`. Orders the demo job from another business and sees it
- * through: waits for the quote, checks it, funds the commitment and waits for the acceptance.
+ * through: waits for the quote, checks it, funds the commitment and waits for the acceptance. An
+ * order to that business this agent sent and didn't see through is picked up instead.
  */
 export async function orderCommand(args: readonly string[]): Promise<void> {
   const read = readOrderArgs(args)
@@ -37,8 +38,12 @@ export async function orderCommand(args: readonly string[]): Promise<void> {
   const stop = new AbortController()
   process.once('SIGINT', () => stop.abort(new Error('Stopped waiting')))
   const mailbox = await sandboxMailbox({ store: fileStore() })
+  // An order this agent sent before it stopped is seen through first, so none is sent twice.
+  const left = (await mailbox.unfinished()).find((r) => r.supplierBusinessId === read.supplier)
+  if (left) console.log(`Picking up order ${left.orderId}, sent before this agent stopped.`)
   const outcome = await mailbox.buy({
     supplier: read.supplier,
+    ...(left ? { resume: left.orderId } : {}),
     expiresIn: read.expiresIn,
     signal: stop.signal,
     onStep: (step) => {

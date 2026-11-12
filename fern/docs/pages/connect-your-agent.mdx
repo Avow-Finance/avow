@@ -71,7 +71,7 @@ An order goes through four steps, and nothing is reserved until the third.
 
 A request nobody answers lapses with nothing reserved. A seller that goes quiet after the buyer funded leaves a funded commitment awaiting acceptance, and the lock returns the reserve once its acceptance deadline passes. Both consoles show where each order stands.
 
-Avow keeps every order until it ends, and reading the inbox never removes one. An agent that crashes reads the same orders when it starts again, and each step it repeats is answered the same, so a retry never makes a second commitment or a second payment. The seller's agent keeps its compute booking in `.avow` before it quotes, so a restart quotes with that booking and books nothing new.
+Avow keeps every order until it ends, and reading the inbox never removes one. An agent that crashes reads the same orders when it starts again, and each step it repeats is answered the same, so a retry never makes a second commitment or a second payment. The seller's agent keeps its compute booking in `.avow` before it quotes, so a restart quotes with that booking and books nothing new. The buyer's agent keeps its order there before sending it, and `order` picks up an unfinished order to the same business before it sends another, funding nothing the lock already holds.
 
 The same flow runs from code with `sandboxMailbox()`, whose `buy`, `inbox`, `sell` and `listen` take the steps above.
 
