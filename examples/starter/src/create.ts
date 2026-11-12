@@ -30,6 +30,8 @@ const COPIED: Record<string, string> = {
   'service.ts': 'service.ts',
   'bypass.ts': 'bypass.ts',
   'README.md': 'README.md',
+  'AGENTS.md': 'AGENTS.md',
+  'CLAUDE.md': 'CLAUDE.md',
   'tsconfig.json': 'tsconfig.json',
   gitignore: '.gitignore',
 }
