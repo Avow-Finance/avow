@@ -1,4 +1,5 @@
-import { connectToBusiness, SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
+import { renderUnicodeCompact } from 'uqr'
+import { approvalLink, connectToBusiness, SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
 import { fileStore } from './platform.js'
 
 /** What `avow-sandbox connect` takes, read from its arguments, or why it can't run. */
@@ -56,13 +57,20 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
     signal: stop.signal,
     onEvent: (event) => {
       if (event.type === 'asked') {
+        const link = approvalLink(event.agentKey)
         console.log(
           [
             `Asked ${event.businessId} for authority, as "${read.label}".`,
             '',
             `  Pairing code  ${event.pairingCode}`,
             '',
-            `Approve it at ${SANDBOX_CONSOLE_URL} and check the console shows the same code.`,
+            'Open this to review and approve it, on your phone or here. The console shows the same code.',
+            '',
+            `  ${link}`,
+            '',
+            // A phone can scan the link from a terminal a person is watching. An agent reading the
+            // output relays the link instead, so it gets no block art.
+            ...(process.stdout.isTTY ? [renderUnicodeCompact(link), ''] : []),
             "This agent's key stays in .avow in this folder. Avow and the console never see it.",
           ].join('\n'),
         )
@@ -72,7 +80,7 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
           'Waiting for the approval. Leave this running, or stop it and run connect again later.',
         )
       } else if (event.type === 'approved') {
-        console.log(`Approved as ${event.agentId}. Enrolling with Avow.`)
+        console.log(`Approved as ${event.agentId}. Picking up its authority from Avow.`)
       } else if (event.type === 'supplier') {
         console.log(`Registered signing key ${event.signingKey} to sell for the business.`)
       }

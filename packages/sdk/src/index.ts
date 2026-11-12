@@ -45,6 +45,7 @@ export {
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
 export {
+  approvalLink,
   type ConnectEvent,
   type ConnectOptions,
   connectToBusiness,

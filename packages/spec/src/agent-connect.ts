@@ -113,3 +113,16 @@ export function pairingCode(agentKey: Address): string {
   }
   return `${code.slice(0, 4)}-${code.slice(4)}`
 }
+
+/**
+ * The hash of a console link that opens one agent's request for review. It names the request by
+ * the agent's key and grants nothing, since whoever opens it still signs in, and only the
+ * business's administrator can approve what the console shows.
+ */
+export const approvalHash = (agentKey: Address): string => `#approve-${agentKey.toLowerCase()}`
+
+/** The agent key a console link's hash names for review, or null when it names none. */
+export function approvalKeyOf(hash: string): Address | null {
+  const match = /^#approve-(0x[0-9a-f]{40})$/.exec(hash)
+  return match ? (match[1] as Address) : null
+}

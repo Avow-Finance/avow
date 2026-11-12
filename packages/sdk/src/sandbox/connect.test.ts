@@ -19,7 +19,7 @@ vi.mock('../moderato.js', async (original) => ({
   moderatoClient: () => ({ readContract: async () => LOCK }),
 }))
 
-const { connectToBusiness } = await import('./connect.js')
+const { approvalLink, connectToBusiness } = await import('./connect.js')
 
 // The business's account, whose address its sandbox id is made from.
 const root = Account.fromSecp256k1(generatePrivateKey())
@@ -236,5 +236,12 @@ describe('connecting an agent to a business', () => {
     await expect(
       connectToBusiness({ businessId: stranger, label: 'x', store, fetch: world.fetch }),
     ).rejects.toThrow(`no sandbox business ${stranger}`)
+  })
+})
+
+describe('the approval link', () => {
+  it("opens the console on this agent's request, named by its key and nothing else", () => {
+    const key = privateKeyToAccount(generatePrivateKey()).address
+    expect(approvalLink(key)).toBe(`https://testnet.avow.finance/#approve-${key.toLowerCase()}`)
   })
 })
