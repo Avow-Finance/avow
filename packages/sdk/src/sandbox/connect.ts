@@ -1,6 +1,7 @@
 import {
   type AgentRequestStatus,
   accountOfSandboxId,
+  approvalHash,
   type Enrollment,
   pairingCode,
   parseAgentRequestStatus,
@@ -31,6 +32,13 @@ import { completeSupplierRegistration } from './supplier-key.js'
 
 /** Where a business's administrator approves an agent on the testnet. */
 export const SANDBOX_CONSOLE_URL = 'https://testnet.avow.finance'
+
+/**
+ * The console link that opens this agent's request for review, on a phone or anywhere else. It names
+ * the request and grants nothing: the administrator still signs in and signs what it shows.
+ */
+export const approvalLink = (agentKey: Address): string =>
+  `${SANDBOX_CONSOLE_URL}/${approvalHash(agentKey)}`
 
 /** What happens while an agent waits for its business to answer. */
 export type ConnectEvent =

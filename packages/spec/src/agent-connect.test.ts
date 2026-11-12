@@ -1,6 +1,12 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
-import { pairingCode, parseAgentRequest, parseAgentRequestStatus } from './agent-connect.js'
+import {
+  approvalHash,
+  approvalKeyOf,
+  pairingCode,
+  parseAgentRequest,
+  parseAgentRequestStatus,
+} from './agent-connect.js'
 import { API_PATH_PATTERN } from './api-request.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 
@@ -69,5 +75,20 @@ describe('the pairing code', () => {
       ),
     )
     expect(codes.size).toBe(200)
+  })
+})
+
+describe('the approval link', () => {
+  const key = privateKeyToAccount(generatePrivateKey()).address
+
+  it('names the request by its agent key, and reads back to the same key', () => {
+    expect(approvalHash(key)).toBe(`#approve-${key.toLowerCase()}`)
+    expect(approvalKeyOf(approvalHash(key))).toBe(key.toLowerCase())
+  })
+
+  it('reads nothing from a hash that names no request', () => {
+    expect(approvalKeyOf('#agents')).toBeNull()
+    expect(approvalKeyOf('#approve-0x1234')).toBeNull()
+    expect(approvalKeyOf(`#approve-${key.toLowerCase()}&grant=1`)).toBeNull()
   })
 })

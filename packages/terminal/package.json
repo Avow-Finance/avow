@@ -1,6 +1,6 @@
 {
   "name": "@avow-finance/terminal",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "How Avow's command-line tools draw in a terminal: the banner, the step rail and set-apart lines",
   "license": "Apache-2.0",
   "type": "module",
