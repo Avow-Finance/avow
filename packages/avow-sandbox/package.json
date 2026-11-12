@@ -1,0 +1,28 @@
+{
+  "name": "avow-sandbox",
+  "version": "0.1.0",
+  "description": "Connects an agent to Avow's testnet sandbox, so npx avow-sandbox works without naming a scope",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "bin": {
+    "avow-sandbox": "./cli.js"
+  },
+  "files": [
+    "cli.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avow-finance/avow.git",
+    "directory": "packages/avow-sandbox"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*"
+  }
+}

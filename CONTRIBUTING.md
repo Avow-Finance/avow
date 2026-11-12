@@ -38,7 +38,13 @@ Every review checks a change for these nine problems, and a finding gets fixed b
 
 ## Packages
 
-Each package lives in `packages/`. Packages stay marked private until their first release, so nothing is published by accident.
+Each package lives in `packages/`. A package stays marked private until it's ready for its first release, so nothing reaches npm by accident. The public ones share one version.
+
+### Releasing
+
+1. Bump every public package to the same new version in one pull request.
+2. Once it merges, a maintainer runs the Release workflow from the Actions tab. It runs the checks, packs each public package, installs the packs into an empty project to prove they run, and publishes whatever npm doesn't have yet.
+3. A package's first publish uses the `NPM_TOKEN` secret in the `npm` environment. Then the package is set on npm to trust this repository's Release workflow, and the token is deleted, so later releases carry no token at all.
 
 ## Words we use
 
