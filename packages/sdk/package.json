@@ -1,10 +1,16 @@
 {
   "name": "@avow-finance/sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "TypeScript SDK for agents making commitments backed by Avow reserves",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,7 +25,8 @@
     "./service": {
       "types": "./dist/service-entry.d.ts",
       "default": "./dist/service-entry.js"
-    }
+    },
+    "./cli": "./dist/node/cli.js"
   },
   "bin": {
     "avow-sandbox": "./dist/node/cli.js",

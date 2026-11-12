@@ -12,6 +12,7 @@ This repository holds the open parts of Avow that developers and suppliers run t
 
 | Package | What it does | Status |
 | --- | --- | --- |
+| `avow-sandbox` | The command that connects an agent to the sandbox, run as `npx avow-sandbox connect` | First release, testnet only |
 | `@avow-finance/sdk` | TypeScript SDK for agents: book with a supplier, check Avow's approval against the terms, fund the reserve with the agent's own key while Avow pays the fee, then cancel, start or read a commitment | In progress, with limits and a list of commitments next |
 | `@avow-finance/mcp-server` | MCP server that gives an agent in Claude, Cursor or any other MCP client the same calls | Planned |
 | `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | In progress |

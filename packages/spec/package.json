@@ -1,10 +1,16 @@
 {
   "name": "@avow-finance/spec",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Avow's commitment schema: mandates, terms and their templates, signed messages, reason codes and the mandate check",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

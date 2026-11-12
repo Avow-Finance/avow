@@ -8,6 +8,14 @@ import { createAgentFolder, TEMPLATE_FILES } from './create.js'
 import { createTarball, sdkTarball, type TarEntry, tarball } from './pack.js'
 
 const STARTER = join(dirname(fileURLToPath(import.meta.url)), '..')
+/** The terminal package's own version, which the command depends on exactly. */
+const TERMINAL_VERSION = (
+  JSON.parse(
+    readFileSync(join(STARTER, '..', '..', 'packages', 'terminal', 'package.json'), 'utf8'),
+  ) as {
+    version: string
+  }
+).version
 
 /** Reads back a gzipped ustar tarball's files, as npm's extractor sees them. */
 function untar(gz: Buffer): Map<string, Buffer> {
@@ -60,7 +68,7 @@ describe('the host tarballs', () => {
       bin: { 'create-avow-agent': 'dist/bin.js' },
     })
     // The terminal package draws its banner and rail, bundled inside, so npx fetches nothing else.
-    expect(command.dependencies).toEqual({ '@avow-finance/terminal': '0.0.0' })
+    expect(command.dependencies).toEqual({ '@avow-finance/terminal': TERMINAL_VERSION })
     expect(command.bundleDependencies).toEqual(['@avow-finance/terminal'])
     const terminal = manifest(files, 'package/node_modules/@avow-finance/terminal/package.json')
     expect(terminal).toMatchObject({ private: true, dependencies: {} })

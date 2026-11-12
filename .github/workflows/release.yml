@@ -1,0 +1,61 @@
+name: Release
+
+# A maintainer runs this by hand once a version bump has merged. It publishes each public package
+# that npm doesn't have yet, signed with this workflow's identity, so no npm token is kept here once
+# trusted publishing is set up for every package. Until then, the npm environment's NPM_TOKEN
+# secret covers a package's first publish.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # Publishing with the workflow's own identity needs npm 11.5.1 or later.
+      - name: Use an npm that publishes with GitHub's identity
+        run: npm install -g npm@11.6.2
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint, type check and test
+        run: pnpm check
+
+      - name: Pack the public packages
+        run: node scripts/release/pack.mjs packed
+
+      - name: Install them into an empty project and run them
+        run: node scripts/release/check.mjs packed
+
+      - name: Publish what npm doesn't have yet
+        run: node scripts/release/publish.mjs packed
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
