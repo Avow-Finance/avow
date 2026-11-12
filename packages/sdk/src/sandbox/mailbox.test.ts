@@ -6,6 +6,7 @@ import {
   mandateHash,
   SANDBOX_PATHS,
   testnetDemoJobTerms,
+  testnetDemoTerms,
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
@@ -136,6 +137,8 @@ describe('the sandbox mailbox', () => {
     })
     expect(outcome).toMatchObject({ ok: false, reason: 'order.expired' })
     expect(steps).toEqual(['ordered'])
+    // Seen through, the order no longer waits to be resumed.
+    expect(await mailbox.unfinished()).toEqual([])
     // The order named the seller and the job, and lapses a minute after it was sent.
     expect(sent).toMatchObject({ supplierBusinessId: SELLER })
     expect(Number(sent.expiry) - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(60)
@@ -146,19 +149,75 @@ describe('the sandbox mailbox', () => {
     ])
   })
 
+  it('picks up an order it funded before it stopped, and funds nothing again', async () => {
+    const { store } = await agentFolder(BUYER)
+    const order = anOrder(1_800_000_600n)
+    await write(store, 'mailbox', { buying: [order] })
+    const reserve = { fundedIn: null, amount: '200000000', acceptBy: '9999999999' }
+    const paths: string[] = []
+    let reads = 0
+    const fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      paths.push(path)
+      const quote = {
+        terms: wire(order.terms),
+        salt: `0x${'01'.repeat(32)}`,
+        agreement: {
+          commitmentId: order.commitmentId,
+          termsHash: `0x${'02'.repeat(32)}`,
+          category: JOB_CATEGORY,
+          buyerBusinessId: BUYER,
+          supplierBusinessId: SELLER,
+          mandateHash: `0x${'cd'.repeat(32)}`,
+          nonce: '1',
+          expiry: '1800000000',
+        },
+        supplierSignature: `0x${'11'.repeat(65)}`,
+        disclosed: [],
+      }
+      if (path === SANDBOX_PATHS.mailboxOrders) {
+        return json(answered(wire(order), 'reserved', { quote, reserve }))
+      }
+      reads++
+      return json(answered(wire(order), 'accepted', { quote, reserve, acceptedIn: null }))
+    }) as typeof globalThis.fetch
+
+    const mailbox = await sandboxMailbox({ store, fetch })
+    expect((await mailbox.unfinished()).map((r) => r.orderId)).toEqual([order.orderId])
+    const steps: string[] = []
+    const outcome = await mailbox.buy({
+      supplier: SELLER,
+      resume: order.orderId,
+      pollEvery: 1,
+      onStep: (s) => steps.push(s.step),
+    })
+    expect(outcome).toMatchObject({ ok: true, order: { status: 'accepted' } })
+    expect(steps).toEqual(['ordered', 'accepted'])
+    // It sent the same order again and read where it stood, and asked for no approval or funding.
+    expect(paths).toEqual([SANDBOX_PATHS.mailboxOrders, SANDBOX_PATHS.mailboxOrder(order.orderId)])
+    expect(reads).toBe(1)
+    expect(await mailbox.unfinished()).toEqual([])
+  })
+
   it('quotes with the booking it kept after a restart, and books nothing new', async () => {
     bookings.mockReset()
     quotes.mockReset().mockResolvedValue({ quoted: true })
     const { store } = await agentFolder(SELLER, true)
     const order = anOrder(1_800_000_600n)
     const compute = {
-      lock: LOCK,
-      commitmentId: `0x${'34'.repeat(32)}`,
-      terms: { kept: true },
+      reference: {
+        kind: 'commitment',
+        chainId: deployment.chainId,
+        lock: LOCK.toLowerCase(),
+        commitmentId: `0x${'34'.repeat(32)}`,
+        side: 'buyer',
+        termsHash: `0x${'78'.repeat(32)}`,
+      },
+      terms: testnetDemoTerms(1_800_000_000n, deployment.arbiter),
       salt: `0x${'56'.repeat(32)}`,
-      termsHash: `0x${'78'.repeat(32)}`,
     }
-    await write(store, 'mailbox', { [order.orderId]: { compute } })
+    await write(store, 'mailbox', { sales: { [order.orderId]: { compute } } })
     const posted: { path: string; body: unknown }[] = []
     const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(input)).pathname
@@ -175,9 +234,8 @@ describe('the sandbox mailbox', () => {
     await mailbox.sell(held)
     expect(bookings).not.toHaveBeenCalled()
     expect(quotes).toHaveBeenCalledOnce()
-    expect(quotes.mock.calls[0]?.[0]).toMatchObject({
-      compute: { reference: { commitmentId: compute.commitmentId, lock: LOCK } },
-    })
+    // The booking comes back as it was booked, its terms as numbers again.
+    expect(quotes.mock.calls[0]?.[0]).toMatchObject({ compute })
     expect(posted.map((p) => p.path)).toEqual([
       SANDBOX_PATHS.mailboxInbox,
       SANDBOX_PATHS.mailboxQuote(order.orderId),
