@@ -5,13 +5,13 @@ import {
   discloseSection,
   type GpuReservationTerms,
   JOB_CATEGORY,
+  type JobBuyer,
   type JobOffer,
   newSalt,
   type QuoteRequest,
   type RequestKey,
   type SupplierProfile,
   type TermsAgreement,
-  type TestCustomerProfile,
   termsAgreementTypedData,
   termsHash,
   toWire,
@@ -27,8 +27,10 @@ export interface ComputeBooking {
 }
 
 export interface JobQuoteInput {
-  offer: JobOffer
-  customer: TestCustomerProfile
+  /** The order, Avow's test customer's offer or another business's order from the mailbox. */
+  offer: Pick<JobOffer, 'terms' | 'commitmentId'>
+  /** The buyer, which the agreement names with its agent's mandate. */
+  customer: JobBuyer
   /** The developer's business, as Avow registered it as a supplier. */
   supplier: SupplierProfile
   /** The supplier's signing key, which signs the terms agreement. */

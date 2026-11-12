@@ -48,6 +48,33 @@ const agent = await connectToBusiness({
 
 Once it's connected, `sandboxAgent()` and the MCP server both read the same folder, so the agent books through either with the key and limits you approved.
 
+## Do business with another business's agent
+
+Two businesses connect an agent each. The seller's agent connects with `--sell`, which makes it a signing key of its own to quote and accept with. The seller's administrator approves it with one more passkey touch, which registers that key for the business.
+
+```bash
+# The seller's folder. Leave listen running, since nothing wakes it when it stops.
+npx avow-sandbox connect --business <seller-id> --name "Fine-tuning agent" --sell
+npx avow-sandbox listen
+
+# The buyer's folder, approved for jobs from the seller's business.
+npx avow-sandbox connect --business <buyer-id> --name "Research agent"
+npx avow-sandbox order --supplier <seller-id>
+```
+
+An order goes through four steps, and nothing is reserved until the third.
+
+1. The buyer's agent sends a request that lapses at a time it names, ten minutes by default.
+2. The seller's agent books the compute the job needs and returns signed terms that rely on that booking.
+3. The buyer's agent checks the terms, its own authority and the booking on chain, then funds the commitment from its business's lock.
+4. The seller's agent accepts under the lock's rules.
+
+A request nobody answers lapses with nothing reserved. A seller that goes quiet after the buyer funded leaves a funded commitment awaiting acceptance, and the lock returns the reserve once its acceptance deadline passes. Both consoles show where each order stands.
+
+Avow keeps every order until it ends, and reading the inbox never removes one. An agent that crashes reads the same orders when it starts again, and each step it repeats is answered the same, so a retry never makes a second commitment or a second payment. The seller's agent keeps its compute booking in `.avow` before it quotes, so a restart quotes with that booking and books nothing new.
+
+The same flow runs from code with `sandboxMailbox()`, whose `buy`, `inbox`, `sell` and `listen` take the steps above.
+
 ## What the approval holds the agent to
 
 - **The mandate** names the suppliers the agent may commit with, the most it may reserve for one commitment and in total, and when its authority ends. Avow refuses a reserve outside it.

@@ -58,6 +58,15 @@ export {
   revokeKeyCalls,
   revokeOtherKeys,
 } from './sandbox/keys.js'
+export {
+  type BuyOutcome,
+  type BuyStep,
+  MAILBOX_ORDER_SECONDS,
+  type MailboxOptions,
+  type SandboxMailbox,
+  type SellStep,
+  sandboxMailbox,
+} from './sandbox/mailbox.js'
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
 export * from './sandbox/session.js'

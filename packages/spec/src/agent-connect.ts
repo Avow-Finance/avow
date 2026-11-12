@@ -1,7 +1,7 @@
 import type { Address, Hex } from 'viem'
 import { keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
-import { address, bytes32, u64 } from './json-fields.js'
+import { address, bytes32, hexBytes, u64 } from './json-fields.js'
 
 /**
  * An agent asking a business for authority, from wherever its developer runs it. The agent makes
@@ -22,10 +22,14 @@ import { address, bytes32, u64 } from './json-fields.js'
 /** How long a request waits for the administrator, in seconds, before it lapses unanswered. */
 export const AGENT_REQUEST_LIFETIME = 60n * 60n
 
-/** What an agent sends when it asks: the business it works for, and a name its developer chose. */
+/**
+ * What an agent sends when it asks: the business it works for, a name its developer chose, and for
+ * an agent that sells, the signing key it made to quote and accept jobs for the business.
+ */
 export interface AgentRequest {
   businessId: string
   label: string
+  signingKey?: Address
 }
 
 const labelJson = z
@@ -38,11 +42,14 @@ const labelJson = z
 const agentRequestJson = z.strictObject({
   businessId: z.string().min(1).max(200),
   label: labelJson,
+  signingKey: address.optional(),
 })
 
 export function parseAgentRequest(json: unknown): AgentRequest | null {
   const parsed = agentRequestJson.safeParse(json)
-  return parsed.success ? parsed.data : null
+  if (!parsed.success) return null
+  const { signingKey, ...rest } = parsed.data
+  return signingKey ? { ...rest, signingKey } : rest
 }
 
 /** Where a request stands. Approved carries the signed approval for the agent to enroll with. */
@@ -57,6 +64,8 @@ const statusBase = {
   pairingCode: z.string().regex(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/),
   requestedAt: u64,
   expiresAt: u64,
+  /** The signing key an agent that sells asked to quote and accept with, or null. */
+  signingKey: address.nullable(),
 }
 
 const agentRequestStatusJson = z.discriminatedUnion('state', [
@@ -70,6 +79,11 @@ const agentRequestStatusJson = z.discriminatedUnion('state', [
       mandate: z.record(z.string(), z.unknown()),
       keyAuthorizedIn: bytes32,
     }),
+    // For an agent that sells, the supplier registration of its signing key with the account's
+    // signature on it, which the agent completes with its own and sends to Avow. Null otherwise.
+    supplierRegistration: z
+      .strictObject({ registration: z.record(z.string(), z.unknown()), accountSignature: hexBytes })
+      .nullable(),
   }),
 ])
 

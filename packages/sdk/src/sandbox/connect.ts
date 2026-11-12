@@ -8,7 +8,7 @@ import {
   SANDBOX_PATHS,
 } from '@avow-finance/spec'
 import { type Address, getAddress, type Hex, isAddressEqual } from 'viem'
-import { generatePrivateKey } from 'viem/accounts'
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests, enrollAgent } from '../http.js'
@@ -27,6 +27,7 @@ import {
   saveAgentItem,
   write,
 } from './store.js'
+import { completeSupplierRegistration } from './supplier-key.js'
 
 /** Where a business's administrator approves an agent on the testnet. */
 export const SANDBOX_CONSOLE_URL = 'https://testnet.avow.finance'
@@ -37,12 +38,18 @@ export type ConnectEvent =
   | { type: 'waiting'; expiresAt: bigint }
   | { type: 'approved'; agentId: string }
   | { type: 'enrolled'; enrollment: Enrollment }
+  | { type: 'supplier'; signingKey: Address }
 
 export interface ConnectOptions {
   /** The business the agent works for, as its console shows it. */
   businessId: string
   /** The name the administrator sees, such as "Research agent". */
   label: string
+  /**
+   * Whether the agent sells as well as buys. It then makes a signing key of its own to quote and
+   * accept jobs with, and once approved registers it as the business's supplier key.
+   */
+  sell?: boolean
   /** Where the agent's key and mandate are kept. In Node it's the working directory's `.avow`. */
   store?: SandboxStore
   screenUrl?: string
@@ -59,6 +66,8 @@ export interface ConnectOptions {
 interface RequestItem {
   agentKey: Hex
   businessId: string
+  /** The signing key an agent that sells made, kept with its request. */
+  signingKey?: Hex
 }
 
 async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null> {
@@ -68,11 +77,18 @@ async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null>
   return typeof json.agentKey === 'string' &&
     /^0x[0-9a-fA-F]{64}$/.test(json.agentKey) &&
     typeof json.businessId === 'string'
-    ? { agentKey: json.agentKey as Hex, businessId: json.businessId }
+    ? {
+        agentKey: json.agentKey as Hex,
+        businessId: json.businessId,
+        ...(typeof json.signingKey === 'string' && /^0x[0-9a-fA-F]{64}$/.test(json.signingKey)
+          ? { signingKey: json.signingKey as Hex }
+          : {}),
+      }
     : null
 }
 
-const pause = (ms: number, signal?: AbortSignal) =>
+/** Waits `ms`, or rejects with the signal's reason once it aborts. */
+export const pause = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason)
     const timer = setTimeout(resolve, ms)
@@ -122,11 +138,15 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   })
 
   const waiting = await loadRequestItem(store)
-  const keyHex = waiting?.businessId === o.businessId ? waiting.agentKey : generatePrivateKey()
+  const same = waiting?.businessId === o.businessId ? waiting : null
+  const keyHex = same?.agentKey ?? generatePrivateKey()
+  const signingHex = o.sell ? (same?.signingKey ?? generatePrivateKey()) : undefined
   await write(store, 'request', {
     agentKey: keyHex,
     businessId: o.businessId,
+    ...(signingHex ? { signingKey: signingHex } : {}),
   } satisfies RequestItem)
+  const signing = signingHex ? privateKeyToAccount(signingHex) : null
   const agentKey: AgentKey = Account.fromSecp256k1(keyHex, { access: account })
   const code = pairingCode(agentKey.accessKeyAddress)
   o.onEvent?.({
@@ -149,7 +169,11 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     status = await ask({
       domain,
       path: SANDBOX_PATHS.agentRequests,
-      body: { businessId: o.businessId, label: o.label },
+      body: {
+        businessId: o.businessId,
+        label: o.label,
+        ...(signing ? { signingKey: signing.address } : {}),
+      },
       read: (json) => {
         const read = parseAgentRequestStatus(json)
         return read ? { ok: true, value: read } : { ok: false, reason: 'message.invalid' }
@@ -195,5 +219,24 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     suppliers,
   }
   await saveAgentItem(store, item)
+
+  // An agent that sells completes its signing key's registration, which the account signed.
+  if (signingHex) {
+    if (!status.supplierRegistration) {
+      throw new Error(
+        'The administrator approved this agent to buy only. Connect again without selling, or ask them to approve selling.',
+      )
+    }
+    const supplier = await completeSupplierRegistration({
+      store,
+      deployment,
+      business,
+      client,
+      signingKey: signingHex,
+      partial: status.supplierRegistration,
+      fetch: send,
+    })
+    o.onEvent?.({ type: 'supplier', signingKey: supplier.profile.signingKey })
+  }
   return item
 }

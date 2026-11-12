@@ -1,15 +1,18 @@
 import {
   type Parsed,
   parseSupplierProfile,
+  registrationDigest,
+  registrationDomain,
   SANDBOX_PATHS,
   type SandboxDeployment,
   type SupplierProfile,
   signSupplierRegistration,
+  supplierRegistrationBody,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import type { Account as TempoAccount } from 'viem/tempo'
-import { AvowApiError, avowRequests, rootRequestKey } from '../http.js'
+import { AvowApiError, avowRequests, rootRequestKey, signingRequestKey } from '../http.js'
 import { fundFees, type SandboxClient } from './business.js'
 import { readBusiness, readJson, type SandboxStore, type StoredBusiness, write } from './store.js'
 
@@ -111,6 +114,73 @@ export async function registerSandboxSupplier(deps: {
       { cause: error },
     )
   })
+}
+
+/**
+ * Completes a supplier registration the business's administrator started in the console. The
+ * console signs the registration of this agent's signing key with the account's root key, and the
+ * agent signs it with the signing key, proving it holds the key, and sends it to Avow signed with
+ * that key. The supplier item it keeps is the one quoting and accepting jobs read. The signing key
+ * pays its own fees, so Moderato's faucet funds them first.
+ */
+export async function completeSupplierRegistration(m: {
+  store: SandboxStore
+  deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl' | 'factory'>
+  business: StoredBusiness
+  client: SandboxClient
+  signingKey: Hex
+  /** The registration and the account's signature on it, as the approval carried them. */
+  partial: { registration: Record<string, unknown>; accountSignature: Hex }
+  fetch?: typeof fetch
+}): Promise<SupplierItem> {
+  const signer = privateKeyToAccount(m.signingKey)
+  const parsed = supplierRegistrationBody.safeParse({
+    registration: m.partial.registration,
+    accountSignature: m.partial.accountSignature,
+    signingKeySignature: '0x00',
+  })
+  if (!parsed.success) throw new Error("The supplier registration in the approval doesn't read")
+  const r = parsed.data.registration
+  if (
+    !isAddressEqual(r.signingKey, signer.address) ||
+    !isAddressEqual(r.account, m.business.account)
+  ) {
+    throw new Error(
+      "The supplier registration names another key or business, so this agent won't sign it.",
+    )
+  }
+  const hash = registrationDigest(registrationDomain(m.deployment.chainId, m.deployment.factory), {
+    kind: 'supplier',
+    registration: r,
+  })
+  const body = {
+    registration: r,
+    accountSignature: m.partial.accountSignature,
+    signingKeySignature: await signer.sign({ hash }),
+  }
+  const profile = await avowRequests({
+    baseUrl: m.deployment.apiUrl,
+    key: signingRequestKey(signer),
+    retryFor: 60n,
+    ...(m.fetch ? { fetch: m.fetch } : {}),
+  })({
+    domain: { chainId: m.deployment.chainId, verifyingContract: m.deployment.factory },
+    path: SANDBOX_PATHS.suppliers,
+    body,
+    read: (json): Parsed<SupplierProfile> => {
+      const read = parseSupplierProfile(json)
+      if (!read.ok) return read
+      const p = read.value
+      return isAddressEqual(p.account, m.business.account) &&
+        isAddressEqual(p.signingKey, signer.address)
+        ? read
+        : { ok: false, reason: 'message.invalid' }
+    },
+  })
+  const item: SupplierItem = { signingKey: m.signingKey, profile, business: m.business }
+  await saveSupplierItem(m.store, item)
+  await fundFees(m.client, signer.address)
+  return item
 }
 
 /**

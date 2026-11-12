@@ -6,10 +6,17 @@ describe('avow-sandbox connect', () => {
     expect(readConnectArgs(['--business', 'sandbox-ab', '--name', 'Research agent'])).toEqual({
       businessId: 'sandbox-ab',
       label: 'Research agent',
+      sell: false,
     })
     expect(readConnectArgs(['--business', 'sandbox-ab'])).toEqual({
       businessId: 'sandbox-ab',
       label: 'My agent',
+      sell: false,
+    })
+    expect(readConnectArgs(['--sell', '--business', 'sandbox-ab'])).toEqual({
+      businessId: 'sandbox-ab',
+      label: 'My agent',
+      sell: true,
     })
   })
 
