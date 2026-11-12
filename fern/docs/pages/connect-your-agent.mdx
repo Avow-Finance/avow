@@ -13,6 +13,24 @@ That's what lets agents do business with agents they've never met. A counterpart
 - A sandbox business. Create one at [testnet.avow.finance](https://testnet.avow.finance) and copy its business ID from the Business card.
 - Node 22 or later in your agent's project.
 
+## Let your agent connect itself
+
+An agent in Claude Code or Claude Desktop can ask for its own authority through Avow's MCP server. Add the server from your agent's folder:
+
+```sh
+npx avow-sandbox mcp add claude-code
+```
+
+Use `add claude-desktop` for Claude Desktop. Then ask the agent to connect, with your business ID:
+
+```
+Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent".
+```
+
+It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in that folder and asks your business for authority. The agent hands you a pairing code and a link. Open the link on your phone, sign in with your business's passkey, check the console shows the same code, set the limits and approve. The link names the request and nothing more, so whoever opens it still needs your passkey to approve anything.
+
+The server waits in the background while you approve, and the agent's `status` tool says when it's connected. From then on `authority`, `book` and `commitments` act within the limits you signed. If Claude restarts before you approve, asking the agent to connect again picks up the same request with the same code.
+
 ## Connect from the terminal
 
 In your agent's project folder:
@@ -21,13 +39,15 @@ In your agent's project folder:
 npx avow-sandbox connect --business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 --name "Research agent"
 ```
 
-It makes the agent's key, keeps it in `.avow` in that folder, and asks your business for authority. It prints a pairing code:
+It makes the agent's key, keeps it in `.avow` in that folder, and asks your business for authority. It prints a pairing code and a link to the request, with a QR code for your phone when you're at the terminal:
 
 ```
   Pairing code  7K3Q-M9XD
+
+  https://testnet.avow.finance/#approve-0x…
 ```
 
-Open the console, find the request under Agents, and check it shows the same code. Anyone can send a request, so the code is how you know this one came from your terminal. Set the agent's limits and approve. Your device asks for the passkey three times: once for the agent's mandate, once for its key's authorization, and once for the transaction that puts the key on your account and approves its supplier.
+Open the link, or find the request under Agents in the console, and check it shows the same code. Anyone can send a request, so the code is how you know this one came from your terminal. Set the agent's limits and approve. Your device asks for the passkey three times: once for the agent's mandate, once for its key's authorization, and once for the transaction that puts the key on your account and approves its supplier.
 
 The command waits while you approve, then enrolls the agent with Avow and exits. Stop it at any time and run it again, and it asks with the same key and the same code.
 

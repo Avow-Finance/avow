@@ -44,9 +44,9 @@ import { type ComputeBooking, quoteJob } from '../job/quote.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { sendOwn, sendSponsored } from '../send.js'
 import { platformStore, sandboxAgent } from './agent.js'
-import { fundFees } from './business.js'
 import { pause } from './connect.js'
 import { loadSandboxDeployment } from './deployment.js'
+import { fundFees } from './fees.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import {
   type AgentItem,

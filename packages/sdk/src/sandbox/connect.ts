@@ -74,6 +74,8 @@ export interface ConnectOptions {
 interface RequestItem {
   agentKey: Hex
   businessId: string
+  /** The name the agent asked under, so asking again after a restart keeps it. */
+  label?: string
   /** The signing key an agent that sells made, kept with its request. */
   signingKey?: Hex
 }
@@ -88,11 +90,23 @@ async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null>
     ? {
         agentKey: json.agentKey as Hex,
         businessId: json.businessId,
+        ...(typeof json.label === 'string' ? { label: json.label } : {}),
         ...(typeof json.signingKey === 'string' && /^0x[0-9a-fA-F]{64}$/.test(json.signingKey)
           ? { signingKey: json.signingKey as Hex }
           : {}),
       }
     : null
+}
+
+/**
+ * The business this folder's agent last asked for authority, and the name it asked under, while it
+ * has no agent item yet. It gives nothing of the agent's key.
+ */
+export async function savedRequest(
+  store: SandboxStore,
+): Promise<{ businessId: string; label: string | null } | null> {
+  const r = await loadRequestItem(store)
+  return r ? { businessId: r.businessId, label: r.label ?? null } : null
 }
 
 /** Waits `ms`, or rejects with the signal's reason once it aborts. */
@@ -149,6 +163,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   await write(store, 'request', {
     agentKey: keyHex,
     businessId: o.businessId,
+    label: o.label,
     ...(signingHex ? { signingKey: signingHex } : {}),
   } satisfies RequestItem)
   const signing = signingHex ? privateKeyToAccount(signingHex) : null

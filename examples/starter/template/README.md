@@ -42,7 +42,7 @@ Each reserve sits in your business's own lock, for one named supplier, until the
 
 ## Drive it from Claude
 
-Your agent can take its bookings from Claude too, with three tools. `authority` says what it can commit right now, `book` books, and `commitments` lists what it made with a link to check each. The tools run as your agent with only its key, through the same SDK calls `agent.ts` makes, and each call shows on the screen marked as Claude's.
+Your agent can take its bookings from Claude too. `authority` says what it can commit right now, `book` books, and `commitments` lists what it made with a link to check each. The tools run as your agent with only its key, through the same SDK calls `agent.ts` makes, and each call shows on the screen marked as Claude's.
 
 Run `npm start` once first, so your business has an agent. Then add the tools with one line.
 

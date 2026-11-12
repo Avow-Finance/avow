@@ -21,13 +21,16 @@ import {
   whenRetryPasses,
 } from '@avow-finance/spec'
 import { Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
+import { SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
 import { sessionUrl } from '../sandbox/session.js'
+import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 
 /**
- * `avow-sandbox-mcp` gives a model in Claude Code, Claude Desktop or any other MCP client the
- * starter's agent, with three tools. It runs as the agent, with only the agent's key, through the
- * same SDK calls agent.ts makes, and it never opens the business's key. Each tool call reports to
+ * `avow-sandbox-mcp` gives a model in Claude Code, Claude Desktop or any other MCP client an agent
+ * for one folder. It connects the agent to a business itself, asking for authority with a key it
+ * makes and keeps in the folder, and once the administrator approves it commits through the same
+ * SDK calls agent.ts makes. It never holds the business's key. Each commitment tool call reports to
  * the screen the runner opened, marked as the MCP agent's.
  *
  *   avow-sandbox-mcp [--dir <folder>]          serves MCP over stdio for the agent in <folder>
@@ -45,8 +48,43 @@ const usd = (dollars: number | null) =>
 
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 
+/** The tools that set the agent up, which run before it has any authority to report. */
+type SetupTool = 'connect' | 'status'
+
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
+  {
+    name: 'connect',
+    description:
+      "Asks a business for the authority to commit for it, with a key this agent makes and keeps on this machine. It answers with a pairing code and a link for your person to review the request on their phone, and keeps waiting in the background. Only the business's administrator can approve, with their passkey, and the approval sets this agent's limits. Calling it again for the same business answers with the same request.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        business: {
+          type: 'string',
+          description: 'The business ID your person copies from the console',
+        },
+        name: {
+          type: 'string',
+          description:
+            'The name the administrator sees, which says what this agent does, such as "Research agent"',
+        },
+        sell: {
+          type: 'boolean',
+          description:
+            'Also ask to quote and accept jobs for the business, with a signing key of its own. Leave it out to only buy.',
+        },
+      },
+      required: ['business'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'status',
+    description:
+      'Where this agent stands with its business. It is not connected yet, waiting for approval with its pairing code and link, connected under a mandate with the date it ends, or failed with the reason.',
+    inputSchema: noInput,
+  },
   {
     name: 'authority',
     description:
@@ -79,7 +117,11 @@ export const MCP_TOOLS = [
       'Lists every commitment your agent made, with its state on the lock, whether the current authority made it, and a link anyone can open to check it.',
     inputSchema: noInput,
   },
-] as const satisfies readonly { name: SandboxTool; description: string; inputSchema: object }[]
+] as const satisfies readonly {
+  name: SandboxTool | SetupTool
+  description: string
+  inputSchema: object
+}[]
 
 export interface ToolAnswer {
   text: string
@@ -104,10 +146,84 @@ function runnerSession(dir: string): string | null {
   }
 }
 
+const when = (seconds: number) => new Date(seconds * 1000).toISOString()
+
+/**
+ * What the model hears about the agent's connection. `asked` is the business a connect call named,
+ * so a folder already connected elsewhere says so.
+ */
+function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
+  const answer = (text: string | string[], isError = false): ToolAnswer => ({
+    text: Array.isArray(text) ? text.join(' ') : text,
+    structured: { ...c },
+    isError,
+  })
+  switch (c.at) {
+    case 'none':
+      return answer(
+        `This agent isn't connected to a business yet. Ask your person for their business ID, which the console at ${SANDBOX_CONSOLE_URL} shows, then call connect with it.`,
+      )
+    case 'saved':
+      return answer(
+        `This agent asked ${c.businessId} for authority earlier, and nothing is waiting on that request now. Call connect with the same business to keep waiting, with the same pairing code.`,
+      )
+    case 'waiting':
+      return answer([
+        `Asked ${c.businessId} for authority, as "${c.label}", with pairing code ${c.pairingCode}.`,
+        `Send your person this link to review the request, on their phone or anywhere else: ${c.link}`,
+        'The console shows the same code, so they can check the request came from you. The link grants nothing by itself, and only their passkey approves.',
+        `Avow holds the request until ${when(c.expiresAt)}. This server keeps waiting in the background, and status says once it's approved.`,
+        'Your key stays in .avow on this machine. Never print it or send it to anyone, your person included.',
+      ])
+    case 'enrolling':
+      return answer(
+        `${c.businessId} approved this agent as ${c.agentId}. It's picking up its authority from Avow, and status says once it has.`,
+      )
+    case 'connected':
+      return answer(
+        asked !== undefined && asked !== c.businessId
+          ? `This folder's agent is already connected to ${c.businessId} as ${c.agentId}. Connect an agent for ${asked} from a fresh folder.`
+          : `Connected to ${c.businessId} as ${c.agentId}, under a mandate that runs until ${when(c.expiry)} unless the business revokes it first. Call authority to see what it can commit now.`,
+      )
+    case 'failed':
+      return answer(
+        `Connecting to ${c.businessId} failed. ${c.reason} Call connect to try again.`,
+        true,
+      )
+  }
+}
+
 /** The MCP agent for one folder, answering each tool call through the SDK's agent. */
 export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
   const store = fileStore(join(dir, SANDBOX_DIR))
   const log = (line: string) => process.stderr.write(`${line}\n`)
+  const connection = mcpConnection({
+    store,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  })
+
+  async function connect(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const business = typeof args.business === 'string' ? args.business.trim() : ''
+    if (business === '') throw new RangeError('connect needs the business ID from the console')
+    const c = await connection.start({
+      businessId: business,
+      label: typeof args.name === 'string' && args.name.trim() !== '' ? args.name.trim() : null,
+      sell: args.sell === true,
+    })
+    return connectionAnswer(c, business)
+  }
+
+  /** Answers for a tool that needs authority, while the agent has none yet. */
+  async function unready(): Promise<ToolAnswer | null> {
+    const c = await connection.state()
+    if (c.at === 'connected') return null
+    const told = connectionAnswer(c)
+    return {
+      ...told,
+      text: c.at === 'none' ? told.text : `This agent has no authority yet. ${told.text}`,
+      isError: true,
+    }
+  }
 
   async function open(tool: SandboxTool): Promise<SandboxAgent> {
     const id = runnerSession(dir)
@@ -257,10 +373,16 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
   return {
     async call(name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
       try {
+        if (name === 'connect') return await connect(args)
+        if (name === 'status') return connectionAnswer(await connection.state())
+        if (!SANDBOX_TOOLS.includes(name as SandboxTool)) {
+          return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
+        }
+        const waiting = await unready()
+        if (waiting) return waiting
         if (name === 'authority') return await authority()
         if (name === 'book') return await book(args)
-        if (name === 'commitments') return await commitments()
-        return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
+        return await commitments()
       } catch (error) {
         return {
           text: error instanceof Error ? error.message : String(error),
@@ -304,7 +426,7 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
             capabilities: { tools: { listChanged: false } },
             serverInfo: SERVER,
             instructions:
-              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. The agent commits the business only within the mandate the business signed. A refusal comes from the SDK checking the mandate on this machine, from Avow, from Avow's relay, from the lock or from the account's keychain. It names which, gives the reason code and the amounts, and says when the same booking could pass. A reserve that never landed with no reason given comes back as a failure, and the same booking might pass on another try.",
+              "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. Until the agent is connected, connect asks the business for authority and gives a pairing code and a link for the business's administrator to approve on their phone. Only the administrator approves, and the agent's key never leaves this machine. Once connected, the agent commits the business only within the mandate the business signed. A refusal comes from the SDK checking the mandate on this machine, from Avow, from Avow's relay, from the lock or from the account's keychain. It names which, gives the reason code and the amounts, and says when the same booking could pass. A reserve that never landed with no reason given comes back as a failure, and the same booking might pass on another try.",
           },
         })
         return
@@ -354,9 +476,9 @@ export function claudeDesktopConfig(): string {
 function add(client: string | undefined, dir: string): number {
   const server = realpathSync(fileURLToPath(import.meta.url))
   const args = [server, '--dir', dir]
-  if (!existsSync(join(dir, SANDBOX_DIR, 'agent.json'))) {
-    console.log('This folder has no agent yet. Run npm start first, then add the server.')
-  }
+  const ask = existsSync(join(dir, SANDBOX_DIR, 'agent.json'))
+    ? 'ask it to book $200 of GPU compute'
+    : 'ask it to connect to your Avow business, with the business ID your console shows'
   if (client === 'claude-code') {
     const line = ['claude', 'mcp', 'add', SERVER.name, '--', process.execPath, ...args]
     const result = spawnSync(line[0] as string, line.slice(1), {
@@ -369,7 +491,7 @@ function add(client: string | undefined, dir: string): number {
       )
       return 1
     }
-    console.log('\nAdded. Run claude in this folder and ask it to book $200 of GPU compute.')
+    console.log(`\nAdded. Run claude in this folder and ${ask}.`)
     return 0
   }
   if (client === 'claude-desktop') {
@@ -385,7 +507,7 @@ function add(client: string | undefined, dir: string): number {
     }
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
-    console.log(`Added to ${file}. Restart Claude Desktop and ask it to book $200 of GPU compute.`)
+    console.log(`Added to ${file}. Restart Claude Desktop and ${ask}.`)
     return 0
   }
   console.error('Use avow-sandbox-mcp add claude-code, or avow-sandbox-mcp add claude-desktop.')
@@ -400,17 +522,22 @@ const isMain = (() => {
     return false
   }
 })()
-if (isMain) {
-  const argv = process.argv.slice(2)
+/**
+ * `avow-sandbox-mcp [add <client> | --dir <folder>]`, which `avow-sandbox mcp` runs too, so npx
+ * finds it with nothing installed first.
+ */
+export function mcpCommand(argv: readonly string[]): void {
   if (argv[0] === 'add') {
     process.exitCode = add(argv[1], process.cwd())
-  } else {
-    const at = argv.indexOf('--dir')
-    const dir = resolve(at >= 0 ? (argv[at + 1] ?? '.') : '.')
-    // Standard output carries the protocol, so anything the SDK prints goes to standard error.
-    console.log = (...items: unknown[]) => console.error(...items)
-    serve(dir)
+    return
   }
+  const at = argv.indexOf('--dir')
+  const dir = resolve(at >= 0 ? (argv[at + 1] ?? '.') : '.')
+  // Standard output carries the protocol, so anything the SDK prints goes to standard error.
+  console.log = (...items: unknown[]) => console.error(...items)
+  serve(dir)
 }
+
+if (isMain) mcpCommand(process.argv.slice(2))
 
 export { SANDBOX_TOOLS }
