@@ -48,7 +48,9 @@ export function encodeCommitmentReference(reference: CommitmentReference): strin
 
 /** Reads the commitment reference a token from `encodeCommitmentReference` carries. */
 export function decodeCommitmentReference(token: string): Parsed<CommitmentReference> {
-  const decoded = decodeLinkToken(token, MAX_TOKEN)
+  // A terminal wraps a long link, and copying it can carry the breaks along as spaces, which a
+  // browser sends as %20. Neither is ever part of a token, so both go before it's read.
+  const decoded = decodeLinkToken(token.replace(/%20|\s/g, ''), MAX_TOKEN)
   if (!decoded) return { ok: false, reason: 'message.invalid' }
   const parsed = commitmentReferenceJson.safeParse(decoded.json)
   return parsed.success

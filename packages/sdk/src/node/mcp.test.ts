@@ -1,4 +1,5 @@
-import { mkdtempSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,4 +65,25 @@ describe('avow-sandbox-mcp', () => {
     expect(answer.isError).toBe(true)
     expect(JSON.stringify(answer.content)).toMatch(/business ID from the console/)
   }, 30_000)
+
+  it.skipIf(process.platform === 'win32')(
+    'replaces an entry an earlier version added, so adding again picks up this one',
+    () => {
+      // A stand-in for the claude command, which records each call it gets.
+      const bin = mkdtempSync(join(tmpdir(), 'avow-claude-'))
+      const log = join(bin, 'calls')
+      writeFileSync(join(bin, 'claude'), `#!/bin/sh\necho "$@" >> "${log}"\n`)
+      chmodSync(join(bin, 'claude'), 0o755)
+      const dir = mkdtempSync(join(tmpdir(), 'avow-mcp-'))
+      const run = spawnSync(process.execPath, [SERVER, 'add', 'claude-code'], {
+        cwd: dir,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        encoding: 'utf8',
+      })
+      expect(run.status).toBe(0)
+      const calls = readFileSync(log, 'utf8').trim().split('\n')
+      expect(calls[0]).toBe('mcp remove avow-sandbox')
+      expect(calls[1]).toMatch(/^mcp add avow-sandbox -- .+ --dir /)
+    },
+  )
 })
