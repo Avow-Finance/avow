@@ -1,6 +1,6 @@
 # @avow-finance/verifier
 
-Lets a supplier check an Avow commitment before it grants capacity, accept it and report a charge on it, without calling Avow. It reads the signed authorization, the buyer's signed mandate, the supplier's own record of what it agreed to and the chain, and nothing else.
+Lets a supplier check an Avow commitment before it grants capacity, accept it and report a charge on it, without calling Avow. It reads the signed authorization, the buyer's mandate, the supplier's own record of what it agreed to and the chain, and nothing else.
 
 > **Status:** pre-release and testnet only. `tempoChainReader` reads the lock and the keychain on Tempo, and `MemoryChain` stands in for the chain in tests.
 
@@ -14,7 +14,7 @@ Lets a supplier check an Avow commitment before it grants capacity, accept it an
 4. The token is one the supplier accepts for the terms' currency, the amount and deadlines match what the terms map to, the payee is the supplier's own payout address, and the acceptance deadline hasn't passed.
 5. On the chain, the lock comes from Avow's factory and holds a reserve for this commitment that nobody has accepted yet and that matches the authorization. Every value the lock stores and enforces is what `lockTerms` maps the supplier's terms to, and the agent's key or the account's root key funded the reserve.
 6. The agent's key is active, lasts until the release date, and carries the mandate hash Avow named, in the transaction the authorization points to.
-7. When the supplier passes the buyer's signed mandate, the mandate hashes to that value, the buyer's account signed it in Tempo's keychain envelope, and its own limits allow this reserve.
+7. When the supplier passes the buyer's mandate, the mandate hashes to that value, the buyer's account authorized it, and its own limits allow this reserve. The account authorizes a mandate either by signing it in Tempo's keychain envelope, or in the transaction that put the agent's key on with the mandate's hash as its witness, which the mandate then names. Only the account's root or an admin key can put a key on, so either one is the account's word on exactly that mandate.
 8. The commitment hasn't passed this check before. That's recorded only after every other check passes.
 
 It throws, rather than refusing, when the setup is wrong, such as a chain reader for another chain or test data on a chain that isn't a testnet.

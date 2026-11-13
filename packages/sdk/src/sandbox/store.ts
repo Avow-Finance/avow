@@ -1,10 +1,8 @@
 import {
   type CommitmentReference,
-  type Mandate,
-  mandateJson,
+  type MandateProof,
+  parseMandateProof,
   parseReference,
-  parseSigned,
-  type Signed,
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddress } from 'viem'
@@ -56,11 +54,11 @@ export interface StoredBusiness {
   businessId: string
 }
 
-/** The agent's item: its own key, and the mandate the business signed for it. */
+/** The agent's item: its own key, and the mandate the business authorized for it. */
 export interface AgentItem {
   agentKey: Hex
   business: StoredBusiness
-  mandate: Signed<Mandate>
+  mandate: MandateProof
   mandateHash: Hex
   keyAuthorizedIn: Hex
   suppliers: SandboxSupplier[]
@@ -135,7 +133,7 @@ export async function loadAgentItem(store: SandboxStore): Promise<AgentItem | nu
   ) {
     return null
   }
-  const mandate = parseSigned(json.mandate, 'Mandate', mandateJson, {
+  const mandate = parseMandateProof(json.mandate, {
     chainId: business.chainId,
     lock: business.lock,
   })
@@ -143,7 +141,7 @@ export async function loadAgentItem(store: SandboxStore): Promise<AgentItem | nu
   return {
     agentKey: json.agentKey,
     business,
-    mandate: mandate.value as Signed<Mandate>,
+    mandate: mandate.value,
     mandateHash: json.mandateHash,
     keyAuthorizedIn: json.keyAuthorizedIn,
     suppliers,

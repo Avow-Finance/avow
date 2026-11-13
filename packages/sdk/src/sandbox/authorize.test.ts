@@ -1,4 +1,4 @@
-import { dollars } from '@avow-finance/spec'
+import { dollars, mandateHash } from '@avow-finance/spec'
 import { decodeFunctionData } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Abis, Account, Addresses } from 'viem/tempo'
@@ -46,29 +46,92 @@ describe('authorizeSandboxKey', () => {
     sent.length = 0
   })
 
-  it('gives a mandate that names no supplier one call that only reads the new key', async () => {
-    await authorize([])
-    const calls = sent[0]?.calls ?? []
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.to.toLowerCase()).toBe(Addresses.accountKeychain.toLowerCase())
-    const read = decodeFunctionData({
-      abi: Abis.accountKeychain,
-      data: calls[0]?.data as `0x${string}`,
-    })
-    expect(read.functionName).toBe('getKey')
-    expect((read.args ?? []).map((a) => String(a).toLowerCase())).toEqual([
-      root.address.toLowerCase(),
-      agent.accessKeyAddress.toLowerCase(),
-    ])
-  })
-
-  it('adds nothing when the transaction already approves a supplier', async () => {
-    await authorize([
+  it("puts the key on in the root's own transaction, bound to the mandate, before the suppliers", async () => {
+    const authorized = await authorize([
       { account: '0x00000000000000000000000000000000000000c1', businessId: 'avow-demo-gpu' },
     ])
     const calls = sent[0]?.calls ?? []
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.to.toLowerCase()).toBe(LOCK)
+    expect(calls.map((c) => c.to.toLowerCase())).toEqual([
+      Addresses.accountKeychain.toLowerCase(),
+      LOCK,
+    ])
+    const put = decodeFunctionData({
+      abi: Abis.accountKeychain,
+      data: calls[0]?.data as `0x${string}`,
+    })
+    expect(put.functionName).toBe('authorizeKey')
+    const [keyId, signatureType, config, witness] = put.args as unknown as [
+      string,
+      number,
+      {
+        expiry: bigint
+        enforceLimits: boolean
+        limits: readonly { token: string; amount: bigint; period: bigint }[]
+        allowAnyCalls: boolean
+        allowedCalls: readonly {
+          target: string
+          selectorRules: readonly { selector: string; recipients: readonly string[] }[]
+        }[]
+      },
+      string,
+    ]
+    expect(keyId.toLowerCase()).toBe(agent.accessKeyAddress.toLowerCase())
+    // The agent's key is a P256 key here, which Tempo numbers 1.
+    expect(signatureType).toBe(1)
+    expect(config.expiry).toBe(1_900_000_000n)
+    expect(config.enforceLimits).toBe(true)
+    expect(config.allowAnyCalls).toBe(false)
+    expect(config.limits.map((l) => [l.token.toLowerCase(), l.period])).toEqual([[TOKEN, 86_400n]])
+    // The key approves the token only to the lock, and calls only the lock's reserve.
+    expect(config.allowedCalls.map((c) => c.target.toLowerCase())).toEqual([TOKEN, LOCK])
+    expect(
+      config.allowedCalls[0]?.selectorRules[0]?.recipients.map((r) => r.toLowerCase()),
+    ).toEqual([LOCK])
+    // The witness is the mandate's hash, which is what binds the key to exactly this mandate.
+    expect(witness).toBe(authorized.mandateHash)
+    expect(authorized.mandateHash).toBe(
+      mandateHash(authorized.mandate.message, { chainId: 42431, verifyingContract: LOCK }),
+    )
+  })
+
+  it("names the transaction as the account's word on the mandate, which carries no signature", async () => {
+    const authorized = await authorize([])
+    expect(sent[0]?.calls).toHaveLength(1)
+    expect(authorized.mandate).not.toHaveProperty('signature')
+    expect(authorized.mandate).toMatchObject({
+      type: 'Mandate',
+      chainId: 42431,
+      lock: LOCK,
+      authorizedIn: `0x${'ab'.repeat(32)}`,
+    })
+  })
+
+  it('refuses a mandate for another account than the root key', async () => {
+    await expect(
+      authorizeSandboxKey({
+        deployment: { chainId: 42431 },
+        client: {} as never,
+        root,
+        agent,
+        lock: LOCK,
+        mandate: {
+          ...sandboxMandate({
+            businessId: 'sandbox-customer',
+            agentId: 'agt_test',
+            account: root.address,
+            agentKey: agent.accessKeyAddress,
+            suppliers: [],
+            token: TOKEN,
+            capPerCommitment: dollars(10),
+            capOpenReserves: dollars(30),
+            expiry: 1_900_000_000n,
+          }),
+          account: '0x00000000000000000000000000000000000000d1',
+        },
+        suppliers: [],
+      }),
+    ).rejects.toThrow('another account')
+    expect(sent).toHaveLength(0)
   })
 
   it("authorizes a key known only by its address and type, as a console does for a developer's agent", async () => {

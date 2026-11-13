@@ -2,19 +2,18 @@ import {
   type AvowDomain,
   type Enrollment,
   type Mandate,
-  mandateHash,
+  type MandateProof,
+  MESSAGE_VERSIONS,
   type SandboxDeployment,
-  type Signed,
   type SupplierProfile,
 } from '@avow-finance/spec'
-import { type Address, encodeFunctionData, type Hex, toHex } from 'viem'
-import { Abis, Account, Addresses } from 'viem/tempo'
+import { type Address, encodeFunctionData, type Hex, isAddressEqual, toHex } from 'viem'
+import { Abis, type Account, Addresses } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
-import { agentKeyTerms } from '../agent-key.js'
+import { agentKeyTerms, authorizeKeyCall } from '../agent-key.js'
 import { agentRequestKey, enrollAgent } from '../http.js'
 import { approveSupplierCall, RESERVE_SELECTOR, removeSupplierCall } from '../lock.js'
 import { sendOwn } from '../send.js'
-import { accountSigner, signMandate } from '../sign.js'
 import type { SandboxClient } from './fees.js'
 
 const DAY = 86_400n
@@ -68,9 +67,12 @@ export function sandboxMandate(m: {
   }
 }
 
-/** The agent's key on the account, under the mandate the root key signed. */
+/**
+ * The agent's key on the account, under its mandate. A mandate this SDK authorizes names the
+ * transaction its key went on in, and older agents hold one the root key signed.
+ */
 export interface AuthorizedSandboxKey {
-  mandate: Signed<Mandate>
+  mandate: MandateProof
   mandateHash: Hex
   /** The transaction that put the agent's key on the account. */
   keyAuthorizedIn: Hex
@@ -98,30 +100,29 @@ export interface SandboxAuthorizeDeps {
   revoke?: Address
   /** Supplier accounts the previous mandate allowed and this one doesn't, removed from the lock. */
   remove?: readonly Address[]
-  onSigned?: (mandate: Signed<Mandate>) => void
 }
 
 /**
- * Signs the mandate with the root key and puts the agent's key on the account, in one transaction
- * from the root key. The key is bound to the mandate's hash with the mandate's limits and expiry,
- * and each supplier the mandate names is approved on the lock. When the key replaces another, the
- * same transaction revokes the old key in the account's keychain, so the old key can't sign for the
- * account again, and removes from the lock each supplier the new mandate drops. Bookings the old key
- * made stay in the lock until their release. A new mandate needs a new key, since the account binds
- * each key to one mandate's hash.
+ * Puts the agent's key on the account under its mandate, in one transaction the root key signs, so
+ * approving an agent takes one signature. The transaction calls the keychain to add the key with
+ * the mandate's limits and expiry and the mandate's hash as its witness, and approves on the lock
+ * each supplier the mandate names. That transaction is the account's word on the mandate, which
+ * carries its hash and names it, and the mandate gets no signature of its own. When the key
+ * replaces another, the same transaction first revokes the old key in the account's keychain, so
+ * it can't sign for the account again, and removes from the lock each supplier the new mandate
+ * drops. Bookings the old key made stay in the lock until their release. A new mandate needs a new
+ * key, since the account binds each key to one mandate's hash. If any call fails, the whole
+ * transaction reverts and no key goes on.
  */
 export async function authorizeSandboxKey(
   deps: SandboxAuthorizeDeps,
 ): Promise<AuthorizedSandboxKey> {
   const { deployment, client, root, agent, lock, mandate } = deps
+  if (!isAddressEqual(mandate.account, root.address)) {
+    throw new Error("The mandate names another account than the root key's")
+  }
   const d: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
-  const signed = await signMandate(mandate, d, accountSigner(root.address, root))
-  deps.onSigned?.(signed)
-  const keyAuthorization = await Account.signKeyAuthorization(root, {
-    key: agent,
-    chainId: BigInt(deployment.chainId),
-    ...agentKeyTerms(mandate, d, { lock, lockSelectors: [RESERVE_SELECTOR] }),
-  })
+  const terms = agentKeyTerms(mandate, d, { lock, lockSelectors: [RESERVE_SELECTOR] })
   const calls = [
     ...(deps.revoke
       ? [
@@ -135,26 +136,21 @@ export async function authorizeSandboxKey(
           },
         ]
       : []),
+    authorizeKeyCall(agent, terms),
     ...(deps.remove ?? []).map((s) => removeSupplierCall(lock, s)),
     ...deps.suppliers.map((s) => approveSupplierCall(lock, s.account)),
   ]
-  // Tempo refuses a transaction with no calls, and a mandate that names no supplier, such as one
-  // whose agent approves each supplier as it books, would send none. Reading the key just put on the
-  // account gives the transaction a call that changes nothing.
-  if (calls.length === 0) {
-    calls.push({
-      to: Addresses.accountKeychain as Address,
-      data: encodeFunctionData({
-        abi: Abis.accountKeychain,
-        functionName: 'getKey',
-        args: [root.address, agent.accessKeyAddress],
-      }),
-    })
-  }
-  const receipt = await sendOwn({ client, account: root, calls, keyAuthorization })
+  const receipt = await sendOwn({ client, account: root, calls })
   return {
-    mandate: signed,
-    mandateHash: mandateHash(mandate, d),
+    mandate: {
+      type: 'Mandate',
+      schemaVersion: MESSAGE_VERSIONS.Mandate,
+      chainId: d.chainId,
+      lock,
+      message: mandate,
+      authorizedIn: receipt.transactionHash,
+    },
+    mandateHash: terms.witness,
     keyAuthorizedIn: receipt.transactionHash,
   }
 }

@@ -13,6 +13,7 @@ import {
   isSessionId,
   lockTerms,
   type Mandate,
+  type MandateProof,
   type RailState,
   type ReasonCode,
   type RefusalAmounts,
@@ -22,7 +23,6 @@ import {
   type SandboxDeployment,
   type SandboxTool,
   type SessionEvent,
-  type Signed,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
 import {
@@ -197,8 +197,8 @@ export interface SandboxAgent {
   readonly dailyLimit: number | null
   readonly suppliers: readonly SandboxSupplier[]
   readonly business: { account: Address; lock: Address; businessId: string }
-  /** The mandate the business's root key signed for the agent. */
-  readonly mandate: Signed<Mandate>
+  /** The mandate the business's root key authorized for the agent. */
+  readonly mandate: MandateProof
   readonly mandateHash: Hex
   /** The authority the agent has left, in dollars, as the lock counts it. */
   left(): Promise<number>
@@ -368,7 +368,7 @@ function booker(m: {
   client: SandboxClient
   store: SandboxStore
   agentKey: AgentKey
-  mandate: Signed<Mandate>
+  mandate: MandateProof
   mandateHash: Hex
   keyAuthorizedIn: Hex
   business: { account: Address; lock: Address; businessId: string }
