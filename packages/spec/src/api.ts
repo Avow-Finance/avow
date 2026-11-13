@@ -14,12 +14,12 @@ import {
   type Timestamp,
 } from './eip712.js'
 import { address, bytes32, hexBytes, u64 } from './json-fields.js'
+import { isSignedMandate, type MandateProof, parseMandateProof } from './mandate-proof.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
-import type { Mandate, ReserveRequest } from './types.js'
+import type { ReserveRequest } from './types.js'
 import {
   approvalJson,
   humanApprovalJson,
-  mandateJson,
   type Parsed,
   parseSigned,
   parseSignedAgreement,
@@ -72,12 +72,14 @@ export type ReserveApproval =
   | { ok: false; decisionId: string; reason: ReasonCode }
 
 /**
- * An agent enrolling with Avow once its key is on the chain. The mandate the administrator signed
- * names the business, the agent and its key, and the transaction put that key on the business
- * account with the mandate's hash. The agent signs the request with that key.
+ * An agent enrolling with Avow once its key is on the chain. The mandate names the business, the
+ * agent and its key, and the transaction put that key on the business account with the mandate's
+ * hash. The administrator either signed the mandate as well, or let that transaction stand as the
+ * account's word on it, in which case the mandate names that same transaction. The agent signs the
+ * request with its key.
  */
 export interface EnrollmentRequest {
-  mandate: Signed<Mandate>
+  mandate: MandateProof
   keyAuthorizedIn: Hex
 }
 
@@ -109,7 +111,7 @@ export type SupplierAuthorizationAnswer =
       ok: true
       authorization: Signed<SupplierAuthorization>
       approval: Signed<Approval>
-      mandate: Signed<Mandate>
+      mandate: MandateProof
     }
   | { ok: false; reason: ReasonCode }
 
@@ -319,8 +321,15 @@ export function parseEnrollmentRequest(
 ): Parsed<EnrollmentRequest> {
   const outer = z.strictObject({ mandate: objectJson, keyAuthorizedIn: bytes32 }).safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
-  const mandate = parseSigned(outer.data.mandate, 'Mandate', mandateJson, expected)
+  const mandate = parseMandateProof(outer.data.mandate, expected)
   if (!mandate.ok) return mandate
+  // A mandate the transaction authorized has to name the transaction the key went on in.
+  if (
+    !isSignedMandate(mandate.value) &&
+    mandate.value.authorizedIn !== outer.data.keyAuthorizedIn
+  ) {
+    return { ok: false, reason: 'message.invalid' }
+  }
   return {
     ok: true,
     value: { mandate: mandate.value, keyAuthorizedIn: outer.data.keyAuthorizedIn },
@@ -382,7 +391,7 @@ export function parseSupplierAuthorizationAnswer(
   if (!authorization.ok) return authorization
   const approval = parseSigned(issued.data.approval, 'Approval', approvalJson, expected)
   if (!approval.ok) return approval
-  const mandate = parseSigned(issued.data.mandate, 'Mandate', mandateJson, expected)
+  const mandate = parseMandateProof(issued.data.mandate, expected)
   if (!mandate.ok) return mandate
   return {
     ok: true,

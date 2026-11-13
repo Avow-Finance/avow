@@ -227,6 +227,21 @@ describe('reserve approvals', () => {
 describe('enrollment, sponsorship, supplier authorizations and errors', () => {
   const mandate = demoMandate(newKey().address, agent.address)
 
+  it('reads a mandate the key transaction authorized only when it names that same transaction', () => {
+    const { signature: _, ...unsigned } = envelope('Mandate', mandate)
+    const read = (authorizedIn: string, keyAuthorizedIn: string) =>
+      parseEnrollmentRequest(
+        roundTrip({ mandate: { ...unsigned, authorizedIn }, keyAuthorizedIn }),
+        {
+          chainId: CHAIN_ID,
+          lock: LOCK,
+        },
+      )
+    const ok = read(id('key tx'), id('key tx'))
+    expect(ok.ok && 'authorizedIn' in ok.value.mandate).toBe(true)
+    expect(read(id('another tx'), id('key tx'))).toEqual({ ok: false, reason: 'message.invalid' })
+  })
+
   it('round-trips an enrollment request and its answer', () => {
     const parsed = parseEnrollmentRequest(
       roundTrip({ mandate: envelope('Mandate', mandate), keyAuthorizedIn: id('key tx') }),

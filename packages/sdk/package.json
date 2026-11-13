@@ -1,6 +1,6 @@
 {
   "name": "@avow-finance/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for agents making commitments backed by Avow reserves",
   "license": "Apache-2.0",
   "type": "module",

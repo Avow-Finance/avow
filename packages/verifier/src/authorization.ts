@@ -12,8 +12,7 @@ import {
   lockTermsDifferences,
   type Mandate,
   mandateHash,
-  mandateJson,
-  mandateTypedData,
+  parseMandateProof,
   parseSigned,
   plainTermsOf,
   type RailToken,
@@ -29,6 +28,7 @@ import {
 import { type Address, type Hex, isAddressEqual, recoverAddress, zeroAddress } from 'viem'
 import type { ChainReader, LockedBacking, LockInfo } from './chain.js'
 import type { CheckedChainedTerms } from './dependency.js'
+import { mandateProofProblem } from './mandate-proof.js'
 import type { VerifierConfig } from './verify.js'
 
 /** Avow signs a supplier authorization for five minutes. */
@@ -220,10 +220,7 @@ export async function checkAuthorization(
   // The buyer's mandate, when the supplier has it: its hash, its signer and its limits.
   let mandate: Mandate | null = null
   if (input.mandate !== undefined) {
-    const m = parseSigned(input.mandate, 'Mandate', mandateJson, {
-      chainId: config.chainId,
-      lock,
-    })
+    const m = parseMandateProof(input.mandate, { chainId: config.chainId, lock })
     if (!m.ok) return m
     mandate = m.value.message
     if (
@@ -234,12 +231,12 @@ export async function checkAuthorization(
     ) {
       return refuse('authorization.mandate_mismatch')
     }
-    const signed = await chain.isAccountSignature(
-      lockInfo.account,
-      digestOf(mandateTypedData(mandate, d)),
-      m.value.signature,
-    )
-    if (!signed) return refuse('mandate.signature_invalid')
+    const proof = await mandateProofProblem(chain, m.value, {
+      account: lockInfo.account,
+      domain: d,
+      keyAuthorizedIn: auth.agentKeyAuthorizedIn,
+    })
+    if (proof) return refuse(proof)
     // The parts a supplier can check. Open reserves and revocation live with the lock and the
     // key, which the checks above read, and Avow's signature stands for any human approval.
     const limits = checkMandate({

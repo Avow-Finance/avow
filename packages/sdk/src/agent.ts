@@ -19,6 +19,7 @@ import {
   lockTerms,
   type Mandate,
   type MandateCheckInput,
+  type MandateProof,
   MESSAGE_VERSIONS,
   mandateHash,
   newSalt,
@@ -78,8 +79,11 @@ export interface AgentConfig<A extends AvowApi = AvowApi> {
    * It signs transactions for the account, and Avow's messages with its bare signature.
    */
   key: AgentKey
-  /** The mandate the business's administrator signed for this agent. It names the chain and lock. */
-  mandate: Signed<Mandate>
+  /**
+   * The mandate the business's administrator authorized for this agent, by signing it or by the
+   * transaction that put the agent's key on. It names the chain and lock.
+   */
+  mandate: MandateProof
   /** The token the business's lock holds reserves in, on the mandate's chain. */
   token: RailToken
   /** The rules the terms have to meet, the profile Avow and the supplier check them under. */

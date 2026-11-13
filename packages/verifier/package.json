@@ -1,6 +1,6 @@
 {
   "name": "@avow-finance/verifier",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Lets a supplier check an Avow commitment's authorization, terms and on-chain reserve without calling Avow",
   "license": "Apache-2.0",
   "type": "module",

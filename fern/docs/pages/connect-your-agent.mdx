@@ -47,7 +47,7 @@ It makes the agent's key, keeps it in `.avow` in that folder, and asks your busi
   https://testnet.avow.finance/#approve-0x…
 ```
 
-Open the link, or find the request under Agents in the console, and check it shows the same code. Anyone can send a request, so the code is how you know this one came from your terminal. Set the agent's limits and approve. Your device asks for the passkey three times: once for the agent's mandate, once for its key's authorization, and once for the transaction that puts the key on your account and approves its supplier.
+Open the link, or find the request under Agents in the console, and check it shows the same code. Anyone can send a request, so the code is how you know this one came from your terminal. Set the agent's limits and approve. Your device asks for the passkey once, for one transaction that puts the agent's key on your account with its limits and approves its supplier. That transaction carries the mandate's hash as the key's witness, so it's your account's word on exactly the mandate the card showed, and changing any term of the mandate breaks the match. The agent has no authority until the transaction succeeds.
 
 The command waits while you approve, then enrolls the agent with Avow and exits. Stop it at any time and run it again, and it asks with the same key and the same code.
 
