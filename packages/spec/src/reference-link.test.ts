@@ -33,6 +33,13 @@ describe('commitment reference tokens', () => {
     expect(() => encodeCommitmentReference(payment)).toThrow(RangeError)
   })
 
+  it('reads a token a terminal broke across lines, with the breaks copied as spaces', () => {
+    const token = encodeCommitmentReference(reference)
+    const broken = `${token.slice(0, 40)} ${token.slice(40, 90)}\n${token.slice(90)}`
+    expect(decodeCommitmentReference(broken)).toEqual(decodeCommitmentReference(token))
+    expect(decodeCommitmentReference(`${token.slice(0, 40)}%20${token.slice(40)}`).ok).toBe(true)
+  })
+
   it('refuses a token that is empty, too long, out of form or not a commitment reference', () => {
     const json = (value: unknown) =>
       btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')

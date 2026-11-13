@@ -480,10 +480,14 @@ function add(client: string | undefined, dir: string): number {
     ? 'ask it to book $200 of GPU compute'
     : 'ask it to connect to your Avow business, with the business ID your console shows'
   if (client === 'claude-code') {
+    const shell = process.platform === 'win32'
+    // An entry an earlier version added for this folder would stop the new one, so it goes first.
+    // Removing one that isn't there fails quietly.
+    spawnSync('claude', ['mcp', 'remove', SERVER.name], { stdio: 'ignore', shell })
     const line = ['claude', 'mcp', 'add', SERVER.name, '--', process.execPath, ...args]
     const result = spawnSync(line[0] as string, line.slice(1), {
       stdio: 'inherit',
-      shell: process.platform === 'win32',
+      shell,
     })
     if (result.error || result.status !== 0) {
       console.log(
