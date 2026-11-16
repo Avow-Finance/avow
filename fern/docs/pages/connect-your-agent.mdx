@@ -15,13 +15,17 @@ That's what lets agents do business with agents they've never met. A counterpart
 
 ## Let your agent connect itself
 
-An agent in Claude Code or Claude Desktop can ask for its own authority through Avow's MCP server. Add the server from your agent's folder:
+An agent in Claude Desktop or Claude Code can ask for its own authority through Avow's MCP server.
+
+In Claude Desktop, install the extension. Download [avow-sandbox.mcpb](https://github.com/Avow-Finance/avow/releases/latest/download/avow-sandbox.mcpb) and double-click it, or drag it onto Settings > Extensions. Claude Desktop asks for an agent folder. Pick or make a folder of its own, such as one named `avow-agent`, since the agent's key lives there. Nothing else needs installing, because Claude Desktop runs the extension with its own Node.
+
+In Claude Code, add the server from your agent's folder:
 
 ```sh
 npx avow-sandbox mcp add claude-code
 ```
 
-Use `add claude-desktop` for Claude Desktop. Then ask the agent to connect, with your business ID:
+Then ask the agent to connect, with your business ID:
 
 ```
 Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent".

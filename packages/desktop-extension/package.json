@@ -1,0 +1,20 @@
+{
+  "name": "@avow-finance/desktop-extension",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Packs the sandbox MCP server as a Claude Desktop extension, one .mcpb file a person installs with a double-click",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
+    "@avow-finance/sdk": "workspace:*",
+    "esbuild": "0.25.12"
+  }
+}
