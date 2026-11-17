@@ -7,11 +7,15 @@ export const DEFAULT_LABEL = 'My agent'
 /** Where this folder's agent stands with a business, as the connect and status tools tell it. */
 export type Connection =
   | { at: 'none' }
-  /** A request this folder made earlier, which nothing in this server is waiting on now. */
-  | { at: 'saved'; businessId: string; label: string | null }
+  /**
+   * A request this folder made earlier, which nothing in this server is waiting on now. Its
+   * business is null when it named none.
+   */
+  | { at: 'saved'; businessId: string | null; label: string | null }
   | {
       at: 'waiting'
-      businessId: string
+      /** The business it asked, or null while it waits for whoever approves it. */
+      businessId: string | null
       label: string
       pairingCode: string
       link: string
@@ -21,10 +25,11 @@ export type Connection =
   /** Approved, and picking up its authority from Avow. */
   | { at: 'enrolling'; businessId: string; agentId: string }
   | { at: 'connected'; businessId: string; agentId: string; expiry: number }
-  | { at: 'failed'; businessId: string; reason: string }
+  | { at: 'failed'; businessId: string | null; reason: string }
 
 export interface ConnectAsk {
-  businessId: string
+  /** The business to ask, or null to ask whoever opens the link and approves. */
+  businessId: string | null
   label: string | null
   sell: boolean
 }
@@ -51,7 +56,7 @@ export function mcpConnection(o: {
   pollEvery?: number
 }) {
   const connect = o.connect ?? connectToBusiness
-  let run: { businessId: string; started: Promise<Connection> } | null = null
+  let run: { businessId: string | null; started: Promise<Connection> } | null = null
   let latest: Connection | null = null
 
   async function state(): Promise<Connection> {
@@ -80,9 +85,11 @@ export function mcpConnection(o: {
         const saved = await savedRequest(o.store)
         const label =
           ask.label ?? (saved?.businessId === ask.businessId ? saved.label : null) ?? DEFAULT_LABEL
+        // The business it asked, or once an approval binds a request that named none, that one.
+        let business = ask.businessId
         const done = await connect({
           store: o.store,
-          businessId: ask.businessId,
+          ...(ask.businessId ? { businessId: ask.businessId } : {}),
           label,
           sell: ask.sell,
           ...(o.fetch ? { fetch: o.fetch } : {}),
@@ -93,13 +100,15 @@ export function mcpConnection(o: {
             } else if (e.type === 'waiting' && asked) {
               tell({
                 at: 'waiting',
-                businessId: ask.businessId,
+                businessId: business,
                 label,
                 ...asked,
                 expiresAt: Number(e.expiresAt),
               })
-            } else if (e.type === 'approved') {
-              tell({ at: 'enrolling', businessId: ask.businessId, agentId: e.agentId })
+            } else if (e.type === 'bound') {
+              business = e.businessId
+            } else if (e.type === 'approved' && business) {
+              tell({ at: 'enrolling', businessId: business, agentId: e.agentId })
             }
           },
         })
@@ -129,7 +138,9 @@ export function mcpConnection(o: {
           return latest?.at === 'connected' ? latest : run.started
         }
         throw new Error(
-          `This agent is already asking ${run.businessId} for authority, and asks one business at a time.`,
+          run.businessId
+            ? `This agent is already asking ${run.businessId} for authority, and asks one business at a time.`
+            : 'This agent is already waiting for whoever opens its link to approve it, and asks one business at a time.',
         )
       }
       latest = null

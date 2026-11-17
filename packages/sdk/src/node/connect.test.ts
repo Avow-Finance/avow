@@ -20,8 +20,16 @@ describe('avow-sandbox connect', () => {
     })
   })
 
-  it('says what is missing, and points at the console for the business ID', () => {
-    expect(readConnectArgs([])).toEqual({ error: expect.stringContaining('testnet.avow.finance') })
+  it('asks without a business when none is named, for whoever opens the link to approve', () => {
+    expect(readConnectArgs([])).toEqual({ businessId: null, label: 'My agent', sell: false })
+    expect(readConnectArgs(['--name', 'Research agent'])).toEqual({
+      businessId: null,
+      label: 'Research agent',
+      sell: false,
+    })
+  })
+
+  it('says what is missing or not taken', () => {
     expect(readConnectArgs(['--business'])).toEqual({ error: '--business needs a value' })
     expect(readConnectArgs(['--business', 'a', '--root', 'x'])).toEqual({
       error: "connect doesn't take --root",

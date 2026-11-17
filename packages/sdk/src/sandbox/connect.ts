@@ -6,6 +6,8 @@ import {
   pairingCode,
   parseAgentRequestStatus,
   parseEnrollmentRequest,
+  parseOpenAgentRequestStatus,
+  type RequestKey,
   SANDBOX_PATHS,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual } from 'viem'
@@ -42,15 +44,21 @@ export const approvalLink = (agentKey: Address): string =>
 
 /** What happens while an agent waits for its business to answer. */
 export type ConnectEvent =
-  | { type: 'asked'; businessId: string; agentKey: Address; pairingCode: string }
+  /** The agent asked, naming its business, or null when it asked before knowing it. */
+  | { type: 'asked'; businessId: string | null; agentKey: Address; pairingCode: string }
   | { type: 'waiting'; expiresAt: bigint }
+  /** A request that named no business was approved for this one. */
+  | { type: 'bound'; businessId: string }
   | { type: 'approved'; agentId: string }
   | { type: 'enrolled'; enrollment: Enrollment }
   | { type: 'supplier'; signingKey: Address }
 
 export interface ConnectOptions {
-  /** The business the agent works for, as its console shows it. */
-  businessId: string
+  /**
+   * The business the agent works for, as its console shows it. Left out, the agent asks without
+   * one, and the person who opens its link signs in or sets up a business there and approves.
+   */
+  businessId?: string
   /** The name the administrator sees, such as "Research agent". */
   label: string
   /**
@@ -73,7 +81,8 @@ export interface ConnectOptions {
 /** The agent's waiting request, kept so asking again after a restart uses the same key. */
 interface RequestItem {
   agentKey: Hex
-  businessId: string
+  /** The business it asked, or null for a request that named none and isn't bound yet. */
+  businessId: string | null
   /** The name the agent asked under, so asking again after a restart keeps it. */
   label?: string
   /** The signing key an agent that sells made, kept with its request. */
@@ -86,7 +95,7 @@ async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null>
   const json = readJson(text, 'request')
   return typeof json.agentKey === 'string' &&
     /^0x[0-9a-fA-F]{64}$/.test(json.agentKey) &&
-    typeof json.businessId === 'string'
+    (typeof json.businessId === 'string' || json.businessId === null)
     ? {
         agentKey: json.agentKey as Hex,
         businessId: json.businessId,
@@ -104,7 +113,7 @@ async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null>
  */
 export async function savedRequest(
   store: SandboxStore,
-): Promise<{ businessId: string; label: string | null } | null> {
+): Promise<{ businessId: string | null; label: string | null } | null> {
   const r = await loadRequestItem(store)
   return r ? { businessId: r.businessId, label: r.label ?? null } : null
 }
@@ -123,6 +132,49 @@ export const pause = (ms: number, signal?: AbortSignal) =>
       { once: true },
     )
   })
+
+/** The agent's key as the signer of its open request, which names no account yet. */
+function openRequestKey(keyHex: Hex): RequestKey {
+  const key = privateKeyToAccount(keyHex)
+  return { address: key.address, signDigest: (hash) => key.sign({ hash }) }
+}
+
+/**
+ * Asks Avow, under the factory, for authority from whichever business approves this key, and asks
+ * again until an approval binds the request to one. It answers with that business's id. Avow starts
+ * the request afresh when an ask comes after it lapsed, so waiting longer needs nothing more.
+ */
+async function waitToBeBound(o: {
+  deployment: Awaited<ReturnType<typeof loadSandboxDeployment>>
+  keyHex: Hex
+  label: string
+  signingKey: Address | undefined
+  send: typeof fetch
+  onEvent: ConnectOptions['onEvent']
+  pollEvery: number | undefined
+  signal: AbortSignal | undefined
+}): Promise<string> {
+  const ask = avowRequests({
+    baseUrl: o.deployment.apiUrl,
+    key: openRequestKey(o.keyHex),
+    retryFor: 60n,
+    fetch: o.send,
+  })
+  for (;;) {
+    const status = await ask({
+      domain: { chainId: o.deployment.chainId, verifyingContract: o.deployment.factory },
+      path: SANDBOX_PATHS.openAgentRequests,
+      body: { label: o.label, ...(o.signingKey ? { signingKey: o.signingKey } : {}) },
+      read: (json) => {
+        const read = parseOpenAgentRequestStatus(json)
+        return read ? { ok: true, value: read } : { ok: false, reason: 'message.invalid' }
+      },
+    })
+    if (status.state === 'bound') return status.businessId
+    o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
+    await pause(o.pollEvery ?? 5000, o.signal)
+  }
+}
 
 /**
  * Connects this agent to a business the way any agent connects, with no business key on this
@@ -143,10 +195,51 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   }
   const deployment = await loadSandboxDeployment(o.screenUrl ?? SANDBOX_SCREEN_URL, send)
 
+  const waiting = await loadRequestItem(store)
+  const asked = o.businessId ?? null
+  const same = waiting?.businessId === asked ? waiting : null
+  const keyHex = same?.agentKey ?? generatePrivateKey()
+  const signingHex = o.sell ? (same?.signingKey ?? generatePrivateKey()) : undefined
+  const signing = signingHex ? privateKeyToAccount(signingHex) : null
+  const remember = (businessId: string | null) =>
+    write(store, 'request', {
+      agentKey: keyHex,
+      businessId,
+      label: o.label,
+      ...(signingHex ? { signingKey: signingHex } : {}),
+    } satisfies RequestItem)
+  await remember(asked)
+  const keyAddress = privateKeyToAccount(keyHex).address
+  o.onEvent?.({
+    type: 'asked',
+    businessId: asked,
+    agentKey: keyAddress,
+    pairingCode: pairingCode(keyAddress),
+  })
+
+  // With no business named, the agent waits until an administrator's approval binds its request
+  // to their business, and then asks that business as any agent does, with the same key.
+  const businessId =
+    asked ??
+    (await waitToBeBound({
+      deployment,
+      keyHex,
+      label: o.label,
+      signingKey: signing?.address,
+      send,
+      onEvent: o.onEvent,
+      pollEvery: o.pollEvery,
+      signal: o.signal,
+    }))
+  if (asked === null) {
+    await remember(businessId)
+    o.onEvent?.({ type: 'bound', businessId })
+  }
+
   // The business's account from its id, and its lock from the factory on chain. Avow refuses the
   // ask for a business it doesn't hold at that lock.
-  const account = accountOfSandboxId(o.businessId)
-  const unknown = `Avow has no sandbox business ${o.businessId}. Copy its ID from the console.`
+  const account = accountOfSandboxId(businessId)
+  const unknown = `Avow has no sandbox business ${businessId}. Copy its ID from the console.`
   if (!account) throw new Error(unknown)
   const client = moderatoClient(deployment.rpcUrl)
   const lock: Address = await client.readContract({
@@ -155,26 +248,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     functionName: 'lockAddress',
     args: [account],
   })
-
-  const waiting = await loadRequestItem(store)
-  const same = waiting?.businessId === o.businessId ? waiting : null
-  const keyHex = same?.agentKey ?? generatePrivateKey()
-  const signingHex = o.sell ? (same?.signingKey ?? generatePrivateKey()) : undefined
-  await write(store, 'request', {
-    agentKey: keyHex,
-    businessId: o.businessId,
-    label: o.label,
-    ...(signingHex ? { signingKey: signingHex } : {}),
-  } satisfies RequestItem)
-  const signing = signingHex ? privateKeyToAccount(signingHex) : null
   const agentKey: AgentKey = Account.fromSecp256k1(keyHex, { access: account })
-  const code = pairingCode(agentKey.accessKeyAddress)
-  o.onEvent?.({
-    type: 'asked',
-    businessId: o.businessId,
-    agentKey: agentKey.accessKeyAddress,
-    pairingCode: code,
-  })
 
   const config = {
     baseUrl: deployment.apiUrl,
@@ -190,7 +264,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
       domain,
       path: SANDBOX_PATHS.agentRequests,
       body: {
-        businessId: o.businessId,
+        businessId,
         label: o.label,
         ...(signing ? { signingKey: signing.address } : {}),
       },
@@ -212,7 +286,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   const approval = parseEnrollmentRequest(status.approval, { chainId: deployment.chainId, lock })
   if (!approval.ok) throw new Error(`The approval Avow holds isn't a mandate: ${approval.reason}`)
   const m = approval.value.mandate.message
-  if (!isAddressEqual(m.agentKey, agentKey.accessKeyAddress) || m.businessId !== o.businessId) {
+  if (!isAddressEqual(m.agentKey, agentKey.accessKeyAddress) || m.businessId !== businessId) {
     throw new Error("The approval names another agent or business, so this agent won't use it.")
   }
   o.onEvent?.({ type: 'approved', agentId: m.agentId })
@@ -233,7 +307,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     token: deployment.token,
     account,
     lock,
-    businessId: o.businessId,
+    businessId,
   }
   const item: AgentItem = {
     agentKey: keyHex,

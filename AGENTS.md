@@ -19,7 +19,7 @@ The model proposes, Avow checks, and the human signs. Every change keeps that or
 
 ## How an agent gets authority
 
-1. The agent runs `npx avow-sandbox connect --business <id>`, or calls the MCP server's `connect` tool. Either makes the agent's key, keeps it in `.avow` and asks the business through `connectToBusiness`.
+1. The agent runs `npx avow-sandbox connect`, or calls the MCP server's `connect` tool. Either makes the agent's key, keeps it in `.avow` and asks through `connectToBusiness`. With a business ID it asks that business, signed under its lock. Without one it asks under the factory, and the administrator's approval binds the request to the business whose root key signed the mandate.
 2. The agent gets a pairing code and an approval link, from `approvalLink`, and sends both to its person. The MCP server keeps waiting in the background, and its `status` tool says where the request stands.
 3. The administrator opens the link, signs in with the business's passkey, checks the console shows the same code, sets the limits and approves.
 4. The agent picks up its authority from Avow. From then on `authority`, `book` and `commitments` act within the mandate, and they refuse before that.

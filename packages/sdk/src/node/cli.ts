@@ -65,9 +65,10 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
   start    sets up your business, opens your screen, and runs your agent session when the folder
            has service.ts, or agent.ts each time you press Enter when it doesn't
   job      sets up when it's needed, then runs one job with no input
-  connect  connects the agent in this folder to a business you run from the console, with
-           --business <id> from the console and --name for what the console calls it, and
-           --sell when it also quotes and accepts jobs for the business
+  connect  connects the agent in this folder to a business, through a link where you sign in
+           or set up the business and approve, with --business <id> to name one up front,
+           --name for what the console calls it, and --sell when it also quotes and accepts
+           jobs for the business
   order    orders the demo job from another business with --supplier <id>, then checks the
            quote, funds it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it

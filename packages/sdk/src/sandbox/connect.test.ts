@@ -5,6 +5,7 @@ import {
   pairingCode,
   SANDBOX_PATHS,
   sandboxBusinessId,
+  verifyApiRequest,
 } from '@avow-finance/spec'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
@@ -33,8 +34,10 @@ const json = (body: unknown, status = 200) =>
  * supplier. The administrator approves on the ask after `approveAfter` asks, signing the mandate
  * for whatever key the agent asked with, as the console does.
  */
-function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
+function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1, bindAfter = 1) {
   const asks: { body: unknown; signer: string | null }[] = []
+  // Asks made before the agent knew its business, with who signed them and under what.
+  const openAsks: { body: unknown; signer: string; verifyingContract: string }[] = []
   const enrollments: unknown[] = []
   const status = (state: 'pending' | 'approved', agentKey: `0x${string}`, extra = {}) => ({
     businessId: BUSINESS,
@@ -62,6 +65,30 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
     }
     if (!init?.body) return json({ error: { reason: 'supplier.unknown' } }, 404)
     const body = JSON.parse(new TextDecoder().decode(init.body as Uint8Array))
+    if (path === SANDBOX_PATHS.openAgentRequests) {
+      const checked = verifyApiRequest({
+        audience: deployment.apiUrl,
+        chainId: deployment.chainId,
+        method: 'POST',
+        path,
+        body: init.body as Uint8Array,
+        authorization: new Headers(init.headers).get('authorization'),
+      })
+      if (!checked.ok) return json({ error: { reason: checked.reason } }, 401)
+      const { signer, lock } = checked.value.credentials
+      openAsks.push({ body, signer, verifyingContract: lock })
+      const state =
+        openAsks.length <= bindAfter ? { state: 'open' } : { state: 'bound', businessId: BUSINESS }
+      return json({
+        agentKey: signer.toLowerCase(),
+        label: 'Research agent',
+        pairingCode: pairingCode(signer),
+        requestedAt: '1800000000',
+        expiresAt: '1800003600',
+        signingKey: null,
+        ...state,
+      })
+    }
     if (path === SANDBOX_PATHS.agentRequests) {
       if ((body as { businessId: string }).businessId !== BUSINESS) {
         return json({ error: { reason: 'business.unknown', message: 'No such business' } }, 404)
@@ -104,10 +131,85 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1) {
     }
     return json({ error: { reason: 'request.invalid' } }, 404)
   }) as typeof globalThis.fetch
-  return { fetch, root, asks, enrollments }
+  return { fetch, root, asks, openAsks, enrollments }
 }
 
 describe('connecting an agent to a business', () => {
+  it('asks under the factory without a business, and once an approval binds it, connects there with the same key', async () => {
+    const store = memoryStore()
+    const world = sandbox(store, 1, 2)
+    const events: { type: string; businessId?: string | null }[] = []
+    const item = await connectToBusiness({
+      label: 'Research agent',
+      store,
+      fetch: world.fetch,
+      pollEvery: 1,
+      onEvent: (e) =>
+        events.push(
+          'businessId' in e ? { type: e.type, businessId: e.businessId } : { type: e.type },
+        ),
+    })
+    expect(events).toEqual([
+      { type: 'asked', businessId: null },
+      { type: 'waiting' },
+      { type: 'waiting' },
+      { type: 'bound', businessId: BUSINESS },
+      { type: 'waiting' },
+      { type: 'approved' },
+      { type: 'enrolled' },
+    ])
+    // Each open ask was signed by the agent's own key, under the factory, and names no business.
+    expect(world.openAsks).toHaveLength(3)
+    const key = item.mandate.message.agentKey.toLowerCase()
+    for (const ask of world.openAsks) {
+      expect(ask.body).toEqual({ label: 'Research agent' })
+      expect(ask.signer.toLowerCase()).toBe(key)
+      expect(ask.verifyingContract.toLowerCase()).toBe(deployment.factory.toLowerCase())
+    }
+    // Then it asked the business it was bound to, with the same key, and enrolled there.
+    expect(world.asks.length).toBeGreaterThan(0)
+    for (const ask of world.asks) {
+      expect(ask.body).toEqual({ businessId: BUSINESS, label: 'Research agent' })
+    }
+    expect(item.business).toMatchObject({ businessId: BUSINESS, account: world.root.address })
+  })
+
+  it('picks up an open request after a restart, with the same key and pairing code', async () => {
+    const store = memoryStore()
+    const world = sandbox(store, 1, 99)
+    const stop = new AbortController()
+    const codes: string[] = []
+    const first = connectToBusiness({
+      label: 'Research agent',
+      store,
+      fetch: world.fetch,
+      pollEvery: 1,
+      signal: stop.signal,
+      onEvent: (e) => {
+        if (e.type === 'asked') codes.push(e.pairingCode)
+        if (e.type === 'waiting') stop.abort(new Error('Stopped waiting'))
+      },
+    })
+    await expect(first).rejects.toThrow('Stopped waiting')
+    const second = new AbortController()
+    await expect(
+      connectToBusiness({
+        label: 'Research agent',
+        store,
+        fetch: world.fetch,
+        pollEvery: 1,
+        signal: second.signal,
+        onEvent: (e) => {
+          if (e.type === 'asked') codes.push(e.pairingCode)
+          if (e.type === 'waiting') second.abort(new Error('Stopped again'))
+        },
+      }),
+    ).rejects.toThrow('Stopped again')
+    expect(codes).toHaveLength(2)
+    expect(codes[0]).toBe(codes[1])
+    expect(new Set(world.openAsks.map((a) => a.signer)).size).toBe(1)
+  })
+
   it('asks with a key of its own, waits for the approval, enrolls, and keeps what every call reads', async () => {
     const store = memoryStore()
     const world = sandbox(store, 2)

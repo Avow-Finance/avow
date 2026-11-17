@@ -6,6 +6,8 @@ import {
   pairingCode,
   parseAgentRequest,
   parseAgentRequestStatus,
+  parseOpenAgentRequest,
+  parseOpenAgentRequestStatus,
 } from './agent-connect.js'
 import { API_PATH_PATTERN } from './api-request.js'
 import { SANDBOX_PATHS } from './sandbox.js'
@@ -90,5 +92,44 @@ describe('the approval link', () => {
     expect(approvalKeyOf('#agents')).toBeNull()
     expect(approvalKeyOf('#approve-0x1234')).toBeNull()
     expect(approvalKeyOf(`#approve-${key.toLowerCase()}&grant=1`)).toBeNull()
+  })
+})
+
+describe('a request that names no business', () => {
+  const key = privateKeyToAccount(generatePrivateKey()).address.toLowerCase()
+  const base = {
+    agentKey: key,
+    label: 'Research agent',
+    pairingCode: pairingCode(key as `0x${string}`),
+    requestedAt: '1800000000',
+    expiresAt: '1800003600',
+    signingKey: null,
+  }
+
+  it('takes a name and any signing key, and refuses a business, which the approval sets', () => {
+    expect(parseOpenAgentRequest({ label: 'Research agent' })).toEqual({ label: 'Research agent' })
+    expect(parseOpenAgentRequest({ label: 'R', signingKey: key })).toEqual({
+      label: 'R',
+      signingKey: key,
+    })
+    expect(parseOpenAgentRequest({ label: 'R', businessId: 'sandbox-ab' })).toBeNull()
+    expect(parseOpenAgentRequest({ label: '' })).toBeNull()
+  })
+
+  it('stands open or expired with no business, and names one only once bound', () => {
+    expect(parseOpenAgentRequestStatus({ ...base, state: 'open' })).toMatchObject({ state: 'open' })
+    expect(parseOpenAgentRequestStatus({ ...base, state: 'expired' })).not.toBeNull()
+    expect(
+      parseOpenAgentRequestStatus({ ...base, state: 'bound', businessId: 'sandbox-ab' }),
+    ).toMatchObject({ state: 'bound', businessId: 'sandbox-ab' })
+    expect(parseOpenAgentRequestStatus({ ...base, state: 'bound' })).toBeNull()
+    expect(
+      parseOpenAgentRequestStatus({ ...base, state: 'open', businessId: 'sandbox-ab' }),
+    ).toBeNull()
+  })
+
+  it('is asked at a path of its own, beside the requests that name a business', () => {
+    expect(SANDBOX_PATHS.openAgentRequests).toMatch(API_PATH_PATTERN)
+    expect(SANDBOX_PATHS.openAgentRequests).toBe(`${SANDBOX_PATHS.agentRequests}/open`)
   })
 })
