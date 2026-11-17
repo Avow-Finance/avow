@@ -20,6 +20,7 @@ import {
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
+import { setRequestClient } from '../http.js'
 import { Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
 import { SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
 import { sessionUrl } from '../sandbox/session.js'
@@ -418,6 +419,9 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
     switch (method) {
       case 'initialize': {
         const asked = params.protocolVersion
+        // The business's console shows which client the agent says it runs in, from this.
+        const info = params.clientInfo as { name?: unknown } | undefined
+        setRequestClient(typeof info?.name === 'string' ? `MCP: ${info.name}` : 'MCP')
         write({
           id,
           result: {

@@ -12,6 +12,7 @@ import {
   Rail,
   stylesOf,
 } from '@avow-finance/terminal'
+import { setRequestClient } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { dailyLimitOf, keyLeftToday } from '../sandbox/agent.js'
 import { loadBusinessItem } from '../sandbox/business-store.js'
@@ -369,6 +370,8 @@ async function showKeyLeft(
   }
 }
 
+// The business's console shows the agent as run from the terminal.
+setRequestClient('Terminal')
 main(process.argv.slice(2)).catch((error: unknown) => {
   // A supplier's or a relay's own words can end up in an error, so they're cleaned like any outside text.
   console.error(clean(error instanceof Error ? error.message : String(error)))
