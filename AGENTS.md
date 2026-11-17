@@ -50,6 +50,7 @@ Terms never change after the agreement, and a change is a new commitment that na
 | `packages/sdk` | The agent's and the business's calls, the `avow-sandbox` command and the MCP server |
 | `packages/terminal` | What the command line draws |
 | `packages/avow-sandbox` | The unscoped name `npx` finds, which runs the SDK's command |
+| `skills/avow-commitments` | The Agent Skill that tells an agent when a commitment is the right tool, kept in step with the MCP tools by a test |
 | `examples/starter` | The folder `npx` makes for a new agent, with an `AGENTS.md` of its own for the agent working in it |
 | `examples/buyer`, `supplier`, `keeper` | A quickstart for each side |
 | `fern/docs/pages` | The developer reference, as MDX |
