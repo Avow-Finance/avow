@@ -56,6 +56,13 @@ type SetupTool = 'connect' | 'status'
 export const MCP_TOOLS = [
   {
     name: 'connect',
+    title: 'Connect to a business',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Asks for the authority to commit for a business, with a key this agent makes and keeps on this machine. Leave business out unless your person gave you its ID: the link then lets them sign in, or set up their business, and approve in one place. It answers with a pairing code and a link for your person to open on their phone, and keeps waiting in the background. Only the business's administrator can approve, with their passkey, and the approval sets this agent's limits. Calling it again answers with the same request.",
     inputSchema: {
@@ -83,18 +90,39 @@ export const MCP_TOOLS = [
   },
   {
     name: 'status',
+    title: 'Connection status',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       'Where this agent stands with its business. It is not connected yet, waiting for approval with its pairing code and link, connected under a mandate with the date it ends, or failed with the reason.',
     inputSchema: noInput,
   },
   {
     name: 'authority',
+    title: 'What the agent can commit',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "What your agent can commit right now. It has two limits. It holds at most so much in bookings at once, which Avow refuses past and the lock checks against Avow's approval. Its key moves at most so much a day, a limit the business set on chain. It names the suppliers the agent may book too.",
     inputSchema: noInput,
   },
   {
     name: 'check',
+    title: 'Check a booking',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       "Says whether a booking would pass right now, without booking it or moving any money. It runs the mandate check Avow runs, against what the lock holds under the mandate, and what the key can still move today. A booking that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. Avow's relay budget and the supplier's own answer aren't checked, since only booking asks them.",
     inputSchema: {
@@ -115,6 +143,13 @@ export const MCP_TOOLS = [
   },
   {
     name: 'book',
+    title: 'Book GPU capacity',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     description:
       "Books GPU capacity with one of your agent's suppliers, backed by a reserve in your business's own lock. Avow checks the booking against the mandate and what the lock holds before any money moves, the agent's machine runs the open verifier, and the supplier accepts on the lock. A refusal comes back with its reason code, the layer that refused it, the amounts and when the same booking could pass. A reserve that never landed with no reason given comes back as a failure. Held reserves come back as bookings end or are cancelled, the key's daily limit starts again each day, Avow's relay can be limiting how much it takes for now, and anything else in the mandate changes only when the business signs a new one.",
     inputSchema: {
@@ -135,12 +170,32 @@ export const MCP_TOOLS = [
   },
   {
     name: 'commitments',
+    title: 'List commitments',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     description:
       'Lists every commitment your agent made, with its state on the lock, whether the current authority made it, and a link anyone can open to check it.',
     inputSchema: noInput,
   },
 ] as const satisfies readonly {
   name: SandboxTool | SetupTool
+  /** What a client shows for the tool. */
+  title: string
+  /**
+   * How the tool acts, for clients that ask before running one. Booking adds a commitment and
+   * moves money into a reserve, so it's neither read-only nor idempotent, and it destroys nothing.
+   * Every tool reaches Avow or the chain, so each is open-world.
+   */
+  annotations: {
+    readOnlyHint: boolean
+    destructiveHint: boolean
+    idempotentHint: boolean
+    openWorldHint: boolean
+  }
   description: string
   inputSchema: object
 }[]
