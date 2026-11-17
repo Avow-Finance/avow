@@ -15,13 +15,14 @@ import { fileURLToPath } from 'node:url'
 import {
   formatUsd,
   isSessionId,
+  refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
-import { Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
+import { PREFLIGHT_UNCHECKED, Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
 import { sessionUrl } from '../sandbox/session.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
@@ -91,6 +92,26 @@ export const MCP_TOOLS = [
     description:
       "What your agent can commit right now. It has two limits. It holds at most so much in bookings at once, which Avow refuses past and the lock checks against Avow's approval. Its key moves at most so much a day, a limit the business set on chain. It names the suppliers the agent may book too.",
     inputSchema: noInput,
+  },
+  {
+    name: 'check',
+    description:
+      "Says whether a booking would pass right now, without booking it or moving any money. It runs the mandate check Avow runs, against what the lock holds under the mandate, and what the key can still move today. A booking that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. Avow's relay budget and the supplier's own answer aren't checked, since only booking asks them.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reserve: { type: 'number', description: 'The reserve in dollars, such as 200' },
+        gpu: { type: 'string', description: 'The GPU model, H100 when left out' },
+        count: { type: 'integer', description: 'How many GPUs, 8 when left out' },
+        hours: { type: 'number', description: 'How many hours, 1 when left out' },
+        supplier: {
+          type: 'string',
+          description: "The supplier's business id, the agent's first supplier when left out",
+        },
+      },
+      required: ['reserve'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'book',
@@ -279,6 +300,63 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
     }
   }
 
+  async function check(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const reserve = args.reserve
+    if (typeof reserve !== 'number') throw new RangeError('The check needs a reserve in dollars')
+    const agent = await open('check')
+    const gpu = typeof args.gpu === 'string' ? args.gpu : 'H100'
+    const count = typeof args.count === 'number' ? args.count : 8
+    const hours = typeof args.hours === 'number' ? args.hours : 1
+    const supplier =
+      typeof args.supplier === 'string' ? args.supplier : (agent.suppliers[0]?.id ?? '')
+    const answer = await agent.check({ supplier, resource: { gpu, count, hours }, reserve })
+    const dollars = (micros: bigint | null) => (micros === null ? null : Number(micros) / 1_000_000)
+    const amounts = {
+      needed: dollars(answer.amounts.needed),
+      heldAtOnceLeft: dollars(answer.amounts.left),
+      heldAtOnce: dollars(answer.amounts.authority),
+      perCommitment: dollars(answer.amounts.capPerCommitment),
+      movedPerDay: dollars(answer.amounts.dailyLimit),
+      movedTodayLeft: dollars(answer.amounts.dailyLeft),
+    }
+    const unchecked = `It doesn't check ${PREFLIGHT_UNCHECKED.join(' or ')}, so booking can still be refused there.`
+    if (answer.passes) {
+      return {
+        text: [
+          `Booking ${usd(reserve)} with ${supplier} for ${count} ${gpu} for ${hours} hour${hours === 1 ? '' : 's'} would pass now, and nothing was booked.`,
+          `Your agent has ${usd(amounts.heldAtOnceLeft)} left of its ${usd(amounts.heldAtOnce)} held at once, and its key ${usd(amounts.movedTodayLeft)} of today's ${usd(amounts.movedPerDay)}.`,
+          unchecked,
+        ].join(' '),
+        structured: {
+          status: 'would_pass',
+          supplier,
+          resource: { gpu, count, hours },
+          amounts,
+          unchecked: [...PREFLIGHT_UNCHECKED],
+        },
+        isError: false,
+      }
+    }
+    const refused = { code: answer.code, layer: answer.layer, amounts: answer.amounts }
+    return {
+      text: [
+        `Booking ${usd(reserve)} with ${supplier} wouldn't pass: ${answer.layer === 'sdk' ? 'the SDK' : answer.layer} would refuse it, with reason code ${answer.code}. Nothing was booked.`,
+        refusalSentence(refused),
+        whenRetryPasses(refused),
+      ].join(' '),
+      structured: {
+        status: 'would_be_refused',
+        code: answer.code,
+        layer: answer.layer,
+        sentence: refusalSentence(refused),
+        retry: whenRetryPasses(refused),
+        supplier,
+        amounts,
+      },
+      isError: false,
+    }
+  }
+
   async function book(args: Record<string, unknown>): Promise<ToolAnswer> {
     const reserve = args.reserve
     if (typeof reserve !== 'number') throw new RangeError('The booking needs a reserve in dollars')
@@ -393,6 +471,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
         const waiting = await unready()
         if (waiting) return waiting
         if (name === 'authority') return await authority()
+        if (name === 'check') return await check(args)
         if (name === 'book') return await book(args)
         return await commitments()
       } catch (error) {

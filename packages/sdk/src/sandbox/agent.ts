@@ -9,6 +9,7 @@ import {
   approvalTokenProblem,
   type CommitmentReference,
   checkEnvelope,
+  checkMandate,
   type GpuReservationTerms,
   isSessionId,
   lockTerms,
@@ -24,6 +25,7 @@ import {
   type SandboxTool,
   type SessionEvent,
   TESTNET_DEMO_PROFILE,
+  toTokenUnits,
 } from '@avow-finance/spec'
 import {
   readAgentKey,
@@ -32,7 +34,7 @@ import {
   verifyCommitmentReference,
   verifyCommitmentTerms,
 } from '@avow-finance/verifier'
-import { type Address, type Hex, isAddressEqual } from 'viem'
+import { type Address, type Hex, isAddressEqual, zeroAddress, zeroHash } from 'viem'
 import { Abis, Account, Addresses } from 'viem/tempo'
 import { type AgentKey, BookingError, type Commitment, createAgent } from '../agent.js'
 import type { AvowApi } from '../avow-api.js'
@@ -138,6 +140,19 @@ export interface SandboxBooking {
   reserve: number
 }
 
+/**
+ * Whether a booking would pass the checks the agent can make before anyone signs, with the amounts
+ * behind the answer. A booking that fails names the code and the layer that would refuse it, as a
+ * `Refusal` does. Avow's relay budget and the supplier's own answer aren't checked, since only
+ * sending the booking asks them.
+ */
+export type SandboxPreflight =
+  | { passes: true; amounts: RefusalAmounts }
+  | { passes: false; code: ReasonCode; layer: RefusalLayer; amounts: RefusalAmounts }
+
+/** What a check can't know without sending the booking. */
+export const PREFLIGHT_UNCHECKED = ["Avow's relay budget", "the supplier's own answer"] as const
+
 /** One check the agent's machine made, and why it failed if it did. */
 export interface SandboxCheck {
   name: string
@@ -206,6 +221,12 @@ export interface SandboxAgent {
   dailyLeft(): Promise<number | null>
   /** Every commitment the business's agents made, each with its state on the lock now. */
   commitments(): Promise<SandboxCommitmentRecord[]>
+  /**
+   * Whether a booking would pass now, without moving money or signing anything: the mandate check
+   * Avow runs, against what the lock holds under the mandate, and what the keychain lets the key
+   * move today. It reads the chain and sends nothing to Avow or the supplier.
+   */
+  check(booking: SandboxBooking): Promise<SandboxPreflight>
   /**
    * Books with one of the agent's suppliers. It resolves with the commitment once the reserve is
    * funded, and throws a `Refusal` when the booking is refused before any money moves.
@@ -460,6 +481,63 @@ function booker(m: {
           }
         }),
       )
+    },
+
+    async check(b: SandboxBooking): Promise<SandboxPreflight> {
+      const reserve = micros(b.reserve, 'reserve')
+      const now = systemClock()
+      const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now })
+      const [open, dailyLeft] = await Promise.all([
+        readOpenReserves(client, lock, m.mandateHash),
+        dailyLeftNow(),
+      ])
+      const amounts: RefusalAmounts = {
+        needed: reserve,
+        left: open >= cap ? 0n : cap - open,
+        authority: cap,
+        capPerCommitment: mandate.message.capPerCommitment,
+        dailyLimit,
+        dailyLeft,
+      }
+      const no = (code: ReasonCode, layer: RefusalLayer): SandboxPreflight => ({
+        passes: false,
+        code,
+        layer,
+        amounts,
+      })
+      // The SDK refuses a supplier the mandate doesn't name, or one this deployment can't reach.
+      const known = m.suppliers.some((s) => s.id === b.supplier)
+      if (!known || !mandate.message.suppliers.includes(b.supplier)) {
+        return no('mandate.supplier_not_allowed', 'sdk')
+      }
+      // The same check Avow runs before it approves, with the open reserves the lock reports.
+      const allowed = checkMandate({
+        mandate: mandate.message,
+        request: {
+          commitmentId: zeroHash,
+          agentKey: m.agentKey.accessKeyAddress,
+          supplier: b.supplier,
+          payee: zeroAddress,
+          category: 'compute',
+          terms,
+        },
+        token,
+        openReserves: open,
+        revoked: false,
+        now,
+        profile: TESTNET_DEMO_PROFILE,
+      })
+      if (allowed.result !== 'approved') {
+        // The SDK checks everything but what the lock holds, which Avow's check adds.
+        return no(
+          allowed.reason,
+          allowed.reason === 'mandate.over_open_reserves_cap' ? 'avow' : 'sdk',
+        )
+      }
+      if (dailyLeft !== null && toTokenUnits(reserve, token.decimals) > dailyLeft) {
+        return no('keychain.over_daily_limit', 'keychain')
+      }
+      return { passes: true, amounts }
     },
 
     book(b: SandboxBooking): Promise<SandboxCommitment> {

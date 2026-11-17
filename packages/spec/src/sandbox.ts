@@ -200,7 +200,7 @@ export const SESSION_SOURCES = ['business', ...AGENT_SOURCES] as const
 export type SessionSource = (typeof SESSION_SOURCES)[number]
 
 /** The tools the sandbox's MCP server gives a model. */
-export const SANDBOX_TOOLS = ['authority', 'book', 'commitments'] as const
+export const SANDBOX_TOOLS = ['authority', 'check', 'book', 'commitments'] as const
 export type SandboxTool = (typeof SANDBOX_TOOLS)[number]
 
 /** A run starting, once each time the developer runs their agent or a model calls a tool. */
