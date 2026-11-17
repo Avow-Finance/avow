@@ -24,6 +24,8 @@ The model proposes, Avow checks, and the human signs. Every change keeps that or
 3. The administrator opens the link, signs in with the business's passkey, checks the console shows the same code, sets the limits and approves.
 4. The agent picks up its authority from Avow. From then on `authority`, `check`, `book` and `commitments` act within the mandate, and they refuse before that. `check` says whether a booking would pass without making it.
 
+`verify` needs no authority. It checks a commitment another agent shared, from its `#verify=` link, against the lock through the factory the SDK trusts, and never asks Avow. `findCommitment` in `@avow-finance/verifier` does the read, and `avow-sandbox verify <link>` does the same check from a terminal.
+
 `avow-sandbox mcp add claude-code` adds the server to Claude Code, and `add claude-desktop` to Claude Desktop. The server lives in `packages/sdk/src/node/mcp.ts`.
 
 ## Composable commitments
