@@ -37,6 +37,7 @@ describe('avow-sandbox-mcp', () => {
       'connect',
       'status',
       'authority',
+      'check',
       'book',
       'commitments',
     ])
@@ -51,7 +52,7 @@ describe('avow-sandbox-mcp', () => {
     expect(status.isError).toBe(false)
     expect(status.structuredContent).toEqual({ at: 'none' })
     expect(JSON.stringify(status.content)).toMatch(/call connect/)
-    for (const name of ['authority', 'commitments']) {
+    for (const name of ['authority', 'commitments', 'check']) {
       const answer = await c.callTool({ name, arguments: {} })
       expect(answer.isError).toBe(true)
       expect(JSON.stringify(answer.content)).toMatch(/isn't connected to a business yet/)
