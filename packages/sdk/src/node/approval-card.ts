@@ -54,7 +54,7 @@ body {
 button {
   font: inherit; font-weight: 600; border: 0; cursor: pointer;
   background: var(--accent); color: var(--accent-fg);
-  padding: 9px 16px; border-radius: var(--border-radius-full, 999px);
+  padding: 9px 16px; border-radius: 10px;
 }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
