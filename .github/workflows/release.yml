@@ -59,3 +59,43 @@ jobs:
         run: node scripts/release/publish.mjs packed
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  desktop-extension:
+    name: Attach the Claude Desktop extension
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Creating the release and uploading its asset needs write access to this repo's releases, and
+    # nothing else.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the extension
+        run: pnpm --filter @avow-finance/desktop-extension... build
+
+      # The release for this version is made if it isn't there, and the extension replaces any
+      # earlier upload, so the latest release's download link always serves what main built.
+      - name: Attach it to this version's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(node -p "require('./packages/sdk/package.json').version")"
+          gh release view "$version" > /dev/null 2>&1 || gh release create "$version" --title "$version" --notes "Avow's open packages at $version. The Claude Desktop extension is attached."
+          gh release upload "$version" packages/desktop-extension/dist/avow-sandbox.mcpb --clobber
