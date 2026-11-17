@@ -47,6 +47,29 @@ function fakeConnect(failure?: Error) {
 }
 
 describe('the MCP connection', () => {
+  it('picks up a request saved in the folder when asked its status, with the same request', async () => {
+    const fake = fakeConnect()
+    const store = memoryStore()
+    // A request another copy of the server made, which nothing here is waiting on.
+    await store.write(
+      'request',
+      JSON.stringify({ agentKey: generatePrivateKey(), businessId: BUSINESS, label: 'Card test' }),
+    )
+    const connection = mcpConnection({ store, connect: fake.connect })
+    expect(await connection.state()).toMatchObject({ at: 'saved', businessId: BUSINESS })
+    expect(await connection.status()).toMatchObject({
+      at: 'waiting',
+      businessId: BUSINESS,
+      label: 'Card test',
+    })
+    expect(fake.asks[0]).toMatchObject({ businessId: BUSINESS, label: 'Card test', sell: false })
+    fake.approve()
+    await expect
+      .poll(() => connection.status())
+      .toMatchObject({ at: 'connected', businessId: BUSINESS })
+    expect(fake.asks).toHaveLength(1)
+  })
+
   it('asks without a business, waits for whoever approves, and connects to their business', async () => {
     const fake = fakeConnect()
     const connection = mcpConnection({ store: memoryStore(), connect: fake.connect })

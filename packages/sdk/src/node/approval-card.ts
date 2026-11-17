@@ -101,17 +101,24 @@ function stateLine(kind, words) {
   return line;
 }
 function resize() {
-  notify('ui/notifications/size-changed', { height: Math.ceil(document.documentElement.scrollHeight) });
+  // The body's own height, which shrinks with its content, unlike the frame's.
+  notify('ui/notifications/size-changed', { height: Math.ceil(document.body.getBoundingClientRect().height) });
 }
 
+// A request the card shows waiting only moves forward: approved, connected, failed or lapsed. A
+// status that knows less, such as from a server that hasn't picked the request up yet, changes
+// nothing on the card.
+const FORWARD = ['waiting', 'enrolling', 'connected', 'failed'];
+
 function render(c) {
+  if (state && state.at === 'waiting' && c && !FORWARD.includes(c.at)) return;
   state = c;
   root.replaceChildren();
   if (!c || !c.at) return;
   if (c.at === 'waiting') {
     root.append(
       el('p', 'title', c.label + ' asks for authority'),
-      el('p', 'text', 'Approve only if Avow shows this code. The link grants nothing by itself, and only your administrator\\'s passkey approves.'),
+      el('p', 'text', (c.businessId ? '' : 'Sign in, or set up your business, then approve. ') + 'Approve only if Avow shows this code. The link grants nothing by itself, and only your administrator\\'s passkey approves.'),
       el('p', 'code', c.pairingCode),
     );
     const actions = el('div', 'actions');
@@ -131,7 +138,7 @@ function render(c) {
   } else if (c.at === 'failed') {
     root.append(el('p', 'title', 'Not connected'), el('p', 'text failed', c.reason));
   } else {
-    root.append(el('p', 'title', 'Not connected yet'), el('p', 'text', 'Ask your agent to connect to your business with its business ID.'));
+    root.append(el('p', 'title', 'Not connected yet'), el('p', 'text', 'Ask your agent to connect to your Avow business.'));
   }
   resize();
   watch();

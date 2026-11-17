@@ -533,7 +533,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
     async call(name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
       try {
         if (name === 'connect') return await connect(args)
-        if (name === 'status') return connectionAnswer(await connection.state())
+        if (name === 'status') return connectionAnswer(await connection.status())
         if (!SANDBOX_TOOLS.includes(name as SandboxTool)) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
