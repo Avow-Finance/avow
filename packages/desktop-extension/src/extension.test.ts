@@ -63,13 +63,18 @@ describe('the Claude Desktop extension', () => {
     expect(existsSync(join(unpacked, 'node_modules'))).toBe(false)
   })
 
-  it('runs the server in the folder the person picked, from the manifest as Claude Desktop does', () => {
+  it('runs the server in the agent folder, from the manifest as Claude Desktop does', () => {
     const manifest = JSON.parse(readFileSync(join(unpacked, 'manifest.json'), 'utf8'))
     expect(manifest.server.mcp_config).toEqual({
       command: 'node',
       args: ['${__dirname}/server/index.js', '--dir', '${user_config.agent_folder}'],
     })
-    expect(manifest.user_config.agent_folder).toMatchObject({ type: 'directory', required: true })
+    // Installing asks nothing, since the folder has a default in the person's home folder.
+    expect(manifest.user_config.agent_folder).toMatchObject({
+      type: 'directory',
+      required: false,
+      default: '${HOME}/avow-agent',
+    })
     expect(manifest.tools.map((t: { name: string }) => t.name)).toEqual(
       MCP_TOOLS.map((t) => t.name),
     )
@@ -100,5 +105,32 @@ describe('the Claude Desktop extension', () => {
     expect(tools.map((t) => t.name)).toEqual(MCP_TOOLS.map((t) => t.name))
     // A new agent folder has asked no business for anything yet.
     expect(answers.get(3)).toMatchObject({ result: { structuredContent: { at: 'none' } } })
+  })
+
+  it("starts in an agent folder that doesn't exist yet, and serves the approval card", async () => {
+    const fresh = join(agentFolder, 'not-made-yet')
+    const answers = await talk(join(unpacked, 'server', 'index.js'), fresh, [
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: { extensions: { 'io.modelcontextprotocol/ui': {} } },
+          clientInfo: { name: 'test', version: '0' },
+        },
+      },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'status', arguments: {} } },
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'resources/read',
+        params: { uri: 'ui://avow-sandbox/approval' },
+      },
+    ])
+    expect(answers.get(2)).toMatchObject({ result: { structuredContent: { at: 'none' } } })
+    expect(answers.get(3)).toMatchObject({
+      result: { contents: [{ mimeType: 'text/html;profile=mcp-app' }] },
+    })
   })
 })

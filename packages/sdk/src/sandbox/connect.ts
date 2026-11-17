@@ -113,9 +113,11 @@ async function loadRequestItem(store: SandboxStore): Promise<RequestItem | null>
  */
 export async function savedRequest(
   store: SandboxStore,
-): Promise<{ businessId: string | null; label: string | null } | null> {
+): Promise<{ businessId: string | null; label: string | null; sell: boolean } | null> {
   const r = await loadRequestItem(store)
-  return r ? { businessId: r.businessId, label: r.label ?? null } : null
+  return r
+    ? { businessId: r.businessId, label: r.label ?? null, sell: r.signingKey !== undefined }
+    : null
 }
 
 /** Waits `ms`, or rejects with the signal's reason once it aborts. */

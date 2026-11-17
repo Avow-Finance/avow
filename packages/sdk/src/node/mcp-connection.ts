@@ -65,7 +65,9 @@ export function mcpConnection(o: {
     if (item) return connected(item)
     if (latest) return latest
     const saved = await savedRequest(o.store)
-    return saved ? { at: 'saved', ...saved } : { at: 'none' }
+    return saved
+      ? { at: 'saved', businessId: saved.businessId, label: saved.label }
+      : { at: 'none' }
   }
 
   function begin(ask: ConnectAsk): Promise<Connection> {
@@ -127,6 +129,23 @@ export function mcpConnection(o: {
 
   return {
     state,
+    /**
+     * Where the agent stands, picking up a request saved in the folder that nothing in this server
+     * is waiting on, such as one made before a restart or by another copy of the server. It asks
+     * Avow again with the same key, which answers with the same request, so an approval made in the
+     * meantime shows here too.
+     */
+    async status(): Promise<Connection> {
+      const now = await state()
+      if (now.at !== 'saved') return now
+      const saved = await savedRequest(o.store)
+      if (!saved) return now
+      return this.start({
+        businessId: saved.businessId,
+        label: saved.label,
+        sell: saved.sell,
+      }).catch(() => state())
+    },
     /**
      * Asks the business, or answers with the request already running. It rejects when the ask
      * fails before Avow holds it, such as for a business Avow doesn't know.

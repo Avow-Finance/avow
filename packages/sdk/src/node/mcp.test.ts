@@ -57,6 +57,31 @@ describe('avow-sandbox-mcp', () => {
     ])
   }, 30_000)
 
+  it('offers the approval card with connect, for a client that renders MCP Apps, and only then', async () => {
+    const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
+    const { tools } = await c.listTools()
+    // Only connect names the card, so no other answer turns into one.
+    expect(tools.filter((t) => t._meta?.ui).map((t) => [t.name, t._meta?.ui])).toEqual([
+      ['connect', { resourceUri: 'ui://avow-sandbox/approval' }],
+    ])
+    const { resources } = await c.listResources()
+    expect(resources).toEqual([
+      expect.objectContaining({
+        uri: 'ui://avow-sandbox/approval',
+        mimeType: 'text/html;profile=mcp-app',
+      }),
+    ])
+    const { contents } = await c.readResource({ uri: 'ui://avow-sandbox/approval' })
+    const card = contents[0] as { mimeType: string; text: string; _meta: unknown }
+    expect(card.mimeType).toBe('text/html;profile=mcp-app')
+    // One file that loads nothing from anywhere, and asks for nowhere to connect to.
+    expect(card.text).not.toMatch(/<script[^>]+src=|<link[^>]+href=|https?:\/\//)
+    expect(card._meta).toEqual({
+      ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
+    })
+    await expect(c.readResource({ uri: 'ui://avow-sandbox/other' })).rejects.toThrow(/not found/)
+  }, 30_000)
+
   it('tells a model in a folder with no agent to connect it, and the tools that commit refuse', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
     const status = await c.callTool({ name: 'status', arguments: {} })
