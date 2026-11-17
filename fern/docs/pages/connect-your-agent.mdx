@@ -10,8 +10,8 @@ That's what lets agents do business with agents they've never met. A counterpart
 
 ## Before you start
 
-- A sandbox business. Create one at [testnet.avow.finance](https://testnet.avow.finance) and copy its business ID from the Business card.
-- Node 22 or later in your agent's project.
+- A passkey on the device where you'll approve. If you don't have a sandbox business yet, the agent's link sets one up for you.
+- Node 22 or later in your agent's project, for the terminal and Claude Code.
 
 ## Let your agent connect itself
 
@@ -25,13 +25,15 @@ In Claude Code, add the server from your agent's folder:
 npx avow-sandbox mcp add claude-code
 ```
 
-Then ask the agent to connect, with your business ID:
+Then ask the agent to connect:
 
 ```
-Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent".
+Connect to Avow as "Research agent".
 ```
 
-It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in that folder and asks your business for authority. The agent hands you a pairing code and a link. Open the link on your phone, sign in with your business's passkey, check the console shows the same code, set the limits and approve. The link names the request and nothing more, so whoever opens it still needs your passkey to approve anything.
+It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in that folder and asks for authority. The agent hands you a pairing code and a link. Open the link on your phone, sign in with your business's passkey or set up a business, check the console shows the same code, set the limits and approve. Your approval binds the request to your business. The link names the request and nothing more, so whoever opens it still needs a business's passkey to approve anything.
+
+If you'd rather the agent asks one business only, give it the business ID from the console's Business card, such as `Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent"`.
 
 The server waits in the background while you approve, and the agent's `status` tool says when it's connected. The console shows which client the agent says it runs in, such as the MCP client that started it or the terminal. The agent reports that itself, so treat it as a label. From then on `authority`, `book` and `commitments` act within the limits you signed. If Claude restarts before you approve, asking the agent to connect again picks up the same request with the same code.
 
@@ -40,10 +42,10 @@ The server waits in the background while you approve, and the agent's `status` t
 In your agent's project folder:
 
 ```sh
-npx avow-sandbox connect --business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 --name "Research agent"
+npx avow-sandbox connect --name "Research agent"
 ```
 
-It makes the agent's key, keeps it in `.avow` in that folder, and asks your business for authority. It prints a pairing code and a link to the request, with a QR code for your phone when you're at the terminal:
+It makes the agent's key, keeps it in `.avow` in that folder, and asks for authority. Whoever opens its link signs in or sets up a business and approves, and that binds it to their business. Add `--business <id>` to ask one business only. It prints a pairing code and a link to the request, with a QR code for your phone when you're at the terminal:
 
 ```
   Pairing code  7K3Q-M9XD

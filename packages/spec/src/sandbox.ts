@@ -73,6 +73,11 @@ export const SANDBOX_PATHS = {
   },
   /** Where an agent asks a business for authority, and asks again to hear the answer. */
   agentRequests: '/v1/sandbox/agent-requests',
+  /**
+   * Where an agent asks before it knows its business, signed under the factory, and asks again to
+   * hear whether an approval bound it to one.
+   */
+  openAgentRequests: '/v1/sandbox/agent-requests/open',
   /** Where the business's console sends the administrator's approval of one agent's request. */
   agentApproval: (agentKey: Address) =>
     `/v1/sandbox/agent-requests/${agentKey.toLowerCase()}/approval`,

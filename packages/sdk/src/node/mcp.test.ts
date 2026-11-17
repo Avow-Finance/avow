@@ -40,7 +40,8 @@ describe('avow-sandbox-mcp', () => {
       'book',
       'commitments',
     ])
-    expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual(['business'])
+    // An agent can ask without knowing its business.
+    expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual([])
     expect(tools.find((t) => t.name === 'book')?.inputSchema.required).toEqual(['reserve'])
   }, 30_000)
 
@@ -59,11 +60,11 @@ describe('avow-sandbox-mcp', () => {
     expect(unknown.isError).toBe(true)
   }, 30_000)
 
-  it('asks for the business ID before it asks anyone for authority', async () => {
+  it('refuses a blank business ID rather than asking anyone with it', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
     const answer = await c.callTool({ name: 'connect', arguments: { business: ' ' } })
     expect(answer.isError).toBe(true)
-    expect(JSON.stringify(answer.content)).toMatch(/business ID from the console/)
+    expect(JSON.stringify(answer.content)).toMatch(/Leave business out/)
   }, 30_000)
 
   it.skipIf(process.platform === 'win32')(

@@ -22,7 +22,6 @@ import {
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
 import { Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
-import { SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
 import { sessionUrl } from '../sandbox/session.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
@@ -57,13 +56,14 @@ export const MCP_TOOLS = [
   {
     name: 'connect',
     description:
-      "Asks a business for the authority to commit for it, with a key this agent makes and keeps on this machine. It answers with a pairing code and a link for your person to review the request on their phone, and keeps waiting in the background. Only the business's administrator can approve, with their passkey, and the approval sets this agent's limits. Calling it again for the same business answers with the same request.",
+      "Asks for the authority to commit for a business, with a key this agent makes and keeps on this machine. Leave business out unless your person gave you its ID: the link then lets them sign in, or set up their business, and approve in one place. It answers with a pairing code and a link for your person to open on their phone, and keeps waiting in the background. Only the business's administrator can approve, with their passkey, and the approval sets this agent's limits. Calling it again answers with the same request.",
     inputSchema: {
       type: 'object',
       properties: {
         business: {
           type: 'string',
-          description: 'The business ID your person copies from the console',
+          description:
+            'The business ID, only if your person gave you one. Leave it out and whoever approves through the link chooses their business.',
         },
         name: {
           type: 'string',
@@ -76,7 +76,7 @@ export const MCP_TOOLS = [
             'Also ask to quote and accept jobs for the business, with a signing key of its own. Leave it out to only buy.',
         },
       },
-      required: ['business'],
+      required: [],
       additionalProperties: false,
     },
   },
@@ -162,16 +162,22 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
   switch (c.at) {
     case 'none':
       return answer(
-        `This agent isn't connected to a business yet. Ask your person for their business ID, which the console at ${SANDBOX_CONSOLE_URL} shows, then call connect with it.`,
+        "This agent isn't connected to a business yet. To connect it, call connect with no business unless your person gave you its ID, and send your person the link it gives.",
       )
     case 'saved':
       return answer(
-        `This agent asked ${c.businessId} for authority earlier, and nothing is waiting on that request now. Call connect with the same business to keep waiting, with the same pairing code.`,
+        c.businessId
+          ? `This agent asked ${c.businessId} for authority earlier, and nothing is waiting on that request now. Call connect with the same business to keep waiting, with the same pairing code.`
+          : 'This agent asked for authority earlier without naming a business, and nothing is waiting on that request now. Call connect with no business to keep waiting, with the same pairing code.',
       )
     case 'waiting':
       return answer([
-        `Asked ${c.businessId} for authority, as "${c.label}", with pairing code ${c.pairingCode}.`,
-        `Send your person this link to review the request, on their phone or anywhere else: ${c.link}`,
+        c.businessId
+          ? `Asked ${c.businessId} for authority, as "${c.label}", with pairing code ${c.pairingCode}.`
+          : `Asked for authority, as "${c.label}", with pairing code ${c.pairingCode}, from whichever business approves it.`,
+        c.businessId
+          ? `Send your person this link to review the request, on their phone or anywhere else: ${c.link}`
+          : `Send your person this link, on their phone or anywhere else. They sign in, or set up their business, and approve there: ${c.link}`,
         'The console shows the same code, so they can check the request came from you. The link grants nothing by itself, and only their passkey approves.',
         `Avow holds the request until ${when(c.expiresAt)}. This server keeps waiting in the background, and status says once it's approved.`,
         'Your key stays in .avow on this machine. Never print it or send it to anyone, your person included.',
@@ -188,7 +194,7 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
       )
     case 'failed':
       return answer(
-        `Connecting to ${c.businessId} failed. ${c.reason} Call connect to try again.`,
+        `Connecting${c.businessId ? ` to ${c.businessId}` : ''} failed. ${c.reason} Call connect to try again.`,
         true,
       )
   }
@@ -204,14 +210,19 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
   })
 
   async function connect(args: Record<string, unknown>): Promise<ToolAnswer> {
-    const business = typeof args.business === 'string' ? args.business.trim() : ''
-    if (business === '') throw new RangeError('connect needs the business ID from the console')
+    // Left out, the agent asks whoever opens its link. Given, it has to be an ID.
+    const business = typeof args.business === 'string' ? args.business.trim() : null
+    if (business === '') {
+      throw new RangeError(
+        'Leave business out to ask whoever approves through the link, or give the business ID from the console.',
+      )
+    }
     const c = await connection.start({
       businessId: business,
       label: typeof args.name === 'string' && args.name.trim() !== '' ? args.name.trim() : null,
       sell: args.sell === true,
     })
-    return connectionAnswer(c, business)
+    return connectionAnswer(c, business ?? undefined)
   }
 
   /** Answers for a tool that needs authority, while the agent has none yet. */
@@ -482,7 +493,7 @@ function add(client: string | undefined, dir: string): number {
   const args = [server, '--dir', dir]
   const ask = existsSync(join(dir, SANDBOX_DIR, 'agent.json'))
     ? 'ask it to book $200 of GPU compute'
-    : 'ask it to connect to your Avow business, with the business ID your console shows'
+    : 'ask it to connect to your Avow business'
   if (client === 'claude-code') {
     const shell = process.platform === 'win32'
     // An entry an earlier version added for this folder would stop the new one, so it goes first.

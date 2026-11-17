@@ -1,11 +1,11 @@
 import { renderUnicodeCompact } from 'uqr'
-import { approvalLink, connectToBusiness, SANDBOX_CONSOLE_URL } from '../sandbox/connect.js'
+import { approvalLink, connectToBusiness } from '../sandbox/connect.js'
 import { fileStore } from './platform.js'
 
 /** What `avow-sandbox connect` takes, read from its arguments, or why it can't run. */
 export function readConnectArgs(
   args: readonly string[],
-): { businessId: string; label: string; sell: boolean } | { error: string } {
+): { businessId: string | null; label: string; sell: boolean } | { error: string } {
   let businessId: string | null = null
   let label = 'My agent'
   let sell = false
@@ -27,17 +27,14 @@ export function readConnectArgs(
     else return { error: `connect doesn't take ${flag}` }
     i++
   }
-  if (!businessId) {
-    return {
-      error: `connect needs --business, the business ID your console shows at ${SANDBOX_CONSOLE_URL}`,
-    }
-  }
+  // With no --business, whoever opens the link signs in, or sets up their business, and approves.
   return { businessId, label, sell }
 }
 
 /**
- * `avow-sandbox connect --business <id> [--sell]`. Connects the agent in this folder to a business,
+ * `avow-sandbox connect [--business <id>] [--sell]`. Connects the agent in this folder to a business,
  * with its own key kept in .avow here, and waits while the administrator approves it in the console.
+ * Without `--business`, the person who opens the link signs in, or sets up their business, there.
  * With `--sell` it also makes a signing key to quote and accept jobs for the business with.
  */
 export async function connectCommand(args: readonly string[]): Promise<void> {
@@ -51,7 +48,7 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
   let told = false
   const item = await connectToBusiness({
     store: fileStore(),
-    businessId: read.businessId,
+    ...(read.businessId ? { businessId: read.businessId } : {}),
     label: read.label,
     sell: read.sell,
     signal: stop.signal,
@@ -60,11 +57,15 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
         const link = approvalLink(event.agentKey)
         console.log(
           [
-            `Asked ${event.businessId} for authority, as "${read.label}".`,
+            event.businessId
+              ? `Asked ${event.businessId} for authority, as "${read.label}".`
+              : `Asked for authority, as "${read.label}", from whichever business approves it.`,
             '',
             `  Pairing code  ${event.pairingCode}`,
             '',
-            'Open this to review and approve it, on your phone or here. The console shows the same code.',
+            event.businessId
+              ? 'Open this to review and approve it, on your phone or here. The console shows the same code.'
+              : 'Open this on your phone or here, sign in or set up your business, and approve. The console shows the same code.',
             '',
             `  ${link}`,
             '',
@@ -79,6 +80,8 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
         console.log(
           'Waiting for the approval. Leave this running, or stop it and run connect again later.',
         )
+      } else if (event.type === 'bound') {
+        console.log(`Approved for ${event.businessId}.`)
       } else if (event.type === 'approved') {
         console.log(`Approved as ${event.agentId}. Picking up its authority from Avow.`)
       } else if (event.type === 'supplier') {

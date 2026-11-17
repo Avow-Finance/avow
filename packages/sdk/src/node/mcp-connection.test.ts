@@ -10,7 +10,8 @@ const OTHER = 'sandbox-1111111111111111111111111111111111111111'
 
 /**
  * A connect that asks, holds the request until the administrator approves it, and then hands back
- * the agent item. What it was asked with is kept for the test to read.
+ * the agent item. A request that named no business is bound to BUSINESS when approved. What it was
+ * asked with is kept for the test to read.
  */
 function fakeConnect(failure?: Error) {
   const agentKey = privateKeyToAccount(generatePrivateKey()).address
@@ -23,17 +24,22 @@ function fakeConnect(failure?: Error) {
     asks.push(o)
     o.onEvent?.({
       type: 'asked',
-      businessId: o.businessId,
+      businessId: o.businessId ?? null,
       agentKey,
       pairingCode: pairingCode(agentKey),
     })
     if (failure) throw failure
     o.onEvent?.({ type: 'waiting', expiresAt: 1_800_003_600n })
     await approved
+    if (!o.businessId) o.onEvent?.({ type: 'bound', businessId: BUSINESS })
     o.onEvent?.({ type: 'approved', agentId: 'agt_research' })
     return {
       mandate: {
-        message: { businessId: o.businessId, agentId: 'agt_research', expiry: 1_900_000_000n },
+        message: {
+          businessId: o.businessId ?? BUSINESS,
+          agentId: 'agt_research',
+          expiry: 1_900_000_000n,
+        },
       },
     } as unknown as AgentItem
   }
@@ -41,6 +47,36 @@ function fakeConnect(failure?: Error) {
 }
 
 describe('the MCP connection', () => {
+  it('asks without a business, waits for whoever approves, and connects to their business', async () => {
+    const fake = fakeConnect()
+    const connection = mcpConnection({ store: memoryStore(), connect: fake.connect })
+    const waiting = await connection.start({
+      businessId: null,
+      label: 'Research agent',
+      sell: false,
+    })
+    expect(waiting).toEqual({
+      at: 'waiting',
+      businessId: null,
+      label: 'Research agent',
+      pairingCode: pairingCode(fake.agentKey),
+      link: approvalLink(fake.agentKey),
+      expiresAt: 1_800_003_600,
+    })
+    // The connect was asked with no business at all.
+    expect(fake.asks[0]?.businessId).toBeUndefined()
+    // Asking again without one answers with the same request, and naming one while it waits is
+    // refused, since a key asks one business at a time.
+    expect(await connection.start({ businessId: null, label: null, sell: false })).toEqual(waiting)
+    await expect(connection.start({ businessId: OTHER, label: null, sell: false })).rejects.toThrow(
+      'whoever opens its link',
+    )
+    fake.approve()
+    await expect
+      .poll(() => connection.state())
+      .toMatchObject({ at: 'connected', businessId: BUSINESS, agentId: 'agt_research' })
+  })
+
   it('answers once Avow holds the request, keeps waiting, and reports the connection', async () => {
     const fake = fakeConnect()
     const connection = mcpConnection({ store: memoryStore(), connect: fake.connect })

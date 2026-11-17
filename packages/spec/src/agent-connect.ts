@@ -17,6 +17,11 @@ import { address, bytes32, hexBytes, u64 } from './json-fields.js'
  * The request carries no authority. Anyone can ask any business, and nothing is granted until the
  * account's own root key signs. The pairing code is how the administrator tells their own agent's
  * request from someone else's.
+ *
+ * An agent can also ask before it knows its business, at `SANDBOX_PATHS.openAgentRequests`, signed
+ * under the factory instead of a lock. That request names no business. Its link lets the person
+ * sign in or set up a business and approve, and the approval binds it to the business whose root
+ * key signed the agent's mandate. From then on the agent asks that business as any agent does.
  */
 
 /** How long a request waits for the administrator, in seconds, before it lapses unanswered. */
@@ -47,6 +52,18 @@ const agentRequestJson = z.strictObject({
 
 export function parseAgentRequest(json: unknown): AgentRequest | null {
   const parsed = agentRequestJson.safeParse(json)
+  if (!parsed.success) return null
+  const { signingKey, ...rest } = parsed.data
+  return signingKey ? { ...rest, signingKey } : rest
+}
+
+/** What an agent sends when it asks before it knows its business: its name, and any signing key. */
+export type OpenAgentRequest = Omit<AgentRequest, 'businessId'>
+
+const openAgentRequestJson = agentRequestJson.omit({ businessId: true })
+
+export function parseOpenAgentRequest(json: unknown): OpenAgentRequest | null {
+  const parsed = openAgentRequestJson.safeParse(json)
   if (!parsed.success) return null
   const { signingKey, ...rest } = parsed.data
   return signingKey ? { ...rest, signingKey } : rest
@@ -92,6 +109,27 @@ export type AgentRequestStatus = z.infer<typeof agentRequestStatusJson>
 
 export function parseAgentRequestStatus(json: unknown): AgentRequestStatus | null {
   const parsed = agentRequestStatusJson.safeParse(json)
+  return parsed.success ? parsed.data : null
+}
+
+const { businessId: _businessId, lock: _lock, ...openBase } = statusBase
+
+/**
+ * Where a request that named no business stands. Open waits for someone to approve it, and bound
+ * means a business's administrator approved it, so the agent asks that business for the approval
+ * at `SANDBOX_PATHS.agentRequests`, as any agent does.
+ */
+const openAgentRequestStatusJson = z.discriminatedUnion('state', [
+  z.strictObject({ ...openBase, state: z.literal('open') }),
+  z.strictObject({ ...openBase, state: z.literal('expired') }),
+  z.strictObject({ ...openBase, state: z.literal('bound'), businessId: z.string().min(1) }),
+])
+
+/** An open request as Avow answers it, to the agent that made it or to a console that opens its link. */
+export type OpenAgentRequestStatus = z.infer<typeof openAgentRequestStatusJson>
+
+export function parseOpenAgentRequestStatus(json: unknown): OpenAgentRequestStatus | null {
+  const parsed = openAgentRequestStatusJson.safeParse(json)
   return parsed.success ? parsed.data : null
 }
 
