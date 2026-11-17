@@ -41,7 +41,7 @@ const manifest = {
   description:
     "Lets Claude act as an agent for your Avow business on Tempo's testnet, within the limits your administrator approves.",
   long_description:
-    "Claude connects to your business with a key it makes and keeps in the folder you choose. You get a pairing code and a link, and your business's administrator approves on their phone with a passkey, setting the agent's limits. From then on Claude can book GPU capacity backed by a reserve in your business's own lock, and Avow and the chain refuse anything outside those limits. Everything runs on Tempo's Moderato testnet with test dollars.",
+    "Claude connects to your business with a key it makes and keeps in an avow-agent folder in your home folder. You get a pairing code and a link, and your business's administrator approves on their phone with a passkey, setting the agent's limits. From then on Claude can book GPU capacity backed by a reserve in your business's own lock, and Avow and the chain refuse anything outside those limits. Everything runs on Tempo's Moderato testnet with test dollars.",
   author: { name: 'Avow', url: 'https://avow.finance' },
   homepage: 'https://avow.finance',
   documentation:
@@ -65,8 +65,10 @@ const manifest = {
       type: 'directory',
       title: 'Agent folder',
       description:
-        'Where this agent keeps its key, in a .avow folder inside it. Pick or make a folder of its own, such as one named avow-agent. The key never leaves it, and Claude never shows it.',
-      required: true,
+        'Where this agent keeps its key, in a .avow folder inside it. Leave it as it is unless you run more than one agent, then give each a folder of its own. The key never leaves it, and Claude never shows it.',
+      // Installing asks nothing, and the server makes the folder the first time it saves the key.
+      default: '${HOME}/avow-agent',
+      required: false,
     },
   },
 }

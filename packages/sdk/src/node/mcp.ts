@@ -24,6 +24,7 @@ import {
 import { setRequestClient } from '../http.js'
 import { PREFLIGHT_UNCHECKED, Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
 import { sessionUrl } from '../sandbox/session.js'
+import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 
@@ -87,6 +88,9 @@ export const MCP_TOOLS = [
       required: [],
       additionalProperties: false,
     },
+    // A client that renders MCP Apps shows the approval card with the answer. The text answer
+    // carries the same pairing code and link, for every client that doesn't.
+    _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
   },
   {
     name: 'status',
@@ -198,7 +202,17 @@ export const MCP_TOOLS = [
   }
   description: string
   inputSchema: object
+  _meta?: { ui: { resourceUri: string } }
 }[]
+
+/** The card the server serves, as `resources/list` and `resources/read` describe it. */
+const APPROVAL_CARD = {
+  uri: APPROVAL_CARD_URI,
+  name: 'approval-card',
+  title: 'Approval request',
+  description: "Where this agent's request for authority stands, with its pairing code and link.",
+  mimeType: APPROVAL_CARD_MIME,
+} as const
 
 export interface ToolAnswer {
   text: string
@@ -572,7 +586,7 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
           result: {
             protocolVersion:
               typeof asked === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : PROTOCOL,
-            capabilities: { tools: { listChanged: false } },
+            capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
             serverInfo: SERVER,
             instructions:
               "These tools act as one business's agent on Avow's sandbox, on Tempo's testnet, with test dollars. Until the agent is connected, connect asks the business for authority and gives a pairing code and a link for the business's administrator to approve on their phone. Only the administrator approves, and the agent's key never leaves this machine. Once connected, the agent commits the business only within the mandate the business signed. A refusal comes from the SDK checking the mandate on this machine, from Avow, from Avow's relay, from the lock or from the account's keychain. It names which, gives the reason code and the amounts, and says when the same booking could pass. A reserve that never landed with no reason given comes back as a failure, and the same booking might pass on another try.",
@@ -586,6 +600,35 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
       case 'tools/list':
         write({ id, result: { tools: MCP_TOOLS } })
         return
+      case 'resources/list':
+        write({ id, result: { resources: [APPROVAL_CARD] } })
+        return
+      case 'resources/read': {
+        if (params.uri !== APPROVAL_CARD_URI) {
+          write({
+            id,
+            error: { code: -32002, message: `Resource not found: ${String(params.uri)}` },
+          })
+          return
+        }
+        write({
+          id,
+          result: {
+            contents: [
+              {
+                uri: APPROVAL_CARD_URI,
+                mimeType: APPROVAL_CARD_MIME,
+                text: approvalCardHtml(),
+                // The card loads nothing from anywhere and opens the link through the client.
+                _meta: {
+                  ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
+                },
+              },
+            ],
+          },
+        })
+        return
+      }
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : ''
         const args = (params.arguments ?? {}) as Record<string, unknown>

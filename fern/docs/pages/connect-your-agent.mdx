@@ -17,7 +17,7 @@ That's what lets agents do business with agents they've never met. A counterpart
 
 An agent in Claude Desktop or Claude Code can ask for its own authority through Avow's MCP server.
 
-In Claude Desktop, install the extension. Download [avow-sandbox.mcpb](https://github.com/Avow-Finance/avow/releases/latest/download/avow-sandbox.mcpb) and double-click it, or drag it onto the Claude Desktop window. It then shows as a Desktop connector under Customize > Connectors. Claude Desktop asks for an agent folder. Pick or make a folder of its own, such as one named `avow-agent`, since the agent's key lives there. Nothing else needs installing, because Claude Desktop runs the extension with its own Node.
+In Claude Desktop, install the extension. Download [avow-sandbox.mcpb](https://github.com/Avow-Finance/avow/releases/latest/download/avow-sandbox.mcpb) and double-click it, or drag it onto the Claude Desktop window. It then shows as a Desktop connector under Customize > Connectors. The agent keeps its key in an `avow-agent` folder in your home folder, which Claude Desktop sets for you. Change it in the connector's settings only to run a second agent, which needs a folder of its own. Nothing else needs installing, because Claude Desktop runs the extension with its own Node.
 
 In Claude Code, add the server from your agent's folder:
 
@@ -31,7 +31,7 @@ Then ask the agent to connect:
 Connect to Avow as "Research agent".
 ```
 
-It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in that folder and asks for authority. The agent hands you a pairing code and a link. Open the link on your phone, sign in with your business's passkey or set up a business, check the console shows the same code, set the limits and approve. Your approval binds the request to your business. The link names the request and nothing more, so whoever opens it still needs a business's passkey to approve anything.
+It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in that folder and asks for authority. The agent hands you a pairing code and a link. Clients that show MCP Apps, Claude Desktop among them, also show a card with the code and a button that opens the link, and the card changes to approved once you approve. Every client gets the code and link as text, so nothing depends on the card. Open the link on your phone, sign in with your business's passkey or set up a business, check the console shows the same code, set the limits and approve. Your approval binds the request to your business. The link names the request and nothing more, so whoever opens it still needs a business's passkey to approve anything.
 
 If you'd rather the agent asks one business only, give it the business ID from the console's Business card, such as `Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent"`.
 
