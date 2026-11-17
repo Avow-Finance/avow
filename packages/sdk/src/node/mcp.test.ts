@@ -44,6 +44,17 @@ describe('avow-sandbox-mcp', () => {
     // An agent can ask without knowing its business.
     expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual([])
     expect(tools.find((t) => t.name === 'book')?.inputSchema.required).toEqual(['reserve'])
+    // Every tool has a title and says how it acts. Only booking changes anything beyond the
+    // agent's own request, and nothing destroys.
+    for (const t of tools) {
+      expect(t.title).toBeTruthy()
+      expect(t.annotations?.destructiveHint).toBe(false)
+      expect(t.annotations?.openWorldHint).toBe(true)
+    }
+    expect(tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name)).toEqual([
+      'connect',
+      'book',
+    ])
   }, 30_000)
 
   it('tells a model in a folder with no agent to connect it, and the tools that commit refuse', async () => {
