@@ -20,6 +20,7 @@ import {
   httpBusinessRecords,
   requestSupplierAuthorization,
   rootRequestKey,
+  setRequestClient,
 } from './http.js'
 
 // Every key is generated for the run and held only in memory.
@@ -105,6 +106,22 @@ describe('httpAvowApi', () => {
     expect(v.ok && v.value.credentials.lock).toBe(domain.verifyingContract)
     expect(v.ok && v.value.credentials.expiry).toBe(NOW + 120n)
     expect(verified(s, '/v1/reserve-approvals').ok).toBe(false)
+  })
+
+  it('says which client the agent runs in once this process names one, and nothing before', async () => {
+    const { seen, fetcher } = fakeApi([ok, ok, ok])
+    const api = client(fetcher)
+    await api.sponsor('0x1234')
+    expect(new Headers(seen[0]?.init.headers).get('avow-client')).toBeNull()
+    // An MCP server learns its client after it starts, so a client made earlier says it too.
+    setRequestClient('MCP: claude-code')
+    await api.sponsor('0x1234')
+    expect(new Headers(seen[1]?.init.headers).get('avow-client')).toBe('MCP: claude-code')
+    // A label that isn't one goes nowhere, so a header can't be smuggled through it.
+    setRequestClient('x\r\nset-cookie: y')
+    await api.sponsor('0x1234')
+    expect(new Headers(seen[2]?.init.headers).get('avow-client')).toBeNull()
+    setRequestClient(null)
   })
 
   it('never follows a redirect, and bounds each attempt', async () => {

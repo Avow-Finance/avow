@@ -3,6 +3,8 @@ import {
   API_REQUEST_MAX_VALIDITY,
   type ApiRequest,
   type AvowDomain,
+  CLIENT_HEADER,
+  clientLabelOf,
   contestStatementHash,
   describeReason,
   type Enrollment,
@@ -101,6 +103,17 @@ export interface AvowResend {
   waitMs: number
 }
 
+let requestClient: string | null = null
+
+/**
+ * Names the client every request from this process says it runs in, such as `Terminal` or the MCP
+ * client that started the server. The label is the agent's own word, and the console shows it as
+ * that. A label that isn't one is dropped.
+ */
+export function setRequestClient(label: string | null): void {
+  requestClient = clientLabelOf(label)
+}
+
 export interface AvowRequestConfig {
   /**
    * The deployment's origin, such as `https://api.testnet.avow.finance`. It is the audience every
@@ -121,6 +134,11 @@ export interface AvowRequestConfig {
   retryWait?: number
   /** Milliseconds one attempt may take before it's abandoned and sent again, 30 seconds by default. */
   attemptTimeout?: number
+  /**
+   * Which client this agent runs in, sent in the `avow-client` header so its business's console can
+   * show it. The label this process set with `setRequestClient` by default, and none in a browser.
+   */
+  client?: string
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
   fetch?: typeof fetch
@@ -227,6 +245,9 @@ export function avowRequests(config: AvowRequestConfig) {
   const fetchOnce = config.fetch ?? fetch
 
   return async function send<T>({ domain, path, body: value, read }: AvowRequest<T>): Promise<T> {
+    // Read when each request goes, since an MCP server learns its client after it has started.
+    const client = clientLabelOf(config.client ?? requestClient)
+    const clientHeader: Record<string, string> = client ? { [CLIENT_HEADER]: client } : {}
     const body = encodeApiBody(value)
     const requestId = newRequestId()
     const { authorization, request, digest } = await signApiRequest({
@@ -249,7 +270,7 @@ export function avowRequests(config: AvowRequestConfig) {
       try {
         const response = await fetchOnce(`${audience}${path}`, {
           method: 'POST',
-          headers: { authorization, 'content-type': 'application/json' },
+          headers: { authorization, 'content-type': 'application/json', ...clientHeader },
           body,
           redirect: 'error',
           signal: AbortSignal.timeout(attemptTimeout),
