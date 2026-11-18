@@ -26,6 +26,7 @@ import {
   type SandboxTool,
   type SessionEvent,
   TESTNET_DEMO_PROFILE,
+  tempoKeychainCheck,
   toTokenUnits,
 } from '@avow-finance/spec'
 import {
@@ -225,8 +226,9 @@ export interface SandboxAgent {
   commitments(): Promise<SandboxCommitmentRecord[]>
   /**
    * Whether a booking would pass now, without moving money or signing anything: the mandate check
-   * Avow runs, against what the lock holds under the mandate, and what the keychain lets the key
-   * move today. It reads the chain and sends nothing to Avow or the supplier.
+   * Avow runs, against what the lock holds under the mandate and every one it replaced, and what
+   * the keychain lets the key move today. It reads the chain, sends nothing to the supplier, and
+   * asks Avow only for the agent's mandates, at most every half minute.
    */
   check(booking: SandboxBooking): Promise<SandboxPreflight>
   /**
@@ -372,13 +374,23 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
       keyAuthorizedIn: item.keyAuthorizedIn,
       domain,
       send,
+      isAccountSignature: tempoKeychainCheck(client),
     })
   // The administrator may have replaced the mandate since this folder was set up, so the agent
-  // starts under the one Avow holds now, and under the one it was enrolled with if Avow can't say.
-  const chain = await mandates().catch(() => null)
+  // starts under the one Avow holds now. With no such route on Avow it keeps the one it enrolled
+  // with, and when the read fails it checks and books nothing until a later read succeeds.
+  const started = await mandates().then(
+    (chain) => ({ chain, problem: null }),
+    (error: unknown) => ({
+      chain: null,
+      problem: error instanceof Error ? error.message : String(error),
+    }),
+  )
+  if (started.problem) log(`Couldn't read this agent's mandates: ${started.problem}`)
   return booker({
     mandates,
-    chain,
+    started,
+    log,
     deployment,
     client,
     store,
@@ -400,10 +412,19 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
   })
 }
 
+/** The mandate an agent acts under, and the hashes of those it replaced, newest first. */
+interface Held {
+  mandate: MandateProof
+  hash: Hex
+  earlier: Hex[]
+}
+
 /** What the booker holds from a chain of mandates, or null when there's none to hold. */
-function heldFrom(chain: MandateChain | null) {
+function heldFrom(chain: MandateChain | null): Held | null {
   return chain && { mandate: chain.current.proof, hash: chain.current.hash, earlier: chain.earlier }
 }
+
+const sameHash = (a: Hex, b: Hex) => a.toLowerCase() === b.toLowerCase()
 
 /** The agent's side of booking, under the mandate it holds. */
 function booker(m: {
@@ -421,10 +442,11 @@ function booker(m: {
   source: AgentSource
   report: (event: SessionEvent) => void
   send: typeof fetch
-  /** Every mandate the agent has held, from Avow, or null when it can't say. */
+  /** Every mandate the agent has held, from Avow, or null when Avow has no such route. */
   mandates: () => Promise<MandateChain | null>
-  /** The chain it read when the agent started, if any. */
-  chain: MandateChain | null
+  /** What reading the chain gave when the agent started. */
+  started: { chain: MandateChain | null; problem: string | null }
+  log: (line: string) => void
 }): SandboxAgent {
   const { deployment, client, run, source, report, send } = m
   const { lock, account } = m.business
@@ -433,22 +455,40 @@ function booker(m: {
 
   // The mandate the agent acts under, which the administrator can replace without touching its
   // key, and the hashes of those it replaced, whose open reserves count against its limit too.
-  // Avow is asked again at most every half minute, and a failed read keeps what the agent held.
-  let held = heldFrom(m.chain) ?? { mandate: m.mandate, hash: m.mandateHash, earlier: [] as Hex[] }
-  let readAt = m.chain ? Date.now() : 0
-  async function current(): Promise<typeof held> {
+  // Avow is asked again at most every half minute. While the last read failed, or served a chain
+  // the agent can't take, the agent keeps what it held and checks and books nothing, since the
+  // administrator may have lowered its limits. An API with no such route isn't a failure.
+  let held: Held = heldFrom(m.started.chain) ?? {
+    mandate: m.mandate,
+    hash: m.mandateHash,
+    earlier: [],
+  }
+  let problem = m.started.problem
+  let readAt = Date.now()
+  async function current(): Promise<Held> {
     if (Date.now() - readAt < 30_000) return held
     readAt = Date.now()
-    held = heldFrom(await m.mandates().catch(() => null)) ?? held
+    const before = problem
+    try {
+      const next = heldFrom(await m.mandates())
+      problem = null
+      // A chain without the mandate the agent holds would take it back to limits the
+      // administrator replaced. This holds within one process, and a new process starts from
+      // whatever Avow serves, checked against the key.
+      const keeps = next && [next.hash, ...next.earlier].some((h) => sameHash(h, held.hash))
+      if (next && keeps) held = next
+      else if (next) problem = 'Avow served mandates that leave out the one this agent holds'
+    } catch (error) {
+      problem = error instanceof Error ? error.message : String(error)
+    }
+    if (problem && problem !== before) m.log(`Couldn't read this agent's mandates: ${problem}`)
     return held
   }
-  /** The key's witness, the first mandate of the chain, which the key carries on the chain. */
-  const witness = () => held.earlier.at(-1) ?? held.hash
-  const capOf = (h: typeof held) => h.mandate.message.capOpenReserves
-  const dailyLimitNow = () => dailyLimitOf(held.mandate.message, deployment.token)
+  const capOf = (h: Held) => h.mandate.message.capOpenReserves
+  const dailyLimitOf_ = (h: Held) => dailyLimitOf(h.mandate.message, deployment.token)
 
   /** What the lock holds open under the current mandate and every one it replaced. */
-  async function openAcross(h: typeof held): Promise<bigint> {
+  async function openAcross(h: Held): Promise<bigint> {
     const each = await Promise.all(
       [h.hash, ...h.earlier].map((hash) => readOpenReserves(client, lock, hash)),
     )
@@ -470,23 +510,89 @@ function booker(m: {
     }
   }
 
-  const dailyLeftNow = () =>
-    dailyLimitNow() === null
+  const dailyLeftUnder = (h: Held) =>
+    dailyLimitOf_(h) === null
       ? Promise.resolve(null)
       : keyLeftToday(client, account, m.agentKey.accessKeyAddress, deployment.token)
 
+  /**
+   * Whether a booking passes every check the agent can make before anyone signs, under one
+   * mandate, with the amounts behind the answer. It's the same check Avow runs, with the open
+   * reserves the lock holds under that mandate and every one it replaced, then the keychain's
+   * daily limit. `check` answers with it, and `book` runs it first.
+   */
+  async function limits(
+    h: Held,
+    supplierId: string,
+    terms: GpuReservationTerms,
+  ): Promise<{
+    refused: { code: ReasonCode; layer: RefusalLayer } | null
+    amounts: RefusalAmounts
+  }> {
+    const reserve = terms.backing.amount
+    const { mandate } = h
+    const cap = capOf(h)
+    const [open, dailyLeft] = await Promise.all([openAcross(h), dailyLeftUnder(h)])
+    const amounts: RefusalAmounts = {
+      needed: reserve,
+      left: open >= cap ? 0n : cap - open,
+      authority: cap,
+      capPerCommitment: mandate.message.capPerCommitment,
+      dailyLimit: dailyLimitOf_(h),
+      dailyLeft,
+    }
+    const no = (code: ReasonCode, layer: RefusalLayer) => ({ refused: { code, layer }, amounts })
+    if (problem) return no('service.unavailable', 'avow')
+    // The SDK refuses a supplier the mandate doesn't name, or one this deployment can't reach.
+    const known = m.suppliers.some((s) => s.id === supplierId)
+    if (!known || !mandate.message.suppliers.includes(supplierId)) {
+      return no('mandate.supplier_not_allowed', 'sdk')
+    }
+    const allowed = checkMandate({
+      mandate: mandate.message,
+      request: {
+        commitmentId: zeroHash,
+        agentKey: m.agentKey.accessKeyAddress,
+        supplier: supplierId,
+        payee: zeroAddress,
+        category: 'compute',
+        terms,
+      },
+      token,
+      openReserves: open,
+      revoked: false,
+      now: systemClock(),
+      profile: TESTNET_DEMO_PROFILE,
+    })
+    if (allowed.result !== 'approved') {
+      // Only the open reserves come from the lock, which Avow's check reads too.
+      return no(
+        allowed.reason,
+        allowed.reason === 'mandate.over_open_reserves_cap' ? 'avow' : 'sdk',
+      )
+    }
+    if (dailyLeft !== null && toTokenUnits(reserve, token.decimals) > dailyLeft) {
+      return no('keychain.over_daily_limit', 'keychain')
+    }
+    return { refused: null, amounts }
+  }
+
+  /** A refusal under the mandate the booking ran under, with what's left now. */
   async function refusal(
+    h: Held,
     r: { code: ReasonCode; layer: RefusalLayer; needed: bigint; leftBefore: bigint },
     extra: { decisionId?: string | null; cause?: unknown },
   ): Promise<Refusal> {
-    const left = await leftNow().catch(() => r.leftBefore)
-    const dailyLeft = await dailyLeftNow().catch(() => null)
+    const open = await openAcross(h).catch(() => null)
+    const cap = capOf(h)
+    const left = open === null ? r.leftBefore : open >= cap ? 0n : cap - open
+    const dailyLeft = await dailyLeftUnder(h).catch(() => null)
     const amounts = {
       needed: r.needed,
       left,
-      authority: capOf(held),
-      capPerCommitment: held.mandate.message.capPerCommitment,
-      dailyLimit: dailyLimitNow(),
+      authority: cap,
+      capPerCommitment: h.mandate.message.capPerCommitment,
+      dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
     report({ type: 'refused', run, source, code: r.code, layer: r.layer, amounts })
@@ -501,7 +607,7 @@ function booker(m: {
       return toDollars(capOf(held))
     },
     get dailyLimit() {
-      const limit = dailyLimitNow()
+      const limit = dailyLimitOf_(held)
       return limit === null ? null : toDollars(limit)
     },
     suppliers: m.suppliers,
@@ -514,7 +620,7 @@ function booker(m: {
     },
     left: async () => toDollars(await leftNow()),
     dailyLeft: async () => {
-      const left = await dailyLeftNow()
+      const left = await dailyLeftUnder(await current())
       return left === null ? null : toDollars(left)
     },
 
@@ -545,60 +651,9 @@ function booker(m: {
 
     async check(b: SandboxBooking): Promise<SandboxPreflight> {
       const reserve = micros(b.reserve, 'reserve')
-      const now = systemClock()
-      const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now })
-      const h = await current()
-      const { mandate } = h
-      const cap = capOf(h)
-      const [open, dailyLeft] = await Promise.all([openAcross(h), dailyLeftNow()])
-      const amounts: RefusalAmounts = {
-        needed: reserve,
-        left: open >= cap ? 0n : cap - open,
-        authority: cap,
-        capPerCommitment: mandate.message.capPerCommitment,
-        dailyLimit: dailyLimitNow(),
-        dailyLeft,
-      }
-      const no = (code: ReasonCode, layer: RefusalLayer): SandboxPreflight => ({
-        passes: false,
-        code,
-        layer,
-        amounts,
-      })
-      // The SDK refuses a supplier the mandate doesn't name, or one this deployment can't reach.
-      const known = m.suppliers.some((s) => s.id === b.supplier)
-      if (!known || !mandate.message.suppliers.includes(b.supplier)) {
-        return no('mandate.supplier_not_allowed', 'sdk')
-      }
-      // The same check Avow runs before it approves, with the open reserves the lock reports
-      // under this mandate and every one it replaced.
-      const allowed = checkMandate({
-        mandate: mandate.message,
-        request: {
-          commitmentId: zeroHash,
-          agentKey: m.agentKey.accessKeyAddress,
-          supplier: b.supplier,
-          payee: zeroAddress,
-          category: 'compute',
-          terms,
-        },
-        token,
-        openReserves: open,
-        revoked: false,
-        now,
-        profile: TESTNET_DEMO_PROFILE,
-      })
-      if (allowed.result !== 'approved') {
-        // The SDK checks everything but what the lock holds, which Avow's check adds.
-        return no(
-          allowed.reason,
-          allowed.reason === 'mandate.over_open_reserves_cap' ? 'avow' : 'sdk',
-        )
-      }
-      if (dailyLeft !== null && toTokenUnits(reserve, token.decimals) > dailyLeft) {
-        return no('keychain.over_daily_limit', 'keychain')
-      }
-      return { passes: true, amounts }
+      const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now: systemClock() })
+      const { refused, amounts } = await limits(await current(), b.supplier, terms)
+      return refused ? { passes: false, ...refused, amounts } : { passes: true, amounts }
     },
 
     book(b: SandboxBooking): Promise<SandboxCommitment> {
@@ -618,17 +673,16 @@ function booker(m: {
     reserve: bigint,
   ): Promise<SandboxCommitment> {
     {
-      const b = { supplier: supplierId }
-      const leftBefore = await leftNow()
-      const { mandate, hash: mandateHash } = held
-      const supplier = m.suppliers.find((s) => s.id === b.supplier)
-      // The mandate names its suppliers, so the SDK refuses any other before anyone signs.
-      if (!supplier || !mandate.message.suppliers.includes(b.supplier)) {
-        throw await refusal(
-          { code: 'mandate.supplier_not_allowed', layer: 'sdk', needed: reserve, leftBefore },
-          {},
-        )
-      }
+      // One mandate for the whole booking, so a refusal reports the limits it ran under.
+      const h = await current()
+      const { mandate, hash: mandateHash } = h
+      const before = await limits(h, supplierId, terms)
+      const leftBefore = before.amounts.left
+      // The lock caps each mandate hash on its own, so the agent checks the total itself before
+      // it signs anything, whatever cap Avow's approval carries.
+      if (before.refused)
+        throw await refusal(h, { ...before.refused, needed: reserve, leftBefore }, {})
+      const supplier = m.suppliers.find((s) => s.id === supplierId) as SandboxSupplier
       const connection = await connectSupplier(supplier, send)
       const avow = httpAvowApi({
         baseUrl: deployment.apiUrl,
@@ -670,12 +724,14 @@ function booker(m: {
       } catch (error) {
         if (error instanceof SupplierDeclined) {
           throw await refusal(
+            h,
             { code: 'supplier.declined', layer: 'supplier', needed: reserve, leftBefore },
             { cause: error },
           )
         }
         if (error instanceof BookingError && error.outcome === 'failed') {
           throw await refusal(
+            h,
             { ...fundingRefusal(error), needed: reserve, leftBefore },
             { cause: error },
           )
@@ -685,6 +741,7 @@ function booker(m: {
       if (!booked.ok) {
         const layer: RefusalLayer = avowRefused === booked.reason ? 'avow' : 'sdk'
         throw await refusal(
+          h,
           { code: booked.reason, layer, needed: reserve, leftBefore },
           { decisionId: booked.decisionId ?? null },
         )
@@ -705,7 +762,15 @@ function booker(m: {
         mandateHash,
         madeAt: systemClock(),
       })
-      const left = await leftNow().catch(() => (leftBefore > reserve ? leftBefore - reserve : 0n))
+      const open = await openAcross(h).catch(() => null)
+      const left =
+        open === null
+          ? leftBefore > reserve
+            ? leftBefore - reserve
+            : 0n
+          : open >= capOf(h)
+            ? 0n
+            : capOf(h) - open
       report({ type: 'committed', run, source, reference, amount: reserve })
       let acceptance: Promise<boolean> | null = null
       return {
@@ -723,7 +788,8 @@ function booker(m: {
             reference,
             mandate: mandate.message,
             mandateHash,
-            witness: witness(),
+            // The key carries the first mandate of the chain.
+            witness: h.earlier.at(-1) ?? h.hash,
             account,
             agentKey: m.agentKey.accessKeyAddress,
             keyAuthorizedIn: m.keyAuthorizedIn,

@@ -1,3 +1,4 @@
+import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { mandateHash, mandateVersion, type Signed } from './eip712.js'
 import {
@@ -100,6 +101,26 @@ describe("an agent's chain of mandates", () => {
         reason: 'message.invalid',
       },
     )
+  })
+
+  it('reads replaces in any case, and refuses mixed accounts, agents or an unsigned link', async () => {
+    const upper = { ...second, replaces: second.replaces?.toUpperCase().replace('0X', '0x') as Hex }
+    expect(mandateChainProblem(chain(upper, first), expected).ok).toBe(true)
+    const otherAccount = { ...second, account: newKey().address }
+    expect(mandateChainProblem(chain(otherAccount, first), expected)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+    const otherAgent = { ...second, agentId: 'another-agent' }
+    expect(mandateChainProblem(chain(otherAgent, first), expected)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+    const { signature: _, ...unsigned } = signed(second)
+    const middle = { ...unsigned, authorizedIn: id('key transaction') } as unknown as MandateProof
+    expect(
+      mandateChainProblem({ current: signed(third), earlier: [middle, signed(first)] }, expected),
+    ).toEqual({ ok: false, reason: 'message.invalid' })
   })
 
   it('parses the chain as Avow serves it, and refuses one too long or with a bad mandate', () => {
