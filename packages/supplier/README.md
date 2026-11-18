@@ -1,8 +1,75 @@
-# Supplier quickstart
+# Supplier adapter
 
-A minimal supplier adapter for Avow on Moderato. Agents book with it over HTTP, it accepts each reserve Avow authorizes once its own checks pass, and it reports a charge on a booking cancelled late or never used. Run it on your own machine, apart from Avow.
+Run this adapter beside your booking system to take Avow commitments on Moderato. It talks to agents and to the chain for you. Your system hears about each booking through a webhook and asks one local call whether to grant capacity, so it needs no blockchain code. You hold your own signing key, and Avow never does.
 
-## What it does
+## What your system does
+
+Your system does two things. It receives the webhook's events, and before it grants capacity it either acts on `reserve.accepted` or calls `GET /commitments/<id>` and grants when `grant` is true.
+
+### The webhook
+
+Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each time a booking reaches a status your system acts on.
+
+| Event | When | What your system does |
+| --- | --- | --- |
+| `booking.agreed` | The adapter signed an agent's agreement, and the agent is funding its reserve | Mark the capacity as spoken for |
+| `reserve.held` | Avow authorized the funded reserve and the verifier passed it | Hold the capacity |
+| `reserve.accepted` | The lock took the adapter's acceptance | Grant the capacity |
+| `booking.lapsed` | No reserve came before the acceptance deadline | Free the capacity |
+
+Each post is JSON like this, with money in dollars and times in UTC.
+
+```json
+{
+  "id": "msg_4f1c…_accepted",
+  "type": "reserve.accepted",
+  "createdAt": "2027-01-04T09:00:12.000Z",
+  "data": {
+    "commitmentId": "0x4f1c…",
+    "chainId": 42431,
+    "lock": "0x…",
+    "buyerBusinessId": "biz_…",
+    "supplierBusinessId": "biz_…",
+    "reserveDollars": "500",
+    "agreementExpiresAt": "2027-01-04T09:05:00.000Z",
+    "acceptanceTransaction": "0x…",
+    "terms": { "…": "the terms both sides signed" }
+  }
+}
+```
+
+Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) specification, so check each one with that project's library for your language before you act on it. The `webhook-id`, `webhook-timestamp` and `webhook-signature` headers carry what the library needs, and it refuses a post older than five minutes. `avow-supplier secret` makes a secret, which goes in `WEBHOOK_SECRET` here and in your receiver, and nowhere else.
+
+Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. After three days it gives the event up, logs it and keeps it in `outbox/failed` in the state directory. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment.
+
+### The check
+
+`GET /commitments/<commitment id>` on the local port checks one booking against the lock as it stands now.
+
+```sh
+curl http://127.0.0.1:8791/commitments/0x4f1c…
+```
+
+```json
+{
+  "commitmentId": "0x4f1c…",
+  "status": "accepted",
+  "grant": true,
+  "onChain": {
+    "state": "accepted",
+    "reserveDollars": "500",
+    "heldDollars": "500",
+    "paysYou": true,
+    "freeCancellationEndsAt": "2027-01-05T09:00:00.000Z",
+    "releaseDate": "2027-01-06T09:00:00.000Z"
+  },
+  "terms": { "…": "the terms both sides signed" }
+}
+```
+
+`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it.
+
+## What the adapter does
 
 - `GET /profile` gives agents the supplier's business id, account, payout address and signing key.
 - `POST /agreements` signs an agent's terms agreement. It signs GPU reservation terms that meet Avow's testnet profile, reserve no more than its limit and leave it at least a minute to accept. It records the booking before it answers, and it answers the same offer again with the same signature.
@@ -41,19 +108,31 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `MAX_OPEN_BOOKINGS` | The most open bookings it holds in all, 200 by default |
 | `STATE_DIR` | Where the keys and bookings live, `.avow-supplier` by default |
 | `RPC_URL` | Moderato's RPC, `https://rpc.moderato.tempo.xyz` by default |
+| `WEBHOOK_URL` | Where your system receives events, https or http to this machine. Leave it out for no webhook |
+| `WEBHOOK_SECRET` | The secret `avow-supplier secret` made, which signs each post. Needed with `WEBHOOK_URL` |
+| `LOCAL_PORT` | Where your own systems reach the check, 8791 by default |
+| `LOCAL_HOST` | The address the check listens on, `127.0.0.1` by default |
 
-`serve` needs every setting above. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
+`serve` needs every setting Avow sends, and the rest have defaults. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
 
 A booking is open from the moment the supplier signs its agreement until the lock holds the acceptance or the booking lapses.
 
 ## Running it
 
 ```sh
-cd examples/supplier
+cd packages/supplier
 node dist/main.js init
 ```
 
 `init` makes your account key and signing key, has Moderato's faucet fund the signing key's fees, and prints three addresses. Send them to Avow, which registers you and gives you the settings above. Then:
+
+Make a webhook secret, give it to your receiver, and set `WEBHOOK_URL` and `WEBHOOK_SECRET`:
+
+```sh
+node dist/main.js secret
+```
+
+Then start the adapter:
 
 ```sh
 node dist/main.js serve

@@ -20,9 +20,11 @@ import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
+import { localServer } from './local.js'
 import { reportArgs, reportCharge } from './report.js'
 import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
-import { SupplierStore } from './store.js'
+import { type Booking, SupplierStore } from './store.js'
+import { bookingEvent, fetchPost, makeWebhookSecret, Outbox, webhookSender } from './webhook.js'
 
 type Client = ReturnType<typeof moderatoClient>
 
@@ -77,7 +79,24 @@ async function init() {
 /** Serves agents and accepts each reserve Avow authorizes, until it's stopped. */
 async function serve() {
   const settings = serveSettings(process.env)
-  const store = new SupplierStore(settings.stateDir)
+  const outbox = settings.webhook ? new Outbox(settings.stateDir) : null
+  const enqueue = (b: Booking) => {
+    const event = outbox && bookingEvent(b, new Date())
+    if (outbox && event) outbox.add(event, Date.now())
+  }
+  const store = new SupplierStore(settings.stateDir, enqueue)
+  // Every booking's current status gets its event, so a stop between saving a booking and adding
+  // its event loses nothing. The outbox ignores an event it already has.
+  if (outbox) {
+    for (const id of store.commitmentIds()) {
+      try {
+        const b = store.booking(id)
+        if (b) enqueue(b)
+      } catch {
+        // The poll logs a booking file it can't read.
+      }
+    }
+  }
   const { account, signingKey } = keysOf(store)
   const client = moderatoClient(settings.rpcUrl)
   const chain = tempoChainReader(client, { factory: settings.factory, chainId: TEMPO_MODERATO })
@@ -104,6 +123,19 @@ async function serve() {
     log,
   }).listen(settings.port)
   log(`serving agents on port ${settings.port} as ${settings.businessId}`)
+  const local = localServer({
+    store,
+    chain,
+    payee: account,
+    decimals: moderatoUsdToken(settings.token).decimals,
+    log,
+  }).listen(settings.localPort, settings.localHost)
+  log(`answering checks for your own systems on ${settings.localHost}:${settings.localPort}`)
+  const deliver =
+    outbox && settings.webhook
+      ? webhookSender({ target: settings.webhook, outbox, post: fetchPost, nowMs: Date.now, log })
+      : async () => {}
+  if (settings.webhook) log(`posting booking events to ${new URL(settings.webhook.url).origin}`)
 
   const requests = {
     baseUrl: settings.apiUrl,
@@ -145,11 +177,13 @@ async function serve() {
   const stop = () => {
     stopping = true
     server.close()
+    local.close()
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
   while (!stopping) {
     await poll()
+    await deliver()
     for (let waited = 0; waited < settings.pollSeconds * 1000 && !stopping; waited += 250) {
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
@@ -192,10 +226,23 @@ function profile() {
   console.log(JSON.stringify({ account, payee: account, signingKey: signingKey.address }, null, 2))
 }
 
-const commands: Record<string, () => Promise<void> | void> = { init, serve, report, profile }
+/** Prints a new webhook secret, for `WEBHOOK_SECRET` here and in the system that receives events. */
+function secret() {
+  console.log(makeWebhookSecret())
+}
+
+const commands: Record<string, () => Promise<void> | void> = {
+  init,
+  serve,
+  report,
+  profile,
+  secret,
+}
 const command = commands[process.argv[2] ?? '']
 if (!command) {
-  console.error('Usage: avow-supplier init | profile | serve | report [commitmentId] [--no-show]')
+  console.error(
+    'Usage: avow-supplier init | profile | secret | serve | report [commitmentId] [--no-show]',
+  )
   process.exit(2)
 }
 Promise.resolve(command()).catch((e: unknown) => {

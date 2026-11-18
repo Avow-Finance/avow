@@ -48,11 +48,12 @@ Terms never change after the agreement, and a change is a new commitment that na
 | `packages/spec` | Records, terms and their templates, signed messages, reason codes and the mandate check |
 | `packages/verifier` | The supplier's check of a commitment's authorization, terms and reserve, and the dependency check |
 | `packages/sdk` | The agent's and the business's calls, the `avow-sandbox` command and the MCP server |
+| `packages/supplier` | The adapter a supplier runs: agreements, acceptances, reports, the webhook and the local check |
 | `packages/terminal` | What the command line draws |
 | `packages/avow-sandbox` | The unscoped name `npx` finds, which runs the SDK's command |
 | `skills/avow-commitments` | The Agent Skill that tells an agent when a commitment is the right tool, kept in step with the MCP tools by a test |
 | `examples/starter` | The folder `npx` makes for a new agent, with an `AGENTS.md` of its own for the agent working in it |
-| `examples/buyer`, `supplier`, `keeper` | A quickstart for each side |
+| `examples/buyer`, `keeper` | A quickstart for the buyer and the keeper |
 | `fern/docs/pages` | The developer reference, as MDX |
 
 ## Commands

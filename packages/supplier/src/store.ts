@@ -163,7 +163,14 @@ export class SupplierStore {
   /** The lock of each open booking by commitment, read from disk once and kept in step by `put`. */
   #open: Map<Hex, Address> | null = null
 
-  constructor(readonly dir: string) {
+  /**
+   * `onPut` hears every booking `put` saves, once the file is written, which is how the webhook's
+   * outbox learns of each status a booking reaches.
+   */
+  constructor(
+    readonly dir: string,
+    readonly onPut?: (booking: Booking) => void,
+  ) {
     this.#bookings = join(dir, 'bookings')
     this.#reports = join(dir, 'reports')
     mkdirSync(this.#bookings, { recursive: true, mode: 0o700 })
@@ -248,6 +255,7 @@ export class SupplierStore {
       this.#bookingFile(booking.commitmentId),
       `${JSON.stringify(toWire(booking), null, 2)}\n`,
     )
+    this.onPut?.(booking)
     const id = booking.commitmentId.toLowerCase() as Hex
     if (!this.#open) return
     if (isOpen(booking.status)) this.#open.set(id, booking.lock.toLowerCase() as Address)

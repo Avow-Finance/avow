@@ -1,5 +1,6 @@
 import { MODERATO_RPC_URL } from '@avow-finance/sdk'
 import { type Address, getAddress, type Hex, isAddress } from 'viem'
+import { isWebhookSecret, type WebhookTarget } from './webhook.js'
 
 export interface SupplierSettings {
   /** Avow's API, an origin such as `https://api.testnet.avow.finance`. */
@@ -22,6 +23,11 @@ export interface SupplierSettings {
   maxOpenPerBuyer: number
   /** How many open bookings it holds in all. */
   maxOpenBookings: number
+  /** Where the webhook posts events and the secret it signs them with, or null for no webhook. */
+  webhook: WebhookTarget | null
+  /** Where the supplier's own systems reach the local check. */
+  localHost: string
+  localPort: number
 }
 
 /**
@@ -47,7 +53,7 @@ const address = (env: Record<string, string | undefined>, name: string, missing:
 function refuseMissing(missing: string[]) {
   if (missing.length > 0) {
     throw new Error(
-      `These settings are missing or wrong: ${missing.sort().join(', ')}. Avow sends these when it registers you, and the quickstart's README lists each one. Set them in this terminal.`,
+      `These settings are missing or wrong: ${missing.sort().join(', ')}. The README lists each one and where it comes from. Set them in this terminal.`,
     )
   }
 }
@@ -100,6 +106,10 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
   if (maxOpenPerBuyer === null) missing.push('MAX_OPEN_PER_BUYER')
   const maxOpenBookings = whole(env.MAX_OPEN_BOOKINGS, 200)
   if (maxOpenBookings === null) missing.push('MAX_OPEN_BOOKINGS')
+  const webhook = webhookSettings(env, missing)
+  const localPort = whole(env.LOCAL_PORT, 8791)
+  if (localPort === null || localPort > 65_535 || localPort === port) missing.push('LOCAL_PORT')
+  const localHost = env.LOCAL_HOST?.trim() || '127.0.0.1'
   refuseMissing(missing)
   return {
     ...baseSettings(env),
@@ -113,7 +123,41 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
     pollSeconds: pollSeconds as number,
     maxOpenPerBuyer: maxOpenPerBuyer as number,
     maxOpenBookings: maxOpenBookings as number,
+    webhook,
+    localHost,
+    localPort: localPort as number,
   }
+}
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * The webhook, when `WEBHOOK_URL` is set. Its URL is https, or http to this machine for a receiver
+ * running beside the adapter, and `WEBHOOK_SECRET` has to be a secret `avow-supplier secret` made.
+ * Neither value appears in an error, since the secret is the receiver's only proof of who posted.
+ */
+function webhookSettings(
+  env: Record<string, string | undefined>,
+  missing: string[],
+): WebhookTarget | null {
+  const url = env.WEBHOOK_URL?.trim() ?? ''
+  const secret = env.WEBHOOK_SECRET?.trim() ?? ''
+  if (url === '') {
+    if (secret !== '') missing.push('WEBHOOK_URL')
+    return null
+  }
+  let parsed: URL | null = null
+  try {
+    parsed = new URL(url)
+  } catch {
+    parsed = null
+  }
+  const allowed =
+    parsed !== null &&
+    (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname)))
+  if (!allowed) missing.push('WEBHOOK_URL')
+  if (!isWebhookSecret(secret)) missing.push('WEBHOOK_SECRET')
+  return { url, secret }
 }
 
 /**

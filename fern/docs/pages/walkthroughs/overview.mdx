@@ -26,7 +26,7 @@ Build the quickstarts as the [welcome page](/welcome) shows. From the repository
 export AVOW_FACTORY=0x8fa7177c84BE069df2a51F096ED28d5D661B8283
 (cd examples/buyer && node dist/main.js init)
 (cd examples/buyer && STATE_DIR=.avow-buyer-spare node dist/main.js init)
-(cd examples/supplier && node dist/main.js init)
+(cd packages/supplier && node dist/main.js init)
 ```
 
 The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. The quickstarts don't register through the sandbox yet, so send all of them, with a name and country for each business, to the person at Avow who invited you to the testnet. Nothing past this point works until Avow has registered them. Avow sends each buyer's account enough test tUSD for three \$500 reserves, and sends you each business id. The other settings are the testnet's own, published at https://try.testnet.avow.finance/config.json.
@@ -54,10 +54,10 @@ export SUPPLIER_BUSINESS_ID=<from Avow>
 export SUPPLIER_URL=http://localhost:8790
 ```
 
-The walkthroughs use two kinds of terminal. A supplier terminal works in `examples/supplier`, and a buyer terminal works in `examples/buyer`, each with the settings loaded. Open the first supplier terminal, start the supplier and leave it running. The buyer reaches it at `SUPPLIER_URL`.
+The walkthroughs use two kinds of terminal. A supplier terminal works in `packages/supplier`, and a buyer terminal works in `examples/buyer`, each with the settings loaded. Open the first supplier terminal, start the supplier and leave it running. The buyer reaches it at `SUPPLIER_URL`.
 
 ```bash
-cd examples/supplier
+cd packages/supplier
 source ../../avow-settings.sh
 node dist/main.js serve
 ```
