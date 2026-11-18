@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   type AvowResend,
   type Call,
@@ -20,11 +22,12 @@ import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
-import { localServer } from './local.js'
+import { localHostnames, localServer } from './local.js'
 import { reportArgs, reportCharge } from './report.js'
 import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
+import { makeWebhookSecret } from './signature.js'
 import { type Booking, SupplierStore } from './store.js'
-import { bookingEvent, fetchPost, makeWebhookSecret, Outbox, webhookSender } from './webhook.js'
+import { bookingEvent, fetchPost, Outbox, reconcile, webhookSender } from './webhook.js'
 
 type Client = ReturnType<typeof moderatoClient>
 
@@ -79,23 +82,31 @@ async function init() {
 /** Serves agents and accepts each reserve Avow authorizes, until it's stopped. */
 async function serve() {
   const settings = serveSettings(process.env)
-  const outbox = settings.webhook ? new Outbox(settings.stateDir) : null
+  const outbox = settings.webhook ? new Outbox(settings.stateDir, Date.now()) : null
+  // A booking is saved before its event is added, and an outbox that fails to add one never stops
+  // the booking moving on. The reconciliation at the next start adds what was missed.
   const enqueue = (b: Booking) => {
-    const event = outbox && bookingEvent(b, new Date())
-    if (outbox && event) outbox.add(event, Date.now())
+    try {
+      const event = outbox && bookingEvent(b, new Date())
+      if (outbox && event) outbox.add(event, Date.now())
+    } catch (e) {
+      log(
+        `webhook: couldn't add the event for ${b.commitmentId} (${e instanceof Error ? e.message : String(e)})`,
+      )
+    }
   }
   const store = new SupplierStore(settings.stateDir, enqueue)
-  // Every booking's current status gets its event, so a stop between saving a booking and adding
-  // its event loses nothing. The outbox ignores an event it already has.
   if (outbox) {
-    for (const id of store.commitmentIds()) {
+    const readable = store.commitmentIds().flatMap((id) => {
       try {
-        const b = store.booking(id)
-        if (b) enqueue(b)
+        return store.booking(id) ?? []
       } catch {
         // The poll logs a booking file it can't read.
+        return []
       }
-    }
+    })
+    const added = reconcile(outbox, readable, new Date())
+    if (added > 0) log(`webhook: added ${added} events the outbox was missing`)
   }
   const { account, signingKey } = keysOf(store)
   const client = moderatoClient(settings.rpcUrl)
@@ -121,21 +132,26 @@ async function serve() {
     isLock: async (lock) => (await chain.lock(lock))?.fromFactory === true,
     now: clock,
     log,
-  }).listen(settings.port)
+  })
+  server.on('error', cannotListen('agents', settings.port))
+  server.listen(settings.port)
   log(`serving agents on port ${settings.port} as ${settings.businessId}`)
   const local = localServer({
     store,
     chain,
     payee: account,
     decimals: moderatoUsdToken(settings.token).decimals,
+    hostnames: localHostnames(settings.localHost),
     log,
-  }).listen(settings.localPort, settings.localHost)
+  })
+  local.on('error', cannotListen('your own systems', settings.localPort))
+  local.listen(settings.localPort, settings.localHost)
   log(`answering checks for your own systems on ${settings.localHost}:${settings.localPort}`)
-  const deliver =
-    outbox && settings.webhook
-      ? webhookSender({ target: settings.webhook, outbox, post: fetchPost, nowMs: Date.now, log })
-      : async () => {}
-  if (settings.webhook) log(`posting booking events to ${new URL(settings.webhook.url).origin}`)
+  if (!localHostnames('127.0.0.1').includes(settings.localHost)) {
+    log(
+      `LOCAL_HOST is ${settings.localHost}, so other machines can reach the check, which shows your bookings' terms and buyers. Keep that port behind your firewall.`,
+    )
+  }
 
   const requests = {
     baseUrl: settings.apiUrl,
@@ -181,13 +197,40 @@ async function serve() {
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
-  while (!stopping) {
-    await poll()
-    await deliver()
-    for (let waited = 0; waited < settings.pollSeconds * 1000 && !stopping; waited += 250) {
-      await new Promise((resolve) => setTimeout(resolve, 250))
+  /** Runs a step, then waits, until the process stops. A step that throws is logged and run again. */
+  const every = async (seconds: number, step: () => Promise<void>, what: string) => {
+    while (!stopping) {
+      try {
+        await step()
+      } catch (e) {
+        log(`${what} failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      for (let waited = 0; waited < seconds * 1000 && !stopping; waited += 250) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
     }
   }
+  const loops = [every(settings.pollSeconds, poll, 'the booking poll')]
+  // The webhook runs on its own loop, so a slow or unreachable receiver never holds up an
+  // acceptance, which may have only a minute before its deadline.
+  if (outbox && settings.webhook) {
+    const deliver = webhookSender({
+      target: settings.webhook,
+      outbox,
+      post: fetchPost,
+      nowMs: Date.now,
+      log,
+    })
+    log(`posting booking events to ${new URL(settings.webhook.url).origin}`)
+    loops.push(every(1, deliver, 'the webhook'))
+  }
+  await Promise.all(loops)
+}
+
+/** Stops the process with a sentence when a port can't be opened, such as when it's in use. */
+const cannotListen = (what: string, port: number) => (e: Error) => {
+  log(`couldn't open port ${port} for ${what} (${e.message})`)
+  process.exit(1)
 }
 
 /**
@@ -231,17 +274,29 @@ function secret() {
   console.log(makeWebhookSecret())
 }
 
+/** Puts every webhook event the adapter gave up on back to be sent, for a receiver that's back. */
+function redeliver() {
+  const { stateDir } = baseSettings(process.env)
+  if (!existsSync(join(stateDir, 'outbox'))) {
+    log(`${stateDir} has no webhook outbox, so there is nothing to send again`)
+    return
+  }
+  const count = new Outbox(stateDir, Date.now()).redeliverFailed(Date.now())
+  log(`${count} events will go out again once serve runs`)
+}
+
 const commands: Record<string, () => Promise<void> | void> = {
   init,
   serve,
   report,
   profile,
   secret,
+  redeliver,
 }
 const command = commands[process.argv[2] ?? '']
 if (!command) {
   console.error(
-    'Usage: avow-supplier init | profile | secret | serve | report [commitmentId] [--no-show]',
+    'Usage: avow-supplier init | profile | secret | serve | redeliver | report [commitmentId] [--no-show]',
   )
   process.exit(2)
 }

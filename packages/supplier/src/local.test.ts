@@ -1,7 +1,8 @@
+import { request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { checkCommitment, type LocalDeps, localServer } from './local.js'
+import { checkCommitment, type LocalDeps, localHostnames, localServer } from './local.js'
 import type { Booking, SupplierStore } from './store.js'
 import {
   agreedBooking,
@@ -35,7 +36,14 @@ async function deps(
     'buyer',
     state === null || held === null ? null : { ...held, state, payee: payee ?? held.payee },
   )
-  return { store, chain, payee: supplierAccount.address, decimals: 6, log: () => {} }
+  return {
+    store,
+    chain,
+    payee: supplierAccount.address,
+    decimals: 6,
+    hostnames: localHostnames('127.0.0.1'),
+    log: () => {},
+  }
 }
 
 describe('checking a commitment for the supplier', () => {
@@ -90,5 +98,39 @@ describe("the adapter's local port", () => {
     } finally {
       server.close()
     }
+  })
+
+  it('refuses a request that names another host, as a page on another site would after rebinding its name', async () => {
+    store.put(accepted())
+    const server = localServer(await deps('accepted')).listen(0, '127.0.0.1')
+    await new Promise((resolve) => server.once('listening', resolve))
+    const port = (server.address() as AddressInfo).port
+    const statusFor = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request(
+          { host: '127.0.0.1', port, path: '/health', headers: { host } },
+          (res) => {
+            res.resume()
+            resolve(res.statusCode ?? 0)
+          },
+        )
+        req.on('error', reject)
+        req.end()
+      })
+    try {
+      expect(await statusFor('evil.example')).toBe(403)
+      expect(await statusFor(`evil.example:${port}`)).toBe(403)
+      expect(await statusFor(`localhost:${port}`)).toBe(200)
+      expect(await statusFor('[::1]')).toBe(200)
+    } finally {
+      server.close()
+    }
+  })
+
+  it('takes the loopback names and the address it listens on, and no address that means every one', () => {
+    expect(localHostnames('127.0.0.1')).toEqual(['localhost', '127.0.0.1', '[::1]'])
+    expect(localHostnames('10.0.0.5')).toContain('10.0.0.5')
+    expect(localHostnames('0.0.0.0')).not.toContain('0.0.0.0')
+    expect(localHostnames('fd00::5')).toContain('[fd00::5]')
   })
 })

@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   CHARGE_KINDS,
@@ -20,6 +13,7 @@ import { MAX_REPORTS } from '@avow-finance/verifier'
 import { type Address, type Hex, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { z } from 'zod'
+import { writeAtomically } from './files.js'
 
 /**
  * The supplier's two keys. The account key holds the supplier's account, which businesses approve
@@ -132,13 +126,6 @@ const bookingJson = z.strictObject({
   status: z.enum(BOOKING_STATUSES),
   sent: sentJson.optional(),
 })
-
-/** Writes a file whole or not at all, so a crash never leaves half a record. */
-function writeAtomically(path: string, text: string, mode = 0o600) {
-  const temporary = `${path}.${process.pid}.tmp`
-  writeFileSync(temporary, text, { mode })
-  renameSync(temporary, path)
-}
 
 /** A file's JSON, or null when there's no file. A file that isn't JSON is refused. */
 function readJson(path: string): unknown {
@@ -255,11 +242,12 @@ export class SupplierStore {
       this.#bookingFile(booking.commitmentId),
       `${JSON.stringify(toWire(booking), null, 2)}\n`,
     )
-    this.onPut?.(booking)
     const id = booking.commitmentId.toLowerCase() as Hex
-    if (!this.#open) return
-    if (isOpen(booking.status)) this.#open.set(id, booking.lock.toLowerCase() as Address)
-    else this.#open.delete(id)
+    if (this.#open) {
+      if (isOpen(booking.status)) this.#open.set(id, booking.lock.toLowerCase() as Address)
+      else this.#open.delete(id)
+    }
+    this.onPut?.(booking)
   }
 
   /**

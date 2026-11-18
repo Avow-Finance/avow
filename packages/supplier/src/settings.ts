@@ -1,6 +1,8 @@
+import { isIP } from 'node:net'
 import { MODERATO_RPC_URL } from '@avow-finance/sdk'
 import { type Address, getAddress, type Hex, isAddress } from 'viem'
-import { isWebhookSecret, type WebhookTarget } from './webhook.js'
+import { isWebhookSecret } from './signature.js'
+import type { WebhookTarget } from './webhook.js'
 
 export interface SupplierSettings {
   /** Avow's API, an origin such as `https://api.testnet.avow.finance`. */
@@ -110,6 +112,7 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
   const localPort = whole(env.LOCAL_PORT, 8791)
   if (localPort === null || localPort > 65_535 || localPort === port) missing.push('LOCAL_PORT')
   const localHost = env.LOCAL_HOST?.trim() || '127.0.0.1'
+  if (localHost !== 'localhost' && isIP(localHost) === 0) missing.push('LOCAL_HOST')
   refuseMissing(missing)
   return {
     ...baseSettings(env),
@@ -133,7 +136,8 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
  * The webhook, when `WEBHOOK_URL` is set. Its URL is https, or http to this machine for a receiver
- * running beside the adapter, and `WEBHOOK_SECRET` has to be a secret `avow-supplier secret` made.
+ * running beside the adapter, with no user name or password in it, and `WEBHOOK_SECRET` has to be
+ * a secret `avow-supplier secret` made.
  * Neither value appears in an error, since the secret is the receiver's only proof of who posted.
  */
 function webhookSettings(
@@ -154,6 +158,8 @@ function webhookSettings(
   }
   const allowed =
     parsed !== null &&
+    parsed.username === '' &&
+    parsed.password === '' &&
     (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname)))
   if (!allowed) missing.push('WEBHOOK_URL')
   if (!isWebhookSecret(secret)) missing.push('WEBHOOK_SECRET')

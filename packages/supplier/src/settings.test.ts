@@ -1,7 +1,7 @@
 import { getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { envKeys, serveSettings } from './settings.js'
-import { makeWebhookSecret } from './webhook.js'
+import { makeWebhookSecret } from './signature.js'
 
 const KEY = `0x${'1a'.repeat(32)}`
 const ACCOUNT = '0x00000000000000000000000000000000000a11ce'
@@ -68,6 +68,17 @@ describe('the webhook and the local port', () => {
     expect(() => serveSettings(plain)).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining(SECRET) }),
     )
+  })
+
+  it('refuses a webhook URL with a user name or password, and a local host that is no address', () => {
+    const withLogin = {
+      ...SERVE,
+      WEBHOOK_URL: 'https://me:pw@bookings.example/avow',
+      WEBHOOK_SECRET: SECRET,
+    }
+    expect(() => serveSettings(withLogin)).toThrow('WEBHOOK_URL')
+    expect(() => serveSettings({ ...SERVE, LOCAL_HOST: 'bookings.example' })).toThrow('LOCAL_HOST')
+    expect(serveSettings({ ...SERVE, LOCAL_HOST: 'localhost' }).localHost).toBe('localhost')
   })
 
   it('refuses a local port that is the agents port', () => {

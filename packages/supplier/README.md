@@ -4,7 +4,7 @@ Run this adapter beside your booking system to take Avow commitments on Moderato
 
 ## What your system does
 
-Your system does two things. It receives the webhook's events, and before it grants capacity it either acts on `reserve.accepted` or calls `GET /commitments/<id>` and grants when `grant` is true.
+Your system does two things. It receives the webhook's events, which say when to hold capacity and when to grant it. And before a booked window starts, it calls `GET /commitments/<id>` and runs the booking only when `grant` is still true. The webhook says nothing after `reserve.accepted`, and a business can still cancel before free cancellation ends and take its reserve back, so the check is how your system hears of that.
 
 ### The webhook
 
@@ -40,7 +40,7 @@ Each post is JSON like this, with money in dollars and times in UTC.
 
 Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) specification, so check each one with that project's library for your language before you act on it. The `webhook-id`, `webhook-timestamp` and `webhook-signature` headers carry what the library needs, and it refuses a post older than five minutes. `avow-supplier secret` makes a secret, which goes in `WEBHOOK_SECRET` here and in your receiver, and nowhere else.
 
-Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. After three days it gives the event up, logs it and keeps it in `outbox/failed` in the state directory. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment.
+Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones agreed after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
 
 ### The check
 
@@ -67,7 +67,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 }
 ```
 
-`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it.
+`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it, and it refuses a request that names any other host, so a web page can't reach it through a name it controls. Another address in `LOCAL_HOST` lets other machines read your bookings' terms and buyers, so the adapter warns when you set one, and the port belongs behind your firewall.
 
 ## What the adapter does
 
@@ -111,7 +111,7 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `WEBHOOK_URL` | Where your system receives events, https or http to this machine. Leave it out for no webhook |
 | `WEBHOOK_SECRET` | The secret `avow-supplier secret` made, which signs each post. Needed with `WEBHOOK_URL` |
 | `LOCAL_PORT` | Where your own systems reach the check, 8791 by default |
-| `LOCAL_HOST` | The address the check listens on, `127.0.0.1` by default |
+| `LOCAL_HOST` | The IP address the check listens on, `127.0.0.1` by default |
 
 `serve` needs every setting Avow sends, and the rest have defaults. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
 
@@ -124,15 +124,15 @@ cd packages/supplier
 node dist/main.js init
 ```
 
-`init` makes your account key and signing key, has Moderato's faucet fund the signing key's fees, and prints three addresses. Send them to Avow, which registers you and gives you the settings above. Then:
+`init` makes your account key and signing key, has Moderato's faucet fund the signing key's fees, and prints three addresses. Send them to Avow, which registers you and gives you the settings above.
 
-Make a webhook secret, give it to your receiver, and set `WEBHOOK_URL` and `WEBHOOK_SECRET`:
+Make a webhook secret, give it to your receiver, and set `WEBHOOK_URL` and `WEBHOOK_SECRET`.
 
 ```sh
 node dist/main.js secret
 ```
 
-Then start the adapter:
+Start the adapter.
 
 ```sh
 node dist/main.js serve

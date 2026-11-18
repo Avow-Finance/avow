@@ -1,18 +1,12 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { enforceableTerms, toWire } from '@avow-finance/spec'
-import { type Address, formatUnits, type Hex } from 'viem'
+import type { Address, Hex } from 'viem'
 import { z } from 'zod'
-import type { Booking, BookingStatus } from './store.js'
+import { writeAtomically } from './files.js'
+import { dollars, iso, TERMS_DECIMALS } from './format.js'
+import { signWebhook } from './signature.js'
+import { type Booking, type BookingStatus, isOpen } from './store.js'
 
 /**
  * What the webhook tells the supplier's own system, one event for each status a booking reaches
@@ -31,33 +25,40 @@ export const WEBHOOK_EVENTS = {
 
 export type WebhookEventType = (typeof WEBHOOK_EVENTS)[keyof typeof WEBHOOK_EVENTS]
 
+const hex = <T extends Hex>(pattern: RegExp) =>
+  z
+    .string()
+    .regex(pattern)
+    .transform((v) => v as T)
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/
+
 /** What every event says about its booking. Money is in dollars and times are ISO 8601 in UTC. */
-export interface BookingEventData {
-  commitmentId: Hex
-  chainId: number
-  lock: Address
-  buyerBusinessId: string
-  supplierBusinessId: string
+const dataJson = z.strictObject({
+  commitmentId: hex<Hex>(BYTES32),
+  chainId: z.number().int().positive(),
+  lock: hex<Address>(/^0x[0-9a-fA-F]{40}$/),
+  buyerBusinessId: z.string(),
+  supplierBusinessId: z.string(),
   /** The most the supplier can charge on this booking, the reserve the business funds. */
-  reserveDollars: string
+  reserveDollars: z.string().regex(/^[0-9]+(\.[0-9]+)?$/),
   /** When the agreement the supplier signed lapses if no reserve arrives. */
-  agreementExpiresAt: string
+  agreementExpiresAt: z.iso.datetime(),
   /** The acceptance's transaction on the lock, once `reserve.accepted` has it. */
-  acceptanceTransaction: Hex | null
+  acceptanceTransaction: hex<Hex>(BYTES32).nullable(),
   /** The terms both sides signed, as the spec writes them. */
-  terms: unknown
-}
-
-export interface WebhookEvent {
+  terms: z.unknown(),
+})
+const EVENT_ID = /^msg_([0-9a-f]{64})_[a-z]+$/
+const eventJson = z.strictObject({
   /** The same for every delivery of one event, so a receiver handles each id once. */
-  id: string
-  type: WebhookEventType
-  createdAt: string
-  data: BookingEventData
-}
+  id: z.string().regex(EVENT_ID),
+  type: z.enum(Object.values(WEBHOOK_EVENTS) as [WebhookEventType, ...WebhookEventType[]]),
+  createdAt: z.iso.datetime(),
+  data: dataJson,
+})
 
-const MICROS = 6
-const iso = (seconds: bigint) => new Date(Number(seconds) * 1000).toISOString()
+export type BookingEventData = z.output<typeof dataJson>
+export type WebhookEvent = z.output<typeof eventJson>
 
 /**
  * The event a booking's status calls for, or null for a status that calls for none. Its id comes
@@ -77,7 +78,7 @@ export function bookingEvent(booking: Booking, now: Date): WebhookEvent | null {
       lock: booking.lock,
       buyerBusinessId: booking.agreement.buyerBusinessId,
       supplierBusinessId: booking.agreement.supplierBusinessId,
-      reserveDollars: formatUnits(enforceableTerms(booking.terms).reserve, MICROS),
+      reserveDollars: dollars(enforceableTerms(booking.terms).reserve, TERMS_DECIMALS),
       agreementExpiresAt: iso(booking.agreement.expiry),
       acceptanceTransaction: booking.status === 'accepted' ? (booking.sent?.hash ?? null) : null,
       terms: toWire(booking.terms),
@@ -85,106 +86,37 @@ export function bookingEvent(booking: Booking, now: Date): WebhookEvent | null {
   }
 }
 
-// Signing follows the Standard Webhooks specification, so a receiver in any language can check a
-// delivery with that project's libraries. The secret is `whsec_` and base64, and the signature is
-// HMAC-SHA256 over `${id}.${timestamp}.${body}`, sent as `v1,` and base64.
-
-const SECRET = /^whsec_([A-Za-z0-9+/]{32,}={0,2})$/
-
-/** Whether a string is a webhook secret this adapter can sign with. */
-export const isWebhookSecret = (secret: string) => SECRET.test(secret)
-
-/** A new webhook secret, 32 random bytes. */
-export const makeWebhookSecret = () => `whsec_${randomBytes(32).toString('base64')}`
-
-function keyOf(secret: string): Buffer {
-  const match = SECRET.exec(secret)
-  if (!match?.[1]) throw new Error('A webhook secret is whsec_ followed by base64')
-  return Buffer.from(match[1], 'base64')
-}
-
-/** The `webhook-signature` header value for a delivery. */
-export function signWebhook(secret: string, id: string, timestamp: number, body: string): string {
-  const mac = createHmac('sha256', keyOf(secret)).update(`${id}.${timestamp}.${body}`).digest()
-  return `v1,${mac.toString('base64')}`
-}
-
-/**
- * Whether a delivery came from this adapter: its signature matches the body under the secret and
- * its timestamp is within five minutes of now, so an old delivery can't be replayed. A receiver
- * written in TypeScript can use it, and any Standard Webhooks library does the same.
- */
-export function verifyWebhook(
-  secret: string,
-  headers: { id: string; timestamp: string; signature: string },
-  body: string,
-  nowSeconds: number,
-  toleranceSeconds = 300,
-): boolean {
-  const timestamp = Number(headers.timestamp)
-  if (!Number.isSafeInteger(timestamp)) return false
-  if (Math.abs(nowSeconds - timestamp) > toleranceSeconds) return false
-  const expected = Buffer.from(signWebhook(secret, headers.id, timestamp, body))
-  return headers.signature.split(' ').some((given) => {
-    const g = Buffer.from(given)
-    return g.length === expected.length && timingSafeEqual(g, expected)
-  })
-}
-
 /** How long after the last failed delivery each retry waits, then the last wait over again. */
 const RETRY_AFTER_MS = [5_000, 30_000, 120_000, 600_000, 1_800_000, 3_600_000, 10_800_000]
-/** How long the adapter keeps trying before it gives an event up. */
+/** How long after its first attempt the adapter keeps trying an event before it gives it up. */
 const GIVE_UP_AFTER_MS = 3 * 24 * 3_600_000
 
-const hex = <T extends Hex>(pattern: RegExp) =>
-  z
-    .string()
-    .regex(pattern)
-    .transform((v) => v as T)
-const dataJson = z.strictObject({
-  commitmentId: hex<Hex>(/^0x[0-9a-fA-F]{64}$/),
-  chainId: z.number().int().positive(),
-  lock: hex<Address>(/^0x[0-9a-fA-F]{40}$/),
-  buyerBusinessId: z.string(),
-  supplierBusinessId: z.string(),
-  reserveDollars: z.string().regex(/^[0-9]+(\.[0-9]+)?$/),
-  agreementExpiresAt: z.iso.datetime(),
-  acceptanceTransaction: hex<Hex>(/^0x[0-9a-fA-F]{64}$/).nullable(),
-  terms: z.unknown(),
-})
-const eventJson = z.strictObject({
-  id: z.string().regex(/^msg_[0-9a-f]{64}_[a-z]+$/),
-  type: z.enum(Object.values(WEBHOOK_EVENTS) as [WebhookEventType, ...WebhookEventType[]]),
-  createdAt: z.iso.datetime(),
-  data: dataJson,
-})
 const pendingJson = z.strictObject({
   event: eventJson,
   attempts: z.number().int().min(0),
+  /** Milliseconds since the epoch, for this and the next two fields. */
   nextAttemptAt: z.number().int().min(0),
+  firstAttemptAt: z.number().int().min(0).optional(),
   lastError: z.string().optional(),
 })
-
-/** An event waiting to go out, with when to try next in milliseconds since the epoch. */
 type Pending = z.output<typeof pendingJson>
-
-function writeAtomically(path: string, text: string) {
-  const temporary = `${path}.${process.pid}.tmp`
-  writeFileSync(temporary, text, { mode: 0o600 })
-  renameSync(temporary, path)
-}
+const sinceJson = z.strictObject({ since: z.number().int().min(0) })
 
 /**
  * The events waiting to reach the supplier's system, one file each in the state directory, so a
  * restart loses none. An event moves to `delivered` once the system answers with a 2xx status, and
- * to `failed` once the adapter gives up on it.
+ * to `failed` once the adapter gives up on it. The outbox remembers when it was first made, which
+ * is when the supplier first turned the webhook on.
  */
 export class Outbox {
   readonly #pending: string
   readonly #delivered: string
   readonly #failed: string
+  readonly #since: bigint
+  /** The text of each pending file it couldn't read, as it was when it said so. */
+  readonly #unreadable = new Map<string, string>()
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, nowMs: number) {
     const root = join(stateDir, 'outbox')
     this.#pending = join(root, 'pending')
     this.#delivered = join(root, 'delivered')
@@ -192,67 +124,133 @@ export class Outbox {
     for (const dir of [this.#pending, this.#delivered, this.#failed]) {
       mkdirSync(dir, { recursive: true, mode: 0o700 })
     }
+    const sinceFile = join(root, 'since.json')
+    if (!existsSync(sinceFile)) {
+      writeAtomically(sinceFile, `${JSON.stringify({ since: Math.floor(nowMs / 1000) })}\n`)
+    }
+    const since = sinceJson.safeParse(JSON.parse(readFileSync(sinceFile, 'utf8')))
+    if (!since.success) throw new Error(`${sinceFile} doesn't say when the webhook was turned on`)
+    this.#since = BigInt(since.data.since)
+  }
+
+  /** When the webhook was first turned on, in seconds since the epoch. */
+  get since(): bigint {
+    return this.#since
   }
 
   #file = (dir: string, id: string) => join(dir, `${id}.json`)
+  #write = (dir: string, record: unknown, id: string) =>
+    writeAtomically(this.#file(dir, id), `${JSON.stringify(record, null, 2)}\n`)
 
   /** Adds an event once. An event with the same id, pending, delivered or given up, is left alone. */
   add(event: WebhookEvent, nowMs: number): boolean {
-    if (
-      [this.#pending, this.#delivered, this.#failed].some((d) =>
-        existsSync(this.#file(d, event.id)),
-      )
+    const dirs = [this.#pending, this.#delivered, this.#failed]
+    if (dirs.some((d) => existsSync(this.#file(d, event.id)))) return false
+    this.#write(
+      this.#pending,
+      { event, attempts: 0, nextAttemptAt: nowMs } satisfies Pending,
+      event.id,
     )
-      return false
-    const pending: Pending = { event, attempts: 0, nextAttemptAt: nowMs }
-    writeAtomically(this.#file(this.#pending, event.id), `${JSON.stringify(pending, null, 2)}\n`)
     return true
   }
 
-  /** Every pending event, oldest first. A file that doesn't parse is skipped and named in the log. */
-  pending(log: (line: string) => void): Pending[] {
-    const found: Pending[] = []
+  /**
+   * Every pending event, oldest first, and the commitments of pending files it couldn't read, so
+   * the sender holds those bookings back rather than send a later event first. It logs a file it
+   * can't read once, and again only once the file changes.
+   */
+  pending(log: (line: string) => void): { events: Pending[]; unreadable: Set<string> } {
+    const events: Pending[] = []
+    const unreadable = new Set<string>()
     for (const name of readdirSync(this.#pending).filter((n) => n.endsWith('.json'))) {
       const path = join(this.#pending, name)
+      const text = readFileSync(path, 'utf8')
+      let parsed: ReturnType<typeof pendingJson.safeParse> | null = null
       try {
-        const parsed = pendingJson.safeParse(JSON.parse(readFileSync(path, 'utf8')))
-        if (parsed.success) found.push(parsed.data)
-        else log(`webhook: ${path} doesn't hold a pending event, so it's skipped`)
+        parsed = pendingJson.safeParse(JSON.parse(text))
       } catch {
-        log(`webhook: ${path} isn't JSON, so it's skipped`)
+        parsed = null
+      }
+      if (parsed?.success) {
+        events.push(parsed.data)
+        this.#unreadable.delete(path)
+        continue
+      }
+      const commitment = EVENT_ID.exec(name.slice(0, -'.json'.length))?.[1]
+      if (commitment) unreadable.add(`0x${commitment}`)
+      if (this.#unreadable.get(path) !== text) {
+        this.#unreadable.set(path, text)
+        log(`webhook: ${path} doesn't hold a pending event, so its booking waits until it's mended`)
       }
     }
-    return found.sort(
+    events.sort(
       (a, b) =>
         a.event.createdAt.localeCompare(b.event.createdAt) || a.event.id.localeCompare(b.event.id),
     )
+    return { events, unreadable }
   }
 
-  delivered(id: string, nowMs: number) {
-    this.#move(id, this.#delivered, { deliveredAt: new Date(nowMs).toISOString() })
+  delivered(p: Pending, nowMs: number) {
+    this.#move(p, this.#delivered, { deliveredAt: new Date(nowMs).toISOString() })
   }
 
-  failed(id: string, nowMs: number, lastError: string) {
-    this.#move(id, this.#failed, { failedAt: new Date(nowMs).toISOString(), lastError })
+  failed(p: Pending, nowMs: number, lastError: string) {
+    this.#move(p, this.#failed, { failedAt: new Date(nowMs).toISOString(), lastError })
   }
 
   retryLater(p: Pending, nowMs: number, lastError: string) {
     const attempts = p.attempts + 1
     const wait = RETRY_AFTER_MS[Math.min(attempts - 1, RETRY_AFTER_MS.length - 1)] as number
-    const next: Pending = { ...p, attempts, nextAttemptAt: nowMs + wait, lastError }
-    writeAtomically(this.#file(this.#pending, p.event.id), `${JSON.stringify(next, null, 2)}\n`)
+    const next: Pending = {
+      ...p,
+      attempts,
+      nextAttemptAt: nowMs + wait,
+      firstAttemptAt: p.firstAttemptAt ?? nowMs,
+      lastError,
+    }
+    this.#write(this.#pending, next, p.event.id)
+  }
+
+  /** Puts every event it gave up on back to be sent now, as new, and says how many. */
+  redeliverFailed(nowMs: number): number {
+    const names = readdirSync(this.#failed).filter((n) => n.endsWith('.json'))
+    for (const name of names) {
+      const path = join(this.#failed, name)
+      const { event } = z.object({ event: eventJson }).parse(JSON.parse(readFileSync(path, 'utf8')))
+      this.#write(
+        this.#pending,
+        { event, attempts: 0, nextAttemptAt: nowMs } satisfies Pending,
+        event.id,
+      )
+      unlinkSync(path)
+    }
+    return names.length
   }
 
   /**
    * Records where an event ended up, then drops it from pending. A stop between the two leaves it
    * in both, and the next run delivers it again, which a receiver handling each id once allows.
    */
-  #move(id: string, dir: string, extra: Record<string, string>) {
-    const from = this.#file(this.#pending, id)
-    const record = { ...JSON.parse(readFileSync(from, 'utf8')), ...extra }
-    writeAtomically(this.#file(dir, id), `${JSON.stringify(record, null, 2)}\n`)
-    unlinkSync(from)
+  #move(p: Pending, dir: string, extra: Record<string, string>) {
+    this.#write(dir, { ...p, ...extra }, p.event.id)
+    unlinkSync(this.#file(this.#pending, p.event.id))
   }
+}
+
+/**
+ * Adds the event for each booking's current status, so a stop between saving a booking and adding
+ * its event loses nothing. It covers every open booking, and a finished one only when its agreement
+ * came after the webhook was first turned on, so turning the webhook on for an adapter with a
+ * history doesn't replay bookings that ended long ago.
+ */
+export function reconcile(outbox: Outbox, bookings: Iterable<Booking>, now: Date): number {
+  let added = 0
+  for (const b of bookings) {
+    if (!isOpen(b.status) && b.agreement.expiry <= outbox.since) continue
+    const event = bookingEvent(b, now)
+    if (event && outbox.add(event, now.getTime())) added++
+  }
+  return added
 }
 
 export interface WebhookTarget {
@@ -280,58 +278,70 @@ export const fetchPost: SenderDeps['post'] = async (url, init) => {
   return response.status
 }
 
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
 /**
  * The webhook's sender, which delivers every event that's due each time it runs. Events for one
  * booking go in order, so a failed delivery holds back that booking's later events until it lands
- * or is given up, and holds back no other booking's. Delivery is at least once, so a receiver may
- * see an event again and handles each id once. A receiver acts on the latest status it has seen for
- * a commitment, since an event can be skipped when the adapter stopped between two transitions.
+ * or is given up, and holds back no other booking's. A post that never reaches the receiver ends
+ * the pass, since the rest would wait out the same timeout. Delivery is at least once, so a
+ * receiver may see an event again and handles each id once. A receiver acts on the latest status
+ * it has seen for a commitment, since an event can be skipped when the adapter stopped between two
+ * transitions. An error reading or writing the outbox is logged and holds back only its booking.
  */
 export function webhookSender(deps: SenderDeps): () => Promise<void> {
   return async () => {
-    const blocked = new Set<string>()
-    for (const p of deps.outbox.pending(deps.log)) {
+    const { events, unreadable } = deps.outbox.pending(deps.log)
+    const blocked = new Set(unreadable)
+    for (const p of events) {
       const commitment = p.event.data.commitmentId.toLowerCase()
       if (blocked.has(commitment)) continue
-      const now = deps.nowMs()
-      if (p.nextAttemptAt > now) {
-        blocked.add(commitment)
-        continue
-      }
-      const body = JSON.stringify(p.event)
-      const timestamp = Math.floor(now / 1000)
-      let problem: string
-      try {
-        const status = await deps.post(deps.target.url, {
-          headers: {
-            'content-type': 'application/json',
-            'webhook-id': p.event.id,
-            'webhook-timestamp': String(timestamp),
-            'webhook-signature': signWebhook(deps.target.secret, p.event.id, timestamp, body),
-          },
-          body,
-        })
-        if (status >= 200 && status < 300) {
-          deps.outbox.delivered(p.event.id, deps.nowMs())
-          deps.log(`webhook: delivered ${p.event.type} for ${commitment}`)
-          continue
-        }
-        problem = `the webhook answered ${status}`
-      } catch (e) {
-        problem = e instanceof Error ? e.message : String(e)
-      }
       blocked.add(commitment)
-      if (deps.nowMs() - Date.parse(p.event.createdAt) >= GIVE_UP_AFTER_MS) {
-        deps.outbox.failed(p.event.id, deps.nowMs(), problem)
-        deps.log(
-          `webhook: gave up on ${p.event.type} for ${commitment} after three days (${problem})`,
-        )
-      } else {
-        deps.outbox.retryLater(p, deps.nowMs(), problem)
-        deps.log(
-          `webhook: ${p.event.type} for ${commitment} failed (${problem}), trying again later`,
-        )
+      try {
+        const now = deps.nowMs()
+        if (p.nextAttemptAt > now) continue
+        const body = JSON.stringify(p.event)
+        const timestamp = String(Math.floor(now / 1000))
+        let status: number
+        try {
+          status = await deps.post(deps.target.url, {
+            headers: {
+              'content-type': 'application/json',
+              'webhook-id': p.event.id,
+              'webhook-timestamp': timestamp,
+              'webhook-signature': signWebhook(deps.target.secret, p.event.id, timestamp, body),
+            },
+            body,
+          })
+        } catch (e) {
+          settleFailure(deps, p, `the post didn't reach the webhook (${message(e)})`)
+          return
+        }
+        if (status >= 200 && status < 300) {
+          deps.outbox.delivered(p, deps.nowMs())
+          blocked.delete(commitment)
+          deps.log(`webhook: delivered ${p.event.type} for ${commitment}`)
+        } else {
+          settleFailure(deps, p, `the webhook answered ${status}`)
+        }
+      } catch (e) {
+        deps.log(`webhook: the outbox failed for ${commitment} (${message(e)})`)
       }
     }
+  }
+}
+
+/** Gives an event up once three days have passed since its first attempt, or tries it later. */
+function settleFailure(deps: SenderDeps, p: Pending, problem: string) {
+  const now = deps.nowMs()
+  const commitment = p.event.data.commitmentId.toLowerCase()
+  if (p.firstAttemptAt !== undefined && now - p.firstAttemptAt >= GIVE_UP_AFTER_MS) {
+    deps.outbox.failed(p, now, problem)
+    deps.log(
+      `webhook: gave up on ${p.event.type} for ${commitment} after three days (${problem}). Run redeliver to send it again`,
+    )
+  } else {
+    deps.outbox.retryLater(p, now, problem)
+    deps.log(`webhook: ${p.event.type} for ${commitment} failed (${problem}), trying again later`)
   }
 }
