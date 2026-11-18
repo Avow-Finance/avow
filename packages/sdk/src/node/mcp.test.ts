@@ -39,9 +39,11 @@ describe('avow-sandbox-mcp', () => {
       'authority',
       'check',
       'book',
+      'verify',
       'commitments',
     ])
     // An agent can ask without knowing its business.
+    expect(tools.find((t) => t.name === 'verify')?.inputSchema.required).toEqual(['link'])
     expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual([])
     expect(tools.find((t) => t.name === 'book')?.inputSchema.required).toEqual(['reserve'])
     // Every tool has a title and says how it acts. Only booking changes anything beyond the
@@ -95,6 +97,19 @@ describe('avow-sandbox-mcp', () => {
     }
     const unknown = await c.callTool({ name: 'pay', arguments: {} })
     expect(unknown.isError).toBe(true)
+  }, 30_000)
+
+  it('checks a shared commitment without connecting, and refuses a link or payee that is no such thing', async () => {
+    const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
+    // A link that carries no commitment is answered without reading the chain, and not as an error,
+    // since the answer is that the chain doesn't back it.
+    const bad = await c.callTool({ name: 'verify', arguments: { link: 'not a link' } })
+    expect(bad.isError).toBe(false)
+    expect(bad.structuredContent).toMatchObject({ standing: false, code: 'message.invalid' })
+    expect(JSON.stringify(bad.content)).toMatch(/Don't rely on it/)
+    const payee = await c.callTool({ name: 'verify', arguments: { link: 'x', payee: 'me' } })
+    expect(payee.isError).toBe(true)
+    expect(JSON.stringify(payee.content)).toMatch(/isn't an address/)
   }, 30_000)
 
   it('refuses a blank business ID rather than asking anyone with it', async () => {

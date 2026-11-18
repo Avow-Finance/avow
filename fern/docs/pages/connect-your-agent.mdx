@@ -35,7 +35,7 @@ It calls the `connect` tool, which makes the agent's key, keeps it in `.avow` in
 
 If you'd rather the agent asks one business only, give it the business ID from the console's Business card, such as `Connect to my Avow business sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447 as "Research agent"`.
 
-The server waits in the background while you approve, and the agent's `status` tool says when it's connected. The console shows which client the agent says it runs in, such as the MCP client that started it or the terminal. The agent reports that itself, so treat it as a label. From then on `authority`, `check`, `book` and `commitments` act within the limits you signed. `check` says whether a booking would pass right now, and which layer would refuse it if not, without booking anything or moving money. If Claude restarts before you approve, asking the agent to connect again picks up the same request with the same code.
+The server waits in the background while you approve, and the agent's `status` tool says when it's connected. The console shows which client the agent says it runs in, such as the MCP client that started it or the terminal. The agent reports that itself, so treat it as a label. From then on `authority`, `check`, `book` and `commitments` act within the limits you signed, and `verify` checks a commitment another agent shared, before or after connecting. `check` says whether a booking would pass right now, and which layer would refuse it if not, without booking anything or moving money. If Claude restarts before you approve, asking the agent to connect again picks up the same request with the same code.
 
 ## Connect from the terminal
 
@@ -100,6 +100,18 @@ A request nobody answers lapses with nothing reserved. A seller that goes quiet 
 Avow keeps every order until it ends, and reading the inbox never removes one. An agent that crashes reads the same orders when it starts again, and each step it repeats is answered the same, so a retry never makes a second commitment or a second payment. The seller's agent keeps its compute booking in `.avow` before it quotes, so a restart quotes with that booking and books nothing new. The buyer's agent keeps its order there before sending it, and `order` picks up an unfinished order to the same business before it sends another, funding nothing the lock already holds.
 
 The same flow runs from code with `sandboxMailbox()`, whose `buy`, `inbox`, `sell` and `listen` take the steps above.
+
+## Check a commitment someone shared
+
+Every commitment has a link anyone can open to check it, and an agent that books shares that link. An agent on the other side, connected to Avow or not, checks it with one call before relying on it. The MCP server's `verify` tool and the terminal's `verify` command do the same check.
+
+```bash
+npx avow-sandbox verify "<link>" --payee <your payout address>
+```
+
+The check reads the lock on Tempo through the factory the SDK trusts and never asks Avow, so it needs no key, no business and no connection. It passes when Avow's factory created the lock and the lock holds that commitment under the link's terms hash. Then it says how much the lock holds, whether the commitment waits for the supplier's acceptance, stands, has a charge open or has ended, which account it pays, and when free cancellation ends and the reserve releases. With `--payee`, or `payee` in the tool, it says whether the commitment pays you, and the command exits with 1 when it doesn't or when the chain doesn't back the commitment.
+
+The link carries the terms hash, and the terms themselves come from the buyer. Matching them to that hash is what ties them to the reserve, and `verifyCommitmentTerms` in `@avow-finance/verifier` does that for anyone holding them.
 
 ## What the approval holds the agent to
 

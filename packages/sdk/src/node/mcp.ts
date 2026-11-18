@@ -24,6 +24,7 @@ import {
 import { setRequestClient } from '../http.js'
 import { PREFLIGHT_UNCHECKED, Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
 import { sessionUrl } from '../sandbox/session.js'
+import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
@@ -50,8 +51,11 @@ const usd = (dollars: number | null) =>
 
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 
-/** The tools that set the agent up, which run before it has any authority to report. */
-type SetupTool = 'connect' | 'status'
+/**
+ * The tools that need no authority: setting the agent up, and checking a commitment someone else
+ * shared, which any agent can do without connecting.
+ */
+type FreeTool = 'connect' | 'status' | 'verify'
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -173,6 +177,33 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: 'verify',
+    title: 'Check a shared commitment',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Checks a commitment another agent shared, such as a buyer's agent sending its link to a supplier. It reads the lock on Tempo through the factory this server trusts, never Avow, and needs no connection or authority. It says whether the chain backs the commitment, how much the lock holds, where it stands, who it pays, and when free cancellation ends and the reserve releases. Give payee, your payout address, and it says whether the commitment pays you. A commitment the chain doesn't back comes back with its reason code.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        link: {
+          type: 'string',
+          description: 'The link the other agent shared, with #verify=, or the token after it',
+        },
+        payee: {
+          type: 'string',
+          description: 'Your payout address, to check the commitment pays you',
+        },
+      },
+      required: ['link'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'commitments',
     title: 'List commitments',
     annotations: {
@@ -186,7 +217,7 @@ export const MCP_TOOLS = [
     inputSchema: noInput,
   },
 ] as const satisfies readonly {
-  name: SandboxTool | SetupTool
+  name: SandboxTool | FreeTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -500,6 +531,20 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
     }
   }
 
+  async function verify(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const link = typeof args.link === 'string' ? args.link : ''
+    if (link.trim() === '') throw new RangeError('The check needs the link the other agent shared')
+    const payee =
+      typeof args.payee === 'string' && args.payee.trim() !== '' ? args.payee.trim() : null
+    if (payee !== null && !isPayee(payee)) throw new RangeError(`${payee} isn't an address`)
+    const checked = await checkShared(payee ? { link, payee } : { link })
+    return {
+      text: sharedSentences(checked).join(' '),
+      structured: sharedJson(checked),
+      isError: false,
+    }
+  }
+
   async function commitments(): Promise<ToolAnswer> {
     const agent = await open('commitments')
     const list = await agent.commitments()
@@ -534,6 +579,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
       try {
         if (name === 'connect') return await connect(args)
         if (name === 'status') return connectionAnswer(await connection.status())
+        if (name === 'verify') return await verify(args)
         if (!SANDBOX_TOOLS.includes(name as SandboxTool)) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }

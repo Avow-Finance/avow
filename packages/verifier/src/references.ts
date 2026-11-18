@@ -43,10 +43,22 @@ export async function verifyPaymentReference(
   return problem ? refuse(problem) : { ok: true }
 }
 
-type Found = { ok: true; info: LockInfo; held: LockedBacking } | { ok: false; reason: ReasonCode }
+/** What the chain holds for a commitment reference: its lock and its record, or why neither. */
+export type FoundCommitment =
+  | { ok: true; info: LockInfo; held: LockedBacking }
+  | { ok: false; reason: ReasonCode }
+type Found = FoundCommitment
 
-/** The lock and the commitment a reference names, or why the chain shows neither. */
-async function findCommitment(ref: CommitmentReference, chain: ChainReader): Promise<Found> {
+/**
+ * The lock and the commitment a reference names, or why the chain shows neither: a lock Avow's
+ * factory created, holding that commitment and side under the reference's terms hash. It runs the
+ * same tests as `verifyCommitmentReference` and hands back what it read, so a caller can show the
+ * reserve, the parties and the deadlines the lock holds.
+ */
+export async function findCommitment(
+  ref: CommitmentReference,
+  chain: ChainReader,
+): Promise<FoundCommitment> {
   const missing = (reason: ReasonCode): Found => ({ ok: false, reason })
   if (ref.chainId !== chain.chainId) return missing('message.wrong_chain')
   const info = await chain.lock(ref.lock)
