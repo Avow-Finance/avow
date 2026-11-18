@@ -1,9 +1,10 @@
 import {
   type AvowDomain,
   type Enrollment,
+  type FirstMandate,
   type Mandate,
   type MandateProof,
-  mandateVersion,
+  MESSAGE_VERSIONS,
   type SandboxDeployment,
   type SupplierProfile,
 } from '@avow-finance/spec'
@@ -47,7 +48,7 @@ export function sandboxMandate(m: {
   dailyLimit?: bigint
   /** Unix seconds. */
   expiry: bigint
-}): Mandate {
+}): FirstMandate {
   return {
     mandateId: toHex(crypto.getRandomValues(new Uint8Array(32))),
     businessId: m.businessId,
@@ -93,7 +94,7 @@ export interface SandboxAuthorizeDeps {
    */
   agent: Pick<AgentKey, 'accessKeyAddress' | 'keyType'>
   lock: Address
-  mandate: Mandate
+  mandate: FirstMandate
   /** The suppliers the mandate names, each approved on the lock. */
   suppliers: readonly SupplierProfile[]
   /** The agent key this one replaces, revoked in the account's keychain in the same transaction. */
@@ -110,8 +111,9 @@ export interface SandboxAuthorizeDeps {
  * carries its hash and names it, and the mandate gets no signature of its own. When the key
  * replaces another, the same transaction first revokes the old key in the account's keychain, so
  * it can't sign for the account again, and removes from the lock each supplier the new mandate
- * drops. Bookings the old key made stay in the lock until their release. A new mandate needs a new
- * key, since the account binds each key to one mandate's hash. If any call fails, the whole
+ * drops. Bookings the old key made stay in the lock until their release. Only a first mandate goes
+ * on this way, since the account binds each key to one mandate's hash. A mandate that changes the
+ * same key's limits replaces it under the account's signature instead. If any call fails, the whole
  * transaction reverts and no key goes on.
  */
 export async function authorizeSandboxKey(
@@ -144,7 +146,7 @@ export async function authorizeSandboxKey(
   return {
     mandate: {
       type: 'Mandate',
-      schemaVersion: mandateVersion(mandate),
+      schemaVersion: MESSAGE_VERSIONS.Mandate,
       chainId: d.chainId,
       lock,
       message: mandate,

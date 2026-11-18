@@ -1,4 +1,3 @@
-import { hashTypedData } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   MANDATE_REPLACEMENT_TYPES,
@@ -48,8 +47,32 @@ describe('a mandate that replaces another', () => {
     expect(td.domain.version).toBe(MESSAGE_VERSIONS.Mandate)
     expect(td.types).toBe(MANDATE_TYPES)
     expect('replaces' in td.message).toBe(false)
-    expect(mandateHash(first, DOMAIN)).toBe(
-      hashTypedData({ ...td, types: MANDATE_TYPES } as Parameters<typeof hashTypedData>[0]),
+    // The hash version 0.6.0 gave this mandate, before replacements existed.
+    const golden: Mandate = {
+      mandateId: `0x${'0a'.repeat(32)}`,
+      businessId: 'biz_golden',
+      agentId: 'agent-golden',
+      account: '0x00000000000000000000000000000000000000a1',
+      agentKey: '0x00000000000000000000000000000000000000b2',
+      actions: ['reserve', 'start', 'cancel'],
+      currency: 'USD',
+      capPerCommitment: 50_000_000n,
+      capOpenReserves: 200_000_000n,
+      suppliers: ['biz_supplier'],
+      categories: ['compute'],
+      paymentLimits: [
+        {
+          token: '0x20C0000000000000000000000000000000000001',
+          amount: 100_000_000n,
+          period: 86400n,
+        },
+      ],
+      approvalRule: { kind: 'never' },
+      expiry: 1_900_000_000n,
+      nonce: 1n,
+    }
+    expect(mandateHash(golden, DOMAIN)).toBe(
+      '0x2313bebd7868703c3c9472f986c276a64cbcefd3ed2723dff7dcd3efd9e0ec90',
     )
   })
 

@@ -1,4 +1,4 @@
-import { type MandateProof, parseMandateProof } from '@avow-finance/spec'
+import { type FirstMandate, type MandateProof, parseMandateProof } from '@avow-finance/spec'
 import { describe, expect, it } from 'vitest'
 import { MemoryChain } from './chain.js'
 import { mandateProofProblem } from './mandate-proof.js'
@@ -15,7 +15,7 @@ import {
 } from './test-helpers.js'
 
 /** A mandate the transaction `authorizedIn` authorized, as the SDK hands one over. */
-const authorized = (message = mandate, authorizedIn = KEY_TX): MandateProof => ({
+const authorized = (message: FirstMandate = mandate, authorizedIn = KEY_TX): MandateProof => ({
   type: 'Mandate',
   schemaVersion: '1',
   chainId: CHAIN_ID,
@@ -85,7 +85,10 @@ describe('a mandate and what shows the business authorized it', () => {
     if (!signed.ok) throw new Error(signed.reason)
     expect(await check(new MemoryChain(CHAIN_ID), signed.value)).toBeNull()
     // The same signature on a changed mandate.
-    const forged = { ...signed.value, message: { ...mandate, capPerCommitment: 1n } }
+    const forged = {
+      ...signed.value,
+      message: { ...mandate, capPerCommitment: 1n },
+    } as MandateProof
     expect(await check(new MemoryChain(CHAIN_ID), forged)).toBe('mandate.signature_invalid')
   })
 })

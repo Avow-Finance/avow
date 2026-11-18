@@ -7,7 +7,14 @@ import {
   type TypedDataDomain,
 } from 'viem'
 import type { ReasonCode } from './reasons.js'
-import type { ApprovalRule, Mandate, PaymentLimit, Side } from './types.js'
+import type {
+  ApprovalRule,
+  Mandate,
+  MandateFields,
+  PaymentLimit,
+  ReplacementMandate,
+  Side,
+} from './types.js'
 import {
   DOMAIN_NAME,
   isSupportedMessageVersion,
@@ -26,7 +33,7 @@ export interface AvowDomain {
   verifyingContract: Address
 }
 
-export function domain(d: AvowDomain, version: string): TypedDataDomain {
+export function domain(d: AvowDomain, version: string): TypedDataDomain & { version: string } {
   return {
     name: DOMAIN_NAME,
     version,
@@ -831,7 +838,10 @@ export const isReplacementTypedData = (
 ): td is Extract<MandateTypedData, { types: typeof MANDATE_REPLACEMENT_TYPES }> =>
   'replaces' in td.message
 
-/** The digest of a mandate's typed data under whichever table it signs with. */
+/**
+ * The digest of a mandate's typed data under whichever table it signs with. Both branches make
+ * the same call, since viem types its argument by one table, so each has to see a single table.
+ */
 function hashMandateTypedData(td: MandateTypedData): Hex {
   return isReplacementTypedData(td) ? hashTypedData(td) : hashTypedData(td)
 }
@@ -885,11 +895,11 @@ type SameFields<Keys extends PropertyKey, Names extends PropertyKey> = [
  */
 interface InterfacesMatchTables {
   Mandate: SameFields<
-    keyof Mandate | 'approvalAbove',
+    keyof ReplacementMandate | 'approvalAbove',
     FieldNames<typeof MANDATE_REPLACEMENT_TYPES.Mandate>
   >
   FirstMandate: SameFields<
-    Exclude<keyof Mandate, 'replaces'> | 'approvalAbove',
+    keyof MandateFields | 'approvalAbove',
     FieldNames<typeof MANDATE_TYPES.Mandate>
   >
   PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>

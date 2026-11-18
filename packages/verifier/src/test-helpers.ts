@@ -7,6 +7,7 @@ import {
   digestOf,
   discloseSection,
   dollars,
+  type FirstMandate,
   gpuReservationTerms,
   type LockRecordField,
   type LockTerms,
@@ -109,7 +110,7 @@ export const RECORD_CHANGES: { readonly [K in LockRecordField]: LockedBacking[K]
   }
 })()
 
-export const mandate: Mandate = {
+export const mandate: FirstMandate = {
   mandateId: id('mandate-1'),
   businessId: 'biz_buyer',
   agentId: 'agt_1',

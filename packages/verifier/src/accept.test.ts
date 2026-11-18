@@ -127,6 +127,39 @@ async function ready() {
   return prepared
 }
 
+describe('accepting a commitment under a mandate that replaced the first', () => {
+  // A wider mandate whose open-reserves cap Avow lowered on its approval, as it does to count the
+  // reserves still open under the mandate it replaced.
+  const replacement = {
+    ...mandate,
+    capOpenReserves: mandate.capOpenReserves * 2n,
+    nonce: mandate.nonce + 1n,
+    replaces: mHash,
+  }
+  const rHash = mandateHash(replacement, DOMAIN)
+  const underReplacement = async (capOpenReserves: bigint) => {
+    const a = approval({ mandateHash: rHash, capOpenReserves })
+    chain.setBacking(LOCK, COMMITMENT, 'buyer', lockedBacking({}, a))
+    return prepare({
+      authorization: await signedAuthorization(authorization({ mandateHash: rHash })),
+      approval: await signedApproval(a),
+      mandate: await signedMandate(replacement),
+      agreed: { ...agreed, mandateHash: rHash },
+    })
+  }
+
+  it("prepares the acceptance when Avow's approval holds a lower open-reserves cap", async () => {
+    expect((await underReplacement(mandate.capOpenReserves)).ok).toBe(true)
+    expect((await underReplacement(replacement.capOpenReserves)).ok).toBe(true)
+  })
+
+  it("refuses an approval whose open-reserves cap is above the replacement's", async () => {
+    expect(await underReplacement(replacement.capOpenReserves + 1n)).toEqual(
+      refused('approval.mandate_mismatch'),
+    )
+  })
+})
+
 describe('the supported acceptance path', () => {
   it('builds the acceptance the lock checks, naming the digest the lock stored', async () => {
     const prepared = await ready()
