@@ -1,0 +1,40 @@
+name: Docs
+
+# A maintainer runs this by hand to publish the developer docs in fern/ to the docs site. It checks
+# the docs first, so a broken page never replaces a working one. Publishing needs the docs
+# environment's FERN_TOKEN secret, which `fern token` makes for the avow organization.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish the docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: docs
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # The same Fern version fern.config.json pins, so the check and the publish match.
+      - name: Check the docs
+        run: npx --yes fern-api@5.190.0 check
+
+      - name: Publish
+        run: npx --yes fern-api@5.190.0 generate --docs
+        env:
+          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
