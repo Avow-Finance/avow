@@ -1,4 +1,4 @@
-import { dollars, mandateHash } from '@avow-finance/spec'
+import { dollars, mandateHash, SANDBOX_PATHS } from '@avow-finance/spec'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,8 +59,13 @@ async function enrolled() {
     keyAuthorizedIn: `0x${'ab'.repeat(32)}`,
     suppliers: [supplier],
   })
-  // Anything sent anywhere is counted, since a check sends nothing.
-  const fetch = (async () => {
+  // Anything sent anywhere is counted, since a check sends nothing. The agent reads its mandates
+  // from Avow once when it starts, which this API answers it has no route for, so the agent keeps
+  // the one it was enrolled with.
+  const fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith(SANDBOX_PATHS.agentMandates)) {
+      return Response.json({ error: { code: 'request.invalid' } }, { status: 404 })
+    }
     chain.sent++
     return new Response('{}', { status: 500 })
   }) as typeof globalThis.fetch

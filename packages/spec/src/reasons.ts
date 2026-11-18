@@ -29,6 +29,10 @@ export const REASON_CODES = {
   'mandate.over_commitment_cap': 'The amount is above the cap per commitment',
   'mandate.over_open_reserves_cap': "The amount would take open reserves above the mandate's cap",
   'mandate.ends_before_window': 'The mandate expires before the booking window ends',
+  'mandate.replaces_mismatch':
+    "The new mandate doesn't name the agent's current mandate as the one it replaces, or one in the agent's chain of mandates doesn't name the one before it",
+  'mandate.change_pending':
+    "The agent's limits just changed, and Avow approves under the new ones once every approval given under the old ones has expired, which takes at most a few minutes, so send it again then",
   'approval.human_required': 'The mandate asks the administrator to approve this reserve',
   'approval.human_invalid':
     "The administrator's approval is forged, expired, used already, or names another amount or supplier",

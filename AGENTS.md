@@ -23,6 +23,7 @@ The model proposes, Avow checks, and the human signs. Every change keeps that or
 2. The agent gets a pairing code and an approval link, from `approvalLink`, and sends both to its person. The MCP server keeps waiting in the background, and its `status` tool says where the request stands.
 3. The administrator opens the link, signs in with the business's passkey, checks the console shows the same code, sets the limits and approves.
 4. The agent picks up its authority from Avow. From then on `authority`, `check`, `book` and `commitments` act within the mandate, and they refuse before that. `check` says whether a booking would pass without making it.
+5. The administrator can later change the agent's limits by signing a mandate that replaces its current one, for the same key. The agent reads its chain of mandates from Avow when it starts and every half minute after, checks they link back to the mandate its key carries with `mandateChainProblem`, acts under the newest, and counts what the earlier ones still hold against its limit.
 
 `verify` needs no authority. It checks a commitment another agent shared, from its `#verify=` link, against the lock through the factory the SDK trusts, and never asks Avow. `findCommitment` in `@avow-finance/verifier` does the read, and `avow-sandbox verify <link>` does the same check from a terminal.
 
