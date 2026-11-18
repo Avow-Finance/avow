@@ -24,3 +24,13 @@ describe('the agent skill', () => {
     expect(SKILL).toMatch(/^---\nname: avow-commitments\ndescription: Use when .+\n---\n/)
   })
 })
+
+describe('the tools reference', () => {
+  it('lists every tool the MCP server has', () => {
+    const page = readFileSync(
+      join(import.meta.dirname, '../../../../fern/docs/pages/tools.mdx'),
+      'utf8',
+    )
+    for (const tool of MCP_TOOLS) expect(page).toContain(`| \`${tool.name}\` |`)
+  })
+})

@@ -16,48 +16,39 @@ Avow runs on testnet today. Nothing here moves real money.
 ## Get started
 
 <Steps>
-  <Step title="Make your agent">
-    You need Node 20 or later. One command asks for your business's name and makes a folder holding `business.ts`, your business, `agent.ts`, your agent, and a README. Then it sets the business up in the same terminal.
+  <Step title="Connect your agent">
+    Your agent asks for authority itself, whatever model or framework it runs on. In Claude Desktop, install [the extension](https://github.com/Avow-Finance/avow/releases/latest/download/avow-sandbox.mcpb). In Claude Code, run `npx avow-sandbox mcp add claude-code` in the agent's folder. From any terminal, run `npx avow-sandbox connect`. Claude Code and the terminal need Node 22.12 or later.
 
-  ```bash
-  npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
-  ```
-
+    Then ask the agent to connect. It makes its own key, keeps it on your machine and hands you a link and a pairing code.
   </Step>
 
-  <Step title="Set it up">
-    Setup makes your business's key on your machine and seals it under a passphrase you choose, in `.avow`, a folder git ignores. It registers a sandbox business with Avow, which pays it $1,500 of test dollars, and creates the business's lock. It shows you the mandate it's about to sign from `business.ts`, asks you to confirm it and type the passphrase, and enrolls your agent. Then it opens a screen that shows each run as it happens. When you come back later, `npm start` in the folder picks the business up again.
-
-  ```bash
-  cd my-agent
-  npm start
-  ```
-
+  <Step title="Approve it">
+    Open the link on any device that has your passkey. Sign in, or set up a sandbox business, check the console shows the same code, and set the limits: the suppliers it may book, the most per commitment, the most held at once, a daily limit and an end date. Approving signs that mandate with your passkey.
   </Step>
 
-  <Step title="See what your agent can and can't commit you to">
-    Press Enter and the agent books 8 H100s with a $200 reserve, in a process that holds only the agent's key. Your machine runs the open verifier, which checks Avow's approval against your terms and mandate, and checks that a lock Avow's factory made holds the commitment and enforces your terms. Then the supplier accepts. Change the reserve to 400 and press Enter. Your agent has $300 left of its $500 held at once, so Avow refuses the reserve and no money moves. You see the reason code, the layer that refused it and the amounts. The lock takes no reserve without Avow's approval, and your agent's key moves at most $1,000 a day, a limit your business set on chain. The same agent takes bookings from Claude through three MCP tools, with the same refusals. A $250 booking then passes as a second commitment under the same authority.
+  <Step title="Let it commit">
+    Ask it to book. `check` says whether a booking would pass and which layer would refuse it, without moving money. `book` reserves the money in your business's own lock for that one supplier, and a refusal comes back with its reason code. Each commitment has a link, and the supplier's agent checks it with `verify` before it relies on it. You see every commitment in the console, and you can revoke the agent there at any time.
   </Step>
 </Steps>
 
-When you want both sides of a booking, with cancellations, charges and disputes, the [walkthroughs](/docs/walkthroughs/overview) run the buyer and supplier quickstarts.
+[Connect your own agent](/docs/get-started/connect-your-agent) has every path in detail. For a ready-made sample instead, `npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent` makes a folder with an agent and a business of its own, and the [walkthroughs](/docs/walkthroughs/overview) run both sides of a booking with cancellations, charges and disputes.
 
 ## Build with Avow
 
 <CardGroup cols={2}>
-  <Card title="How Avow works" icon="duotone book" href="/docs/get-started/introduction">
-    Authority, commitments, reserves, and how one commitment will rely on another next.
+  <Card title="Introduction" icon="duotone book" href="/docs/get-started/introduction">
+    Authority, commitments and reserves, and how one commitment relies on another.
   </Card>
 
   <Card title="Avow explained simply" icon="duotone lightbulb" href="/docs/get-started/avow-explained-simply">
     The same ideas without the jargon.
   </Card>
 
-  <Card title="Buyer quickstart" icon="duotone cart-shopping" href="https://github.com/Avow-Finance/avow/tree/main/examples/buyer">
-    A business and its agent, from an empty account to a booking a supplier accepts.
+  <Card title="Tools and commands" icon="duotone terminal" href="/docs/reference/tools">
+    Every MCP tool and terminal command, what it takes and what it answers.
   </Card>
 
-  <Card title="Supplier quickstart" icon="duotone server" href="https://github.com/Avow-Finance/avow/tree/main/examples/supplier">
-    Check an agent's authority and its reserve, then accept the booking.
+  <Card title="Walkthroughs" icon="duotone route" href="/docs/walkthroughs/overview">
+    The buyer and supplier quickstarts, through a kept booking, a capped charge, a dispute and limits that hold.
   </Card>
 </CardGroup>

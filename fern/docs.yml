@@ -8,7 +8,7 @@ navigation:
     contents:
       - page: Introduction
         path: ./docs/pages/introduction.mdx
-      - page: Avow Explained Simply
+      - page: Avow explained simply
         path: ./docs/pages/avow-explained-simply.mdx
       - page: Trust model
         path: ./docs/pages/trust-model.mdx
@@ -30,10 +30,6 @@ navigation:
     contents:
       - page: Contesting a charge
         path: ./docs/pages/contesting.mdx
-  - section: Reference
-    contents:
-      - page: Relay refusals
-        path: ./docs/pages/relay-refusals.mdx
   - section: Composable commitments
     contents:
       - page: Version 3 terms
@@ -44,6 +40,12 @@ navigation:
         path: ./docs/pages/jobs.mdx
       - page: Committing to a quote
         path: ./docs/pages/commit-to-quote.mdx
+  - section: Reference
+    contents:
+      - page: Tools and commands
+        path: ./docs/pages/tools.mdx
+      - page: Relay refusals
+        path: ./docs/pages/relay-refusals.mdx
 # Light follows avow.finance's white and violet, and dark keeps the black and white it had.
 colors:
   accentPrimary:

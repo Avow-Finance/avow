@@ -5,11 +5,11 @@ slug: docs/walkthroughs/limits
 
 An agent can only commit what its business authorized. The mandate the administrator signed sets a cap per booking and a cap on what the agent's bookings can hold at once, among other limits, and a booking past either is refused with a reason code before any money moves. This walkthrough tries one booking past each cap.
 
-Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running, and with three bookings open. The quickstart's mandate lets the agent reserve up to $500 per booking and hold three bookings at once, so the dispute, the capped charge and the kept booking fill it.
+Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running, and with three bookings open. The quickstart's mandate lets the agent reserve up to \$500 per booking and hold three bookings at once, so the dispute, the capped charge and the kept booking fill it.
 
 ## A booking over the cap per booking
 
-Ask for a $600 reserve.
+Ask for a \$600 reserve.
 
 ```bash
 RESERVE_DOLLARS=600 node dist/main.js book
@@ -26,13 +26,13 @@ Nothing was signed, and Avow was never asked. An agent that skipped the SDK's ch
 
 ## A booking past the open bookings cap
 
-Book again at the default $500 while the three bookings are still open, so before the kept booking is released.
+Book again at the default \$500 while the three bookings are still open, so before the kept booking is released.
 
 ```bash
 node dist/main.js book
 ```
 
-The SDK's own check passes, since it doesn't read what the lock holds. The supplier signs the terms, and Avow refuses the reserve, because the lock already holds $1,500 under this mandate.
+The SDK's own check passes, since it doesn't read what the lock holds. The supplier signs the terms, and Avow refuses the reserve, because the lock already holds \$1,500 under this mandate.
 
 ```
 booking with <supplier business id>

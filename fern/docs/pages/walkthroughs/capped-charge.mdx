@@ -3,7 +3,7 @@ title: A capped charge
 slug: docs/walkthroughs/capped-charge
 ---
 
-The business cancels after free cancellation has ended, and the supplier charges for it. The terms cap a late cancellation at half the reserve, so the supplier is paid at most $250 of the $500, and the other $250 goes back to the business. Avow confirms the charge only because its own records show the business cancelling inside the late window. A supplier can't charge more than the cap, and a late-cancellation charge with no late cancellation in Avow's records goes to a ruling instead.
+The business cancels after free cancellation has ended, and the supplier charges for it. The terms cap a late cancellation at half the reserve, so the supplier is paid at most \$250 of the \$500, and the other \$250 goes back to the business. Avow confirms the charge only because its own records show the business cancelling inside the late window. A supplier can't charge more than the cap, and a late-cancellation charge with no late cancellation in Avow's records goes to a ruling instead.
 
 Start from both sides set up as [Run all four in an hour](/docs/walkthroughs/overview) shows, with the supplier's `serve` running.
 
@@ -52,7 +52,7 @@ Avow confirmed the charge on 0x<commitment id>. It pays USD 250 (250000000 base 
 
 ## The charge pays
 
-At confirmation the lock sends the business the $250 the charge can't take. Ten minutes later the contest window closes, Avow's settlement service sends the charge, and the lock pays $250 to the supplier's payout address. Both payments are on the [Moderato explorer](https://explore.testnet.tempo.xyz) under the lock.
+At confirmation the lock sends the business the \$250 the charge can't take. Ten minutes later the contest window closes, Avow's settlement service sends the charge, and the lock pays \$250 to the supplier's payout address. Both payments are on the [Moderato explorer](https://explore.testnet.tempo.xyz) under the lock.
 
 ## What it proves
 
