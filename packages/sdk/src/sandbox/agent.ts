@@ -14,6 +14,7 @@ import {
   isSessionId,
   lockTerms,
   type Mandate,
+  type MandateChain,
   type MandateProof,
   type RailState,
   type ReasonCode,
@@ -45,6 +46,7 @@ import { landedReverted, sendErrorIn, sendSponsored } from '../send.js'
 import { SupplierDeclined } from '../supplier.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
+import { heldMandates } from './mandates.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
 import {
   addCommitment,
@@ -361,7 +363,22 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
   const run = session?.run ?? 0
   const source = options.source ?? 'script'
   report({ type: 'run_started', run, source, tool: options.tool ?? null })
+  const mandates = () =>
+    heldMandates({
+      apiUrl: deployment.apiUrl,
+      client,
+      agentKey,
+      account: item.business.account,
+      keyAuthorizedIn: item.keyAuthorizedIn,
+      domain,
+      send,
+    })
+  // The administrator may have replaced the mandate since this folder was set up, so the agent
+  // starts under the one Avow holds now, and under the one it was enrolled with if Avow can't say.
+  const chain = await mandates().catch(() => null)
   return booker({
+    mandates,
+    chain,
     deployment,
     client,
     store,
@@ -383,6 +400,11 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
   })
 }
 
+/** What the booker holds from a chain of mandates, or null when there's none to hold. */
+function heldFrom(chain: MandateChain | null) {
+  return chain && { mandate: chain.current.proof, hash: chain.current.hash, earlier: chain.earlier }
+}
+
 /** The agent's side of booking, under the mandate it holds. */
 function booker(m: {
   deployment: SandboxDeployment
@@ -399,19 +421,47 @@ function booker(m: {
   source: AgentSource
   report: (event: SessionEvent) => void
   send: typeof fetch
+  /** Every mandate the agent has held, from Avow, or null when it can't say. */
+  mandates: () => Promise<MandateChain | null>
+  /** The chain it read when the agent started, if any. */
+  chain: MandateChain | null
 }): SandboxAgent {
-  const { deployment, client, mandate, run, source, report, send } = m
+  const { deployment, client, run, source, report, send } = m
   const { lock, account } = m.business
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
-  const cap = mandate.message.capOpenReserves
-  const dailyLimit = dailyLimitOf(mandate.message, deployment.token)
   const token = moderatoUsdToken(deployment.token)
+
+  // The mandate the agent acts under, which the administrator can replace without touching its
+  // key, and the hashes of those it replaced, whose open reserves count against its limit too.
+  // Avow is asked again at most every half minute, and a failed read keeps what the agent held.
+  let held = heldFrom(m.chain) ?? { mandate: m.mandate, hash: m.mandateHash, earlier: [] as Hex[] }
+  let readAt = m.chain ? Date.now() : 0
+  async function current(): Promise<typeof held> {
+    if (Date.now() - readAt < 30_000) return held
+    readAt = Date.now()
+    held = heldFrom(await m.mandates().catch(() => null)) ?? held
+    return held
+  }
+  /** The key's witness, the first mandate of the chain, which the key carries on the chain. */
+  const witness = () => held.earlier.at(-1) ?? held.hash
+  const capOf = (h: typeof held) => h.mandate.message.capOpenReserves
+  const dailyLimitNow = () => dailyLimitOf(held.mandate.message, deployment.token)
+
+  /** What the lock holds open under the current mandate and every one it replaced. */
+  async function openAcross(h: typeof held): Promise<bigint> {
+    const each = await Promise.all(
+      [h.hash, ...h.earlier].map((hash) => readOpenReserves(client, lock, hash)),
+    )
+    return each.reduce((a, b) => a + b, 0n)
+  }
 
   /** The authority left, read from the lock, which Avow's reserve check reads too. */
   async function leftNow(): Promise<bigint> {
+    const h = await current()
+    const cap = capOf(h)
     for (let i = 1; ; i++) {
       try {
-        const open = await readOpenReserves(client, lock, m.mandateHash)
+        const open = await openAcross(h)
         return open >= cap ? 0n : cap - open
       } catch (error) {
         if (i >= 3) throw error
@@ -421,7 +471,7 @@ function booker(m: {
   }
 
   const dailyLeftNow = () =>
-    dailyLimit === null
+    dailyLimitNow() === null
       ? Promise.resolve(null)
       : keyLeftToday(client, account, m.agentKey.accessKeyAddress, deployment.token)
 
@@ -434,9 +484,9 @@ function booker(m: {
     const amounts = {
       needed: r.needed,
       left,
-      authority: cap,
-      capPerCommitment: mandate.message.capPerCommitment,
-      dailyLimit,
+      authority: capOf(held),
+      capPerCommitment: held.mandate.message.capPerCommitment,
+      dailyLimit: dailyLimitNow(),
       dailyLeft,
     }
     report({ type: 'refused', run, source, code: r.code, layer: r.layer, amounts })
@@ -447,12 +497,21 @@ function booker(m: {
   }
 
   return {
-    authority: toDollars(cap),
-    dailyLimit: dailyLimit === null ? null : toDollars(dailyLimit),
+    get authority() {
+      return toDollars(capOf(held))
+    },
+    get dailyLimit() {
+      const limit = dailyLimitNow()
+      return limit === null ? null : toDollars(limit)
+    },
     suppliers: m.suppliers,
     business: m.business,
-    mandate,
-    mandateHash: m.mandateHash,
+    get mandate() {
+      return held.mandate
+    },
+    get mandateHash() {
+      return held.hash
+    },
     left: async () => toDollars(await leftNow()),
     dailyLeft: async () => {
       const left = await dailyLeftNow()
@@ -461,9 +520,10 @@ function booker(m: {
 
     async commitments() {
       const stored = await loadCommitments(m.store)
+      const { hash } = await current()
       return Promise.all(
         stored.map(async (c): Promise<SandboxCommitmentRecord> => {
-          const held = await readBacking(
+          const backing = await readBacking(
             client,
             c.reference.lock,
             c.reference.commitmentId,
@@ -475,9 +535,9 @@ function booker(m: {
             amount: toDollars(c.amount),
             supplier: c.supplier,
             madeAt: c.madeAt,
-            state: held === undefined ? 'unread' : (held?.state ?? 'none'),
-            current: c.mandateHash.toLowerCase() === m.mandateHash.toLowerCase(),
-            releaseDate: held ? held.releaseDate : null,
+            state: backing === undefined ? 'unread' : (backing?.state ?? 'none'),
+            current: c.mandateHash.toLowerCase() === hash.toLowerCase(),
+            releaseDate: backing ? backing.releaseDate : null,
           }
         }),
       )
@@ -487,16 +547,16 @@ function booker(m: {
       const reserve = micros(b.reserve, 'reserve')
       const now = systemClock()
       const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now })
-      const [open, dailyLeft] = await Promise.all([
-        readOpenReserves(client, lock, m.mandateHash),
-        dailyLeftNow(),
-      ])
+      const h = await current()
+      const { mandate } = h
+      const cap = capOf(h)
+      const [open, dailyLeft] = await Promise.all([openAcross(h), dailyLeftNow()])
       const amounts: RefusalAmounts = {
         needed: reserve,
         left: open >= cap ? 0n : cap - open,
         authority: cap,
         capPerCommitment: mandate.message.capPerCommitment,
-        dailyLimit,
+        dailyLimit: dailyLimitNow(),
         dailyLeft,
       }
       const no = (code: ReasonCode, layer: RefusalLayer): SandboxPreflight => ({
@@ -510,7 +570,8 @@ function booker(m: {
       if (!known || !mandate.message.suppliers.includes(b.supplier)) {
         return no('mandate.supplier_not_allowed', 'sdk')
       }
-      // The same check Avow runs before it approves, with the open reserves the lock reports.
+      // The same check Avow runs before it approves, with the open reserves the lock reports
+      // under this mandate and every one it replaced.
       const allowed = checkMandate({
         mandate: mandate.message,
         request: {
@@ -559,6 +620,7 @@ function booker(m: {
     {
       const b = { supplier: supplierId }
       const leftBefore = await leftNow()
+      const { mandate, hash: mandateHash } = held
       const supplier = m.suppliers.find((s) => s.id === b.supplier)
       // The mandate names its suppliers, so the SDK refuses any other before anyone signs.
       if (!supplier || !mandate.message.suppliers.includes(b.supplier)) {
@@ -640,7 +702,7 @@ function booker(m: {
         reference,
         amount: reserve,
         supplier: supplier.id,
-        mandateHash: m.mandateHash,
+        mandateHash,
         madeAt: systemClock(),
       })
       const left = await leftNow().catch(() => (leftBefore > reserve ? leftBefore - reserve : 0n))
@@ -660,7 +722,8 @@ function booker(m: {
             commitment,
             reference,
             mandate: mandate.message,
-            mandateHash: m.mandateHash,
+            mandateHash,
+            witness: witness(),
             account,
             agentKey: m.agentKey.accessKeyAddress,
             keyAuthorizedIn: m.keyAuthorizedIn,
@@ -717,6 +780,8 @@ async function verifyCommitment(m: {
   reference: CommitmentReference
   mandate: Mandate
   mandateHash: Hex
+  /** The mandate hash the key carries, the first of the agent's chain of mandates. */
+  witness: Hex
   account: Address
   agentKey: Address
   keyAuthorizedIn: Hex
@@ -813,7 +878,7 @@ async function verifyCommitment(m: {
       "Your agent's key is on the account, bound to your mandate",
       key === undefined
         ? 'service.unavailable'
-        : key?.active && key.witness?.toLowerCase() === m.mandateHash.toLowerCase()
+        : key?.active && key.witness?.toLowerCase() === m.witness.toLowerCase()
           ? null
           : 'chain.agent_key_inactive',
     ),

@@ -81,6 +81,13 @@ export const SANDBOX_PATHS = {
   /** Where the business's console sends the administrator's approval of one agent's request. */
   agentApproval: (agentKey: Address) =>
     `/v1/sandbox/agent-requests/${agentKey.toLowerCase()}/approval`,
+  /**
+   * Where the business's console sends a mandate that replaces one of its agent's, signed by the
+   * business account. Avow answers with the agent's mandates as `AgentMandates`.
+   */
+  agentMandate: (agentKey: Address) => `/v1/sandbox/agents/${agentKey.toLowerCase()}/mandate`,
+  /** Where an agent reads every mandate it has held, the current one first, as `AgentMandates`. */
+  agentMandates: '/v1/sandbox/agents/mandates',
   /** Where a buyer's agent sends an order to another business. */
   mailboxOrders: '/v1/sandbox/mailbox/orders',
   /** Where a supplier's agent reads the orders waiting on it. */
