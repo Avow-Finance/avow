@@ -44,6 +44,11 @@ navigation:
         path: ./docs/pages/jobs.mdx
       - page: Committing to a quote
         path: ./docs/pages/commit-to-quote.mdx
+# Light follows avow.finance's white and violet, and dark keeps the black and white it had.
 colors:
-  accentPrimary: '#ffffff'
-  background: '#000000'
+  accentPrimary:
+    light: '#7856f0'
+    dark: '#ffffff'
+  background:
+    light: '#fcfcfb'
+    dark: '#000000'
