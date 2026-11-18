@@ -6,6 +6,13 @@ slug: docs/composable-commitments/dependency-check
 
 A reseller sells capacity it booked from someone else, so its sale relies on its own purchase, and the sale's [version 3 terms](/docs/composable-commitments/terms-v3) name that purchase. `verifyDependencies`, in `@avow-finance/verifier`, checks each booking named before anyone commits to the sale. It proves that a matching booking had been accepted when it was checked, and it promises nothing about that booking after that moment.
 
+## In short
+
+- **Five tests, on the chain.** Each booking relied on has to sit in a lock Avow's factory made, belong to the business selling, be accepted and past free cancellation, match the terms hash, and fit the sale.
+- **Three checkers.** The buyer before it funds, Avow's API before it approves, and the reseller's verifier before it accepts, each reading the lock itself at a pinned block.
+- **One moment.** A pass proves the state at that block. The upstream booking can still be cancelled or charged afterwards, and the downstream commitment stands on its own terms.
+- **Not checked.** Overselling, and whether the upstream supplier delivers.
+
 ## Who checks, and when
 
 Each booking is an ordinary commitment in its own lock, no money moves between the two locks, and neither lock knows about the other. So the parties that rely on a dependency check it at set moments, each by reading the reseller's lock directly. The terms' `dependencyCheck` setting, which these pages call dependency disclosure control, decides whether the buyer is one of them.
@@ -21,6 +28,14 @@ Each booking is an ordinary commitment in its own lock, no money moves between t
 ## The five tests
 
 Before it reads anything, the check refuses terms whose shape, setting, dependencies section or subject break the rules. Terms carrying the dependencies section only as its digest are `dependency.elided`. The terms name only the buyer side of a lock, so an entry naming the supplier side is `terms.invalid`, and a subject the template refuses, such as one asking for no GPUs, gives the template's reason. Then it reads each booking's lock and refuses with the first reason that applies.
+
+| Test | Passes when | Refuses with |
+| --- | --- | --- |
+| Provenance | The supported factory made the lock | `dependency.lock_unknown` |
+| Ownership | The lock belongs to the supplier Avow's approval names | `dependency.not_owned` |
+| State | The booking is held, supplied by someone else, accepted with no report, and past free cancellation | `dependency.not_found`, `dependency.self_supplied`, `dependency.not_accepted`, `dependency.charge_pending`, `dependency.ended`, `dependency.cancellable` |
+| Terms | The lock holds it under the named terms hash, and the shown subject hashes to it | `dependency.terms_mismatch`, `dependency.disclosure_invalid` |
+| Fit | The same GPU and region, no more of them, inside the booking's window | `dependency.does_not_fit` |
 
 1. **Provenance.** The lock is on a chain the caller supports, that chain's supported factory lists it, and the lock's own factory field names the same factory (`dependency.lock_unknown`). A lookalike contract with the same functions and an accepted booking is refused here, and nothing is read from it.
 2. **Ownership.** The lock belongs to the account Avow's approval names as the sale's supplier (`dependency.not_owned`). The lock copies that account into the sale's commitment, and the check takes the owner from the approval and from nowhere else, so a reseller can't cite another business's booking by naming that business in its quote. An approval for the supplier side of a reserve is `approval.terms_mismatch`.
