@@ -101,8 +101,10 @@ export interface PaymentLimit {
 /**
  * What one agent may commit to, signed by the business's administrator. An empty supplier or
  * category list puts no limit on that dimension, and at least one of the two must be non-empty.
+ * These are the fields every mandate signs, and `Mandate` is either a first mandate or one that
+ * replaces another.
  */
-export interface Mandate {
+export interface MandateFields {
   mandateId: Hex
   businessId: string
   agentId: string
@@ -121,14 +123,20 @@ export interface Mandate {
   approvalRule: ApprovalRule
   expiry: bigint
   nonce: bigint
-  /**
-   * The hash of the mandate this one replaces, for the same business, lock and agent key, when the
-   * administrator changed the agent's limits in place. A first mandate has none. A mandate with
-   * one signs at `MANDATE_REPLACEMENT_VERSION`, and only the business account's own signature
-   * authorizes it, since the key on the chain still carries the first mandate's hash.
-   */
-  replaces?: Hex
 }
+
+/** The mandate an agent's key was put on with, which replaces none and signs at version 1. */
+export type FirstMandate = MandateFields & { replaces?: never }
+
+/**
+ * A mandate that replaces another, for the same business, lock and agent key, when the
+ * administrator changed the agent's limits in place. `replaces` is the hash of the mandate it
+ * replaces. It signs at `MANDATE_REPLACEMENT_VERSION`, and only the business account's own
+ * signature authorizes it, since the key on the chain still carries the first mandate's hash.
+ */
+export type ReplacementMandate = MandateFields & { replaces: Hex }
+
+export type Mandate = FirstMandate | ReplacementMandate
 
 /**
  * How a disputed charge ends when Avow doesn't rule. Avow's ruling key can rule until day 30 after

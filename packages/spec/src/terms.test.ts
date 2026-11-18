@@ -763,8 +763,8 @@ describe("the approval's parties, token and mandate", () => {
         'approval.mandate_mismatch',
       )
     }
-    // A lower open-reserves cap is what Avow signs once a mandate replaces another, so the lock
-    // holds the agent to the combined limit across its mandates.
+    // A lower open-reserves cap is what Avow signs once a mandate replaces another. Avow works out
+    // the allowance left across the agent's mandates, and the lock enforces the cap it signs.
     expect(
       approvalMandateProblem({ ...approval, capOpenReserves: caps.capOpenReserves - 1n }, expected),
     ).toBeNull()

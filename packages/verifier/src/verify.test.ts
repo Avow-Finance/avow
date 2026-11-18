@@ -222,6 +222,25 @@ describe('a mandate that replaced the one the key was put on with', () => {
     ).toEqual(refused('mandate.signature_invalid'))
   })
 
+  it("accepts a replacement one of the account's admin keys signed", async () => {
+    const admin = newKey()
+    chain.addAdminKey(buyer.address, admin.address)
+    const result = await verify(await underReplacement(), {
+      agreed: rAgreed,
+      mandate: await signedMandate(replacement, admin),
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it("refuses a replacement the agent's own key signed, so it can't widen its own limits", async () => {
+    expect(
+      await verify(await underReplacement(), {
+        agreed: rAgreed,
+        mandate: await signedMandate(replacement, agent),
+      }),
+    ).toEqual(refused('mandate.signature_invalid'))
+  })
+
   it('refuses another first mandate, with no replaces, whose hash the key never carried', async () => {
     const other = { ...mandate, nonce: mandate.nonce + 1n }
     const otherHash = mandateHash(other, DOMAIN)

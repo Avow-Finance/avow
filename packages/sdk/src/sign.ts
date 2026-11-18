@@ -7,7 +7,6 @@ import {
   type Mandate,
   MESSAGE_VERSIONS,
   mandateTypedData,
-  mandateVersion,
   type Signed,
   signForAccount,
 } from '@avow-finance/spec'
@@ -69,10 +68,12 @@ export async function signMandate(
     throw new Error("The mandate names another account than the signer's")
   }
   const td = mandateTypedData(mandate, d)
+  // Both branches make the same call, since viem types its argument by one table.
   const signature = isReplacementTypedData(td)
     ? await signer.signTypedData(td)
     : await signer.signTypedData(td)
-  return { ...envelope('Mandate', d, mandate, signature), schemaVersion: mandateVersion(mandate) }
+  // The envelope carries the version the typed data signed at, which `replaces` decided.
+  return { ...envelope('Mandate', d, mandate, signature), schemaVersion: td.domain.version }
 }
 
 /** The administrator approves one reserve in person, as the business account. */

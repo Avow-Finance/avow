@@ -1,7 +1,8 @@
 import type { Address, Hex } from 'viem'
 import { mandateVersion, type Signed } from './eip712.js'
 import { bytes32 } from './json-fields.js'
-import type { Mandate } from './types.js'
+import type { FirstMandate, Mandate } from './types.js'
+import { MESSAGE_VERSIONS } from './version.js'
 import { mandateJson, type Parsed, parseSigned } from './wire.js'
 
 /**
@@ -10,9 +11,10 @@ import { mandateJson, type Parsed, parseSigned } from './wire.js'
  * witness, which only the account's root or an admin key can do, so the transaction is the
  * account's word on exactly this mandate. One passkey prompt then covers the mandate, the key and
  * its limits. The envelope is the one a signed mandate carries, so a reader checks the same chain
- * and lock, and `mandateHash` hashes the message the same way.
+ * and lock, and `mandateHash` hashes the message the same way. Only a first mandate can be shown
+ * this way, since the transaction bound the first mandate's hash and no later one.
  */
-export type AuthorizedMandate = Omit<Signed<Mandate>, 'signature'> & {
+export type AuthorizedMandate = Omit<Signed<FirstMandate>, 'signature'> & {
   /** The transaction that put the agent's key on the account with this mandate's hash. */
   authorizedIn: Hex
 }
@@ -52,12 +54,10 @@ export function parseMandateProof(
   // signature standing in for the one this kind doesn't carry, and that stand-in is dropped.
   const read = parseSigned({ ...envelope, signature: '0x' }, 'Mandate', mandateJson, expected)
   if (!read.ok) return read
-  if (
-    read.value.message.replaces !== undefined ||
-    read.value.schemaVersion !== mandateVersion(read.value.message)
-  ) {
+  const { signature: _, message, ...rest } = read.value
+  const { replaces, ...first } = message
+  if (replaces !== undefined || rest.schemaVersion !== MESSAGE_VERSIONS.Mandate) {
     return { ok: false, reason: 'message.invalid' }
   }
-  const { signature: _, ...rest } = read.value
-  return { ok: true, value: { ...rest, authorizedIn: tx.data as Hex } }
+  return { ok: true, value: { ...rest, message: first, authorizedIn: tx.data as Hex } }
 }

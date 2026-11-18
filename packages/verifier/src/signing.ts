@@ -4,7 +4,6 @@ import {
   digestOf,
   type HashSigner,
   isKeySignature,
-  MESSAGE_VERSIONS,
   type Signed,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
@@ -60,7 +59,10 @@ export function checkPrepared(
   return digest
 }
 
-/** A signed message as it travels, under the domain its prepare call built it for. */
+/**
+ * A signed message as it travels, under the domain its prepare call built it for, labelled with
+ * the version its typed data signed at, so a replacement mandate travels as version 2.
+ */
 export function signedMessage<T>(
   typedData: AvowTypedData,
   domain: AvowDomain,
@@ -69,7 +71,7 @@ export function signedMessage<T>(
 ): Signed<T> {
   return {
     type: typedData.primaryType,
-    schemaVersion: MESSAGE_VERSIONS[typedData.primaryType],
+    schemaVersion: typedData.domain.version,
     chainId: domain.chainId,
     lock: domain.verifyingContract,
     message,
