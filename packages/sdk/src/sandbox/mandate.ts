@@ -3,7 +3,7 @@ import {
   type Enrollment,
   type Mandate,
   type MandateProof,
-  MESSAGE_VERSIONS,
+  mandateVersion,
   type SandboxDeployment,
   type SupplierProfile,
 } from '@avow-finance/spec'
@@ -144,7 +144,7 @@ export async function authorizeSandboxKey(
   return {
     mandate: {
       type: 'Mandate',
-      schemaVersion: MESSAGE_VERSIONS.Mandate,
+      schemaVersion: mandateVersion(mandate),
       chainId: d.chainId,
       lock,
       message: mandate,

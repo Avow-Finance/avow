@@ -8,7 +8,12 @@ import {
 } from 'viem'
 import type { ReasonCode } from './reasons.js'
 import type { ApprovalRule, Mandate, PaymentLimit, Side } from './types.js'
-import { DOMAIN_NAME, isSupportedMessageVersion, MESSAGE_VERSIONS } from './version.js'
+import {
+  DOMAIN_NAME,
+  isSupportedMessageVersion,
+  MANDATE_REPLACEMENT_VERSION,
+  MESSAGE_VERSIONS,
+} from './version.js'
 
 /**
  * Every signed message is EIP-712 typed data. The domain names the message type's version, the
@@ -349,6 +354,16 @@ export const MANDATE_TYPES = {
   ],
 } as const
 
+/** A replacement mandate's types: a first mandate's fields, then the hash of the one it replaces. */
+export const MANDATE_REPLACEMENT_TYPES = {
+  PaymentLimit: MANDATE_TYPES.PaymentLimit,
+  Mandate: [...MANDATE_TYPES.Mandate, { name: 'replaces', type: 'bytes32' }],
+} as const
+
+/** The domain version a mandate signs at, which `replaces` decides. */
+export const mandateVersion = (m: Pick<Mandate, 'replaces'>): string =>
+  m.replaces === undefined ? MESSAGE_VERSIONS.Mandate : MANDATE_REPLACEMENT_VERSION
+
 export const TERMS_AGREEMENT_TYPES = {
   TermsAgreement: [
     { name: 'commitmentId', type: 'bytes32' },
@@ -538,33 +553,50 @@ export const TIMESTAMP_TYPES = {
   ],
 } as const
 
+/**
+ * A mandate's EIP-712 typed data. A first mandate signs at version 1 under `MANDATE_TYPES`, exactly
+ * as before replacements existed, and a replacement at version 2 with `replaces` as its last field.
+ */
 export function mandateTypedData(m: Mandate, d: AvowDomain) {
+  const fields = mandateFields(m)
+  if (m.replaces === undefined) {
+    return {
+      domain: domain(d, MESSAGE_VERSIONS.Mandate),
+      types: MANDATE_TYPES,
+      primaryType: 'Mandate' as const,
+      message: fields,
+    }
+  }
   return {
-    domain: domain(d, MESSAGE_VERSIONS.Mandate),
-    types: MANDATE_TYPES,
+    domain: domain(d, MANDATE_REPLACEMENT_VERSION),
+    types: MANDATE_REPLACEMENT_TYPES,
     primaryType: 'Mandate' as const,
-    message: {
-      mandateId: m.mandateId,
-      businessId: m.businessId,
-      agentId: m.agentId,
-      account: m.account,
-      agentKey: m.agentKey,
-      actions: [...m.actions],
-      currency: m.currency,
-      capPerCommitment: m.capPerCommitment,
-      capOpenReserves: m.capOpenReserves,
-      suppliers: [...m.suppliers],
-      categories: [...m.categories],
-      paymentLimits: m.paymentLimits.map((l) => ({
-        token: l.token,
-        amount: l.amount,
-        period: l.period,
-      })),
-      approvalRule: ruleCode[m.approvalRule.kind],
-      approvalAbove: m.approvalRule.kind === 'above' ? m.approvalRule.amount : 0n,
-      expiry: m.expiry,
-      nonce: m.nonce,
-    },
+    message: { ...fields, replaces: m.replaces },
+  }
+}
+
+function mandateFields(m: Mandate) {
+  return {
+    mandateId: m.mandateId,
+    businessId: m.businessId,
+    agentId: m.agentId,
+    account: m.account,
+    agentKey: m.agentKey,
+    actions: [...m.actions],
+    currency: m.currency,
+    capPerCommitment: m.capPerCommitment,
+    capOpenReserves: m.capOpenReserves,
+    suppliers: [...m.suppliers],
+    categories: [...m.categories],
+    paymentLimits: m.paymentLimits.map((l) => ({
+      token: l.token,
+      amount: l.amount,
+      period: l.period,
+    })),
+    approvalRule: ruleCode[m.approvalRule.kind],
+    approvalAbove: m.approvalRule.kind === 'above' ? m.approvalRule.amount : 0n,
+    expiry: m.expiry,
+    nonce: m.nonce,
   }
 }
 
@@ -784,7 +816,24 @@ export function timestampTypedData(t: Timestamp, d: AvowDomain) {
  * includes the domain, so a mandate for one lock or chain can't stand in for another.
  */
 export function mandateHash(m: Mandate, d: AvowDomain): Hex {
-  return hashTypedData(mandateTypedData(m, d))
+  return hashMandateTypedData(mandateTypedData(m, d))
+}
+
+/** A mandate's typed data, under either table. */
+export type MandateTypedData = ReturnType<typeof mandateTypedData>
+
+/**
+ * Whether a mandate's typed data is a replacement's. The two tables differ only in `replaces`, so
+ * its presence in the message says which one it is, and a signer narrows on this before signing.
+ */
+export const isReplacementTypedData = (
+  td: MandateTypedData,
+): td is Extract<MandateTypedData, { types: typeof MANDATE_REPLACEMENT_TYPES }> =>
+  'replaces' in td.message
+
+/** The digest of a mandate's typed data under whichever table it signs with. */
+function hashMandateTypedData(td: MandateTypedData): Hex {
+  return isReplacementTypedData(td) ? hashTypedData(td) : hashTypedData(td)
 }
 
 export type AvowTypedData =
@@ -835,7 +884,14 @@ type SameFields<Keys extends PropertyKey, Names extends PropertyKey> = [
  * `above` rule as `approvalAbove`.
  */
 interface InterfacesMatchTables {
-  Mandate: SameFields<keyof Mandate | 'approvalAbove', FieldNames<typeof MANDATE_TYPES.Mandate>>
+  Mandate: SameFields<
+    keyof Mandate | 'approvalAbove',
+    FieldNames<typeof MANDATE_REPLACEMENT_TYPES.Mandate>
+  >
+  FirstMandate: SameFields<
+    Exclude<keyof Mandate, 'replaces'> | 'approvalAbove',
+    FieldNames<typeof MANDATE_TYPES.Mandate>
+  >
   PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>
   TermsAgreement: SameFields<
     keyof TermsAgreement,
@@ -872,6 +928,7 @@ interface InterfacesMatchTables {
 }
 const _interfacesMatchTables: InterfacesMatchTables = {
   Mandate: true,
+  FirstMandate: true,
   PaymentLimit: true,
   TermsAgreement: true,
   Approval: true,
@@ -899,7 +956,7 @@ void _everyMessageChecked
 export function digestOf(td: AvowTypedData): Hex {
   switch (td.primaryType) {
     case 'Mandate':
-      return hashTypedData(td)
+      return hashMandateTypedData(td)
     case 'TermsAgreement':
       return hashTypedData(td)
     case 'Approval':

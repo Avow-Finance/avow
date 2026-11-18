@@ -6,6 +6,7 @@ import {
   checkMandate,
   digestOf,
   enforceableTerms,
+  isSignedMandate,
   type LockTerms,
   lockRecordDifferences,
   lockTerms,
@@ -213,9 +214,13 @@ export async function checkAuthorization(
   if (!key?.active) return refuse('chain.agent_key_inactive')
   // The key has to last until nothing more can happen to the commitment.
   if (key.expiry !== null && key.expiry < e.releaseDate) return refuse('chain.agent_key_inactive')
-  if (key.witness === null || !same(key.witness, auth.mandateHash)) {
-    return refuse('chain.mandate_mismatch')
-  }
+  // The key carries the hash of the mandate it was put on with. A commitment under that mandate
+  // matches it. One under a mandate that replaced it, after the administrator changed the agent's
+  // limits in place, binds only through that replacement signed by the business account, so the
+  // supplier needs the mandate to check it.
+  if (key.witness === null) return refuse('chain.mandate_mismatch')
+  const witnessed = same(key.witness, auth.mandateHash)
+  if (!witnessed && input.mandate === undefined) return refuse('chain.mandate_mismatch')
 
   // The buyer's mandate, when the supplier has it: its hash, its signer and its limits.
   let mandate: Mandate | null = null
@@ -230,6 +235,9 @@ export async function checkAuthorization(
       !isAddressEqual(mandate.agentKey, auth.agentKey)
     ) {
       return refuse('authorization.mandate_mismatch')
+    }
+    if (!witnessed && (!isSignedMandate(m.value) || mandate.replaces === undefined)) {
+      return refuse('chain.mandate_mismatch')
     }
     const proof = await mandateProofProblem(chain, m.value, {
       account: lockInfo.account,

@@ -29,6 +29,13 @@ export const MESSAGE_VERSIONS = {
   Timestamp: '1',
 } as const
 
+/**
+ * The domain version of a mandate that replaces another, which carries `replaces`. A first mandate
+ * keeps version 1 byte for byte, so a reader that knows only version 1 still checks every agent
+ * whose limits were never changed.
+ */
+export const MANDATE_REPLACEMENT_VERSION = '2'
+
 type VersionedType = keyof typeof MESSAGE_VERSIONS
 
 /** The domain versions this package reads for each message type. */
@@ -40,7 +47,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   Evidence: [MESSAGE_VERSIONS.Evidence],
   BusinessAction: [MESSAGE_VERSIONS.BusinessAction],
   SupplierAction: [MESSAGE_VERSIONS.SupplierAction],
-  Mandate: [MESSAGE_VERSIONS.Mandate],
+  Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION],
   TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement],
   SupplierAuthorization: [MESSAGE_VERSIONS.SupplierAuthorization],
   HumanApproval: [MESSAGE_VERSIONS.HumanApproval],
