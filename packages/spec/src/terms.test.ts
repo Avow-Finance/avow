@@ -747,14 +747,15 @@ describe("the approval's parties, token and mandate", () => {
     expect(() => approvalCaps({ ...caps, capPerCommitment: 1n }, 2)).toThrow(RangeError)
   })
 
-  it('refuses another mandate, other caps, or a funding key the caller does not allow', () => {
+  it('refuses another mandate, another cap per commitment, a higher open-reserves cap, or a funding key the caller does not allow', () => {
     const approval = { mandateHash: MANDATE, ...caps, fundingKey: AGENT }
     const expected = { mandateHash: MANDATE, caps, fundingKeys: [AGENT] }
     expect(approvalMandateProblem(approval, expected)).toBeNull()
     const changes = [
       { mandateHash: keccak256(stringToHex('another mandate')) },
       { capPerCommitment: caps.capPerCommitment + 1n },
-      { capOpenReserves: caps.capOpenReserves - 1n },
+      { capPerCommitment: caps.capPerCommitment - 1n },
+      { capOpenReserves: caps.capOpenReserves + 1n },
       { fundingKey: zeroAddress },
     ]
     for (const change of changes) {
@@ -762,6 +763,12 @@ describe("the approval's parties, token and mandate", () => {
         'approval.mandate_mismatch',
       )
     }
+    // A lower open-reserves cap is what Avow signs once a mandate replaces another, so the lock
+    // holds the agent to the combined limit across its mandates.
+    expect(
+      approvalMandateProblem({ ...approval, capOpenReserves: caps.capOpenReserves - 1n }, expected),
+    ).toBeNull()
+    expect(approvalMandateProblem({ ...approval, capOpenReserves: 0n }, expected)).toBeNull()
     // The account's root key, the zero address, funds only where the caller allows it.
     const byRoot = { ...approval, fundingKey: zeroAddress }
     expect(

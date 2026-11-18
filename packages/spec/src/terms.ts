@@ -1017,10 +1017,13 @@ export interface ApprovalMandate {
 }
 
 /**
- * Checks that an approval names the buyer's mandate, that mandate's two caps and a funding key the
- * caller allows. The lock enforces the caps and checks the key that funds the reserve against the
- * one the approval names, so other values would let through a reserve the mandate doesn't allow.
- * Returns `approval.mandate_mismatch` when any of them differs, or null.
+ * Checks that an approval names the buyer's mandate, its cap per commitment, an open-reserves cap
+ * no higher than the mandate's, and a funding key the caller allows. The lock enforces the caps and
+ * checks the key that funds the reserve against the one the approval names, so other values would
+ * let through a reserve the mandate doesn't allow. The open-reserves cap may be lower because the
+ * lock counts open reserves per mandate hash: after a mandate replaces another, Avow signs the new
+ * limit less what the earlier mandates still hold, so the lock holds the agent to the combined
+ * limit. Returns `approval.mandate_mismatch` when any of them differs, or null.
  */
 export function approvalMandateProblem(
   approval: Pick<Approval, 'mandateHash' | 'capPerCommitment' | 'capOpenReserves' | 'fundingKey'>,
@@ -1029,7 +1032,7 @@ export function approvalMandateProblem(
   const named =
     approval.mandateHash.toLowerCase() === expected.mandateHash.toLowerCase() &&
     approval.capPerCommitment === expected.caps.capPerCommitment &&
-    approval.capOpenReserves === expected.caps.capOpenReserves &&
+    approval.capOpenReserves <= expected.caps.capOpenReserves &&
     expected.fundingKeys.some((k) => sameAddress(approval.fundingKey, k))
   return named ? null : 'approval.mandate_mismatch'
 }

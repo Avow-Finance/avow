@@ -3,9 +3,11 @@ import {
   type HashSigner,
   type HumanApproval,
   humanApprovalTypedData,
+  isReplacementTypedData,
   type Mandate,
   MESSAGE_VERSIONS,
   mandateTypedData,
+  mandateVersion,
   type Signed,
   signForAccount,
 } from '@avow-finance/spec'
@@ -66,8 +68,11 @@ export async function signMandate(
   if (!isAddressEqual(mandate.account, signer.account)) {
     throw new Error("The mandate names another account than the signer's")
   }
-  const signature = await signer.signTypedData(mandateTypedData(mandate, d))
-  return envelope('Mandate', d, mandate, signature)
+  const td = mandateTypedData(mandate, d)
+  const signature = isReplacementTypedData(td)
+    ? await signer.signTypedData(td)
+    : await signer.signTypedData(td)
+  return { ...envelope('Mandate', d, mandate, signature), schemaVersion: mandateVersion(mandate) }
 }
 
 /** The administrator approves one reserve in person, as the business account. */

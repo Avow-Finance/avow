@@ -265,6 +265,7 @@ export const mandateJson = z.strictObject({
   approvalRule: approvalRuleJson,
   expiry: u64,
   nonce: u256,
+  replaces: bytes32.exactOptional(),
 })
 
 export const reserveRequestJson = z.strictObject({

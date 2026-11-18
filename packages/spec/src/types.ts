@@ -121,6 +121,13 @@ export interface Mandate {
   approvalRule: ApprovalRule
   expiry: bigint
   nonce: bigint
+  /**
+   * The hash of the mandate this one replaces, for the same business, lock and agent key, when the
+   * administrator changed the agent's limits in place. A first mandate has none. A mandate with
+   * one signs at `MANDATE_REPLACEMENT_VERSION`, and only the business account's own signature
+   * authorizes it, since the key on the chain still carries the first mandate's hash.
+   */
+  replaces?: Hex
 }
 
 /**

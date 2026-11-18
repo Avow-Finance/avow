@@ -13,6 +13,7 @@ import {
   type Mandate,
   mandateHash,
   mandateTypedData,
+  mandateVersion,
   type RailState,
   type RailToken,
   type Side,
@@ -183,7 +184,7 @@ export async function signedMandate(m: Mandate, key = buyer): Promise<unknown> {
   const signature = await signForAccount(buyer.address, digestOf(mandateTypedData(m, DOMAIN)), key)
   return json({
     type: 'Mandate',
-    schemaVersion: '1',
+    schemaVersion: mandateVersion(m),
     chainId: CHAIN_ID,
     lock: LOCK,
     message: m,

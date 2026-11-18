@@ -187,6 +187,79 @@ describe('a supplier verifies from the chain and the signatures alone', () => {
   })
 })
 
+describe('a mandate that replaced the one the key was put on with', () => {
+  // The chain holds the agent's key with the first mandate's hash, as `reservedChain` puts it on.
+  const replacement: Mandate = {
+    ...mandate,
+    capOpenReserves: mandate.capOpenReserves * 2n,
+    nonce: mandate.nonce + 1n,
+    replaces: mHash,
+  }
+  const rHash = mandateHash(replacement, DOMAIN)
+  const rAgreed = { ...agreed, mandateHash: rHash }
+  const underReplacement = () => signedAuthorization(authorization({ mandateHash: rHash }))
+
+  it('accepts a commitment under a replacement the business account signed', async () => {
+    const result = await verify(await underReplacement(), {
+      agreed: rAgreed,
+      mandate: await signedMandate(replacement),
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('refuses it without the mandate, which is the only thing that binds it to the key', async () => {
+    expect(await verify(await underReplacement(), { agreed: rAgreed })).toEqual(
+      refused('chain.mandate_mismatch'),
+    )
+  })
+
+  it('refuses a replacement signed by anyone but the business account', async () => {
+    expect(
+      await verify(await underReplacement(), {
+        agreed: rAgreed,
+        mandate: await signedMandate(replacement, newKey()),
+      }),
+    ).toEqual(refused('mandate.signature_invalid'))
+  })
+
+  it('refuses another first mandate, with no replaces, whose hash the key never carried', async () => {
+    const other = { ...mandate, nonce: mandate.nonce + 1n }
+    const otherHash = mandateHash(other, DOMAIN)
+    expect(
+      await verify(await signedAuthorization(authorization({ mandateHash: otherHash })), {
+        agreed: { ...agreed, mandateHash: otherHash },
+        mandate: await signedMandate(other),
+      }),
+    ).toEqual(refused('chain.mandate_mismatch'))
+  })
+
+  it('refuses a replacement that names another agent key', async () => {
+    const elsewhere = { ...replacement, agentKey: newKey().address }
+    const hash = mandateHash(elsewhere, DOMAIN)
+    expect(
+      await verify(await signedAuthorization(authorization({ mandateHash: hash })), {
+        agreed: { ...agreed, mandateHash: hash },
+        mandate: await signedMandate(elsewhere),
+      }),
+    ).toEqual(refused('authorization.mandate_mismatch'))
+  })
+
+  it('refuses a replacement for a key that went on with no mandate hash at all', async () => {
+    chain.setAgentKey(
+      buyer.address,
+      agent.address,
+      { active: true, expiry: null, witness: null },
+      KEY_TX,
+    )
+    expect(
+      await verify(await underReplacement(), {
+        agreed: rAgreed,
+        mandate: await signedMandate(replacement),
+      }),
+    ).toEqual(refused('chain.mandate_mismatch'))
+  })
+})
+
 describe('one commitment, one authorization', () => {
   it("refuses an authorization for a commitment the supplier didn't agree to, even on equal terms", async () => {
     const otherSalt = `0x${'77'.repeat(32)}` as const

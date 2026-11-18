@@ -1,5 +1,5 @@
 import type { Address, Hex } from 'viem'
-import type { Signed } from './eip712.js'
+import { mandateVersion, type Signed } from './eip712.js'
 import { bytes32 } from './json-fields.js'
 import type { Mandate } from './types.js'
 import { mandateJson, type Parsed, parseSigned } from './wire.js'
@@ -30,13 +30,20 @@ export const isSignedMandate = (proof: MandateProof): proof is Signed<Mandate> =
 /**
  * Parses a mandate with its proof and checks its envelope as `parseSigned` does. A mandate
  * carries either a signature or the transaction that authorized it, never both and never neither.
+ * Its envelope's version has to be the one its message signs at, so a replacement can't pass as a
+ * first mandate or the reverse. A replacement needs the account's signature, since the transaction
+ * that put the key on bound the first mandate's hash and no later one.
  */
 export function parseMandateProof(
   json: unknown,
   expected: { chainId: number; lock?: Address },
 ): Parsed<MandateProof> {
   if (typeof json !== 'object' || json === null || !('authorizedIn' in json)) {
-    return parseSigned(json, 'Mandate', mandateJson, expected)
+    const signed = parseSigned(json, 'Mandate', mandateJson, expected)
+    if (signed.ok && signed.value.schemaVersion !== mandateVersion(signed.value.message)) {
+      return { ok: false, reason: 'message.invalid' }
+    }
+    return signed
   }
   const { authorizedIn, ...envelope } = json as Record<string, unknown>
   const tx = bytes32.safeParse(authorizedIn)
@@ -45,6 +52,12 @@ export function parseMandateProof(
   // signature standing in for the one this kind doesn't carry, and that stand-in is dropped.
   const read = parseSigned({ ...envelope, signature: '0x' }, 'Mandate', mandateJson, expected)
   if (!read.ok) return read
+  if (
+    read.value.message.replaces !== undefined ||
+    read.value.schemaVersion !== mandateVersion(read.value.message)
+  ) {
+    return { ok: false, reason: 'message.invalid' }
+  }
   const { signature: _, ...rest } = read.value
   return { ok: true, value: { ...rest, authorizedIn: tx.data as Hex } }
 }

@@ -1,15 +1,17 @@
 import {
   type AvowDomain,
+  digestOf,
   dollars,
   type HumanApproval,
   humanApprovalTypedData,
   isSignedBy,
   keychainSignatureCheck,
   type Mandate,
+  mandateHash,
   mandateTypedData,
 } from '@avow-finance/spec'
 import { P256 } from 'ox'
-import { type Address, hashTypedData, keccak256, stringToHex } from 'viem'
+import { type Address, keccak256, stringToHex } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
@@ -69,10 +71,22 @@ describe('signing for a business account', () => {
     expect(await isSignedBy(td, signed.signature, account, keychain)).toBe(true)
   })
 
+  it('signs a mandate that replaces another at version 2, and the signature checks', async () => {
+    const root = Account.fromSecp256k1(generatePrivateKey())
+    const account = root.address as Address
+    const first = mandateFor(account)
+    const replacement = { ...first, nonce: first.nonce + 1n, replaces: mandateHash(first, DOMAIN) }
+    const signed = await signMandate(replacement, DOMAIN, accountSigner(account, root))
+    expect(signed.schemaVersion).toBe('2')
+    const td = mandateTypedData(signed.message, DOMAIN)
+    expect(await isSignedBy(td, signed.signature, account, keychain)).toBe(true)
+    expect((await signMandate(first, DOMAIN, accountSigner(account, root))).schemaVersion).toBe('1')
+  })
+
   it('produces nothing the keychain accepts when the key signs bare', async () => {
     const { root, account } = passkeyBusiness()
     const td = mandateTypedData(mandateFor(account), DOMAIN)
-    const bare = await root.sign({ hash: hashTypedData(td) })
+    const bare = await root.sign({ hash: digestOf(td) })
     expect(await isSignedBy(td, bare, account, keychain)).toBe(false)
   })
 
