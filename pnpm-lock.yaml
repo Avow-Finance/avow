@@ -72,24 +72,6 @@ importers:
         specifier: 2.57.11
         version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
 
-  examples/supplier:
-    dependencies:
-      '@avow-finance/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
-      '@avow-finance/spec':
-        specifier: workspace:*
-        version: link:../../packages/spec
-      '@avow-finance/verifier':
-        specifier: workspace:*
-        version: link:../../packages/verifier
-      viem:
-        specifier: 2.57.11
-        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
-
   packages/avow-sandbox:
     dependencies:
       '@avow-finance/sdk':
@@ -143,6 +125,24 @@ importers:
       ox:
         specifier: 0.14.57
         version: 0.14.57(typescript@7.0.2)(zod@4.6.7)
+      viem:
+        specifier: 2.57.11
+        version: 2.57.11(typescript@7.0.2)(zod@4.6.7)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
+  packages/supplier:
+    dependencies:
+      '@avow-finance/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@avow-finance/spec':
+        specifier: workspace:*
+        version: link:../spec
+      '@avow-finance/verifier':
+        specifier: workspace:*
+        version: link:../verifier
       viem:
         specifier: 2.57.11
         version: 2.57.11(typescript@7.0.2)(zod@4.6.7)

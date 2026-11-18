@@ -16,9 +16,10 @@ This repository holds the open parts of Avow that developers and suppliers run t
 | `@avow-finance/sdk` | TypeScript SDK for agents: book with a supplier, check Avow's approval against the terms, fund the reserve with the agent's own key while Avow pays the fee, then cancel, start or read a commitment | In progress, with limits and a list of commitments next |
 | `@avow-finance/mcp-server` | MCP server that gives an agent in Claude, Cursor or any other MCP client the same calls | Planned |
 | `@avow-finance/verifier` | Lets a supplier check a commitment's authorization, terms and on-chain reserve without calling Avow | In progress |
+| `@avow-finance/supplier` | The adapter a supplier runs beside its own booking system. It signs agreements for agents, checks and accepts each reserve with the verifier, calls the supplier's webhook as a reserve is held and accepted, and answers one local call that checks a commitment | In progress |
 | `@avow-finance/spec` | The commitment schema the others share: records, terms and their templates, references, signed messages, reason codes and the mandate check | In progress |
 
-Quickstarts for a buyer and a supplier live in [examples](examples). Each runs on its own machine against Avow's hosted API. Beside them, a [keeper](examples/keeper) sends the steps that come due on commitments reserved within its lookback, two weeks by default, so those steps land even when Avow is down.
+The supplier's quickstart is the [supplier package](packages/supplier), and the buyer's lives in [examples](examples). Each runs on its own machine against Avow's hosted API. Beside them, a [keeper](examples/keeper) sends the steps that come due on commitments reserved within its lookback, two weeks by default, so those steps land even when Avow is down.
 
 ## How a commitment works
 

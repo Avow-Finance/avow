@@ -1,0 +1,39 @@
+{
+  "name": "@avow-finance/supplier",
+  "version": "0.6.0",
+  "private": true,
+  "description": "The adapter a supplier runs beside its booking system: it signs agreements for agents, checks and accepts each reserve, calls the supplier's webhook and answers a local check of a commitment",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "bin": {
+    "avow-supplier": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Avow-Finance/avow.git",
+    "directory": "packages/supplier"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@avow-finance/spec": "workspace:*",
+    "@avow-finance/verifier": "workspace:*",
+    "viem": "2.57.11",
+    "zod": "4.6.7"
+  }
+}
