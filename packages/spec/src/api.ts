@@ -249,6 +249,115 @@ const decisionId = z.string().min(1).max(128)
 const objectJson = z.record(z.string(), z.unknown())
 
 /**
+ * A signed message inside a body, which the parser checks against its own schema and domain after
+ * the outer shape passes. The description names it, for the API reference.
+ */
+const signedJson = (description: string) => objectJson.describe(description)
+
+/*
+ * The outer shape of each body, which its parser checks first and the API reference describes.
+ * The signed messages inside are checked by the parser as their descriptions say.
+ */
+
+export const reserveApprovalRequestJson = z.strictObject({
+  request: objectJson.describe(
+    'The reserve request, naming the commitment, the supplier, the amount and the terms hash the agent asks Avow to approve',
+  ),
+  salt: bytes32,
+  agreement: signedJson('The terms agreement both sides signed, as a SignedAgreement'),
+  fundedBy: z.enum(['agent', 'administrator']),
+  humanApproval: signedJson(
+    "The administrator's approval of this reserve, as a signed HumanApproval, when the mandate asks for one",
+  ).optional(),
+})
+
+export const reserveApprovalJson = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    decisionId,
+    approval: signedJson("Avow's approval of the reserve, as a signed Approval the lock checks"),
+  }),
+  z.strictObject({ ok: z.literal(false), decisionId, reason: reasonCode }),
+])
+
+export const enrollmentRequestJson = z.strictObject({
+  mandate: signedJson(
+    "The agent's mandate, as a MandateProof the business account signed or the key's transaction authorized",
+  ),
+  keyAuthorizedIn: bytes32,
+})
+
+export const enrollmentJson = z.strictObject({
+  businessId: z.string().min(1),
+  agentId: z.string().min(1),
+  agentKey: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .transform((s) => s.toLowerCase() as Address),
+  mandateHash: bytes32,
+})
+
+/** A transaction an agent signed, or the same transaction once Avow's relay co-signed it. */
+export const sponsorshipJson = z.strictObject({
+  transaction: hexBytes.refine((s) => s.length >= 4),
+})
+
+export const supplierAuthorizationAnswerJson = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    authorization: signedJson("Avow's fresh authorization, as a signed SupplierAuthorization"),
+    approval: signedJson('The Approval the reserve was funded under, whose digest the lock stored'),
+    mandate: signedJson("The buyer's mandate, as a MandateProof"),
+  }),
+  z.strictObject({ ok: z.literal(false), reason: reasonCode }),
+])
+
+const cancelledByJson = z.strictObject({
+  signer: address,
+  requestId: bytes32,
+  expiry: u64,
+  bodyHash: bytes32,
+})
+
+export const cancellationAnswerJson = z.strictObject({
+  cancelledAt: u64,
+  timestamp: signedJson("Avow's signed Timestamp on the request that cancelled"),
+  cancelledBy: cancelledByJson.optional(),
+})
+
+export const startRequestAnswerJson = z.strictObject({
+  startRequestHash: bytes32,
+  requestedAt: u64,
+  timestamp: signedJson("Avow's signed Timestamp on the start request"),
+})
+
+export const startReceiptRequestJson = z.strictObject({
+  receipt: signedJson("The supplier's signed StartReceipt"),
+})
+
+export const startReceiptAnswerJson = z.union([
+  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({ ok: z.literal(false), reason: reasonCode }),
+])
+
+export const contestStatementRequestJson = z.strictObject({
+  statement: objectJson.describe(
+    "The business's ContestStatement, signed by the account's root key",
+  ),
+  contestedIn: bytes32,
+})
+
+export const contestStatementAnswerJson = z.strictObject({
+  statementHash: bytes32,
+  recordedAt: u64,
+})
+
+/** A refusal's body. Readers ignore any other field, and the relay adds its own for its codes. */
+export const apiErrorJson = z.object({
+  error: z.object({ reason: z.string(), message: z.string() }),
+})
+
+/**
  * Parses a reserve approval request. Its agreement and any human approval have to be for this chain
  * and for the lock the request was signed under.
  */
@@ -256,15 +365,7 @@ export function parseReserveApprovalRequest(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<ReserveApprovalRequest> {
-  const outer = z
-    .strictObject({
-      request: objectJson,
-      salt: bytes32,
-      agreement: objectJson,
-      fundedBy: z.enum(['agent', 'administrator']),
-      humanApproval: objectJson.optional(),
-    })
-    .safeParse(json)
+  const outer = reserveApprovalRequestJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const request = reserveRequestJson.safeParse(outer.data.request)
   if (!request.success) return { ok: false, reason: 'message.invalid' }
@@ -298,19 +399,14 @@ export function parseReserveApproval(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<ReserveApproval> {
-  const refused = z
-    .strictObject({ ok: z.literal(false), decisionId, reason: reasonCode })
-    .safeParse(json)
-  if (refused.success) return { ok: true, value: refused.data }
-  const approved = z
-    .strictObject({ ok: z.literal(true), decisionId, approval: objectJson })
-    .safeParse(json)
-  if (!approved.success) return { ok: false, reason: 'message.invalid' }
-  const approval = parseSigned(approved.data.approval, 'Approval', approvalJson, expected)
+  const outer = reserveApprovalJson.safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  if (!outer.data.ok) return { ok: true, value: outer.data }
+  const approval = parseSigned(outer.data.approval, 'Approval', approvalJson, expected)
   if (!approval.ok) return approval
   return {
     ok: true,
-    value: { ok: true, decisionId: approved.data.decisionId, approval: approval.value },
+    value: { ok: true, decisionId: outer.data.decisionId, approval: approval.value },
   }
 }
 
@@ -319,7 +415,7 @@ export function parseEnrollmentRequest(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<EnrollmentRequest> {
-  const outer = z.strictObject({ mandate: objectJson, keyAuthorizedIn: bytes32 }).safeParse(json)
+  const outer = enrollmentRequestJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const mandate = parseMandateProof(outer.data.mandate, expected)
   if (!mandate.ok) return mandate
@@ -337,26 +433,14 @@ export function parseEnrollmentRequest(
 }
 
 export function parseEnrollment(json: unknown): Parsed<Enrollment> {
-  const parsed = z
-    .strictObject({
-      businessId: z.string().min(1),
-      agentId: z.string().min(1),
-      agentKey: z
-        .string()
-        .regex(/^0x[0-9a-fA-F]{40}$/)
-        .transform((s) => s.toLowerCase() as Address),
-      mandateHash: bytes32,
-    })
-    .safeParse(json)
+  const parsed = enrollmentJson.safeParse(json)
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
 }
 
-const transactionJson = z.strictObject({ transaction: hexBytes.refine((s) => s.length >= 4) })
-
 export function parseSponsorshipRequest(json: unknown): Parsed<SponsorshipRequest> {
-  const parsed = transactionJson.safeParse(json)
+  const parsed = sponsorshipJson.safeParse(json)
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
@@ -371,27 +455,19 @@ export function parseSupplierAuthorizationAnswer(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<SupplierAuthorizationAnswer> {
-  const refused = z.strictObject({ ok: z.literal(false), reason: reasonCode }).safeParse(json)
-  if (refused.success) return { ok: true, value: refused.data }
-  const issued = z
-    .strictObject({
-      ok: z.literal(true),
-      authorization: objectJson,
-      approval: objectJson,
-      mandate: objectJson,
-    })
-    .safeParse(json)
-  if (!issued.success) return { ok: false, reason: 'message.invalid' }
+  const outer = supplierAuthorizationAnswerJson.safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  if (!outer.data.ok) return { ok: true, value: outer.data }
   const authorization = parseSigned(
-    issued.data.authorization,
+    outer.data.authorization,
     'SupplierAuthorization',
     supplierAuthorizationJson,
     expected,
   )
   if (!authorization.ok) return authorization
-  const approval = parseSigned(issued.data.approval, 'Approval', approvalJson, expected)
+  const approval = parseSigned(outer.data.approval, 'Approval', approvalJson, expected)
   if (!approval.ok) return approval
-  const mandate = parseMandateProof(issued.data.mandate, expected)
+  const mandate = parseMandateProof(outer.data.mandate, expected)
   if (!mandate.ok) return mandate
   return {
     ok: true,
@@ -422,13 +498,6 @@ function parseTimestamp(
   return parsed
 }
 
-const cancelledByJson = z.strictObject({
-  signer: address,
-  requestId: bytes32,
-  expiry: u64,
-  bodyHash: bytes32,
-})
-
 /**
  * Parses Avow's answer to a cancellation. Its timestamp has to be for this chain and lock and give
  * the same time as the answer. Without `cancelledBy`, the timestamp has to name `requestHash`, the
@@ -447,13 +516,7 @@ export function parseCancellationAnswer(
     requestHash: Hex
   },
 ): Parsed<CancellationAnswer> {
-  const outer = z
-    .strictObject({
-      cancelledAt: u64,
-      timestamp: objectJson,
-      cancelledBy: cancelledByJson.optional(),
-    })
-    .safeParse(json)
+  const outer = cancellationAnswerJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const { cancelledAt, cancelledBy } = outer.data
   const requestHash = cancelledBy
@@ -489,9 +552,7 @@ export function parseStartRequestAnswer(
   json: unknown,
   expected: { chainId: number; lock: Address; requestHash: Hex },
 ): Parsed<StartRequestAnswer> {
-  const outer = z
-    .strictObject({ startRequestHash: bytes32, requestedAt: u64, timestamp: objectJson })
-    .safeParse(json)
+  const outer = startRequestAnswerJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const { startRequestHash, requestedAt } = outer.data
   if (startRequestHash !== expected.requestHash.toLowerCase()) {
@@ -510,7 +571,7 @@ export function parseStartReceiptRequest(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<StartReceiptRequest> {
-  const outer = z.strictObject({ receipt: objectJson }).safeParse(json)
+  const outer = startReceiptRequestJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const receipt = parseSigned(outer.data.receipt, 'StartReceipt', startReceiptJson, expected)
   if (!receipt.ok) return receipt
@@ -519,12 +580,7 @@ export function parseStartReceiptRequest(
 
 /** Parses Avow's answer to a start receipt. */
 export function parseStartReceiptAnswer(json: unknown): Parsed<StartReceiptAnswer> {
-  const parsed = z
-    .union([
-      z.strictObject({ ok: z.literal(true) }),
-      z.strictObject({ ok: z.literal(false), reason: reasonCode }),
-    ])
-    .safeParse(json)
+  const parsed = startReceiptAnswerJson.safeParse(json)
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
@@ -535,7 +591,7 @@ export function parseStartReceiptAnswer(json: unknown): Parsed<StartReceiptAnswe
  * `parseContestStatement` reads one, and a refusal keeps that reason.
  */
 export function parseContestStatementRequest(json: unknown): Parsed<ContestStatementRequest> {
-  const outer = z.strictObject({ statement: objectJson, contestedIn: bytes32 }).safeParse(json)
+  const outer = contestStatementRequestJson.safeParse(json)
   if (!outer.success) return { ok: false, reason: 'message.invalid' }
   const statement = parseContestStatement(outer.data.statement)
   if (!statement.ok) return statement
@@ -550,7 +606,7 @@ export function parseContestStatementAnswer(
   json: unknown,
   expected: { statementHash: Hex },
 ): Parsed<ContestStatementAnswer> {
-  const parsed = z.strictObject({ statementHash: bytes32, recordedAt: u64 }).safeParse(json)
+  const parsed = contestStatementAnswerJson.safeParse(json)
   if (!parsed.success || parsed.data.statementHash !== expected.statementHash.toLowerCase()) {
     return { ok: false, reason: 'message.invalid' }
   }
@@ -564,9 +620,7 @@ export function parseContestStatementAnswer(
 export function parseApiError(
   json: unknown,
 ): { reason: ReasonCode | null; message: string } | null {
-  const parsed = z
-    .object({ error: z.object({ reason: z.string(), message: z.string() }) })
-    .safeParse(json)
+  const parsed = apiErrorJson.safeParse(json)
   if (!parsed.success) return null
   const { reason, message } = parsed.data.error
   return { reason: Object.hasOwn(REASON_CODES, reason) ? (reason as ReasonCode) : null, message }

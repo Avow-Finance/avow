@@ -1,0 +1,4864 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Avow's testnet API",
+    "version": "1",
+    "description": "The API Avow's SDK, verifier and console talk to, on Tempo's Moderato testnet with test dollars. Bodies are JSON, with amounts and times as decimal strings.\n\nEvery route but the status routes and a supplier's profile is signed. The request carries an `Authorization` header of the form `Avow signer=<address>, lock=<address>, requestId=<bytes32>, expiry=<unix seconds>, signature=<hex>`. The signature is EIP-712 over an `ApiRequest` naming this API's origin as its audience, the method, the path, the request id, the expiry and the body's hash, under the domain of the business's lock, or of the factory where a route says so. A request stays valid for at most 300 seconds, and a request id is used once. The SDK signs every request, so a caller rarely builds this header by hand, and the API Explorer can send only the unsigned routes."
+  },
+  "servers": [
+    {
+      "url": "https://api.testnet.avow.finance",
+      "description": "Moderato testnet"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Status",
+      "description": "Whether the API is up and ready. Anyone may call these, unsigned."
+    },
+    {
+      "name": "Agents",
+      "description": "How an agent asks a business for authority, enrolls once approved, and gets its transactions sponsored."
+    },
+    {
+      "name": "Commitments",
+      "description": "Avow's approval of a reserve, and the records Avow keeps on a commitment: cancellations, start requests and receipts, and contest statements."
+    },
+    {
+      "name": "Suppliers",
+      "description": "Registering a business in the sandbox, registering a supplier's signing key, and reading a supplier's profile."
+    },
+    {
+      "name": "Mailbox",
+      "description": "The sandbox mailbox, which carries a job between two businesses' agents wherever each runs."
+    }
+  ],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "health",
+        "tags": [
+          "Status"
+        ],
+        "summary": "Health",
+        "description": "Answers while the API process runs.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The API is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthAnswer"
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/ready": {
+      "get": {
+        "operationId": "ready",
+        "tags": [
+          "Status"
+        ],
+        "summary": "Ready",
+        "description": "Answers once the API can reach its database and take requests.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The API is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyAnswer"
+                },
+                "example": {
+                  "status": "ready"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/agent-requests": {
+      "post": {
+        "operationId": "askBusiness",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Ask a business for authority",
+        "description": "An agent asks a named business for authority, signed by the key it made, under that business's lock. It hears the answer by sending the same request again. The answer carries a pairing code the administrator checks in the console, and once approved, the body the agent enrolls with. The request grants nothing, since only the business account's root key approves.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskBusinessRequest"
+              },
+              "example": {
+                "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                "label": "Research agent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where the request stands: pending, approved or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskBusinessAnswer"
+                },
+                "example": {
+                  "state": "pending",
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "agentKey": "0x1b7a7c8f0e5d4c3b2a19087f6e5d4c3b2a190871",
+                  "lock": "0x504e2d08432886e971fd6d961ddcc009e86b260b",
+                  "label": "Research agent",
+                  "pairingCode": "K7Q2-M9XD",
+                  "requestedAt": "1763420400",
+                  "expiresAt": "1763424000",
+                  "signingKey": null
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/agent-requests/open": {
+      "post": {
+        "operationId": "askAnyBusiness",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Ask for authority without a business",
+        "description": "An agent asks before it knows its business, signed under the factory. Whoever approves through the link chooses their business, and the approval binds the request to the business whose root key signed the mandate. Once the answer says bound, the agent asks that business as any agent does.\n\nSigned by the agent's key, under the factory's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskAnyBusinessRequest"
+              },
+              "example": {
+                "label": "Research agent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where the request stands: open, bound to a business, or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskAnyBusinessAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/enrollments": {
+      "post": {
+        "operationId": "enroll",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Enroll an agent",
+        "description": "An agent enrolls once its key is on the business account, with the mandate the administrator approved. Avow checks the mandate against the account and the transaction that authorized the key.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The agent as Avow enrolled it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollAnswer"
+                },
+                "example": {
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "agentId": "agt_95c1d05c",
+                  "agentKey": "0x1b7a7c8f0e5d4c3b2a19087f6e5d4c3b2a190871",
+                  "mandateHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sponsorships": {
+      "post": {
+        "operationId": "sponsor",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Sponsor a transaction",
+        "description": "Avow's relay co-signs a transaction the agent signed with feePayer set, so Avow pays the network fee, or refuses with the cap, rate limit or budget it hit. The relay pays fees only and never moves money into a reserve.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SponsorRequest"
+              },
+              "example": {
+                "transaction": "0x76f8a5"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The transaction with the relay as fee payer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SponsorRequest"
+                },
+                "example": {
+                  "transaction": "0x76f8a5"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/reserve-approvals": {
+      "post": {
+        "operationId": "approveReserve",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Approve a reserve",
+        "description": "An agent asks Avow to approve a reserve for terms it agreed with a supplier. Avow checks the mandate, the business's open reserves and any bookings the terms rely on, and answers with a signed approval the lock checks, or a refusal with its reason code. Avow records its decision either way.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveReserveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Avow's decision, approved with its signed approval or refused with a reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApproveReserveAnswer"
+                },
+                "example": {
+                  "ok": false,
+                  "decisionId": "dec_7f3a91",
+                  "reason": "mandate.over_open_reserves_cap"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/commitments/{commitmentId}/supplier-authorizations": {
+      "post": {
+        "operationId": "authorizeSupplier",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Authorize a supplier",
+        "description": "A supplier asks for a fresh authorization for a commitment's reserve. With it come the approval the reserve was funded under and the buyer's mandate, which the supplier's verifier checks against its own terms and the lock before it accepts.\n\nSigned by the supplier's signing key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "commitmentId",
+            "in": "path",
+            "required": true,
+            "description": "The commitment id, 32 bytes in lower-case hex",
+            "schema": {
+              "type": "string"
+            },
+            "example": "0xabababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The authorization, approval and mandate, or a refusal with a reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeSupplierAnswer"
+                },
+                "example": {
+                  "ok": false,
+                  "reason": "commitment.unknown"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/commitments/{commitmentId}/cancellations": {
+      "post": {
+        "operationId": "cancel",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Record a late cancellation",
+        "description": "A business cancels after free cancellation has ended, and Avow records when, with its signed timestamp. A late-cancellation charge rests on this record. Before free cancellation ends the business cancels on the lock instead.\n\nSigned by the key of the agent that made the commitment, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "commitmentId",
+            "in": "path",
+            "required": true,
+            "description": "The commitment id, 32 bytes in lower-case hex",
+            "schema": {
+              "type": "string"
+            },
+            "example": "0xabababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "When Avow received the cancellation, and its timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/commitments/{commitmentId}/start-requests": {
+      "post": {
+        "operationId": "requestStart",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Ask to start",
+        "description": "A business asks the supplier to start the job, and Avow timestamps the request. The supplier's start receipt names it, and the job can't have started before it.\n\nSigned by the key of the agent that made the commitment, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "commitmentId",
+            "in": "path",
+            "required": true,
+            "description": "The commitment id, 32 bytes in lower-case hex",
+            "schema": {
+              "type": "string"
+            },
+            "example": "0xabababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request's digest and Avow's timestamp on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestStartAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/commitments/{commitmentId}/start-receipts": {
+      "post": {
+        "operationId": "recordStartReceipt",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Record a start receipt",
+        "description": "The business's agent passes on the supplier's start receipt for Avow to record.\n\nSigned by the key of the agent that made the commitment, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "commitmentId",
+            "in": "path",
+            "required": true,
+            "description": "The commitment id, 32 bytes in lower-case hex",
+            "schema": {
+              "type": "string"
+            },
+            "example": "0xabababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordStartReceiptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded, or refused with a reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordStartReceiptAnswer"
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/commitments/{commitmentId}/contest-statements": {
+      "post": {
+        "operationId": "recordContestStatement",
+        "tags": [
+          "Commitments"
+        ],
+        "summary": "Record a contest statement",
+        "description": "The business sends the statement for a contest the lock already took, so Avow holds the text it rules on. Avow records it only when the named transaction holds the lock's Paused event with the statement's reason code and hash.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "commitmentId",
+            "in": "path",
+            "required": true,
+            "description": "The commitment id, 32 bytes in lower-case hex",
+            "schema": {
+              "type": "string"
+            },
+            "example": "0xabababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordContestStatementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The statement's hash and when Avow first recorded it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordContestStatementAnswer"
+                },
+                "example": {
+                  "statementHash": "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+                  "recordedAt": "1763420400"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/businesses": {
+      "post": {
+        "operationId": "registerBusiness",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Register a sandbox business",
+        "description": "A business registers in the sandbox with a registration its account's root key signed, and Avow pays it test dollars. A sandbox business isn't verified.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterBusinessRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The business's id and the test dollars Avow paid it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterBusinessAnswer"
+                },
+                "example": {
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "testData": true,
+                  "payout": {
+                    "transactionHash": "0x1212121212121212121212121212121212121212121212121212121212121212",
+                    "amount": "1500000000"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/suppliers": {
+      "post": {
+        "operationId": "registerSupplier",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Register a supplier",
+        "description": "A business registers as a supplier, naming its payee and the signing key that quotes and accepts for it. The account and the signing key both sign the registration.\n\nSigned by the business account's root key, or the signing key it registers, under the factory's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterSupplierRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The supplier's profile as Avow registered it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/suppliers/{businessId}": {
+      "get": {
+        "operationId": "supplierProfile",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Read a supplier's profile",
+        "description": "The account, payee and signing key Avow registered for a sandbox supplier. Anyone may read it, unsigned, and a buyer's verifier checks a quote's signature against the signing key.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "businessId",
+            "in": "path",
+            "required": true,
+            "description": "The supplier's business id",
+            "schema": {
+              "type": "string"
+            },
+            "example": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The supplier's profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierProfile"
+                },
+                "example": {
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "account": "0x9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "payee": "0x9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "signingKey": "0x07504744d00b218539cfe7739f00b980ecd64d35"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Refusal404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/orders": {
+      "post": {
+        "operationId": "sendOrder",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Send an order",
+        "description": "A buyer's agent orders a job from another business, with an expiry. Nothing is reserved until the buyer funds the quote.\n\nSigned by the buyer agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The order as the mailbox holds it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/inbox": {
+      "post": {
+        "operationId": "readInbox",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Read the inbox",
+        "description": "A supplier's agent reads the orders waiting on its business, oldest first.\n\nSigned by the supplier's signing key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Up to twenty orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadInboxAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/orders/{orderId}": {
+      "post": {
+        "operationId": "readOrder",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Read an order",
+        "description": "Either side reads one order and where it stands.\n\nSigned by either side's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "description": "The order id the buyer chose, 16 bytes as 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f1c9a2b7d4e5f60718293a4b5c6d7e8"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/orders/{orderId}/quote": {
+      "post": {
+        "operationId": "sendQuote",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Send a quote",
+        "description": "The supplier's agent answers an order with terms it signed.\n\nSigned by the supplier's signing key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "description": "The order id the buyer chose, 16 bytes as 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f1c9a2b7d4e5f60718293a4b5c6d7e8"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order, now quoted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/orders/{orderId}/reserved": {
+      "post": {
+        "operationId": "sayReserved",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Say the reserve landed",
+        "description": "The buyer's agent says its reserve is on the lock. Avow reads the lock itself, so the transaction is optional.\n\nSigned by the buyer agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "description": "The order id the buyer chose, 16 bytes as 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f1c9a2b7d4e5f60718293a4b5c6d7e8"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SayReservedRequest"
+              },
+              "example": {
+                "fundedIn": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The order, now reserved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/mailbox/orders/{orderId}/accepted": {
+      "post": {
+        "operationId": "sayAccepted",
+        "tags": [
+          "Mailbox"
+        ],
+        "summary": "Say the acceptance landed",
+        "description": "The supplier's agent says the lock shows its acceptance. Avow reads the lock itself, so the transaction is optional.\n\nSigned by the supplier's signing key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "description": "The order id the buyer chose, 16 bytes as 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f1c9a2b7d4e5f60718293a4b5c6d7e8"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SayAcceptedRequest"
+              },
+              "example": {
+                "acceptedIn": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The order, now accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxOrder"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AvowSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Every route but the status routes and a supplier's profile is signed. The request carries an `Authorization` header of the form `Avow signer=<address>, lock=<address>, requestId=<bytes32>, expiry=<unix seconds>, signature=<hex>`. The signature is EIP-712 over an `ApiRequest` naming this API's origin as its audience, the method, the path, the request id, the expiry and the body's hash, under the domain of the business's lock, or of the factory where a route says so. A request stays valid for at most 300 seconds, and a request id is used once. The SDK signs every request, so a caller rarely builds this header by hand, and the API Explorer can send only the unsigned routes."
+      }
+    },
+    "schemas": {
+      "JobTerms": {
+        "$id": "#/components/schemas/JobTerms",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 2
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD"
+            ]
+          },
+          "amountDecimals": {
+            "type": "number",
+            "const": 6
+          },
+          "template": {
+            "type": "string",
+            "const": "job/1"
+          },
+          "subject": {
+            "type": "object",
+            "properties": {
+              "work": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
+                  }
+                },
+                "required": [
+                  "kind",
+                  "summary"
+                ],
+                "additionalProperties": false
+              },
+              "compute": {
+                "type": "object",
+                "properties": {
+                  "gpu": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "count": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "region": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "gpu",
+                  "count",
+                  "region"
+                ],
+                "additionalProperties": false
+              },
+              "startsAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "deliverBy": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            },
+            "required": [
+              "work",
+              "compute",
+              "startsAt",
+              "deliverBy"
+            ],
+            "additionalProperties": false
+          },
+          "consideration": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "rate"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "amount",
+                  "unit"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "fixed"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "amount"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "remedies": {
+            "type": "object",
+            "properties": {
+              "acceptBy": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "freeCancelBy": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "charges": {
+                "minItems": 1,
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "lateCancellation",
+                        "noShow"
+                      ]
+                    },
+                    "amount": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)$"
+                    },
+                    "earliest": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "amount",
+                    "earliest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "chargeDeadline": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            },
+            "required": [
+              "acceptBy",
+              "freeCancelBy",
+              "charges",
+              "chargeDeadline"
+            ],
+            "additionalProperties": false
+          },
+          "resolution": {
+            "type": "object",
+            "properties": {
+              "contestWindow": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "arbiter": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "day90SupplierShareBps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              }
+            },
+            "required": [
+              "contestWindow",
+              "arbiter",
+              "day90SupplierShareBps"
+            ],
+            "additionalProperties": false
+          },
+          "backing": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "reserve"
+                  },
+                  "side": {
+                    "type": "string",
+                    "const": "buyer"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "releaseDate": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "side",
+                  "amount",
+                  "releaseDate"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "currency",
+          "amountDecimals",
+          "template",
+          "subject",
+          "consideration",
+          "remedies",
+          "resolution",
+          "backing"
+        ],
+        "additionalProperties": false
+      },
+      "JobRequirement": {
+        "$id": "#/components/schemas/JobRequirement",
+        "type": "object",
+        "properties": {
+          "template": {
+            "type": "string",
+            "const": "gpu-reservation/1"
+          },
+          "condition": {
+            "type": "string",
+            "const": "accepted"
+          },
+          "disclosed": {
+            "type": "string",
+            "const": "subject"
+          }
+        },
+        "required": [
+          "template",
+          "condition",
+          "disclosed"
+        ],
+        "additionalProperties": false
+      },
+      "QuoteRequest": {
+        "$id": "#/components/schemas/QuoteRequest",
+        "type": "object",
+        "properties": {
+          "terms": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "number",
+                    "const": 3
+                  },
+                  "currency": {
+                    "type": "string",
+                    "enum": [
+                      "USD"
+                    ]
+                  },
+                  "amountDecimals": {
+                    "type": "number",
+                    "const": 6
+                  },
+                  "template": {
+                    "type": "string",
+                    "const": "job/1"
+                  },
+                  "subject": {
+                    "type": "object",
+                    "properties": {
+                      "work": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 280
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "compute": {
+                        "type": "object",
+                        "properties": {
+                          "gpu": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "count": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "region": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
+                        },
+                        "required": [
+                          "gpu",
+                          "count",
+                          "region"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "startsAt": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "deliverBy": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "work",
+                      "compute",
+                      "startsAt",
+                      "deliverBy"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "consideration": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "rate"
+                          },
+                          "amount": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "unit": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "amount",
+                          "unit"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "fixed"
+                          },
+                          "amount": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "amount"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "remedies": {
+                    "type": "object",
+                    "properties": {
+                      "acceptBy": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "freeCancelBy": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "charges": {
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "lateCancellation",
+                                "noShow"
+                              ]
+                            },
+                            "amount": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9][0-9]*)$"
+                            },
+                            "earliest": {
+                              "type": "string",
+                              "pattern": "^(0|[1-9][0-9]*)$"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "amount",
+                            "earliest"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "chargeDeadline": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "acceptBy",
+                      "freeCancelBy",
+                      "charges",
+                      "chargeDeadline"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resolution": {
+                    "type": "object",
+                    "properties": {
+                      "contestWindow": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "arbiter": {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{40}$"
+                      },
+                      "day90SupplierShareBps": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000
+                      }
+                    },
+                    "required": [
+                      "contestWindow",
+                      "arbiter",
+                      "day90SupplierShareBps"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "backing": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "reserve"
+                          },
+                          "side": {
+                            "type": "string",
+                            "const": "buyer"
+                          },
+                          "amount": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "releaseDate": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "side",
+                          "amount",
+                          "releaseDate"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "dependencyCheck": {
+                    "type": "string",
+                    "enum": [
+                      "buyer"
+                    ]
+                  },
+                  "dependencies": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ],
+                        "items": false,
+                        "minItems": 1,
+                        "maxItems": 1
+                      },
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ],
+                        "items": false,
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ],
+                        "items": false,
+                        "minItems": 3,
+                        "maxItems": 3
+                      },
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "on": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "commitment"
+                                  },
+                                  "chainId": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "lock": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                                  },
+                                  "commitmentId": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  },
+                                  "side": {
+                                    "type": "string",
+                                    "const": "buyer"
+                                  },
+                                  "termsHash": {
+                                    "type": "string",
+                                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "chainId",
+                                  "lock",
+                                  "commitmentId",
+                                  "side",
+                                  "termsHash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "condition": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted"
+                                ]
+                              },
+                              "disclosed": {
+                                "type": "string",
+                                "enum": [
+                                  "subject"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "on",
+                              "condition",
+                              "disclosed"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ],
+                        "items": false,
+                        "minItems": 4,
+                        "maxItems": 4
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "currency",
+                  "amountDecimals",
+                  "template",
+                  "subject",
+                  "consideration",
+                  "remedies",
+                  "resolution",
+                  "backing",
+                  "dependencyCheck",
+                  "dependencies"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "$ref": "#/components/schemas/JobTerms"
+              }
+            ]
+          },
+          "salt": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "agreement": {
+            "type": "object",
+            "properties": {
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "termsHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "category": {
+                "type": "string",
+                "minLength": 1
+              },
+              "buyerBusinessId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mandateHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "nonce": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            },
+            "required": [
+              "commitmentId",
+              "termsHash",
+              "category",
+              "buyerBusinessId",
+              "supplierBusinessId",
+              "mandateHash",
+              "nonce",
+              "expiry"
+            ],
+            "additionalProperties": false
+          },
+          "supplierSignature": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})*$"
+          },
+          "disclosed": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {}
+          }
+        },
+        "required": [
+          "terms",
+          "salt",
+          "agreement",
+          "supplierSignature",
+          "disclosed"
+        ],
+        "additionalProperties": false
+      },
+      "MailboxOrder": {
+        "$id": "#/components/schemas/MailboxOrder",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "orderId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "terms": {
+                "$ref": "#/components/schemas/JobTerms"
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/JobRequirement"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "buyer": {
+                "type": "object",
+                "properties": {
+                  "businessId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "account": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "lock": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "chainId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mandateHash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "businessId",
+                  "account",
+                  "lock",
+                  "chainId",
+                  "mandateHash"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "type": "string",
+                "const": "requested"
+              }
+            },
+            "required": [
+              "orderId",
+              "commitmentId",
+              "supplierBusinessId",
+              "terms",
+              "requirement",
+              "expiry",
+              "buyer",
+              "requestedAt",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "orderId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "terms": {
+                "$ref": "#/components/schemas/JobTerms"
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/JobRequirement"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "buyer": {
+                "type": "object",
+                "properties": {
+                  "businessId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "account": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "lock": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "chainId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mandateHash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "businessId",
+                  "account",
+                  "lock",
+                  "chainId",
+                  "mandateHash"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "type": "string",
+                "const": "expired"
+              },
+              "quote": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/QuoteRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "orderId",
+              "commitmentId",
+              "supplierBusinessId",
+              "terms",
+              "requirement",
+              "expiry",
+              "buyer",
+              "requestedAt",
+              "status",
+              "quote"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "orderId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "terms": {
+                "$ref": "#/components/schemas/JobTerms"
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/JobRequirement"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "buyer": {
+                "type": "object",
+                "properties": {
+                  "businessId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "account": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "lock": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "chainId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mandateHash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "businessId",
+                  "account",
+                  "lock",
+                  "chainId",
+                  "mandateHash"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "type": "string",
+                "const": "quoted"
+              },
+              "quote": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            },
+            "required": [
+              "orderId",
+              "commitmentId",
+              "supplierBusinessId",
+              "terms",
+              "requirement",
+              "expiry",
+              "buyer",
+              "requestedAt",
+              "status",
+              "quote"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "orderId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "terms": {
+                "$ref": "#/components/schemas/JobTerms"
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/JobRequirement"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "buyer": {
+                "type": "object",
+                "properties": {
+                  "businessId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "account": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "lock": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "chainId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mandateHash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "businessId",
+                  "account",
+                  "lock",
+                  "chainId",
+                  "mandateHash"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "type": "string",
+                "const": "reserved"
+              },
+              "quote": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              },
+              "reserve": {
+                "type": "object",
+                "properties": {
+                  "fundedIn": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "acceptBy": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "fundedIn",
+                  "amount",
+                  "acceptBy"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "orderId",
+              "commitmentId",
+              "supplierBusinessId",
+              "terms",
+              "requirement",
+              "expiry",
+              "buyer",
+              "requestedAt",
+              "status",
+              "quote",
+              "reserve"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "orderId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "commitmentId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "supplierBusinessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "terms": {
+                "$ref": "#/components/schemas/JobTerms"
+              },
+              "requirement": {
+                "$ref": "#/components/schemas/JobRequirement"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "buyer": {
+                "type": "object",
+                "properties": {
+                  "businessId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "account": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "lock": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "chainId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mandateHash": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "businessId",
+                  "account",
+                  "lock",
+                  "chainId",
+                  "mandateHash"
+                ],
+                "additionalProperties": false
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "type": "string",
+                "const": "accepted"
+              },
+              "quote": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              },
+              "reserve": {
+                "type": "object",
+                "properties": {
+                  "fundedIn": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "acceptBy": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "fundedIn",
+                  "amount",
+                  "acceptBy"
+                ],
+                "additionalProperties": false
+              },
+              "acceptedIn": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "orderId",
+              "commitmentId",
+              "supplierBusinessId",
+              "terms",
+              "requirement",
+              "expiry",
+              "buyer",
+              "requestedAt",
+              "status",
+              "quote",
+              "reserve",
+              "acceptedIn"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "SupplierProfile": {
+        "$id": "#/components/schemas/SupplierProfile",
+        "type": "object",
+        "properties": {
+          "businessId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "account": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "payee": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "signingKey": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          }
+        },
+        "required": [
+          "businessId",
+          "account",
+          "payee",
+          "signingKey"
+        ]
+      },
+      "HealthAnswer": {
+        "$id": "#/components/schemas/HealthAnswer",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "ReadyAnswer": {
+        "$id": "#/components/schemas/ReadyAnswer",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ready"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "AskBusinessRequest": {
+        "$id": "#/components/schemas/AskBusinessRequest",
+        "type": "object",
+        "properties": {
+          "businessId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\p{Cc}]+$"
+          },
+          "signingKey": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          }
+        },
+        "required": [
+          "businessId",
+          "label"
+        ],
+        "additionalProperties": false
+      },
+      "AskBusinessAnswer": {
+        "$id": "#/components/schemas/AskBusinessAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "businessId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "lock": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "pending"
+              }
+            },
+            "required": [
+              "businessId",
+              "agentKey",
+              "lock",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "businessId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "lock": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "expired"
+              }
+            },
+            "required": [
+              "businessId",
+              "agentKey",
+              "lock",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "businessId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "lock": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "approved"
+              },
+              "approval": {
+                "type": "object",
+                "properties": {
+                  "mandate": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "keyAuthorizedIn": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "mandate",
+                  "keyAuthorizedIn"
+                ],
+                "additionalProperties": false
+              },
+              "supplierRegistration": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "registration": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "accountSignature": {
+                        "type": "string",
+                        "pattern": "^0x([0-9a-fA-F]{2})*$"
+                      }
+                    },
+                    "required": [
+                      "registration",
+                      "accountSignature"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "businessId",
+              "agentKey",
+              "lock",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state",
+              "approval",
+              "supplierRegistration"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AskAnyBusinessRequest": {
+        "$id": "#/components/schemas/AskAnyBusinessRequest",
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\p{Cc}]+$"
+          },
+          "signingKey": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "additionalProperties": false
+      },
+      "AskAnyBusinessAnswer": {
+        "$id": "#/components/schemas/AskAnyBusinessAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "open"
+              }
+            },
+            "required": [
+              "agentKey",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "expired"
+              }
+            },
+            "required": [
+              "agentKey",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\p{Cc}]+$"
+              },
+              "pairingCode": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{4}-[0-9A-Z]{4}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "signingKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "const": "bound"
+              },
+              "businessId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "agentKey",
+              "label",
+              "pairingCode",
+              "requestedAt",
+              "expiresAt",
+              "signingKey",
+              "state",
+              "businessId"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EnrollRequest": {
+        "$id": "#/components/schemas/EnrollRequest",
+        "type": "object",
+        "properties": {
+          "mandate": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The agent's mandate, as a MandateProof the business account signed or the key's transaction authorized"
+          },
+          "keyAuthorizedIn": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          }
+        },
+        "required": [
+          "mandate",
+          "keyAuthorizedIn"
+        ],
+        "additionalProperties": false
+      },
+      "EnrollAnswer": {
+        "$id": "#/components/schemas/EnrollAnswer",
+        "type": "object",
+        "properties": {
+          "businessId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentKey": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "mandateHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          }
+        },
+        "required": [
+          "businessId",
+          "agentId",
+          "agentKey",
+          "mandateHash"
+        ],
+        "additionalProperties": false
+      },
+      "SponsorRequest": {
+        "$id": "#/components/schemas/SponsorRequest",
+        "type": "object",
+        "properties": {
+          "transaction": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})*$"
+          }
+        },
+        "required": [
+          "transaction"
+        ],
+        "additionalProperties": false
+      },
+      "ApproveReserveRequest": {
+        "$id": "#/components/schemas/ApproveReserveRequest",
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The reserve request, naming the commitment, the supplier, the amount and the terms hash the agent asks Avow to approve"
+          },
+          "salt": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "agreement": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The terms agreement both sides signed, as a SignedAgreement"
+          },
+          "fundedBy": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "administrator"
+            ]
+          },
+          "humanApproval": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The administrator's approval of this reserve, as a signed HumanApproval, when the mandate asks for one"
+          }
+        },
+        "required": [
+          "request",
+          "salt",
+          "agreement",
+          "fundedBy"
+        ],
+        "additionalProperties": false
+      },
+      "ApproveReserveAnswer": {
+        "$id": "#/components/schemas/ApproveReserveAnswer",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "decisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "approval": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {},
+                "description": "Avow's approval of the reserve, as a signed Approval the lock checks"
+              }
+            },
+            "required": [
+              "ok",
+              "decisionId",
+              "approval"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "decisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "business.unverified",
+                  "business.test_data",
+                  "administrator.no_authority",
+                  "agent.revoked",
+                  "agent.key_mismatch",
+                  "mandate.invalid",
+                  "mandate.ap2_mismatch",
+                  "mandate.signature_invalid",
+                  "mandate.missing",
+                  "mandate.expired",
+                  "mandate.revoked",
+                  "mandate.action_not_permitted",
+                  "mandate.supplier_not_allowed",
+                  "mandate.category_not_allowed",
+                  "terms.category_mismatch",
+                  "mandate.currency_not_allowed",
+                  "mandate.token_not_allowed",
+                  "mandate.over_payment_limit",
+                  "mandate.over_commitment_cap",
+                  "mandate.over_open_reserves_cap",
+                  "mandate.ends_before_window",
+                  "approval.human_required",
+                  "approval.human_invalid",
+                  "terms.invalid",
+                  "terms.reserve_mismatch",
+                  "terms.deadlines_out_of_order",
+                  "terms.contest_window_short",
+                  "terms.hash_mismatch",
+                  "terms.currency_mismatch",
+                  "terms.incomplete",
+                  "terms.dispute_invalid",
+                  "terms.version_unknown",
+                  "terms.template_unknown",
+                  "terms.template_invalid",
+                  "terms.backing_unsupported",
+                  "terms.charges_invalid",
+                  "message.schema_unknown",
+                  "message.invalid",
+                  "message.validity_too_long",
+                  "message.wrong_chain",
+                  "message.wrong_contract",
+                  "message.expired",
+                  "message.replayed",
+                  "message.signature_invalid",
+                  "message.signer_unknown",
+                  "request.unsigned",
+                  "request.invalid",
+                  "request.signer_unknown",
+                  "request.id_reused",
+                  "request.in_progress",
+                  "service.unavailable",
+                  "sponsorship.refused",
+                  "sponsorship.over_cap",
+                  "sponsorship.rate_limited",
+                  "sponsorship.simulation_failed",
+                  "sponsorship.altered",
+                  "sponsorship.budget_spent",
+                  "business.unknown",
+                  "supplier.unknown",
+                  "order.supplier_mismatch",
+                  "order.limit_reached",
+                  "order.unknown",
+                  "order.out_of_step",
+                  "order.terms_changed",
+                  "order.commitment_mismatch",
+                  "agreement.parties_mismatch",
+                  "commitment.unknown",
+                  "commitment.cancel_on_lock",
+                  "commitment.cancel_closed",
+                  "commitment.ended",
+                  "authorization.payee_mismatch",
+                  "authorization.terms_mismatch",
+                  "authorization.commitment_mismatch",
+                  "authorization.mandate_mismatch",
+                  "authorization.buyer_mismatch",
+                  "authorization.accept_by_passed",
+                  "authorization.token_not_accepted",
+                  "approval.commitment_mismatch",
+                  "approval.parties_mismatch",
+                  "approval.terms_mismatch",
+                  "approval.charges_mismatch",
+                  "approval.dispute_mismatch",
+                  "approval.mandate_mismatch",
+                  "consent.not_releasable",
+                  "consent.count_passed",
+                  "consent.count_out_of_range",
+                  "report.not_reportable",
+                  "report.open",
+                  "report.limit_reached",
+                  "report.kind_not_allowed",
+                  "report.amount_invalid",
+                  "report.too_early",
+                  "contest.not_contestable",
+                  "contest.already_contested",
+                  "contest.window_closed",
+                  "contest.reason_not_for_charge",
+                  "contest.statement_invalid",
+                  "contest.not_on_chain",
+                  "contest.statement_mismatch",
+                  "chain.reserve_missing",
+                  "keychain.over_daily_limit",
+                  "chain.reserve_mismatch",
+                  "chain.reserve_accepted",
+                  "chain.acceptance_reverted",
+                  "chain.lock_unknown",
+                  "chain.agent_key_inactive",
+                  "chain.mandate_mismatch",
+                  "chain.approval_mismatch",
+                  "chain.lock_timing_unexpected",
+                  "chain.supplier_mismatch",
+                  "reference.commitment_mismatch",
+                  "reference.unreadable",
+                  "payment.not_found",
+                  "payment.failed",
+                  "payment.not_final",
+                  "payment.not_memo_transfer",
+                  "payment.token_not_accepted",
+                  "payment.token_mismatch",
+                  "payment.sender_mismatch",
+                  "payment.recipient_mismatch",
+                  "payment.amount_mismatch",
+                  "payment.memo_mismatch",
+                  "payment.attributed_twice",
+                  "dependency.lock_unknown",
+                  "dependency.not_owned",
+                  "dependency.not_found",
+                  "dependency.self_supplied",
+                  "dependency.not_accepted",
+                  "dependency.charge_pending",
+                  "dependency.cancellable",
+                  "dependency.ended",
+                  "dependency.terms_mismatch",
+                  "dependency.disclosure_invalid",
+                  "dependency.does_not_fit",
+                  "dependency.unreadable",
+                  "dependency.stale",
+                  "dependency.required",
+                  "dependency.elided",
+                  "dependency.unrecorded",
+                  "service.compute_off",
+                  "service.over_budget",
+                  "service.unknown_offer",
+                  "service.unknown_booking",
+                  "service.quantity_unavailable",
+                  "supplier.declined",
+                  "supplier.not_accepted",
+                  "service.check_failed",
+                  "service.cancel_late",
+                  "service.cancel_declined",
+                  "chain.cancel_reverted",
+                  "chain.report_reverted",
+                  "service.booking_required",
+                  "sandbox.closed",
+                  "sandbox.limit_reached",
+                  "sandbox.budget_spent",
+                  "sandbox.pool_empty",
+                  "sandbox.faucet_fees_low",
+                  "sandbox.taken",
+                  "sandbox.session_taken",
+                  "sandbox.session_expired",
+                  "sandbox.session_full",
+                  "sandbox.event_too_large",
+                  "sandbox.session_rate"
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "decisionId",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AuthorizeSupplierAnswer": {
+        "$id": "#/components/schemas/AuthorizeSupplierAnswer",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "authorization": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {},
+                "description": "Avow's fresh authorization, as a signed SupplierAuthorization"
+              },
+              "approval": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {},
+                "description": "The Approval the reserve was funded under, whose digest the lock stored"
+              },
+              "mandate": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {},
+                "description": "The buyer's mandate, as a MandateProof"
+              }
+            },
+            "required": [
+              "ok",
+              "authorization",
+              "approval",
+              "mandate"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "business.unverified",
+                  "business.test_data",
+                  "administrator.no_authority",
+                  "agent.revoked",
+                  "agent.key_mismatch",
+                  "mandate.invalid",
+                  "mandate.ap2_mismatch",
+                  "mandate.signature_invalid",
+                  "mandate.missing",
+                  "mandate.expired",
+                  "mandate.revoked",
+                  "mandate.action_not_permitted",
+                  "mandate.supplier_not_allowed",
+                  "mandate.category_not_allowed",
+                  "terms.category_mismatch",
+                  "mandate.currency_not_allowed",
+                  "mandate.token_not_allowed",
+                  "mandate.over_payment_limit",
+                  "mandate.over_commitment_cap",
+                  "mandate.over_open_reserves_cap",
+                  "mandate.ends_before_window",
+                  "approval.human_required",
+                  "approval.human_invalid",
+                  "terms.invalid",
+                  "terms.reserve_mismatch",
+                  "terms.deadlines_out_of_order",
+                  "terms.contest_window_short",
+                  "terms.hash_mismatch",
+                  "terms.currency_mismatch",
+                  "terms.incomplete",
+                  "terms.dispute_invalid",
+                  "terms.version_unknown",
+                  "terms.template_unknown",
+                  "terms.template_invalid",
+                  "terms.backing_unsupported",
+                  "terms.charges_invalid",
+                  "message.schema_unknown",
+                  "message.invalid",
+                  "message.validity_too_long",
+                  "message.wrong_chain",
+                  "message.wrong_contract",
+                  "message.expired",
+                  "message.replayed",
+                  "message.signature_invalid",
+                  "message.signer_unknown",
+                  "request.unsigned",
+                  "request.invalid",
+                  "request.signer_unknown",
+                  "request.id_reused",
+                  "request.in_progress",
+                  "service.unavailable",
+                  "sponsorship.refused",
+                  "sponsorship.over_cap",
+                  "sponsorship.rate_limited",
+                  "sponsorship.simulation_failed",
+                  "sponsorship.altered",
+                  "sponsorship.budget_spent",
+                  "business.unknown",
+                  "supplier.unknown",
+                  "order.supplier_mismatch",
+                  "order.limit_reached",
+                  "order.unknown",
+                  "order.out_of_step",
+                  "order.terms_changed",
+                  "order.commitment_mismatch",
+                  "agreement.parties_mismatch",
+                  "commitment.unknown",
+                  "commitment.cancel_on_lock",
+                  "commitment.cancel_closed",
+                  "commitment.ended",
+                  "authorization.payee_mismatch",
+                  "authorization.terms_mismatch",
+                  "authorization.commitment_mismatch",
+                  "authorization.mandate_mismatch",
+                  "authorization.buyer_mismatch",
+                  "authorization.accept_by_passed",
+                  "authorization.token_not_accepted",
+                  "approval.commitment_mismatch",
+                  "approval.parties_mismatch",
+                  "approval.terms_mismatch",
+                  "approval.charges_mismatch",
+                  "approval.dispute_mismatch",
+                  "approval.mandate_mismatch",
+                  "consent.not_releasable",
+                  "consent.count_passed",
+                  "consent.count_out_of_range",
+                  "report.not_reportable",
+                  "report.open",
+                  "report.limit_reached",
+                  "report.kind_not_allowed",
+                  "report.amount_invalid",
+                  "report.too_early",
+                  "contest.not_contestable",
+                  "contest.already_contested",
+                  "contest.window_closed",
+                  "contest.reason_not_for_charge",
+                  "contest.statement_invalid",
+                  "contest.not_on_chain",
+                  "contest.statement_mismatch",
+                  "chain.reserve_missing",
+                  "keychain.over_daily_limit",
+                  "chain.reserve_mismatch",
+                  "chain.reserve_accepted",
+                  "chain.acceptance_reverted",
+                  "chain.lock_unknown",
+                  "chain.agent_key_inactive",
+                  "chain.mandate_mismatch",
+                  "chain.approval_mismatch",
+                  "chain.lock_timing_unexpected",
+                  "chain.supplier_mismatch",
+                  "reference.commitment_mismatch",
+                  "reference.unreadable",
+                  "payment.not_found",
+                  "payment.failed",
+                  "payment.not_final",
+                  "payment.not_memo_transfer",
+                  "payment.token_not_accepted",
+                  "payment.token_mismatch",
+                  "payment.sender_mismatch",
+                  "payment.recipient_mismatch",
+                  "payment.amount_mismatch",
+                  "payment.memo_mismatch",
+                  "payment.attributed_twice",
+                  "dependency.lock_unknown",
+                  "dependency.not_owned",
+                  "dependency.not_found",
+                  "dependency.self_supplied",
+                  "dependency.not_accepted",
+                  "dependency.charge_pending",
+                  "dependency.cancellable",
+                  "dependency.ended",
+                  "dependency.terms_mismatch",
+                  "dependency.disclosure_invalid",
+                  "dependency.does_not_fit",
+                  "dependency.unreadable",
+                  "dependency.stale",
+                  "dependency.required",
+                  "dependency.elided",
+                  "dependency.unrecorded",
+                  "service.compute_off",
+                  "service.over_budget",
+                  "service.unknown_offer",
+                  "service.unknown_booking",
+                  "service.quantity_unavailable",
+                  "supplier.declined",
+                  "supplier.not_accepted",
+                  "service.check_failed",
+                  "service.cancel_late",
+                  "service.cancel_declined",
+                  "chain.cancel_reverted",
+                  "chain.report_reverted",
+                  "service.booking_required",
+                  "sandbox.closed",
+                  "sandbox.limit_reached",
+                  "sandbox.budget_spent",
+                  "sandbox.pool_empty",
+                  "sandbox.faucet_fees_low",
+                  "sandbox.taken",
+                  "sandbox.session_taken",
+                  "sandbox.session_expired",
+                  "sandbox.session_full",
+                  "sandbox.event_too_large",
+                  "sandbox.session_rate"
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "CancelAnswer": {
+        "$id": "#/components/schemas/CancelAnswer",
+        "type": "object",
+        "properties": {
+          "cancelledAt": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "timestamp": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Avow's signed Timestamp on the request that cancelled"
+          },
+          "cancelledBy": {
+            "type": "object",
+            "properties": {
+              "signer": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "requestId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "bodyHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              }
+            },
+            "required": [
+              "signer",
+              "requestId",
+              "expiry",
+              "bodyHash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "cancelledAt",
+          "timestamp"
+        ],
+        "additionalProperties": false
+      },
+      "RequestStartAnswer": {
+        "$id": "#/components/schemas/RequestStartAnswer",
+        "type": "object",
+        "properties": {
+          "startRequestHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "requestedAt": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "timestamp": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "Avow's signed Timestamp on the start request"
+          }
+        },
+        "required": [
+          "startRequestHash",
+          "requestedAt",
+          "timestamp"
+        ],
+        "additionalProperties": false
+      },
+      "RecordStartReceiptRequest": {
+        "$id": "#/components/schemas/RecordStartReceiptRequest",
+        "type": "object",
+        "properties": {
+          "receipt": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The supplier's signed StartReceipt"
+          }
+        },
+        "required": [
+          "receipt"
+        ],
+        "additionalProperties": false
+      },
+      "RecordStartReceiptAnswer": {
+        "$id": "#/components/schemas/RecordStartReceiptAnswer",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "business.unverified",
+                  "business.test_data",
+                  "administrator.no_authority",
+                  "agent.revoked",
+                  "agent.key_mismatch",
+                  "mandate.invalid",
+                  "mandate.ap2_mismatch",
+                  "mandate.signature_invalid",
+                  "mandate.missing",
+                  "mandate.expired",
+                  "mandate.revoked",
+                  "mandate.action_not_permitted",
+                  "mandate.supplier_not_allowed",
+                  "mandate.category_not_allowed",
+                  "terms.category_mismatch",
+                  "mandate.currency_not_allowed",
+                  "mandate.token_not_allowed",
+                  "mandate.over_payment_limit",
+                  "mandate.over_commitment_cap",
+                  "mandate.over_open_reserves_cap",
+                  "mandate.ends_before_window",
+                  "approval.human_required",
+                  "approval.human_invalid",
+                  "terms.invalid",
+                  "terms.reserve_mismatch",
+                  "terms.deadlines_out_of_order",
+                  "terms.contest_window_short",
+                  "terms.hash_mismatch",
+                  "terms.currency_mismatch",
+                  "terms.incomplete",
+                  "terms.dispute_invalid",
+                  "terms.version_unknown",
+                  "terms.template_unknown",
+                  "terms.template_invalid",
+                  "terms.backing_unsupported",
+                  "terms.charges_invalid",
+                  "message.schema_unknown",
+                  "message.invalid",
+                  "message.validity_too_long",
+                  "message.wrong_chain",
+                  "message.wrong_contract",
+                  "message.expired",
+                  "message.replayed",
+                  "message.signature_invalid",
+                  "message.signer_unknown",
+                  "request.unsigned",
+                  "request.invalid",
+                  "request.signer_unknown",
+                  "request.id_reused",
+                  "request.in_progress",
+                  "service.unavailable",
+                  "sponsorship.refused",
+                  "sponsorship.over_cap",
+                  "sponsorship.rate_limited",
+                  "sponsorship.simulation_failed",
+                  "sponsorship.altered",
+                  "sponsorship.budget_spent",
+                  "business.unknown",
+                  "supplier.unknown",
+                  "order.supplier_mismatch",
+                  "order.limit_reached",
+                  "order.unknown",
+                  "order.out_of_step",
+                  "order.terms_changed",
+                  "order.commitment_mismatch",
+                  "agreement.parties_mismatch",
+                  "commitment.unknown",
+                  "commitment.cancel_on_lock",
+                  "commitment.cancel_closed",
+                  "commitment.ended",
+                  "authorization.payee_mismatch",
+                  "authorization.terms_mismatch",
+                  "authorization.commitment_mismatch",
+                  "authorization.mandate_mismatch",
+                  "authorization.buyer_mismatch",
+                  "authorization.accept_by_passed",
+                  "authorization.token_not_accepted",
+                  "approval.commitment_mismatch",
+                  "approval.parties_mismatch",
+                  "approval.terms_mismatch",
+                  "approval.charges_mismatch",
+                  "approval.dispute_mismatch",
+                  "approval.mandate_mismatch",
+                  "consent.not_releasable",
+                  "consent.count_passed",
+                  "consent.count_out_of_range",
+                  "report.not_reportable",
+                  "report.open",
+                  "report.limit_reached",
+                  "report.kind_not_allowed",
+                  "report.amount_invalid",
+                  "report.too_early",
+                  "contest.not_contestable",
+                  "contest.already_contested",
+                  "contest.window_closed",
+                  "contest.reason_not_for_charge",
+                  "contest.statement_invalid",
+                  "contest.not_on_chain",
+                  "contest.statement_mismatch",
+                  "chain.reserve_missing",
+                  "keychain.over_daily_limit",
+                  "chain.reserve_mismatch",
+                  "chain.reserve_accepted",
+                  "chain.acceptance_reverted",
+                  "chain.lock_unknown",
+                  "chain.agent_key_inactive",
+                  "chain.mandate_mismatch",
+                  "chain.approval_mismatch",
+                  "chain.lock_timing_unexpected",
+                  "chain.supplier_mismatch",
+                  "reference.commitment_mismatch",
+                  "reference.unreadable",
+                  "payment.not_found",
+                  "payment.failed",
+                  "payment.not_final",
+                  "payment.not_memo_transfer",
+                  "payment.token_not_accepted",
+                  "payment.token_mismatch",
+                  "payment.sender_mismatch",
+                  "payment.recipient_mismatch",
+                  "payment.amount_mismatch",
+                  "payment.memo_mismatch",
+                  "payment.attributed_twice",
+                  "dependency.lock_unknown",
+                  "dependency.not_owned",
+                  "dependency.not_found",
+                  "dependency.self_supplied",
+                  "dependency.not_accepted",
+                  "dependency.charge_pending",
+                  "dependency.cancellable",
+                  "dependency.ended",
+                  "dependency.terms_mismatch",
+                  "dependency.disclosure_invalid",
+                  "dependency.does_not_fit",
+                  "dependency.unreadable",
+                  "dependency.stale",
+                  "dependency.required",
+                  "dependency.elided",
+                  "dependency.unrecorded",
+                  "service.compute_off",
+                  "service.over_budget",
+                  "service.unknown_offer",
+                  "service.unknown_booking",
+                  "service.quantity_unavailable",
+                  "supplier.declined",
+                  "supplier.not_accepted",
+                  "service.check_failed",
+                  "service.cancel_late",
+                  "service.cancel_declined",
+                  "chain.cancel_reverted",
+                  "chain.report_reverted",
+                  "service.booking_required",
+                  "sandbox.closed",
+                  "sandbox.limit_reached",
+                  "sandbox.budget_spent",
+                  "sandbox.pool_empty",
+                  "sandbox.faucet_fees_low",
+                  "sandbox.taken",
+                  "sandbox.session_taken",
+                  "sandbox.session_expired",
+                  "sandbox.session_full",
+                  "sandbox.event_too_large",
+                  "sandbox.session_rate"
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RecordContestStatementRequest": {
+        "$id": "#/components/schemas/RecordContestStatementRequest",
+        "type": "object",
+        "properties": {
+          "statement": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {},
+            "description": "The business's ContestStatement, signed by the account's root key"
+          },
+          "contestedIn": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          }
+        },
+        "required": [
+          "statement",
+          "contestedIn"
+        ],
+        "additionalProperties": false
+      },
+      "RecordContestStatementAnswer": {
+        "$id": "#/components/schemas/RecordContestStatementAnswer",
+        "type": "object",
+        "properties": {
+          "statementHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "recordedAt": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          }
+        },
+        "required": [
+          "statementHash",
+          "recordedAt"
+        ],
+        "additionalProperties": false
+      },
+      "RegisterBusinessRequest": {
+        "$id": "#/components/schemas/RegisterBusinessRequest",
+        "type": "object",
+        "properties": {
+          "registration": {
+            "type": "object",
+            "properties": {
+              "environment": {
+                "type": "string",
+                "const": "sandbox"
+              },
+              "audience": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "account": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "nonce": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "lock": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "legalName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "country": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}$"
+              }
+            },
+            "required": [
+              "environment",
+              "audience",
+              "account",
+              "nonce",
+              "expiry",
+              "lock",
+              "legalName",
+              "country"
+            ],
+            "additionalProperties": false
+          },
+          "accountSignature": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})+$"
+          }
+        },
+        "required": [
+          "registration",
+          "accountSignature"
+        ],
+        "additionalProperties": false
+      },
+      "RegisterBusinessAnswer": {
+        "$id": "#/components/schemas/RegisterBusinessAnswer",
+        "type": "object",
+        "properties": {
+          "businessId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "testData": {
+            "type": "boolean",
+            "const": true
+          },
+          "payout": {
+            "type": "object",
+            "properties": {
+              "transactionHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            },
+            "required": [
+              "transactionHash",
+              "amount"
+            ]
+          }
+        },
+        "required": [
+          "businessId",
+          "testData",
+          "payout"
+        ]
+      },
+      "RegisterSupplierRequest": {
+        "$id": "#/components/schemas/RegisterSupplierRequest",
+        "type": "object",
+        "properties": {
+          "registration": {
+            "type": "object",
+            "properties": {
+              "environment": {
+                "type": "string",
+                "const": "sandbox"
+              },
+              "audience": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "account": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "nonce": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              "expiry": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "payee": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "signingKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              }
+            },
+            "required": [
+              "environment",
+              "audience",
+              "account",
+              "nonce",
+              "expiry",
+              "payee",
+              "signingKey"
+            ],
+            "additionalProperties": false
+          },
+          "accountSignature": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})+$"
+          },
+          "signingKeySignature": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})+$"
+          }
+        },
+        "required": [
+          "registration",
+          "accountSignature",
+          "signingKeySignature"
+        ],
+        "additionalProperties": false
+      },
+      "SendOrderRequest": {
+        "$id": "#/components/schemas/SendOrderRequest",
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "commitmentId": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "supplierBusinessId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "terms": {
+            "$ref": "#/components/schemas/JobTerms"
+          },
+          "requirement": {
+            "$ref": "#/components/schemas/JobRequirement"
+          },
+          "expiry": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          }
+        },
+        "required": [
+          "orderId",
+          "commitmentId",
+          "supplierBusinessId",
+          "terms",
+          "requirement",
+          "expiry"
+        ],
+        "additionalProperties": false
+      },
+      "ReadInboxAnswer": {
+        "$id": "#/components/schemas/ReadInboxAnswer",
+        "type": "object",
+        "properties": {
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailboxOrder"
+            }
+          }
+        },
+        "required": [
+          "orders"
+        ],
+        "additionalProperties": false
+      },
+      "SayReservedRequest": {
+        "$id": "#/components/schemas/SayReservedRequest",
+        "type": "object",
+        "properties": {
+          "fundedIn": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "fundedIn"
+        ],
+        "additionalProperties": false
+      },
+      "SayAcceptedRequest": {
+        "$id": "#/components/schemas/SayAcceptedRequest",
+        "type": "object",
+        "properties": {
+          "acceptedIn": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "acceptedIn"
+        ],
+        "additionalProperties": false
+      },
+      "Refusal": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "description": "A refusal, with its reason code and a sentence. Avow's relay adds the fields its codes name, such as retryAt.",
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "reason",
+              "message"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "business.unverified",
+                  "business.test_data",
+                  "administrator.no_authority",
+                  "agent.revoked",
+                  "agent.key_mismatch",
+                  "mandate.invalid",
+                  "mandate.ap2_mismatch",
+                  "mandate.signature_invalid",
+                  "mandate.missing",
+                  "mandate.expired",
+                  "mandate.revoked",
+                  "mandate.action_not_permitted",
+                  "mandate.supplier_not_allowed",
+                  "mandate.category_not_allowed",
+                  "terms.category_mismatch",
+                  "mandate.currency_not_allowed",
+                  "mandate.token_not_allowed",
+                  "mandate.over_payment_limit",
+                  "mandate.over_commitment_cap",
+                  "mandate.over_open_reserves_cap",
+                  "mandate.ends_before_window",
+                  "approval.human_required",
+                  "approval.human_invalid",
+                  "terms.invalid",
+                  "terms.reserve_mismatch",
+                  "terms.deadlines_out_of_order",
+                  "terms.contest_window_short",
+                  "terms.hash_mismatch",
+                  "terms.currency_mismatch",
+                  "terms.incomplete",
+                  "terms.dispute_invalid",
+                  "terms.version_unknown",
+                  "terms.template_unknown",
+                  "terms.template_invalid",
+                  "terms.backing_unsupported",
+                  "terms.charges_invalid",
+                  "message.schema_unknown",
+                  "message.invalid",
+                  "message.validity_too_long",
+                  "message.wrong_chain",
+                  "message.wrong_contract",
+                  "message.expired",
+                  "message.replayed",
+                  "message.signature_invalid",
+                  "message.signer_unknown",
+                  "request.unsigned",
+                  "request.invalid",
+                  "request.signer_unknown",
+                  "request.id_reused",
+                  "request.in_progress",
+                  "service.unavailable",
+                  "sponsorship.refused",
+                  "sponsorship.over_cap",
+                  "sponsorship.rate_limited",
+                  "sponsorship.simulation_failed",
+                  "sponsorship.altered",
+                  "sponsorship.budget_spent",
+                  "business.unknown",
+                  "supplier.unknown",
+                  "order.supplier_mismatch",
+                  "order.limit_reached",
+                  "order.unknown",
+                  "order.out_of_step",
+                  "order.terms_changed",
+                  "order.commitment_mismatch",
+                  "agreement.parties_mismatch",
+                  "commitment.unknown",
+                  "commitment.cancel_on_lock",
+                  "commitment.cancel_closed",
+                  "commitment.ended",
+                  "authorization.payee_mismatch",
+                  "authorization.terms_mismatch",
+                  "authorization.commitment_mismatch",
+                  "authorization.mandate_mismatch",
+                  "authorization.buyer_mismatch",
+                  "authorization.accept_by_passed",
+                  "authorization.token_not_accepted",
+                  "approval.commitment_mismatch",
+                  "approval.parties_mismatch",
+                  "approval.terms_mismatch",
+                  "approval.charges_mismatch",
+                  "approval.dispute_mismatch",
+                  "approval.mandate_mismatch",
+                  "consent.not_releasable",
+                  "consent.count_passed",
+                  "consent.count_out_of_range",
+                  "report.not_reportable",
+                  "report.open",
+                  "report.limit_reached",
+                  "report.kind_not_allowed",
+                  "report.amount_invalid",
+                  "report.too_early",
+                  "contest.not_contestable",
+                  "contest.already_contested",
+                  "contest.window_closed",
+                  "contest.reason_not_for_charge",
+                  "contest.statement_invalid",
+                  "contest.not_on_chain",
+                  "contest.statement_mismatch",
+                  "chain.reserve_missing",
+                  "keychain.over_daily_limit",
+                  "chain.reserve_mismatch",
+                  "chain.reserve_accepted",
+                  "chain.acceptance_reverted",
+                  "chain.lock_unknown",
+                  "chain.agent_key_inactive",
+                  "chain.mandate_mismatch",
+                  "chain.approval_mismatch",
+                  "chain.lock_timing_unexpected",
+                  "chain.supplier_mismatch",
+                  "reference.commitment_mismatch",
+                  "reference.unreadable",
+                  "payment.not_found",
+                  "payment.failed",
+                  "payment.not_final",
+                  "payment.not_memo_transfer",
+                  "payment.token_not_accepted",
+                  "payment.token_mismatch",
+                  "payment.sender_mismatch",
+                  "payment.recipient_mismatch",
+                  "payment.amount_mismatch",
+                  "payment.memo_mismatch",
+                  "payment.attributed_twice",
+                  "dependency.lock_unknown",
+                  "dependency.not_owned",
+                  "dependency.not_found",
+                  "dependency.self_supplied",
+                  "dependency.not_accepted",
+                  "dependency.charge_pending",
+                  "dependency.cancellable",
+                  "dependency.ended",
+                  "dependency.terms_mismatch",
+                  "dependency.disclosure_invalid",
+                  "dependency.does_not_fit",
+                  "dependency.unreadable",
+                  "dependency.stale",
+                  "dependency.required",
+                  "dependency.elided",
+                  "dependency.unrecorded",
+                  "service.compute_off",
+                  "service.over_budget",
+                  "service.unknown_offer",
+                  "service.unknown_booking",
+                  "service.quantity_unavailable",
+                  "supplier.declined",
+                  "supplier.not_accepted",
+                  "service.check_failed",
+                  "service.cancel_late",
+                  "service.cancel_declined",
+                  "chain.cancel_reverted",
+                  "chain.report_reverted",
+                  "service.booking_required",
+                  "sandbox.closed",
+                  "sandbox.limit_reached",
+                  "sandbox.budget_spent",
+                  "sandbox.pool_empty",
+                  "sandbox.faucet_fees_low",
+                  "sandbox.taken",
+                  "sandbox.session_taken",
+                  "sandbox.session_expired",
+                  "sandbox.session_full",
+                  "sandbox.event_too_large",
+                  "sandbox.session_rate"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Refusal400": {
+        "description": "The request or its body is malformed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Refusal"
+            }
+          }
+        }
+      },
+      "Refusal401": {
+        "description": "The request is unsigned, its signature is wrong, or it expired",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Refusal"
+            }
+          }
+        }
+      },
+      "Refusal404": {
+        "description": "Avow has no such record",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Refusal"
+            }
+          }
+        }
+      },
+      "Refusal409": {
+        "description": "The request id was used before, or the same request is in progress",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Refusal"
+            }
+          }
+        }
+      },
+      "Refusal503": {
+        "description": "The API is unavailable for now, so try again",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Refusal"
+            }
+          }
+        }
+      }
+    }
+  }
+}

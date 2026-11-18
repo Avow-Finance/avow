@@ -1,0 +1,5 @@
+# Avow's testnet API, built from the schemas the API's parsers check. packages/spec/src/openapi.ts
+# writes openapi.json, and a test fails when the two differ.
+api:
+  specs:
+    - openapi: openapi/openapi.json

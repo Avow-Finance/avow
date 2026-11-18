@@ -44,6 +44,7 @@ navigation:
     contents:
       - page: Tools and commands
         path: ./docs/pages/tools.mdx
+      - api: API reference
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx
 # Light follows avow.finance's white and violet, and dark keeps the black and white it had.
