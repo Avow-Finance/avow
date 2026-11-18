@@ -113,6 +113,10 @@ The check reads the lock on Tempo through the factory the SDK trusts and never a
 
 The link carries the terms hash, and the terms themselves come from the buyer. Matching them to that hash is what ties them to the reserve, and `verifyCommitmentTerms` in `@avow-finance/verifier` does that for anyone holding them.
 
+## Teach your agent when to commit
+
+The repo's `skills/avow-commitments` folder is an Agent Skill. It tells an agent when a commitment is the right tool and when a payment is, how to connect and stay inside its limits, and how to check a commitment someone sent it. Copy the folder into your agent's skills, such as `~/.claude/skills` for Claude Code, and the agent loads it when a task calls for a commitment.
+
 ## What the approval holds the agent to
 
 - **The mandate** names the suppliers the agent may commit with, the most it may reserve for one commitment and in total, and when its authority ends. Avow refuses a reserve outside it.
