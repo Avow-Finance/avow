@@ -59,6 +59,10 @@ Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
 
 `npx avow-sandbox --help` prints the same list with every option.
 
+## The API underneath
+
+The tools and commands sign every request for you. The [API reference](/reference/api-reference/status/health) describes each route they call, with its body, its answer and who signs it, and its Try it button calls the routes anyone may call unsigned.
+
 ## Agent Skill
 
 The repo's [`skills/avow-commitments`](https://github.com/Avow-Finance/avow/tree/main/skills/avow-commitments) is an Agent Skill that tells an agent when a commitment is the right tool, how to stay inside its limits and how to check a commitment someone sent it. A test keeps the tools it names in step with the MCP server's.

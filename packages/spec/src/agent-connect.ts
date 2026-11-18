@@ -44,7 +44,7 @@ const labelJson = z
   .max(60)
   .regex(/^[^\p{Cc}]+$/u, 'printable characters only')
 
-const agentRequestJson = z.strictObject({
+export const agentRequestJson = z.strictObject({
   businessId: z.string().min(1).max(200),
   label: labelJson,
   signingKey: address.optional(),
@@ -60,7 +60,7 @@ export function parseAgentRequest(json: unknown): AgentRequest | null {
 /** What an agent sends when it asks before it knows its business: its name, and any signing key. */
 export type OpenAgentRequest = Omit<AgentRequest, 'businessId'>
 
-const openAgentRequestJson = agentRequestJson.omit({ businessId: true })
+export const openAgentRequestJson = agentRequestJson.omit({ businessId: true })
 
 export function parseOpenAgentRequest(json: unknown): OpenAgentRequest | null {
   const parsed = openAgentRequestJson.safeParse(json)
@@ -85,7 +85,7 @@ const statusBase = {
   signingKey: address.nullable(),
 }
 
-const agentRequestStatusJson = z.discriminatedUnion('state', [
+export const agentRequestStatusJson = z.discriminatedUnion('state', [
   z.strictObject({ ...statusBase, state: z.literal('pending') }),
   z.strictObject({ ...statusBase, state: z.literal('expired') }),
   z.strictObject({
@@ -119,7 +119,7 @@ const { businessId: _businessId, lock: _lock, ...openBase } = statusBase
  * means a business's administrator approved it, so the agent asks that business for the approval
  * at `SANDBOX_PATHS.agentRequests`, as any agent does.
  */
-const openAgentRequestStatusJson = z.discriminatedUnion('state', [
+export const openAgentRequestStatusJson = z.discriminatedUnion('state', [
   z.strictObject({ ...openBase, state: z.literal('open') }),
   z.strictObject({ ...openBase, state: z.literal('expired') }),
   z.strictObject({ ...openBase, state: z.literal('bound'), businessId: z.string().min(1) }),
