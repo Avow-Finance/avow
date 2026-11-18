@@ -3,44 +3,32 @@ title: Introduction
 slug: docs/get-started/introduction
 ---
 
-Avow is the commitment layer for autonomous trade. It lets verified businesses authorize AI agents to make commitments, agree on terms, and reserve funds for a named supplier. Suppliers can check who stands behind an agent, what it is authorized to do, and what backs its promise before accepting.
+Avow lets a verified business give its AI agents the authority to make commitments, each backed by money reserved in the business's own lock for one named supplier. The supplier checks who stands behind the agent, what it may commit to and the money backing it, with open-source code and the chain, so two agents that have never met can rely on each other.
 
-Autonomous commerce is trade in which software agents act on behalf of businesses to find suppliers, agree on terms, purchase services, and manage obligations. Businesses set the authority and limits; agents carry out transactions within them. This requires more than the ability to send a payment. A supplier needs to know whether it can rely on an agent’s promise before committing its own resources.
+Agents can already pay. Most trade between businesses runs on promises made before anyone pays in full: a reservation, a booking, a purchase order, an agreement to pay later. A supplier holding GPUs for next Tuesday needs to know the agent booking them can bind a real business, stays within limits that business set, and has money set aside if it cancels late. Avow gives the agent all three.
 
-Businesses trade through commitments: reservations, bookings, purchase orders, and agreements to pay or deliver later. These promises allow one party to act before the other has completed its obligations. Agents need a way to make those promises with clear authority, backing, and consequences.
-
-Avow represents each commitment as a record of its parties, terms, backing, deadlines, and outcome. Developers can create and verify individual commitments today. Connecting a commitment to the ones it depends on comes next.
-
-Avow is currently in development on testnet. The initial implementation supports buyer-funded reserves; other forms of backing are planned.
+Avow runs on Tempo's Moderato testnet with test dollars. Reserves are funded by the buyer today, and other kinds of backing come later.
 
 ## From authority to commitment
 
-A business administrator authorizes an agent through a mandate that defines its permitted actions, limits, and expiry. Avow checks that authority before approving a backed commitment.
+A business's administrator approves an agent with a passkey, under a mandate that names the suppliers it may book, the most per commitment, the most held at once and an end date. The agent's key also carries a daily limit on Tempo. Three layers hold the agent to those limits. Avow's API refuses a reserve the mandate doesn't allow, the lock takes a reserve only with Avow's approval over the exact terms, and Tempo's keychain refuses what the key can't move.
 
-Each reserve is assigned to one commitment and one named supplier. Funds are held in the business’s own reserve contract, locked under agreed rules that specify the maximum charge, when it can apply, and when the funds are released.
+Each reserve backs one commitment for one named supplier, in the business's own lock. The terms say the most the supplier can charge, for a late cancellation or a no-show, and when the reserve goes back.
 
-For example, an agent might reserve GPU capacity with a cancellation charge of up to $500. The business reserves $500, and the supplier verifies the commitment before accepting. Usage is paid separately. When no charge can still apply, the reserve returns to the business. An applicable charge follows the agreed process, including an opportunity to contest it.
+Take a GPU booking with a late-cancellation charge of up to \$500. The business reserves \$500, and the supplier checks the commitment before it accepts. Usage is paid separately. Once no charge can apply, the reserve returns to the business, and a charge that does apply follows the agreed process, with a window to contest it.
 
-Revoking an agent stops new commitments. Obligations already made remain in place.
+Revoking an agent stops its new commitments. Commitments it already made keep their terms.
 
 ## Composable commitments
 
-A business’s promise often depends on another business keeping its own. A compute reseller, for example, may accept a customer’s booking using capacity reserved from a GPU provider. The customer needs to know whether that upstream reservation exists and has been accepted.
+A business's promise often rests on another business keeping its own. A compute reseller sells 8 H100s to a lab and books the same capacity from a GPU cloud, so its sale stands on its own purchase.
 
-Chained commitments come next. One commitment will reference another, naming the exact commitment and its agreed terms, so approval and acceptance can depend on checks of the upstream booking. The reseller will be able to show evidence of the reservation behind its offer, with disclosure settings that control what the customer sees and whether it verifies the dependency directly or relies on Avow’s check.
+A commitment can name the commitments it relies on, by chain, lock, commitment id and terms hash, in [version 3 terms](/docs/composable-commitments/terms-v3). Before it relies on one, a business checks it against the chain: a lock Avow's factory made, owned by the business offering, accepted by its supplier, under matching terms and covering the same capacity. The buyer runs that check before funding, a reseller's verifier runs it before accepting, and Avow's API runs it before approving the buyer's reserve, refusing with the same reason codes. [Checking dependencies](/docs/composable-commitments/dependency-check) covers each test and what's still to come.
 
-Each link will stay a separate agreement. The reseller stays responsible to its customer under their terms, and each reserve backs only its own commitment. Dependency checks will gate approval and acceptance, while reserve contracts won’t enforce relationships between commitments or move funds across them. Evidence of an upstream booking will show its state when it was checked, and promise nothing about later delivery.
+Each link stays its own commitment between its two businesses, with its own reserve. The reseller answers to the lab whatever happens upstream, no money moves between locks, and a check proves only that the upstream booking was accepted when it was checked.
 
 ## Verification and settlement
 
-Avow combines business verification and authorization checks with reserves that suppliers can inspect independently. Its initial implementation uses Tempo for delegated agent authority and reserve enforcement.
+The open verifier checks signatures, the agreed terms and the backing on chain without calling Avow. Who the business is, and Avow's approval decisions, still rest on Avow, and a sandbox business isn't verified.
 
-The open verifier lets suppliers check signatures, agreed terms, and on-chain backing. Business identity verification and Avow’s approval decisions still rely on Avow.
-
-Settlement follows the commitment’s rules. Funds are released when the supplier’s exposure ends, and applicable charges can be paid after the contest window. Contested charges pause for review and may require a ruling under the agreed dispute process.
-
-Avow’s role is to make those promises verifiable and financially backed. A business can delegate purchasing decisions within defined limits, while a supplier can assess an unfamiliar agent’s commitment before accepting it.
-
-Once commitments connect across suppliers, agents will coordinate more than individual purchases, and arrange the services and resources a business needs to fulfill its own obligations.
-
-That is the foundation Avow is building for autonomous commerce, businesses trading through agents, with explicit authority, agreed terms, and clear accountability.
+Settlement follows each commitment's terms. The reserve releases when the supplier's exposure ends, a charge is paid after its contest window, and a contested charge pauses for a ruling under the agreed dispute process. [Trust model](/docs/get-started/trust-model) sets out who holds which key and what the lock holds Avow to.

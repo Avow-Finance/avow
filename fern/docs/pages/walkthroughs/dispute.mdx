@@ -35,7 +35,7 @@ A run that stops partway loses nothing. Run the same `contest` again and it fini
 
 ## Avow rules
 
-Avow has 30 minutes from the pause to rule. It reads the cancellation record, the report, its own confirmation and the business's statement, decides how much of the $250 charge the supplier gets, and posts the ruling to the lock. Five minutes after the ruling, the lock pays the supplier's share to its payout address and the rest to the business. On testnet Avow tells both sides the ruling and its reason, whose hash goes on the chain with the ruling, and the lock's `Resolved` event on the [Moderato explorer](https://explore.testnet.tempo.xyz) shows the split.
+Avow has 30 minutes from the pause to rule. It reads the cancellation record, the report, its own confirmation and the business's statement, decides how much of the \$250 charge the supplier gets, and posts the ruling to the lock. Five minutes after the ruling, the lock pays the supplier's share to its payout address and the rest to the business. On testnet Avow tells both sides the ruling and its reason, whose hash goes on the chain with the ruling, and the lock's `Resolved` event on the [Moderato explorer](https://explore.testnet.tempo.xyz) shows the split.
 
 If Avow hasn't ruled after 30 minutes, the arbiter can rule until 90 minutes after the pause. Avow confirmed this charge, so if nobody rules, the lock then pays the supplier the day-90 share the terms fixed, half by default, and the rest to the business. A charge Avow never confirmed pays the supplier nothing at that point.
 

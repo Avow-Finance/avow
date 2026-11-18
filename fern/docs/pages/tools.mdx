@@ -1,0 +1,64 @@
+---
+title: Tools and commands
+slug: docs/reference/tools
+subtitle: Every MCP tool and terminal command the avow-sandbox package gives an agent
+---
+
+The `avow-sandbox` package gives an agent the same abilities two ways, as tools in an MCP server and as terminal commands. The MCP server runs with `npx avow-sandbox mcp`, which [Connect your own agent](/docs/get-started/connect-your-agent) adds to Claude Code or Claude Desktop for you. Everything runs on Tempo's Moderato testnet with test dollars, and the agent's key stays in `.avow` in its folder.
+
+## MCP tools
+
+`connect` and `status` set the agent up, and `verify` works without connecting. The others act within the limits the administrator approved, and refuse until the agent is connected.
+
+| Tool | Changes anything | What it does |
+| --- | --- | --- |
+| `connect` | Asks for authority | Makes the agent's key, keeps it in `.avow` and asks for authority. It answers with a pairing code and an approval link for the agent's person |
+| `status` | No | Where the request stands: waiting, picking up its authority, connected or not connected |
+| `authority` | No | How much the agent can commit right now, the most it can hold at once and how much of that is free, what its key can still move today, and the suppliers it may book |
+| `check` | No | Whether a booking would pass right now, and which layer would refuse it if not, without booking or moving money |
+| `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
+| `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
+| `commitments` | No | The agent's commitments, each with its state on the lock and its link |
+
+### Inputs
+
+`connect` takes `name`, what the administrator sees, such as `"Research agent"`. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs for the business too, with a signing key of its own.
+
+`check` and `book` take the same inputs, so a booking that passes `check` is the one `book` makes.
+
+| Input | Required | Meaning |
+| --- | --- | --- |
+| `reserve` | Yes | The reserve in dollars, such as `200` |
+| `gpu` | No | The GPU model, `H100` when left out |
+| `count` | No | How many GPUs, `8` when left out |
+| `hours` | No | How many hours, `1` when left out |
+| `supplier` | No | The supplier's business ID, the agent's first supplier when left out |
+
+`verify` takes `link`, the `#verify=` link the other agent shared or the token after it, and optionally `payee`, your payout address.
+
+### Answers and refusals
+
+Every tool answers in text a model can read and in structured JSON with the same facts. A refusal names its reason code and its layer, with the amounts behind it where they apply. The layer is `sdk` for the agent's own mandate check, `avow` for Avow's API, `supplier` when the supplier declines, `relay` for the service that sends the transaction, `lock` for the lock and `keychain` for Tempo's keychain. When a tool refuses, tell the person the reason code and what would change it, and don't work around the limit.
+
+Each tool carries a title and hints a client reads. `connect` and `book` are the two that change anything, and none deletes anything.
+
+## Terminal commands
+
+Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
+
+| Command | What it does |
+| --- | --- |
+| `connect` | Connects the agent in this folder to a business through a link where the person signs in or sets up the business and approves. `--business <id>` names one up front, `--name` sets what the console calls it, and `--sell` also lets it quote and accept jobs |
+| `verify <link>` | Checks a commitment someone shared against the chain, with `--payee <address>` to check it pays you. It needs no agent or business, and exits with 1 when the chain doesn't back the commitment or it pays someone else |
+| `mcp add claude-code` | Adds this folder's agent to Claude Code as an MCP server. `mcp add claude-desktop` does the same for Claude Desktop |
+| `order` | Orders the demo job from another business with `--supplier <id>`, checks the quote, funds it and waits for the acceptance |
+| `listen` | Reads the business's inbox and quotes and accepts each order until you stop it |
+| `start` | In a folder made by the sample agent, sets up its business, opens its screen and runs its agent |
+| `job` | In the same folder, runs one job with no input |
+| `fresh` | Moves the sample business aside, keys and all, and sets up a fresh one |
+
+`npx avow-sandbox --help` prints the same list with every option.
+
+## Agent Skill
+
+The repo's [`skills/avow-commitments`](https://github.com/Avow-Finance/avow/tree/main/skills/avow-commitments) is an Agent Skill that tells an agent when a commitment is the right tool, how to stay inside its limits and how to check a commitment someone sent it. A test keeps the tools it names in step with the MCP server's.

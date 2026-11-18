@@ -1,5 +1,6 @@
 ---
-title: Checking the bookings a booking relies on
+title: Checking dependencies
+subtitle: How a business checks the bookings a booking relies on, and who checks when
 slug: docs/composable-commitments/dependency-check
 ---
 
@@ -11,7 +12,7 @@ Each booking is an ordinary commitment in its own lock, no money moves between t
 
 | Step | `buyer` setting | `avow` setting |
 | --- | --- | --- |
-| Avow approves the reserve | Planned and not built yet. Avow's API is to run the same five tests on the approval it is about to sign and refuse with the same reason codes | The same, and the buyer's only check of the bookings relied on |
+| Avow approves the reserve | Avow's API runs the same five tests on the approval it is about to sign, before its mandate check, and refuses with the same reason codes | The same, and the buyer's only check of the bookings relied on |
 | The buyer funds its reserve | The buyer runs `verifyDependencies` on Avow's approval and funds only once it passes | The buyer checks that Avow's approval names the terms hash of its view |
 | The reserve lands | Nobody checks. The lock checks Avow's approval and the terms hash, and knows nothing of the dependency | The same |
 | The reseller accepts | `prepareAcceptance` runs `verifyDependencies` before anything else reads the terms | The same, since the reseller holds the terms in full |
@@ -57,7 +58,7 @@ A check proves that a matching upstream booking was accepted when it was checked
 
 ### Between Avow's approval and the reserve
 
-Avow's check, once built, won't be atomic with funding. The upstream booking can leave the accepted state after Avow approves and before the buyer's reserve lands, and the lock still takes the reserve, since it checks only Avow's approval and the terms. Three things are meant to bound that gap. The first two are planned API behaviour and aren't built yet, and the third rests on what the lock and the verifier do today.
+Avow's check isn't atomic with funding. The upstream booking can leave the accepted state after Avow approves and before the buyer's reserve lands, and the lock still takes the reserve, since it checks only Avow's approval and the terms. Three things are meant to bound that gap. The first two are planned API behaviour and aren't built yet, and the third rests on what the lock and the verifier do today.
 
 1. **Expiry.** The lock takes a reserve only before the approval's expiry, and Avow's API is planned to give an approval for a booking that relies on others 120 seconds, so a stale approval can't fund a reserve later.
 2. **Recheck and cancel.** Avow's API is planned to recheck the upstream lock until the reserve lands or the approval expires, and to cancel the approval if the booking leaves the accepted state. The cancellation stops the funding only if it lands on the chain before the reserve does. When the reserve lands first, the recovery below applies.
