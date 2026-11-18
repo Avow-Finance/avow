@@ -5,9 +5,38 @@ slug: docs/composable-commitments/jobs
 
 A job is a piece of work your business does for a customer by a deadline, on GPU capacity your business booked from someone else. The `job/1` template in `@avow-finance/spec` describes one, and its terms are always [version 3](/docs/composable-commitments/terms-v3), since a job names the compute booking it runs on. The customer checks that booking before it commits, and your code checks the customer's commitment before work starts.
 
+## How a job runs
+
+```mermaid
+sequenceDiagram
+    participant C as Customer's agent
+    participant Y as Your business
+    participant G as GPU supplier's lock
+    participant A as Avow
+    C->>Y: Order a job by a deadline
+    Y->>G: Book GPUs for the window, and the supplier accepts
+    Y->>C: Quote version 3 terms naming that booking
+    C->>G: Check the booking at a pinned block
+    C->>A: Ask Avow to approve the reserve
+    A->>G: Run the same check, then approve
+    C->>Y: Reserve for your business in the customer's lock
+    Y->>G: Check the booking again, then accept
+    Y->>C: Start, deliver, and get paid by a separate transfer
+```
+
+Each check reads the chain itself and names the block it read. No money moves between the two locks, and each commitment settles on its own.
+
 ## The template
 
-The subject holds the work, the compute and two times. `work` has a short `kind`, such as `fine-tuning`, and a one-sentence `summary`. `compute` names the GPU, how many and the region. Work starts at `startsAt` and is delivered by `deliverBy`. `jobTerms` builds the terms, and `testnetDemoJobTerms` gives the job Avow's test customer offers on testnet.
+| Field | What it holds |
+| --- | --- |
+| `work.kind` | A short kind of work, such as `fine-tuning` |
+| `work.summary` | One sentence on the work |
+| `compute` | The GPU, how many and the region |
+| `startsAt` | When work starts, which is also when free cancellation ends |
+| `deliverBy` | The deadline for delivery |
+
+`jobTerms` builds the terms, and `testnetDemoJobTerms` gives the job Avow's test customer offers on testnet.
 
 Every job falls under the mandate category `compute-job`, which `JOB_CATEGORY` names, so a customer's mandate allows jobs by naming it. Job terms under any other category are refused as `terms.category_mismatch`.
 
@@ -46,9 +75,19 @@ Avow's test customer is a sandbox business on testnet, labelled as Avow's test c
 | `GET /v1/orders/{orderId}` | Where the order stands, from `offered` through `verifying`, `refused`, `reserved`, `accepted` and `delivered` to `paid`, with each check's block, the reason and who refused, the reserve with the transaction that funded it, the payment, and what the customer has said and stated so far |
 | `POST /v1/orders/{orderId}/delivery` | Takes a `DeliveryReport`, the result handed over with its label and hash, and answers 202, and the customer then pays |
 
-Every POST is a signed API request, signed by your supplier signing key, with the customer's origin as its audience and the customer's lock as its domain. An order belongs to the supplier it was offered to. Only that supplier's signing key can quote it or report its delivery, and any other signer is refused as `order.supplier_mismatch`, since an order's id appears in every job event and anyone with the screen's link can read it. A refusal has the API's error shape and a reason code. An unknown order is `order.unknown`, a request for a step the order isn't at is `order.out_of_step`, an expired offer is `message.expired`, too many open orders is `order.limit_reached`, and a quote whose terms change anything beyond the compute they add is `order.terms_changed`, which `quoteTermsProblem` checks. The GETs are unsigned.
+Every POST is a signed API request, signed by your supplier signing key, with the customer's origin as its audience and the customer's lock as its domain. The GETs are unsigned. An order belongs to the supplier it was offered to, since an order's id appears in every job event and anyone with the screen's link can read it. A refusal has the API's error shape and one of these reason codes.
 
-An order's state carries what the customer says as `said`, messages numbered from 0, and what its verifier stated as `facts`, each numbered from 0 with the check it came from, `verifiedBy: 'customer'`, the commitment it's about, the block it read and any transaction. Your session posts each one once, by its index, as the customer's speech or the customer's statement. A fact the customer states is the customer's word until a reader checks it from the chain. An agreement whose commitment id isn't the offer's is refused as `order.commitment_mismatch`.
+| Reason code | When |
+| --- | --- |
+| `order.supplier_mismatch` | A key other than the offered supplier's signing key quotes or reports delivery |
+| `order.unknown` | The order doesn't exist |
+| `order.out_of_step` | The request is for a step the order isn't at |
+| `message.expired` | The offer expired |
+| `order.limit_reached` | Too many orders are open |
+| `order.terms_changed` | The quote's terms change anything beyond the compute they add, which `quoteTermsProblem` checks |
+| `order.commitment_mismatch` | The agreement's commitment id isn't the offer's |
+
+An order's state carries what the customer says as `said`, messages numbered from 0, and what its verifier stated as `facts`, each numbered from 0 with the check it came from, `verifiedBy: 'customer'`, the commitment it's about, the block it read and any transaction. Your session posts each one once, by its index, as the customer's speech or the customer's statement. A fact the customer states is the customer's word until a reader checks it from the chain.
 
 The work is simulated, so the delivery hands over a placeholder whose label says so plainly, with the hash of its content. The GPUs and the training are simulated, and every commitment, reserve, check and payment is a real testnet operation.
 
@@ -58,7 +97,20 @@ A GPU supplier that lists compute for jobs answers an unsigned `GET /offers?star
 
 ## Session events
 
-A job's process posts its events to the same session as the rest of the sandbox, and the screen shows them as they arrive. In order they are `job_order_received`, `job_compute_secured`, `job_quote_sent`, `job_customer_verifying`, `job_customer_verified` or `job_customer_refused`, `job_commitment_checked` or `job_commitment_refused`, `job_work_started`, `job_delivered`, `job_paid` and `job_reserve_released`. A job the customer cancels after its start posts `job_customer_cancelled` in place of the delivery and the payment, then each step of the charge, `job_charge_reported`, `job_charge_confirmed`, and `job_charge_paid` or `job_charge_paused`. A refusal carries its reason code, who refused and the block its check read. `jobEventSentence` gives the one sentence the terminal and the screen both say for each, and the decisive sentence for `job_commitment_checked` is `DECISIVE_SENTENCE`.
+A job's process posts its events to the same session as the rest of the sandbox, and the screen shows them as they arrive. A kept job posts these, in order.
+
+1. `job_order_received`
+2. `job_compute_secured`
+3. `job_quote_sent`
+4. `job_customer_verifying`
+5. `job_customer_verified`, or `job_customer_refused`
+6. `job_commitment_checked`, or `job_commitment_refused`
+7. `job_work_started`
+8. `job_delivered`
+9. `job_paid`
+10. `job_reserve_released`
+
+A job the customer cancels after its start posts `job_customer_cancelled` in place of the delivery and the payment, then each step of the charge: `job_charge_reported`, `job_charge_confirmed`, and `job_charge_paid` or `job_charge_paused`. A refusal carries its reason code, who refused and the block its check read. `jobEventSentence` gives the one sentence the terminal and the screen both say for each, and the decisive sentence for `job_commitment_checked` is `DECISIVE_SENTENCE`.
 
 Your agent session posts its own events to the same session, beside the job's. Each names its run, and the order when it belongs to a job, since each job is its own run and a turn you start is its own run with no order. `said` is speech, from a model by its id, `scripted` for the deterministic fixture, or the customer. `tool_call` and `tool_result` pair a call with what it returned, in a summary code wrote, a refusal with its reason code and layer, and a listing of offers with the offers and the limits that applied. `fact` and `commitment` carry who verified them, `service` for your `service.ts`, `customer` for the customer's verifier or `avow` for Avow's API, with the commitment on the chain, the block and any transaction, and a job's receipt carries what a link to verify it carries. A refusal's layer is `service` for your `service.ts`, `sdk`, `avow`, `customer` for the customer's verifier, `supplier` for the supplier you book with, `relay`, `lock`, `keychain`, or `unknown` for a transaction whose fate nobody gave, one that expired in no block, that the node never took, or that went out while the node wouldn't give its latest block. A result shown again as evidence names the run and call that made it, and a reader shows that original event and refuses a copy that differs.
 
