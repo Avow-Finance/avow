@@ -23,6 +23,9 @@ export const REASON_CODES = {
   'mandate.category_not_allowed': "The category isn't on the mandate's list",
   'terms.category_mismatch':
     "These terms' template has a mandate category of its own, and the request names another",
+  'offer.superseded':
+    'The supplier replaced the offer version booked with a newer one, which the answer carries for review before booking again',
+  'offer.withdrawn': "The supplier withdrew the offer, so it can't be booked",
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
   'mandate.token_not_allowed': "The lock's token isn't one the mandate allows",
   'mandate.over_payment_limit': "The amount is above the mandate's payment limit for the token",

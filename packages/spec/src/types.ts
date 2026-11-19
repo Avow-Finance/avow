@@ -4,6 +4,7 @@ import type { ChargeKind } from './eip712.js'
 import type { ChainedGpuReservationTerms, GpuReservationTerms } from './gpu-reservation.js'
 import type { ChainedJobTerms, JobTerms } from './job.js'
 import type { ReasonCode } from './reasons.js'
+import type { ServiceTerms } from './service.js'
 
 /**
  * Money in terms and mandates is in micros, millionths of the currency unit, so $500 is
@@ -166,7 +167,7 @@ export const AMOUNT_DECIMALS = 6
  * The templates this code knows, by name and version. A template fixes what its subject holds and
  * the rules its terms follow, and its meaning never changes. A new meaning is a new version.
  */
-export const TEMPLATE_IDS = ['gpu-reservation/1', 'job/1'] as const
+export const TEMPLATE_IDS = ['gpu-reservation/1', 'job/1', 'service/1'] as const
 export type TemplateId = (typeof TEMPLATE_IDS)[number]
 
 /**
@@ -177,6 +178,9 @@ export type TemplateId = (typeof TEMPLATE_IDS)[number]
 export const DEPENDENCY_CHECKS_ALLOWED = {
   'gpu-reservation/1': ['buyer', 'avow'],
   'job/1': ['buyer'],
+  // A service relies on no booking in version 1, so its version 3 terms don't parse. The table
+  // still names a setting, since every template has one.
+  'service/1': ['buyer'],
 } as const satisfies {
   readonly [T in TemplateId]: readonly [DependencyCheck, ...DependencyCheck[]]
 }
@@ -262,7 +266,7 @@ export interface TermsOf<Subject, Template extends TemplateId> {
  * Version 2 terms under any template this code knows. Job terms take this shape only as a proposal,
  * since a job relies on a compute booking and so commits only under version 3.
  */
-export type Terms = GpuReservationTerms | JobTerms
+export type Terms = GpuReservationTerms | JobTerms | ServiceTerms
 
 /**
  * The terms of a commitment that relies on other bookings, version 3. They hold version 2's header
