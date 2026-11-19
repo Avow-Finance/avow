@@ -71,6 +71,11 @@ export const SANDBOX_PATHS = {
     }
     return `/v1/sandbox/suppliers/${businessId}`
   },
+  /**
+   * Where an agent searches the directory of offers, signed by its key under its business's lock,
+   * with an `OfferSearch`. Avow answers with an `OfferSearchResult`.
+   */
+  offerSearch: '/v1/sandbox/offers/search',
   /** Where an agent asks a business for authority, and asks again to hear the answer. */
   agentRequests: '/v1/sandbox/agent-requests',
   /**
