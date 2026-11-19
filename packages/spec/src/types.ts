@@ -172,17 +172,17 @@ export type TemplateId = (typeof TEMPLATE_IDS)[number]
 
 /**
  * Who each template lets check the bookings its version 3 terms rely on. A job's customer checks
- * its compute itself, so a job takes only `buyer`. Every rule about the setting reads it from here,
- * and the build fails when a template is missing.
+ * its compute itself, so a job takes only `buyer`, and a template whose bookings rely on nothing
+ * takes none. Every rule about the setting reads it from here, and the build fails when a template
+ * is missing.
  */
 export const DEPENDENCY_CHECKS_ALLOWED = {
   'gpu-reservation/1': ['buyer', 'avow'],
   'job/1': ['buyer'],
-  // A service relies on no booking in version 1, so its version 3 terms don't parse. The table
-  // still names a setting, since every template has one.
-  'service/1': ['buyer'],
+  // A service relies on no booking in version 1, so no one checks one.
+  'service/1': [],
 } as const satisfies {
-  readonly [T in TemplateId]: readonly [DependencyCheck, ...DependencyCheck[]]
+  readonly [T in TemplateId]: readonly DependencyCheck[]
 }
 
 /** The settings a template allows for who checks its version 3 terms' bookings. */

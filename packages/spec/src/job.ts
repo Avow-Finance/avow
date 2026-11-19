@@ -2,6 +2,7 @@ import type { Address } from 'viem'
 import type { Dependencies } from './dependencies.js'
 import { type GpuSubject, gpuSubjectProblem } from './gpu-reservation.js'
 import type { ReasonCode } from './reasons.js'
+import { isText } from './text.js'
 import {
   AMOUNT_DECIMALS,
   CHAINED_TERMS_VERSION,
@@ -155,9 +156,6 @@ export function chainedJobTerms(terms: JobTerms, dependencies: Dependencies): Ch
     dependencies,
   }
 }
-
-const isText = (v: unknown, max: number): v is string =>
-  typeof v === 'string' && v.length > 0 && v.length <= max
 
 /**
  * What's wrong with a job's subject on its own, or null when nothing is. The work has a kind and a

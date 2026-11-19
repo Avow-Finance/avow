@@ -3,7 +3,7 @@ title: Services sold by quantity
 slug: docs/reference/services
 ---
 
-A service is something your business delivers by a deadline at a fixed price per unit, such as an hour of audio transcribed or a report written. The `service/1` template in `@avow-finance/spec` describes one, and a booking always names the exact version of your offer it books, so the price a buyer saw is the price it signs.
+A service is something your business delivers by a deadline at a fixed price per unit, such as an hour of audio transcribed or a report written. The `service/1` template in `@avow-finance/spec` describes one, and a booking names the exact version of your offer it books. `serviceTermsMatchOffer` checks that terms carry that version's price and rules unchanged, so run it before you accept.
 
 Version 1 covers one-off services at a fixed price. Subscriptions, usage billing and physical shipping aren't services under it, so don't list them as one.
 
@@ -14,15 +14,15 @@ Your offer is a `ServiceOfferVersion`: what you sell, the price of one unit, the
 | Rule | What it says |
 | --- | --- |
 | `evidence` | What counts as evidence that you delivered |
-| `leadTime` | How long after booking you deliver by, in seconds |
+| `leadTime` | How long after booking you deliver by, in seconds, at least 15 minutes so you have time to accept |
 | `maxPerBooking` | The most units one booking takes |
-| `dailyCapacity` | How many bookings you take in a day |
-| `freeCancelWindow` | How long after booking the buyer can cancel at no charge, never past the delivery deadline |
+| `dailyCapacity` | How many bookings you take in a day. The terms don't carry it, so whoever accepts bookings for you counts against it |
+| `freeCancelWindow` | How long after booking the buyer can cancel at no charge. Zero turns it off, and otherwise it runs from 15 minutes to the lead time |
 | `lateCancellationBps` | What a late cancellation can cost, as a share of the price |
 | `noShowBps` | What the buyer not being there to take delivery can cost, as a share of the price |
 | `payment` | How the buyer pays, `transfer` or `invoice`, and how long after delivery payment is due |
 
-`serviceRulesProblem` says what's wrong with a set of rules in words you can show the person setting them. At least one charge has to be above zero, since a reserve with nothing to charge backs nothing.
+Every time counts from the moment the terms are built. `serviceOfferProblem` says what's wrong with a version in words you can show the person setting it, and `offerVersionId` won't give an id to a version it refuses. At least one charge has to be above zero, since a reserve with nothing to charge backs nothing. `parseServiceOfferVersion` reads a version from JSON and refuses any field it doesn't know, so two parties that read the same JSON get the same id.
 
 ## The terms a booking signs
 
@@ -38,12 +38,12 @@ Your offer is a `ServiceOfferVersion`: what you sell, the price of one unit, the
 
 The price per unit is the consideration, a rate per `unit`, and `servicePrice` multiplies it by the quantity. The lock never reads it. The buyer pays it by the route the terms name, and the reserve doesn't secure it.
 
-The reserve backs what the buyer owes if it walks away. A late cancellation is chargeable once free cancellation ends, and a no-show from the delivery deadline. Each costs its share of the whole price, and the reserve is the larger of the two. You accept within 15 minutes of the booking, or by the delivery deadline when that comes sooner, and you can report a charge until a day after the delivery deadline, when the reserve comes back.
+The reserve backs what the buyer owes if it walks away. A late cancellation is chargeable once free cancellation ends, and a no-show from the delivery deadline. Each costs its share of the whole price, and the reserve is the larger of the two. You accept within 15 minutes of the booking, payment is due at or after delivery, and you can report a charge until a day after the delivery deadline, when the reserve comes back.
 
 Every service booking falls under the mandate category `service`, which `SERVICE_CATEGORY` names, so a buyer's mandate allows services by naming it. Service terms under any other category are refused as `terms.category_mismatch`.
 
 ## When the offer changes
 
-A booking signed under a version keeps that version's terms, whatever you change later. Terms never change after the agreement. A booking of a version you've since replaced or withdrawn is refused with `offer.superseded` or `offer.withdrawn`. A superseded refusal carries the current version, so the agent can show the new price before it books again.
+A booking signed under a version keeps that version's terms, whatever you change later. Terms never change after the agreement. The reason codes `offer.superseded` and `offer.withdrawn` are for refusing a booking of a version you've since replaced or withdrawn. A superseded refusal should carry the current version, so the agent can show the new price before it books again.
 
 A service relies on no other booking in version 1, so its terms are always version 2.

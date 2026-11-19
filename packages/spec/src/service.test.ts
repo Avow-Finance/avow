@@ -4,6 +4,7 @@ import { subjectFits, subjectProblem } from './dependencies.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import {
   offerVersionId,
+  parseServiceOfferVersion,
   SERVICE,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_CATEGORY,
@@ -11,9 +12,10 @@ import {
   SERVICE_UNIT,
   type ServiceOfferVersion,
   type ServiceTerms,
+  serviceOfferProblem,
   serviceOfferTerms,
   servicePrice,
-  serviceRulesProblem,
+  serviceTermsMatchOffer,
   validateService,
 } from './service.js'
 import { templateCategoryProblem, termsHash, validateTerms } from './terms.js'
@@ -40,6 +42,10 @@ const version: ServiceOfferVersion = {
     payment: { route: 'transfer', dueAfterDelivery: 7n * 24n * HOUR },
   },
 }
+const withRules = (change: Partial<ServiceOfferVersion['rules']>): ServiceOfferVersion => ({
+  ...version,
+  rules: { ...version.rules, ...change },
+})
 
 const terms = serviceOfferTerms(version, 2, NOW, settlement)
 const roundTrip = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
@@ -78,43 +84,76 @@ describe('service terms from an offer version', () => {
     const before = termsHash(terms, SALT)
     const repriced = { ...version, unitPrice: dollars(60) }
     expect(offerVersionId(repriced)).not.toBe(offerVersionId(version))
-    expect(offerVersionId({ ...version })).toBe(offerVersionId(version))
     const later = serviceOfferTerms(repriced, 2, NOW, settlement)
     expect(servicePrice(later)).toBe(dollars(120))
     expect(termsHash(terms, SALT)).toBe(before)
     expect(servicePrice(terms)).toBe(dollars(100))
   })
 
-  it('let the supplier accept by the delivery deadline when that comes sooner', () => {
-    const quick = { ...version, rules: { ...version.rules, leadTime: 600n, freeCancelWindow: 0n } }
+  it('build terms that pass the template at the shortest lead time and with no free cancellation', () => {
+    const quick = withRules({ leadTime: SERVICE_ACCEPT_WITHIN, freeCancelWindow: 0n })
     const t = serviceOfferTerms(quick, 1, NOW, settlement)
-    expect(t.remedies.acceptBy).toBe(NOW + 600n)
+    expect(t.remedies.acceptBy).toBe(t.subject.delivery.by)
     expect(validateTerms(t, TESTNET_DEMO_PROFILE)).toBeNull()
   })
 
-  it('refuse a quantity the version does not take, and rules that back nothing', () => {
+  it('refuse a quantity the version does not take, a version it can not book, and charges that round to zero', () => {
     expect(() => serviceOfferTerms(version, 0, NOW, settlement)).toThrow(RangeError)
     expect(() => serviceOfferTerms(version, 11, NOW, settlement)).toThrow(RangeError)
-    const nothing = { ...version.rules, lateCancellationBps: 0, noShowBps: 0 }
-    expect(serviceRulesProblem(nothing)).toMatch(/reserve backs nothing/)
-    expect(() => serviceOfferTerms({ ...version, rules: nothing }, 1, NOW, settlement)).toThrow()
-    // A price so small that every share rounds to zero leaves no charge to reserve for.
-    const tiny = {
-      ...version,
-      unitPrice: 1n,
-      rules: { ...version.rules, noShowBps: 1, lateCancellationBps: 1 },
-    }
+    expect(() => serviceOfferTerms({ ...version, unitPrice: 0n }, 1, NOW, settlement)).toThrow(
+      /more than zero/,
+    )
+    const tiny = { ...withRules({ noShowBps: 1, lateCancellationBps: 1 }), unitPrice: 1n }
     expect(() => serviceOfferTerms(tiny, 1, NOW, settlement)).toThrow(/rounds to zero/)
   })
+})
 
-  it('say what is wrong with rules in words for the supplier', () => {
-    const r = version.rules
-    expect(serviceRulesProblem(r)).toBeNull()
-    expect(serviceRulesProblem({ ...r, evidence: ' ' })).toMatch(/counts as delivery/)
-    expect(serviceRulesProblem({ ...r, leadTime: 0n })).toMatch(/lead time/)
-    expect(serviceRulesProblem({ ...r, freeCancelWindow: r.leadTime + 1n })).toMatch(/Free cancel/)
-    expect(serviceRulesProblem({ ...r, maxPerBooking: 0 })).toMatch(/units/)
-    expect(serviceRulesProblem({ ...r, noShowBps: 10_001 })).toMatch(/0 to 100%/)
+describe('an offer version', () => {
+  it('says what is wrong in words for the supplier', () => {
+    expect(serviceOfferProblem(version)).toBeNull()
+    const wrong = (v: ServiceOfferVersion, words: RegExp) =>
+      expect(serviceOfferProblem(v)).toMatch(words)
+    wrong({ ...version, unitPrice: -1n }, /more than zero/)
+    wrong({ ...version, item: { ...version.item, name: '   ' } }, /Name the item/)
+    wrong({ ...version, item: { ...version.item, name: 'x'.repeat(121) } }, /Name the item/)
+    wrong(withRules({ evidence: ' ' }), /counts as delivery/)
+    wrong(withRules({ leadTime: SERVICE_ACCEPT_WITHIN - 1n }), /at least 15 minutes/)
+    wrong(withRules({ freeCancelWindow: 60n }), /Free cancellation/)
+    wrong(withRules({ freeCancelWindow: version.rules.leadTime + 1n }), /Free cancellation/)
+    wrong(withRules({ maxPerBooking: 0 }), /units/)
+    wrong(withRules({ noShowBps: 10_001 }), /0 to 100%/)
+    wrong(withRules({ lateCancellationBps: 0, noShowBps: 0 }), /reserve backs nothing/)
+  })
+
+  it('has one id for its content, and none for fields of the wrong type', () => {
+    const extra = { ...version, stripePrice: 'price_123' } as ServiceOfferVersion
+    expect(offerVersionId(extra)).toBe(offerVersionId(version))
+    const numeric = withRules({ leadTime: 86_400 as unknown as bigint })
+    expect(() => offerVersionId(numeric)).toThrow(RangeError)
+    const text = { ...version, unitPrice: '50000000' as unknown as bigint }
+    expect(() => offerVersionId(text)).toThrow(RangeError)
+  })
+
+  it('reads back from JSON with the same id, and refuses an unknown field or a broken rule', () => {
+    const parsed = parseServiceOfferVersion(roundTrip(version))
+    expect(parsed).toEqual({ ok: true, value: version })
+    if (parsed.ok) expect(offerVersionId(parsed.value)).toBe(offerVersionId(version))
+    expect(parseServiceOfferVersion({ ...roundTrip(version), extra: 1 }).ok).toBe(false)
+    expect(parseServiceOfferVersion(roundTrip(withRules({ freeCancelWindow: 60n }))).ok).toBe(false)
+  })
+})
+
+describe('terms against the offer version they name', () => {
+  it('match when built from it, and not when any part was changed', () => {
+    expect(serviceTermsMatchOffer(terms, version)).toBe(true)
+    expect(serviceTermsMatchOffer(terms, { ...version, unitPrice: dollars(60) })).toBe(false)
+    const cheaper = { ...terms, consideration: { ...terms.consideration, amount: dollars(40) } }
+    expect(serviceTermsMatchOffer(cheaper, version)).toBe(false)
+    expect(
+      serviceTermsMatchOffer(withSubject({ item: { ...version.item, name: 'Other' } }), version),
+    ).toBe(false)
+    const lighter = { ...terms, backing: { ...terms.backing, amount: dollars(1) } }
+    expect(serviceTermsMatchOffer(lighter, version)).toBe(false)
   })
 })
 
@@ -130,7 +169,7 @@ describe("the service template's rules", () => {
     invalid(withSubject({ offer: '0x1234' }))
     invalid(withSubject({ quantity: 0 }))
     invalid(withSubject({ quantity: 1.5 }))
-    invalid(withSubject({ item: { name: '', summary: 'x' } }))
+    invalid(withSubject({ item: { name: '  ', summary: 'x' } }))
     invalid(withSubject({ delivery: { by: terms.subject.delivery.by, evidence: '' } }))
     invalid(withSubject({ payment: { route: 'card' as 'transfer', dueBy: NOW } }))
     invalid({ ...terms, consideration: { kind: 'fixed', amount: dollars(100) } })
@@ -144,7 +183,7 @@ describe("the service template's rules", () => {
     late({ ...terms, remedies: { ...terms.remedies, acceptBy: by + 1n } })
     late({ ...terms, remedies: { ...terms.remedies, freeCancelBy: by + 1n } })
     late({ ...terms, remedies: { ...terms.remedies, chargeDeadline: by - 1n } })
-    late(withSubject({ payment: { route: 'invoice', dueBy: terms.remedies.acceptBy - 1n } }))
+    late(withSubject({ payment: { route: 'invoice', dueBy: by - 1n } }))
     const earlyNoShow = terms.remedies.charges.map((c) =>
       c.kind === 'noShow' ? { ...c, earliest: by - 1n } : c,
     )
@@ -160,8 +199,7 @@ describe("the service template's rules", () => {
     const parsed = parseTerms(roundTrip(terms))
     expect(parsed).toEqual({ ok: true, value: terms })
     if (parsed.ok) expect(termsHash(parsed.value, SALT)).toBe(termsHash(terms, SALT))
-    expect(
-      parseTerms({ ...roundTrip(terms), subject: { ...roundTrip(terms.subject), extra: 1 } }).ok,
-    ).toBe(false)
+    const extra = { ...roundTrip(terms), subject: { ...roundTrip(terms.subject), extra: 1 } }
+    expect(parseTerms(extra).ok).toBe(false)
   })
 })
