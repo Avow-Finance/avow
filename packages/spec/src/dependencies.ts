@@ -10,6 +10,7 @@ import { type JobSubject, jobFitsReservation, jobSubjectProblem } from './job.js
 import { bytes32, u64 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import { type CommitmentReference, commitmentReferenceJson } from './references.js'
+import { type ServiceSubject, serviceSubjectProblem } from './service.js'
 import {
   CHAINED_TERMS_VERSION,
   type ChainedTerms,
@@ -158,8 +159,8 @@ export function dependenciesProblem(dependencies: unknown): ReasonCode | null {
 
 /**
  * Each template's rules for a booking's subject, on its own and inside the subject of a booking it
- * relies on. A GPU reservation fits only inside a GPU reservation, and a job only inside the GPU
- * reservation of the compute it runs on. The build fails when a template has no rules here.
+ * relies on. A GPU reservation fits only inside a GPU reservation, a job only inside the GPU
+ * reservation of the compute it runs on, and a service inside nothing. The build fails when a template has no rules here.
  */
 const SUBJECT_RULES: {
   readonly [T in TemplateId]: {
@@ -178,6 +179,11 @@ const SUBJECT_RULES: {
     fits: (inner, outer) =>
       outer.template === GPU_RESERVATION &&
       jobFitsReservation(inner as JobSubject, outer.subject as GpuSubject),
+  },
+  // A service relies on no booking in version 1, so it fits inside none.
+  'service/1': {
+    problem: (subject) => serviceSubjectProblem(subject as ServiceSubject),
+    fits: () => false,
   },
 }
 

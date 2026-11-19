@@ -32,6 +32,7 @@ import { JOB_CATEGORY, validateJob } from './job.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
+import { SERVICE_CATEGORY, validateService } from './service.js'
 import {
   type ComputeTermsV1,
   isTermsV1,
@@ -496,6 +497,7 @@ const TEMPLATE_RULES: {
 } = {
   'gpu-reservation/1': (t) => validateGpuReservation(t),
   'job/1': (t) => validateJob(t),
+  'service/1': (t) => validateService(t),
 }
 
 /**
@@ -505,6 +507,7 @@ const TEMPLATE_RULES: {
 const TEMPLATE_CATEGORIES: { readonly [T in TemplateId]: string | null } = {
   'gpu-reservation/1': null,
   'job/1': JOB_CATEGORY,
+  'service/1': SERVICE_CATEGORY,
 }
 
 /**
@@ -528,6 +531,7 @@ export function templateCategoryProblem(
 const RELIES_ON_A_BOOKING: { readonly [T in TemplateId]: boolean } = {
   'gpu-reservation/1': false,
   'job/1': true,
+  'service/1': false,
 }
 
 /** Charges come in the order of the lock's codes, at most one of each kind, each with an amount. */

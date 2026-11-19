@@ -27,6 +27,13 @@ import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
 import { type Attribution, commitmentReferenceJson, type Reference } from './references.js'
 import {
+  PAYMENT_ROUTES,
+  SERVICE,
+  SERVICE_NAME_MAX,
+  SERVICE_QUANTITY_MAX,
+  SERVICE_TEXT_MAX,
+} from './service.js'
+import {
   type AnyTerms,
   CHAINED_TERMS_SECTIONS,
   type ChainedTermsSection,
@@ -170,8 +177,35 @@ export const jobTermsJson = z.strictObject({
   backing: backingJson,
 })
 
+/** What a service booking promises, the subject of the `service/1` template. */
+export const serviceSubjectJson = z.strictObject({
+  offer: bytes32,
+  item: z.strictObject({
+    name: z.string().min(1).max(SERVICE_NAME_MAX),
+    summary: z.string().min(1).max(SERVICE_TEXT_MAX),
+  }),
+  quantity: z.number().int().min(1).max(SERVICE_QUANTITY_MAX),
+  delivery: z.strictObject({ by: u64, evidence: z.string().min(1).max(SERVICE_TEXT_MAX) }),
+  payment: z.strictObject({ route: z.enum(PAYMENT_ROUTES), dueBy: u64 }),
+})
+
+/** Version 2 terms under the service template. */
+export const serviceTermsJson = z.strictObject({
+  ...termsHeaderShape,
+  template: z.literal(SERVICE),
+  subject: serviceSubjectJson,
+  consideration: considerationJson,
+  remedies: remediesJson,
+  resolution: resolutionJson,
+  backing: backingJson,
+})
+
 /** Version 2 terms under any template this code knows. */
-export const termsJson = z.discriminatedUnion('template', [gpuReservationTermsJson, jobTermsJson])
+export const termsJson = z.discriminatedUnion('template', [
+  gpuReservationTermsJson,
+  jobTermsJson,
+  serviceTermsJson,
+])
 
 /**
  * Version 3 terms under the GPU reservation template, version 2's with the setting for who checks
@@ -224,6 +258,7 @@ export const elidedTermsJson = z.discriminatedUnion('template', [elidedGpuReserv
 const SUBJECTS: Record<string, z.ZodType> = {
   [GPU_RESERVATION]: gpuSubjectJson,
   [JOB]: jobSubjectJson,
+  [SERVICE]: serviceSubjectJson,
 }
 
 function sectionSchema(section: ChainedTermsSection, template: string): z.ZodType | undefined {

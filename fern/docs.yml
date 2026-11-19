@@ -44,6 +44,8 @@ navigation:
     contents:
       - page: Tools and commands
         path: ./docs/pages/tools.mdx
+      - page: Services sold by quantity
+        path: ./docs/pages/services.mdx
       - api: API reference
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx

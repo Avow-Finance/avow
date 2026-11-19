@@ -1,5 +1,6 @@
 import type { Address } from 'viem'
 import type { ReasonCode } from './reasons.js'
+import { isText } from './text.js'
 import {
   AMOUNT_DECIMALS,
   type ChainedTermsOf,
@@ -132,8 +133,6 @@ export function validateGpuReservation(
   }
   return null
 }
-
-const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 
 /**
  * What's wrong with a GPU reservation's subject on its own, or null when nothing is. The resource
