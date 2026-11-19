@@ -88,6 +88,15 @@ describe('parseOfferSearch', () => {
     })
   })
 
+  it.each([
+    ['left out', {}],
+    ['empty', { query: '' }],
+    ['only whitespace', { query: ' \t\n ' }],
+  ])('reads words %s as no words', (_, words) => {
+    const parsed = parseOfferSearch({ budget: '1', currency: 'USD', ...words })
+    expect(parsed.ok && parsed.value.query).toBeNull()
+  })
+
   it('reads a full search', () => {
     const parsed = parseOfferSearch(toWire(search))
     expect(parsed).toEqual({ ok: true, value: search })
@@ -98,7 +107,6 @@ describe('parseOfferSearch', () => {
     ['a currency it lists none in', { budget: '1', currency: 'XYZ' }],
     ['no units', { budget: '1', currency: 'USD', quantity: 0 }],
     ['part of a unit', { budget: '1', currency: 'USD', quantity: 1.5 }],
-    ['words that are only spaces', { budget: '1', currency: 'USD', query: '   ' }],
     ['words past the limit', { budget: '1', currency: 'USD', query: 'a'.repeat(201) }],
     ["a field it doesn't know", { budget: '1', currency: 'USD', supplier: 'acme' }],
   ])('refuses %s', (_, json) => {
@@ -115,6 +123,21 @@ describe('offerFits', () => {
     expect(offerFits({ ...search, query: 'AUDIO hour' }, transcript, NOW)).toBe(true)
     expect(offerFits({ ...search, query: 'french transcript' }, transcript, NOW)).toBe(false)
     expect(offerFits({ ...search, query: null }, transcript, NOW)).toBe(true)
+  })
+
+  it('matches a word in the name and another in the summary', () => {
+    const gpu = {
+      ...transcript,
+      item: { name: 'H100 GPU hour', summary: 'One hour of an H100 for rendering or training' },
+    }
+    const budget = { ...search, budget: dollars(1000) }
+    expect(offerFits({ ...budget, query: 'GPU rendering' }, gpu, NOW)).toBe(true)
+    expect(offerFits({ ...budget, query: 'gpu' }, gpu, NOW)).toBe(true)
+    expect(offerFits({ ...budget, query: 'GPU inference' }, gpu, NOW)).toBe(false)
+  })
+
+  it('lists every offer for blank words, as for none', () => {
+    expect(offerFits({ ...search, query: '   ' }, transcript, NOW)).toBe(true)
   })
 
   it('leaves out an offer in another currency', () => {

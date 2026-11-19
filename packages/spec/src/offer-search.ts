@@ -56,8 +56,9 @@ export type ApprovalNeed = (typeof APPROVAL_NEEDS)[number]
 /** What an agent is looking for and what it can spend. */
 export interface OfferSearch {
   /**
-   * Words the item's name or summary has to contain, in any case and any order, or null to list
-   * every offer that fits the rest.
+   * Words that only filter. The query splits on whitespace, and each word has to appear somewhere
+   * in the item's name or summary, in any case. Null lists every offer that fits the rest, and a
+   * blank query reads as null.
    */
   query: string | null
   /** The most the agent will pay for the whole booking, in micros of `currency`. */
@@ -181,7 +182,7 @@ export function offerSearchResultProblem(
 
 /** A search as JSON. Words, quantity, deadline and the group needing approval may be left out. */
 export const offerSearchJson = z.strictObject({
-  query: z.string().trim().min(1).max(OFFER_QUERY_MAX).optional(),
+  query: z.string().max(OFFER_QUERY_MAX).optional(),
   budget: u256,
   currency: z.enum(CURRENCIES),
   quantity: z.number().int().min(1).max(SERVICE_QUANTITY_MAX).optional(),
@@ -189,7 +190,10 @@ export const offerSearchJson = z.strictObject({
   needingApproval: z.boolean().optional(),
 })
 
-/** Reads a search from JSON. With no words it lists every offer, and the quantity defaults to 1. */
+/**
+ * Reads a search from JSON. Words left out, empty or only whitespace all read as no words, which
+ * lists every offer, and the quantity defaults to 1.
+ */
 export function parseOfferSearch(json: unknown): Parsed<OfferSearch> {
   const parsed = offerSearchJson.safeParse(json)
   if (!parsed.success || parsed.data.budget === 0n) return { ok: false, reason: 'message.invalid' }
@@ -197,7 +201,7 @@ export function parseOfferSearch(json: unknown): Parsed<OfferSearch> {
   return {
     ok: true,
     value: {
-      query: query ?? null,
+      query: query === undefined || query.trim() === '' ? null : query.trim(),
       budget,
       currency,
       quantity: quantity ?? 1,
