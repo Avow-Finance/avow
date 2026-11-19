@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
 import { u64, u256 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
-import { isText } from './text.js'
+import { isFilled } from './text.js'
 import {
   AMOUNT_DECIMALS,
   CURRENCIES,
@@ -60,8 +60,12 @@ export type PaymentRoute = (typeof PAYMENT_ROUTES)[number]
 const isPaymentRoute = (v: unknown): v is PaymentRoute =>
   (PAYMENT_ROUTES as readonly unknown[]).includes(v)
 
-/** Text of 1 to `max` characters that isn't only spaces. */
-const isFilled = (v: unknown, max: number): v is string => isText(v, max) && v.trim().length > 0
+/** The whole price of a number of units at a unit price, the one rule terms and quotes share. */
+const totalOf = (unitPrice: bigint, quantity: number): bigint => unitPrice * BigInt(quantity)
+
+/** The reserve a service booking takes, its larger charge, the one rule terms and quotes share. */
+const reserveOf = (lateCancellation: bigint, noShow: bigint): bigint =>
+  lateCancellation > noShow ? lateCancellation : noShow
 
 /** What a service booking promises: which offer, what and how many, and how it's delivered and paid. */
 export interface ServiceSubject {
@@ -121,7 +125,7 @@ export function serviceTerms(input: ServiceInput): ServiceTerms {
   if (input.noShow > 0n) {
     charges.push({ kind: 'noShow', amount: input.noShow, earliest: input.deliverBy })
   }
-  const reserve = input.lateCancellation > input.noShow ? input.lateCancellation : input.noShow
+  const reserve = reserveOf(input.lateCancellation, input.noShow)
   return {
     version: TERMS_VERSION,
     template: SERVICE,
@@ -220,7 +224,7 @@ export function validateService(
 
 /** What a service's price comes to for the quantity booked, in micros. */
 export const servicePrice = (t: Pick<ServiceTerms, 'subject' | 'consideration'>): bigint =>
-  t.consideration.amount * BigInt(t.subject.quantity)
+  totalOf(t.consideration.amount, t.subject.quantity)
 
 /** How long a supplier has to accept a service booking, in seconds. */
 export const SERVICE_ACCEPT_WITHIN = 15n * 60n
@@ -433,14 +437,13 @@ export function serviceOfferQuote(
   if (!whole(quantity, rules.maxPerBooking)) {
     throw new RangeError(`The offer takes 1 to ${rules.maxPerBooking} units a booking`)
   }
-  const total = version.unitPrice * BigInt(quantity)
+  const total = totalOf(version.unitPrice, quantity)
   const lateCancellation = (total * BigInt(rules.lateCancellationBps)) / BPS
   const noShow = (total * BigInt(rules.noShowBps)) / BPS
   if (lateCancellation === 0n && noShow === 0n) {
     throw new RangeError('At this price and quantity every charge rounds to zero')
   }
-  const reserve = lateCancellation > noShow ? lateCancellation : noShow
-  return { total, lateCancellation, noShow, reserve }
+  return { total, lateCancellation, noShow, reserve: reserveOf(lateCancellation, noShow) }
 }
 
 /**
