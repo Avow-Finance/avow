@@ -5,7 +5,7 @@ description: Use when an agent has to promise a business it may never have dealt
 
 # Avow commitments
 
-Avow lets an agent make a commitment for its business, which is a promise to one named supplier backed by money the business reserves in its own lock on Tempo. A supplier's agent checks the commitment against the chain without asking Avow, so two agents that have never met can rely on each other. Everything runs on Tempo's Moderato testnet with test dollars.
+Avow lets an agent make a commitment for its business, which is a promise to one named counterparty, such as a supplier, backed by money the business reserves in its own lock on Tempo. A supplier's agent checks the commitment against the chain without asking Avow, so two agents that have never met can rely on each other. Everything runs on Tempo's Moderato testnet with test dollars.
 
 ## When a commitment is the right tool
 
