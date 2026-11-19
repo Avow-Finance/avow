@@ -30,7 +30,7 @@ The supplier's quickstart is the [supplier package](packages/supplier), and the 
 5. The supplier's verifier checks the reserve on-chain and every term that binds the supplier against the supplier's own. The supplier accepts on the lock, and only then grants the capacity.
 6. When the job completes, the money goes back to the business. A late cancellation pays the agreed charge after a contest window, and never more than the reserve.
 
-Avow is built first on [Tempo](https://tempo.xyz) testnet, with other rails to follow.
+Avow is built first on [Tempo](https://tempo.com) testnet, with other rails to follow.
 
 ## What opens next
 
