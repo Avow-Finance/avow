@@ -41,21 +41,42 @@ describe('avow-sandbox-mcp', () => {
       'book',
       'verify',
       'commitments',
+      'publish_offer',
+      'offers',
+      'order',
+      'orders',
+      'sell',
     ])
     // An agent can ask without knowing its business.
     expect(tools.find((t) => t.name === 'verify')?.inputSchema.required).toEqual(['link'])
     expect(tools.find((t) => t.name === 'connect')?.inputSchema.required).toEqual([])
     expect(tools.find((t) => t.name === 'book')?.inputSchema.required).toEqual(['reserve'])
-    // Every tool has a title and says how it acts. Only booking changes anything beyond the
-    // agent's own request, and nothing destroys.
+    // Every tool has a title and says how it acts. Booking, ordering and selling change
+    // something beyond the agent's own request, publishing changes its own folder, and nothing
+    // destroys. A supplier's offers stay in its folder, so the two tools for them reach nowhere.
     for (const t of tools) {
       expect(t.title).toBeTruthy()
       expect(t.annotations?.destructiveHint).toBe(false)
-      expect(t.annotations?.openWorldHint).toBe(true)
     }
+    expect(tools.filter((t) => !t.annotations?.openWorldHint).map((t) => t.name)).toEqual([
+      'publish_offer',
+      'offers',
+    ])
     expect(tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name)).toEqual([
       'connect',
       'book',
+      'publish_offer',
+      'order',
+      'sell',
+    ])
+    // An offer names both charges, since they set what a booking reserves.
+    expect(tools.find((t) => t.name === 'publish_offer')?.inputSchema.required).toEqual([
+      'name',
+      'summary',
+      'price',
+      'evidence',
+      'late_cancellation_percent',
+      'no_show_percent',
     ])
   }, 30_000)
 
@@ -90,7 +111,7 @@ describe('avow-sandbox-mcp', () => {
     expect(status.isError).toBe(false)
     expect(status.structuredContent).toEqual({ at: 'none' })
     expect(JSON.stringify(status.content)).toMatch(/call connect/)
-    for (const name of ['authority', 'commitments', 'check']) {
+    for (const name of ['authority', 'commitments', 'check', 'offers', 'orders', 'order']) {
       const answer = await c.callTool({ name, arguments: {} })
       expect(answer.isError).toBe(true)
       expect(JSON.stringify(answer.content)).toMatch(/isn't connected to a business yet/)

@@ -58,7 +58,45 @@ The buyer's agent checks the agreement's expiry and its own authority when it co
 
 You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced is yours to refuse as `offer.superseded`, with the current version for the buyer's agent to order.
 
-A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does.
+A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does, and until then every call below that reaches the mailbox answers that the sandbox doesn't carry service orders.
+
+## Sell and buy with the sandbox package
+
+The `avow-sandbox` package runs the whole order for both sides, from a terminal, from the MCP server's tools, or from code. The seller's agent is connected with `--sell`, and the buyer's mandate names the seller's business and the `service` category.
+
+```bash
+# The seller's folder. Publishing writes transcript.offer.json, which you give the buyer.
+npx avow-sandbox offer publish --name "Transcript" \
+  --summary "One hour of audio transcribed into English text" --price 50 \
+  --evidence "The transcript is delivered as a text file" \
+  --late-cancellation 20 --no-show 50 --max 10
+npx avow-sandbox listen
+
+# The buyer's folder.
+npx avow-sandbox order --offer transcript.offer.json --quantity 2
+```
+
+| Step | Terminal | MCP tool | SDK |
+| --- | --- | --- | --- |
+| Publish an offer | `offer publish` | `publish_offer` | `publish(draft)` |
+| See what's published | `offer list` | `offers` | `published()` |
+| Order from an offer and see it through | `order --offer` | `order` | `buy({ offer, quantity })` |
+| See what waits on you | | `orders` | `inbox()` and `unfinished()` |
+| Quote, then accept | `listen` | `sell` | `sell(order)` or `listen()` |
+
+`sandboxServices()` in `@avow-finance/sdk` gives the calls in the last column.
+
+Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere. No directory lists it, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer.
+
+The seller's agent keeps to three rules when it quotes.
+
+- It quotes only an offer found among the ones it published, with `publishedOffer`. An order for any other offer, a replaced version included, is left to lapse with nothing reserved. The mailbox carries no refusal yet, so the buyer's agent sees the order lapse and not the reason.
+- It counts each order it quotes against the offer's `dailyCapacity` over the last 24 hours, and quotes nothing past it. A quote counts whether or not the buyer funds it, since the signed agreement is what the buyer can fund.
+- It quotes the terms the order builds and nothing else, so there is no price to negotiate in an order.
+
+The buyer's agent keeps each order in `.avow` before it sends it, and ordering the same offer and quantity again picks that order up. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
+
+A booking's reserve backs the two charges the offer names and nothing else. The price is paid by the offer's payment route, and nothing in the order pays it or shows that it was paid.
 
 ## When the offer changes
 

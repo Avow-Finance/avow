@@ -16,47 +16,25 @@ import {
   parseMailboxInbox,
   parseMailboxOrder,
   parseMailboxOrderRequest,
-  parseSupplierProfile,
   parseTerms,
   quoteTermsProblem,
   type ReasonCode,
   SANDBOX_PATHS,
-  type SandboxDeployment,
-  type SupplierProfile,
-  TESTNET_DEMO_PROFILE,
   testnetDemoJobTerms,
 } from '@avow-finance/spec'
-import { readBacking, tempoChainReader, tempoLockReader } from '@avow-finance/verifier'
-import { type Address, type Hex, parseAbi, toHex } from 'viem'
-import { privateKeyToAccount } from 'viem/accounts'
-import { Account } from 'viem/tempo'
-import { type AgentKey, createAgent } from '../agent.js'
-import {
-  AvowApiError,
-  agentRequestKey,
-  avowRequests,
-  httpAvowApi,
-  requestSupplierAuthorization,
-  signingRequestKey,
-} from '../http.js'
-import { acceptJob } from '../job/accept.js'
+import { type Hex, toHex } from 'viem'
+import { signingRequestKey } from '../http.js'
 import { type ComputeBooking, quoteJob } from '../job/quote.js'
-import { moderatoClient, moderatoUsdToken } from '../moderato.js'
-import { sendOwn, sendSponsored } from '../send.js'
-import { platformStore, sandboxAgent } from './agent.js'
+import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
-import { loadSandboxDeployment } from './deployment.js'
-import { fundFees } from './fees.js'
-import { SANDBOX_SCREEN_URL } from './session.js'
 import {
-  type AgentItem,
-  isRecord,
-  loadAgentItem,
-  readJson,
-  type SandboxStore,
-  write,
-} from './store.js'
-import { loadSupplierItem } from './supplier-key.js'
+  awaitAccepted,
+  listenFor,
+  type MailboxOptions,
+  mailboxContext,
+  systemClock,
+} from './mailbox-context.js'
+import { isRecord, readJson, write } from './store.js'
 
 /**
  * The sandbox mailbox from an agent's side. A buyer's agent orders a job from another business,
@@ -66,8 +44,6 @@ import { loadSupplierItem } from './supplier-key.js'
  * same, so it never makes a second commitment.
  */
 
-const APPROVAL_KEY_ABI = parseAbi(['function approvalKey() view returns (address)'])
-const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
 const random = (bytes: number): Hex => toHex(crypto.getRandomValues(new Uint8Array(bytes)))
 
 /** How long an order waits to be funded unless the buyer says otherwise, in seconds. */
@@ -92,12 +68,6 @@ export type SellStep =
   | { step: 'compute'; reservedIn: Hex | null }
   | { step: 'quoted' }
   | { step: 'accepted'; acceptedIn: Hex | null }
-
-export interface MailboxOptions {
-  store?: SandboxStore
-  screenUrl?: string
-  fetch?: typeof fetch
-}
 
 /** The compute a seller booked for one order, kept so a restart never books it twice. */
 interface SaleRecord {
@@ -176,45 +146,14 @@ export interface SandboxMailbox {
 
 /** The mailbox for the agent in this folder, as buyer and, when it holds a signing key, supplier. */
 export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMailbox> {
-  const send = o.fetch ?? ((input, init) => fetch(input, init))
-  const maybeStore = o.store ?? platformStore()
-  if (!maybeStore) throw new Error('Pass a store, outside Node.')
-  const store: SandboxStore = maybeStore
-  const found = await loadAgentItem(store)
-  if (!found) throw new Error('This folder has no agent. Run avow-sandbox connect first.')
-  const item: AgentItem = found
-  const deployment: SandboxDeployment = await loadSandboxDeployment(
-    o.screenUrl ?? SANDBOX_SCREEN_URL,
-    send,
-  )
-  const client = moderatoClient(deployment.rpcUrl)
-  const { business } = item
-  const agentKey: AgentKey = Account.fromSecp256k1(item.agentKey, { access: business.account })
-  const domain = { chainId: deployment.chainId, verifyingContract: business.lock }
-  const lockReader = tempoLockReader(client, {
-    factory: deployment.factory,
-    chainId: deployment.chainId,
-  })
-  const asAgent = avowRequests({
-    baseUrl: deployment.apiUrl,
-    key: agentRequestKey(agentKey),
-    retryFor: 120n,
-    fetch: send,
-  })
+  const context = await mailboxContext(o)
+  const { send, store, deployment, domain, asAgent } = context
+  const { business } = context.item
   const orderReader = (json: unknown) => {
     const order = parseMailboxOrder(json)
     return order
       ? { ok: true as const, value: order }
       : { ok: false as const, reason: 'message.invalid' as const }
-  }
-
-  async function supplierProfile(businessId: string): Promise<SupplierProfile> {
-    const answer = await send(`${deployment.apiUrl}${SANDBOX_PATHS.supplier(businessId)}`, {
-      signal: AbortSignal.timeout(15_000),
-    })
-    const profile = parseSupplierProfile(await answer.json().catch(() => null))
-    if (!answer.ok || !profile.ok) throw new Error(`Avow has no sandbox supplier ${businessId}`)
-    return profile.value
   }
 
   // The buyer's side.
@@ -311,35 +250,9 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
 
     // A reserve already on the lock, from a run that stopped after funding, is reported as it is.
     let fundedIn: Hex | null = null
-    const held = await readBacking(client, business.lock, current.commitmentId, 'buyer')
-    if (!held) {
-      const avow = httpAvowApi({
-        baseUrl: deployment.apiUrl,
-        key: agentRequestKey(agentKey),
-        domain,
-        retryFor: 120n,
-        fetch: send,
-      })
-      const buyer = createAgent({
-        client,
-        key: agentKey,
-        mandate: item.mandate,
-        token: moderatoUsdToken(deployment.token),
-        profile: TESTNET_DEMO_PROFILE,
-        avow,
-        send: async (calls) => {
-          const receipt = await sendSponsored({
-            client,
-            account: agentKey,
-            calls,
-            sponsor: (transaction) => avow.sponsor(transaction),
-          })
-          return { transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }
-        },
-        dependencies: { readers: [lockReader] },
-      })
-      const result = await buyer.commitToQuote({
-        supplier: await supplierProfile(current.supplierBusinessId),
+    if (!(await context.held(current.commitmentId))) {
+      const result = await context.commit({
+        supplier: await context.supplierProfile(current.supplierBusinessId),
         terms: quote.terms,
         salt: quote.salt,
         agreement: quote.agreement,
@@ -349,63 +262,30 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
       if (!result.ok) return { ok: false, reason: result.reason, order: current }
       fundedIn = result.commitment.reservedIn ?? null
     }
-    // A node that lags can hide a reserve that landed for a few seconds, so Avow is asked again.
-    for (let tries = 0; ; tries++) {
-      try {
-        const reported = await asAgent({
-          domain,
-          path: SANDBOX_PATHS.mailboxReserved(current.orderId),
-          body: { fundedIn },
-          read: orderReader,
-        })
-        p.onStep?.({ step: 'reserved', fundedIn })
-        return { order: reported }
-      } catch (error) {
-        const lagging = error instanceof AvowApiError && error.reason === 'chain.reserve_missing'
-        if (!lagging || tries >= 12) throw error
-        await pause(5000, p.signal)
-      }
-    }
+    const reported = await context.reportReserved(
+      SANDBOX_PATHS.mailboxReserved(current.orderId),
+      fundedIn,
+      orderReader,
+      p.signal,
+    )
+    p.onStep?.({ step: 'reserved', fundedIn })
+    return { order: reported }
   }
 
-  /** Waits for the seller to accept, under the lock's rules. Past its deadline the reserve goes back. */
   async function awaitAcceptance(
     from: MailboxOrder,
     every: number,
     p: Parameters<SandboxMailbox['buy']>[0],
   ): Promise<BuyOutcome> {
-    let current = from
-    const acceptBy = current.status === 'reserved' ? current.reserve.acceptBy : 0n
-    while (current.status === 'reserved') {
-      if (systemClock() > acceptBy)
-        return { ok: false, reason: 'acceptance.missed', order: current }
-      await pause(every, p.signal)
-      current = await read(current.orderId)
-    }
-    if (current.status !== 'accepted')
-      return { ok: false, reason: 'message.invalid', order: current }
-    p.onStep?.({ step: 'accepted', acceptedIn: current.acceptedIn })
-    return { ok: true, order: current }
+    const waited = await awaitAccepted(from, read, every, p.signal)
+    if (!waited.ok) return waited
+    p.onStep?.({ step: 'accepted', acceptedIn: waited.acceptedIn })
+    return { ok: true, order: waited.order }
   }
 
   // The supplier's side.
 
-  const supplierItem = await loadSupplierItem(store)
-  const signing = supplierItem ? privateKeyToAccount(supplierItem.signingKey) : null
-  const asSupplier = signing
-    ? avowRequests({
-        baseUrl: deployment.apiUrl,
-        key: signingRequestKey(signing),
-        retryFor: 120n,
-        fetch: send,
-      })
-    : null
-  const needSupplier = () => {
-    if (!asSupplier || !signing || !supplierItem) {
-      throw new Error('This agent has no signing key to sell with. Connect it with --sell.')
-    }
-    return { asSupplier, signing, supplier: supplierItem }
-  }
+  const { needSupplier } = context
 
   async function inbox(): Promise<MailboxOrder[]> {
     const { asSupplier } = needSupplier()
@@ -484,48 +364,8 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
       return
     }
     if (job.status === 'reserved') {
-      const approvalKey = await client.readContract({
-        address: job.buyer.lock,
-        abi: APPROVAL_KEY_ABI,
-        functionName: 'approvalKey',
-      })
-      await fundFees(client, signing.address)
-      const sender = Account.fromSecp256k1(supplier.signingKey)
-      const accepted = await acceptJob(
-        {
-          config: {
-            chainId: deployment.chainId,
-            avowKeys: [approvalKey as Address],
-            businessId: supplier.profile.businessId,
-            payee: supplier.profile.payee,
-            acceptedTokens: [moderatoUsdToken(deployment.token)],
-            profile: TESTNET_DEMO_PROFILE,
-            acceptTestData: true,
-            account: supplier.profile.account,
-            signingKey: supplier.profile.signingKey,
-          },
-          chain: tempoChainReader(client, {
-            factory: deployment.factory,
-            chainId: deployment.chainId,
-          }),
-          dependencies: { readers: [lockReader] },
-          authorize: (commitment) =>
-            requestSupplierAuthorization(
-              { baseUrl: deployment.apiUrl, key: signingRequestKey(signing), fetch: send },
-              commitment,
-            ),
-          signingKey: signing,
-          send: async (call) => {
-            const receipt = await sendOwn({ client, account: sender, calls: [call] })
-            return { transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }
-          },
-          now: systemClock,
-        },
-        { customer: job.buyer, quote: job.quote },
-      )
-      if (!accepted.ok) throw new Error(`The acceptance was refused: ${accepted.code}`)
       // Null when an earlier run's acceptance was already on the lock, which Avow reads either way.
-      const acceptedIn = accepted.sent?.landed.transactionHash ?? null
+      const acceptedIn = await context.accept(job.buyer, job.quote)
       await asSupplier({
         domain,
         path: SANDBOX_PATHS.mailboxAccepted(job.orderId),
@@ -536,19 +376,10 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     }
   }
 
-  async function listen(p: Parameters<SandboxMailbox['listen']>[0] = {}): Promise<void> {
-    for (;;) {
-      if (p.signal?.aborted) return
-      const orders = await inbox().catch(() => [])
-      for (const job of orders) {
-        if (job.status === 'requested' && p.accept && !(await p.accept(job))) continue
-        await sell(job, (step) => p.onStep?.(job, step)).catch((error: unknown) =>
-          p.onError?.(job, error),
-        )
-      }
-      await pause(p.every ?? 5000, p.signal).catch(() => {})
-    }
-  }
+  const listen = (p: Parameters<SandboxMailbox['listen']>[0] = {}) =>
+    listenFor<MailboxOrder, SellStep>({ ...p, inbox, sell })
 
   return { businessId: business.businessId, order, unfinished, read, buy, inbox, sell, listen }
 }
+
+export type { MailboxOptions }

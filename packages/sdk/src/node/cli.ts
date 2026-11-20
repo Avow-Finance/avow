@@ -39,6 +39,7 @@ import {
   terminalPrompts,
 } from './runner.js'
 import { keepSession, sessionForNextRun } from './runner-session.js'
+import { offerCommand, orderServiceCommand } from './services.js'
 import { terminalInput } from './session-input.js'
 import { verifyCommand } from './verify.js'
 
@@ -70,9 +71,14 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            or set up the business and approve, with --business <id> to name one up front,
            --name for what the console calls it, and --sell when it also quotes and accepts
            jobs for the business
-  order    orders the demo job from another business with --supplier <id>, then checks the
-           quote, funds it and waits for the acceptance
-  listen   reads the business's inbox and quotes and accepts each order, until you stop it
+  offer    publish makes an offer of a service this business sells, from --name, --summary,
+           --price, --evidence, --late-cancellation and --no-show, and writes the file a buyer's
+           agent orders from. list shows what's published, and withdraw <id> takes one back
+  order    orders units of a supplier's offer with --offer <file> and --quantity, or the demo
+           job from another business with --supplier <id>. Either way it checks the quote, funds
+           it and waits for the acceptance
+  listen   reads the business's inbox and quotes and accepts each order, until you stop it. A
+           service order is quoted only for an offer this business published
   verify   checks a commitment someone shared, from its link, against the chain, with
            --payee <address> to check it pays you. It needs no agent or business
   mcp      add claude-code or add claude-desktop gives a model in Claude this folder's agent,
@@ -118,6 +124,8 @@ async function main(args: readonly string[]): Promise<void> {
   // An agent connecting to a business it doesn't hold the key of, from any folder.
   if (args[0] === 'connect') return connectCommand(args.slice(1))
   // Its agent ordering from another business, or listening for orders to its own.
+  if (args[0] === 'offer') return offerCommand(args.slice(1))
+  if (args[0] === 'order' && args.includes('--offer')) return orderServiceCommand(args.slice(1))
   if (args[0] === 'order') return orderCommand(args.slice(1))
   if (args[0] === 'listen') return listenCommand()
   // The MCP server, so a model in Claude can connect the folder's agent and commit with it.

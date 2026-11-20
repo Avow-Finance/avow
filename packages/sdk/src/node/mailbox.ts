@@ -1,5 +1,6 @@
 import { type MailboxOrder, mailboxStatusAt } from '@avow-finance/spec'
 import { MAILBOX_ORDER_SECONDS, sandboxMailbox } from '../sandbox/mailbox.js'
+import { sandboxServices } from '../sandbox/services.js'
 import { fileStore } from './platform.js'
 
 /** What `avow-sandbox order` takes, read from its arguments, or why it can't run. */
@@ -62,18 +63,32 @@ export async function orderCommand(args: readonly string[]): Promise<void> {
 }
 
 /**
- * `avow-sandbox listen`. Reads this business's inbox every few seconds and takes each order's next
- * step, until stopped. Orders that arrive while it isn't running wait in the inbox until they lapse.
+ * `avow-sandbox listen`. Reads this business's inboxes every few seconds and takes each order's
+ * next step, until stopped. It quotes a job order, and a service order for an offer this business
+ * published. Orders that arrive while it isn't running wait in the inbox until they lapse.
  */
 export async function listenCommand(): Promise<void> {
   const stop = new AbortController()
   process.once('SIGINT', () => stop.abort())
-  const mailbox = await sandboxMailbox({ store: fileStore() })
-  console.log(`Listening for orders to ${mailbox.businessId}. Stop with Ctrl+C.`)
-  await mailbox.listen({
+  const store = fileStore()
+  const [mailbox, services] = await Promise.all([
+    sandboxMailbox({ store }),
+    sandboxServices({ store }),
+  ])
+  const offers = await services.published()
+  console.log(
+    `Listening for orders to ${mailbox.businessId}, for jobs and for ${
+      offers.length === 0
+        ? 'no offers yet, since it has published none'
+        : offers.map((v) => v.item.name).join(', ')
+    }. Stop with Ctrl+C.`,
+  )
+  const told = {
     signal: stop.signal,
-    onStep: (order, step) => console.log(`${order.orderId}: ${step.step}`),
-    onError: (order, error) =>
+    onStep: (order: { orderId: string }, step: { step: string }) =>
+      console.log(`${order.orderId}: ${step.step}`),
+    onError: (order: { orderId: string }, error: unknown) =>
       console.error(`${order.orderId}: ${error instanceof Error ? error.message : String(error)}`),
-  })
+  }
+  await Promise.all([mailbox.listen(told), services.listen(told)])
 }

@@ -10,6 +10,7 @@ import {
   type ReasonCode,
   type Signed,
   type SupplierAuthorizationAnswer,
+  type Terms,
   toWire,
 } from '@avow-finance/spec'
 import {
@@ -25,6 +26,15 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import type { Landed } from '../agent.js'
 import { AvowApiError, relayReason } from '../http.js'
 import { landedReverted, SendError, sendErrorIn } from '../send.js'
+
+/**
+ * A quote a supplier can accept the commitment for: a job's, with the compute bookings it relies
+ * on shown, or one under terms that rely on nothing, such as a service's, with nothing to show.
+ */
+export type AcceptableQuote = Pick<QuoteRequest, 'salt' | 'agreement' | 'supplierSignature'> & {
+  terms: QuoteRequest['terms'] | Terms
+  disclosed?: readonly unknown[]
+}
 
 /** What accepting a job's commitment needs, which the job process wires once. */
 export interface JobAcceptanceDeps {
@@ -102,7 +112,7 @@ const MAY_BE_ACCEPTED: readonly ReasonCode[] = [
  */
 export async function acceptJob(
   deps: JobAcceptanceDeps,
-  job: { customer: JobBuyer; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: AcceptableQuote },
 ): Promise<JobAcceptance> {
   const outcome = await signAndSend(deps, job)
   if (outcome.ok || !MAY_BE_ACCEPTED.includes(outcome.code)) return outcome
@@ -111,7 +121,7 @@ export async function acceptJob(
 
 async function signAndSend(
   deps: JobAcceptanceDeps,
-  job: { customer: JobBuyer; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: AcceptableQuote },
 ): Promise<JobAcceptance> {
   const refuse = (
     code: ReasonCode,
@@ -149,7 +159,7 @@ async function signAndSend(
         mandateHash: a.mandateHash,
       },
       terms: quote.terms,
-      disclosed: quote.disclosed,
+      disclosed: quote.disclosed ?? [],
       now: deps.now(),
     },
     { config: deps.config, chain: deps.chain, dependencies: deps.dependencies },
@@ -182,11 +192,10 @@ async function signAndSend(
  */
 async function acceptedEarlier(
   deps: JobAcceptanceDeps,
-  job: { customer: JobBuyer; quote: QuoteRequest },
+  job: { customer: JobBuyer; quote: AcceptableQuote },
 ): Promise<JobAcceptance | null> {
   const { customer, quote } = job
   const a = quote.agreement
-  if (!isChainedTerms(quote.terms)) return null
   const held = await deps.chain.backing(customer.lock, a.commitmentId, 'buyer')
   if (
     held?.state !== 'accepted' ||
@@ -196,11 +205,13 @@ async function acceptedEarlier(
   ) {
     return null
   }
+  // Terms that rely on no booking have nothing more to read.
+  if (!isChainedTerms(quote.terms)) return { ok: true, sent: null, checks: [] }
   const relied = await verifyDependencies(
     {
       terms: quote.terms,
       approval: { side: 'buyer', supplier: held.supplier },
-      disclosed: quote.disclosed,
+      disclosed: quote.disclosed ?? [],
       now: deps.now(),
     },
     deps.dependencies,

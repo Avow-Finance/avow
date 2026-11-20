@@ -15,19 +15,37 @@ import { fileURLToPath } from 'node:url'
 import {
   formatUsd,
   isSessionId,
+  offerVersionId,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
+  type ServiceOrder,
+  serviceOfferQuote,
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
 import { PREFLIGHT_UNCHECKED, Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
-import { sessionUrl } from '../sandbox/session.js'
+import {
+  type SandboxServices,
+  type ServiceBuyOutcome,
+  sandboxServices,
+} from '../sandbox/services.js'
+import { sessionUrl, verifyUrl } from '../sandbox/session.js'
 import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
+import {
+  bookingSentence,
+  type OfferInput,
+  offerSentences,
+  orderSentence,
+  outcomeSentence,
+  readOfferInput,
+  readSharedOffer,
+  unfinishedFor,
+} from './services.js'
 
 /**
  * `avow-sandbox-mcp` gives a model in Claude Code, Claude Desktop or any other MCP client an agent
@@ -45,6 +63,8 @@ const SERVER = { name: 'avow-sandbox', version: '0.0.0' }
 const PROTOCOL = '2025-06-18'
 /** How long a booking waits for the supplier's acceptance before it answers. */
 const ACCEPTANCE_WAIT_MS = 45_000
+/** How long ordering a service waits for the other agent's next step before it answers. */
+const ORDER_WAIT_MS = 45_000
 
 const usd = (dollars: number | null) =>
   dollars === null ? 'no limit' : formatUsd(BigInt(Math.round(dollars * 1_000_000)))
@@ -56,6 +76,14 @@ const noInput = { type: 'object', properties: {}, additionalProperties: false } 
  * shared, which any agent can do without connecting.
  */
 type FreeTool = 'connect' | 'status' | 'verify'
+
+/**
+ * The tools for services between two agents. The first two and `sell` are a supplier's, for an
+ * agent connected to sell, and `order` is a buyer's. They act under the same mandate and keys as
+ * the rest, and none reports to the runner's screen.
+ */
+const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
+type ServiceTool = (typeof SERVICE_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -216,14 +244,158 @@ export const MCP_TOOLS = [
       'Lists every commitment your agent made, with its state on the lock, whether the current authority made it, and a link anyone can open to check it.',
     inputSchema: noInput,
   },
+  {
+    name: 'publish_offer',
+    title: 'Publish an offer',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    description:
+      "Publishes an offer of a service your business sells by the unit at a fixed price, such as a transcript or a design review, for an agent connected to sell. It keeps the offer in this folder and answers with the offer to hand a buyer's agent, which orders from it. Nothing is sent to Avow and no directory lists it. Both charges are yours to set, since a booking reserves the larger of them from the buyer and the supplier can charge nothing else. Publishing an item of the same name again replaces its offer, and orders for the old one are no longer quoted.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'What the offer sells, such as "Transcript"' },
+        summary: { type: 'string', description: 'One sentence on what the buyer gets' },
+        price: { type: 'number', description: 'The price of one unit in dollars, such as 50' },
+        evidence: { type: 'string', description: 'What counts as evidence of delivery' },
+        late_cancellation_percent: {
+          type: 'number',
+          description:
+            'What cancelling after free cancellation ends can cost, as a percentage of the price from 0 to 100',
+        },
+        no_show_percent: {
+          type: 'number',
+          description:
+            'What the buyer not being there to take delivery can cost, as a percentage of the price from 0 to 100. One of the two charges has to be above zero',
+        },
+        lead_hours: {
+          type: 'number',
+          description: 'How long after booking you deliver by, 24 hours when left out',
+        },
+        max_per_booking: {
+          type: 'integer',
+          description: 'The most units one booking takes, 1 when left out',
+        },
+        per_day: {
+          type: 'integer',
+          description:
+            'How many bookings you take in a day, 10 when left out. This agent counts each order it quotes against it',
+        },
+        free_cancel_hours: {
+          type: 'number',
+          description:
+            'How long after booking the buyer can cancel at no charge. Left out, no booking is free to cancel',
+        },
+        payment: {
+          type: 'string',
+          enum: ['transfer', 'invoice'],
+          description:
+            'How the buyer pays the price, transfer when left out. The reserve never secures the price',
+        },
+        payment_due_days: {
+          type: 'number',
+          description: 'How long after the delivery deadline payment is due, 7 days when left out',
+        },
+      },
+      required: [
+        'name',
+        'summary',
+        'price',
+        'evidence',
+        'late_cancellation_percent',
+        'no_show_percent',
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'offers',
+    title: 'List published offers',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    description:
+      "Lists the offers your business has published from this folder, each with its id, its rules in words and the offer itself to hand a buyer's agent.",
+    inputSchema: noInput,
+  },
+  {
+    name: 'order',
+    title: 'Order a service',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    description:
+      "Orders units of a service from the offer a supplier's agent gave you, and sees the order through. It sends the order with nothing reserved, waits for the supplier's quote, checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the supplier to accept. The reserve is the larger of the offer's two charges, and it backs only those charges. The price is paid separately, by the route the offer names. Each step waits on the other agent, so the tool answers with where the order stands after a while, and this server keeps seeing the order through while it runs. Call it again with the order's id to read where it got to, which never makes a second commitment. A refusal comes back with its reason code.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        offer: {
+          type: 'object',
+          description:
+            "The offer, whole, as the supplier's agent gave it. Leave it out when you give order",
+        },
+        quantity: { type: 'integer', description: 'How many units, 1 when left out' },
+        order: {
+          type: 'string',
+          description: 'The id of an order you already sent, to carry it on',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'orders',
+    title: 'List service orders',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Lists the service orders waiting on your agent. As a supplier, those are new orders to quote and funded ones to accept. As a buyer, those are the orders you sent and haven't seen through, each with where it stands.",
+    inputSchema: noInput,
+  },
+  {
+    name: 'sell',
+    title: 'Quote or accept an order',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. To decline an order, leave it, and it lapses with nothing reserved.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order: { type: 'string', description: 'The id of the order, from orders' },
+      },
+      required: ['order'],
+      additionalProperties: false,
+    },
+  },
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool
+  name: SandboxTool | FreeTool | ServiceTool
   /** What a client shows for the tool. */
   title: string
   /**
-   * How the tool acts, for clients that ask before running one. Booking adds a commitment and
-   * moves money into a reserve, so it's neither read-only nor idempotent, and it destroys nothing.
-   * Every tool reaches Avow or the chain, so each is open-world.
+   * How the tool acts, for clients that ask before running one. Booking and ordering add a
+   * commitment and move money into a reserve, so they're neither read-only nor idempotent, and
+   * nothing destroys. Every tool reaches Avow or the chain, so each is open-world, but the two
+   * that only read and keep a supplier's offers in its folder.
    */
   annotations: {
     readOnlyHint: boolean
@@ -322,7 +494,7 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
 }
 
 /** The MCP agent for one folder, answering each tool call through the SDK's agent. */
-export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
+export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery?: number } = {}) {
   const store = fileStore(join(dir, SANDBOX_DIR))
   const log = (line: string) => process.stderr.write(`${line}\n`)
   const connection = mcpConnection({
@@ -574,17 +746,238 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch } = {}) {
     }
   }
 
+  const services = (): Promise<SandboxServices> =>
+    sandboxServices({ store, ...(options.fetch ? { fetch: options.fetch } : {}) })
+
+  const shared = (version: Parameters<typeof offerVersionId>[0]) => ({
+    id: offerVersionId(version),
+    offer: toWire(version),
+  })
+
+  async function publishOffer(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const draft = readOfferInput(args as OfferInput)
+    if ('error' in draft) throw new RangeError(draft.error)
+    const { version, id } = await (await services()).publish(draft)
+    return {
+      text: [
+        `Published offer ${id}, kept in this folder. Nothing was sent to Avow, and no directory lists it.`,
+        ...offerSentences(version),
+        "Hand the buyer's agent the offer below, whole, and it orders from it with its order tool. Call orders to see what comes, and sell to quote and accept.",
+        JSON.stringify(toWire(version)),
+      ].join(' '),
+      structured: shared(version),
+      isError: false,
+    }
+  }
+
+  async function offers(): Promise<ToolAnswer> {
+    const published = await (await services()).published()
+    return {
+      text:
+        published.length === 0
+          ? 'Your business has published no offers from this folder. Call publish_offer to make one.'
+          : published
+              .map((v) =>
+                [
+                  `Offer ${offerVersionId(v)}.`,
+                  ...offerSentences(v),
+                  JSON.stringify(toWire(v)),
+                ].join(' '),
+              )
+              .join('\n'),
+      structured: { offers: published.map(shared) },
+      isError: false,
+    }
+  }
+
+  /**
+   * The orders this server is seeing through, by id. Buying waits on another agent, so it runs
+   * past the tool call that started it, and a later call reads how it ended. An order outlives
+   * the server in the folder, where the next call picks it up again.
+   */
+  const buying = new Map<
+    string,
+    { ended: ServiceBuyOutcome | null; failed: { error: unknown } | null }
+  >()
+
+  function seeThrough(mine: SandboxServices, orderId: string) {
+    const run: NonNullable<ReturnType<typeof buying.get>> = { ended: null, failed: null }
+    buying.set(orderId, run)
+    const every = options.pollEvery ? { pollEvery: options.pollEvery } : {}
+    mine.buy({ resume: orderId, ...every }).then(
+      (outcome) => {
+        run.ended = outcome
+      },
+      (error: unknown) => {
+        run.failed = { error }
+      },
+    )
+    return run
+  }
+
+  const orderFacts = (order: ServiceOrder) => {
+    const quote = serviceOfferQuote(order.offer, order.quantity)
+    const dollars = (micros: bigint) => Number(micros) / 1_000_000
+    return {
+      order: order.orderId,
+      status: order.status,
+      supplier: order.offer.supplier,
+      buyer: order.buyer.businessId,
+      item: order.offer.item.name,
+      quantity: order.quantity,
+      price: dollars(quote.total),
+      reserve: dollars(quote.reserve),
+      offer: offerVersionId(order.offer),
+      commitmentId: order.commitmentId,
+      expiry: Number(order.expiry),
+    }
+  }
+
+  /** The link anyone can open to check a funded order's commitment. */
+  const linkOf = (order: ServiceOrder) =>
+    order.status === 'reserved' || order.status === 'accepted'
+      ? verifyUrl({
+          kind: 'commitment',
+          chainId: order.buyer.chainId,
+          lock: order.buyer.lock,
+          commitmentId: order.commitmentId,
+          side: 'buyer',
+          termsHash: order.quote.agreement.termsHash,
+        })
+      : null
+
+  async function order(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const mine = await services()
+    let orderId = typeof args.order === 'string' ? args.order.trim() : ''
+    const said: string[] = []
+    if (orderId === '') {
+      const offer = readSharedOffer(args.offer)
+      if (!offer) {
+        throw new RangeError(
+          "Give the offer, whole, as the supplier's agent gave it, or the id of an order you sent.",
+        )
+      }
+      const quantity = args.quantity === undefined ? 1 : args.quantity
+      if (typeof quantity !== 'number') throw new RangeError('The quantity is a number of units')
+      said.push(bookingSentence(offer, quantity))
+      // An order for the same offer and quantity that was never seen through is carried on, so
+      // asking twice sends one order.
+      const left = await unfinishedFor(mine, offer, quantity)
+      orderId = left ?? (await mine.order({ offer, quantity })).orderId
+      if (left) said.push('You had sent this order already, so it carries on from where it stood.')
+    }
+    const known = (await mine.unfinished()).some((r) => r.orderId === orderId)
+    const run = buying.get(orderId) ?? (known ? seeThrough(mine, orderId) : null)
+    if (run) {
+      const started = Date.now()
+      while (!run.ended && !run.failed && Date.now() - started < ORDER_WAIT_MS) {
+        await new Promise((done) => setTimeout(done, 500).unref())
+      }
+    }
+    if (run?.failed) {
+      // The order is still kept in the folder, so calling again picks it up.
+      buying.delete(orderId)
+      throw run.failed.error
+    }
+    const outcome = run?.ended ?? null
+    if (outcome) buying.delete(orderId)
+    // An order this folder no longer keeps was seen through earlier, and the mailbox still has it.
+    const now = outcome ? outcome.order : await mine.read(orderId)
+    const link = linkOf(now)
+    return {
+      text: [
+        ...said,
+        orderSentence(now),
+        outcome
+          ? outcomeSentence(outcome)
+          : now.status === 'accepted' || now.status === 'expired'
+            ? ''
+            : `This server keeps seeing it through. Call order again with order ${orderId} to read where it got to.`,
+        link ? `Anyone can check the commitment at ${link}` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      structured: {
+        ...orderFacts(now),
+        ended: outcome ? (outcome.ok ? 'accepted' : outcome.reason) : null,
+        link,
+      },
+      isError: false,
+    }
+  }
+
+  async function orders(): Promise<ToolAnswer> {
+    const mine = await services()
+    // An agent connected only to buy has no inbox, which isn't an error here.
+    const selling = await mine.inbox().catch(() => null)
+    const sent = await Promise.all((await mine.unfinished()).map((r) => mine.read(r.orderId)))
+    const lines = [
+      ...(selling ?? []).map(
+        (o) =>
+          `To your business. ${orderSentence(o)} ${o.status === 'requested' ? 'Call sell to quote it.' : 'Call sell to accept it.'}`,
+      ),
+      ...sent.map((o) => `From you. ${orderSentence(o)}`),
+    ]
+    return {
+      text:
+        lines.length === 0
+          ? selling === null
+            ? "You've sent no orders that are still open. This agent wasn't connected to sell, so it has no inbox."
+            : 'No orders are waiting on your business, and you have none of your own still open.'
+          : lines.join('\n'),
+      structured: {
+        selling: selling === null ? null : selling.map(orderFacts),
+        buying: sent.map(orderFacts),
+      },
+      isError: false,
+    }
+  }
+
+  async function sell(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const orderId = typeof args.order === 'string' ? args.order.trim() : ''
+    if (orderId === '') throw new RangeError('Give the id of the order, from orders')
+    const mine = await services()
+    const waiting = (await mine.inbox()).find((o) => o.orderId === orderId)
+    if (!waiting) {
+      return {
+        text: `No order ${orderId} is waiting on your business. It may have lapsed, or its next step is the buyer's.`,
+        structured: { order: orderId, step: null },
+        isError: true,
+      }
+    }
+    let acceptedIn: string | null = null
+    await mine.sell(waiting, (step) => {
+      if (step.step === 'accepted') acceptedIn = step.acceptedIn
+    })
+    const quoted = waiting.status === 'requested'
+    return {
+      text: quoted
+        ? `Quoted. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
+        : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`,
+      structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
+      isError: false,
+    }
+  }
+
+  const isServiceTool = (name: string): name is ServiceTool =>
+    (SERVICE_TOOLS as readonly string[]).includes(name)
+
   return {
     async call(name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
       try {
         if (name === 'connect') return await connect(args)
         if (name === 'status') return connectionAnswer(await connection.status())
         if (name === 'verify') return await verify(args)
-        if (!SANDBOX_TOOLS.includes(name as SandboxTool)) {
+        if (!SANDBOX_TOOLS.includes(name as SandboxTool) && !isServiceTool(name)) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
+        if (name === 'publish_offer') return await publishOffer(args)
+        if (name === 'offers') return await offers()
+        if (name === 'order') return await order(args)
+        if (name === 'orders') return await orders()
+        if (name === 'sell') return await sell(args)
         if (name === 'authority') return await authority()
         if (name === 'check') return await check(args)
         if (name === 'book') return await book(args)

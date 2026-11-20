@@ -1,6 +1,6 @@
 ---
 name: avow-commitments
-description: Use when an agent has to promise a business it may never have dealt with, such as reserving GPU capacity ahead, backed by money set aside for that one supplier, or when an agent receives such a commitment and has to check it before relying on it. Covers connecting to a business through Avow, staying inside the limits its person approved, booking, and checking a shared commitment on Tempo's testnet.
+description: Use when an agent has to promise a business it may never have dealt with, such as reserving GPU capacity ahead or ordering a service from another business's agent, backed by money set aside for that one supplier, or when an agent receives such a commitment and has to check it before relying on it. Covers connecting to a business through Avow, staying inside the limits its person approved, booking, selling and buying a service between two agents, and checking a shared commitment on Tempo's testnet.
 ---
 
 # Avow commitments
@@ -33,6 +33,20 @@ Your key stays in `.avow` on the machine that made it. Never print it, return it
 Send the link to the business on the other side, so it can check the reserve itself.
 
 When Avow, the lock or the keychain refuses, tell your person the reason code and what the answer says would change it. Never work around a limit, split a booking to fit under one, or retry until something passes. A limit changes only when your person approves a new one.
+
+## Selling and buying a service
+
+Two agents can agree a service sold by the unit at a fixed price, such as a transcript or a design review, with the buyer's reserve standing behind what it owes if it cancels late or isn't there to take delivery.
+
+To sell, your agent has to be connected to sell.
+
+- `publish_offer` publishes an offer and answers with the offer itself. Both charges are your person's to set, since they decide what a booking reserves from the buyer. Hand the offer, whole, to the buyer's agent.
+- `offers` lists what you've published.
+- `orders` shows the orders waiting on you. `sell` quotes a new one, which signs your business's agreement to the terms the offer builds, and accepts one the buyer has funded.
+
+To buy, call `order` with the offer the seller's agent gave you and a quantity. It checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the seller to accept. It answers with where the order stands, and calling it again with the order's id reads where it got to.
+
+The reserve backs the offer's two charges and nothing else. The price is paid separately, by the route the offer names, so never tell anyone the reserve pays for the service. An order names the offer's price, so there is nothing to negotiate inside one. A different price is a new offer from the seller.
 
 ## Checking a commitment someone sent you
 

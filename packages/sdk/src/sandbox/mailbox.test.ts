@@ -1,21 +1,15 @@
 import {
-  dollars,
-  encodeApiBody,
   GPU_RESERVATION,
   JOB_CATEGORY,
-  mandateHash,
   SANDBOX_PATHS,
   testnetDemoJobTerms,
   testnetDemoTerms,
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { Account } from 'viem/tempo'
 import { describe, expect, it, vi } from 'vitest'
-import { accountSigner, signMandate } from '../sign.js'
-import { deployment, domain, LOCK, supplier, TOKEN } from '../test/sandbox-business.js'
-import { sandboxMandate } from './mandate.js'
-import { memoryStore, saveAgentItem, write } from './store.js'
+import { folderWithAgent, json, wire } from '../test/agent-folder.js'
+import { deployment, LOCK, supplier } from '../test/sandbox-business.js'
+import { write } from './store.js'
 
 const bookings = vi.fn()
 const quotes = vi.fn()
@@ -35,51 +29,12 @@ const { readOrderArgs } = await import('../node/mailbox.js')
 
 const BUYER = 'sandbox-buyer'
 const SELLER = 'sandbox-seller'
-const wire = (value: unknown) => JSON.parse(new TextDecoder().decode(encodeApiBody(value)))
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
-
-/** A folder holding an enrolled agent, and for a seller its registered signing key too. */
-async function agentFolder(businessId: string, sells = false) {
-  const store = memoryStore()
-  const root = Account.fromSecp256k1(generatePrivateKey())
-  const agentKey = generatePrivateKey()
-  const message = sandboxMandate({
-    businessId,
-    agentId: 'agt_test',
-    account: root.address,
-    agentKey: Account.fromSecp256k1(agentKey, { access: root.address }).accessKeyAddress,
+const agentFolder = (businessId: string, sells = false) =>
+  folderWithAgent(businessId, {
+    sells,
     suppliers: [SELLER, supplier.id],
     categories: [JOB_CATEGORY, 'compute'],
-    token: TOKEN,
-    capPerCommitment: dollars(500),
-    capOpenReserves: dollars(1000),
-    expiry: 1_900_000_000n,
   })
-  const business = { ...deployment, account: root.address, lock: LOCK, businessId }
-  await saveAgentItem(store, {
-    agentKey,
-    business,
-    mandate: await signMandate(message, domain, accountSigner(root.address, root)),
-    mandateHash: mandateHash(message, domain),
-    keyAuthorizedIn: `0x${'ab'.repeat(32)}`,
-    suppliers: [supplier],
-  })
-  if (sells) {
-    const signingKey = generatePrivateKey()
-    await write(store, 'supplier', {
-      signingKey,
-      profile: {
-        businessId,
-        account: root.address,
-        payee: root.address,
-        signingKey: privateKeyToAccount(signingKey).address,
-      },
-      business,
-    })
-  }
-  return { store, root }
-}
 
 /** An order as the mailbox answers it, for the request an agent sent. */
 function answered(request: Record<string, unknown>, status: string, extra = {}) {
