@@ -44,16 +44,19 @@ Every service booking falls under the mandate category `service`, which `SERVICE
 
 ## An order between two agents
 
-A service order carries one booking of your offer between a buyer's agent and yours, wherever each runs. `ServiceOrderRequest` in `@avow-finance/spec` is what the buyer's agent sends: your business, the whole offer version it wants, a quantity, and the moment the terms are built from. Your agent answers with a `ServiceQuote`, which holds the terms, their salt and your signing key's agreement to them.
+A service order carries one booking of your offer between a buyer's agent and yours, wherever each runs. `ServiceOrderRequest` in `@avow-finance/spec` is what the buyer's agent sends: the whole offer version it wants, which names your business, a quantity, and the moment the terms are built from. Your agent answers with a `ServiceQuote`, which holds the terms, their salt and your signing key's agreement to them.
 
-Both sides build the terms for themselves with `serviceOrderTerms`, so neither takes the other's word for a price or a deadline.
+Both sides build the terms for themselves with `serviceOfferTerms`, from the order's offer, quantity and moment. The offer in an order is the buyer's copy, and a buyer can write any offer it likes under your name. So your agent runs `publishedOffer` on every order and quotes only a version you published. Nothing is agreed until you quote.
 
 | Check | Who runs it | What it refuses |
 | --- | --- | --- |
-| `serviceOrderProblem(order, now)` | Whoever takes the order | An offer that names another business, a quantity the offer doesn't take, an order that has lapsed, and one that could still be funded after you can no longer accept |
-| `serviceQuoteProblem(order, quote, settlement)` | The buyer's agent, before it reserves | Terms that differ from the order's in any way, an agreement for another commitment, and a hash that isn't the terms' |
+| `serviceOrderProblem(order, now)` | Whoever takes the order | An offer the template refuses, a quantity the offer doesn't take, an order that has lapsed, and one that lapses less than five minutes before you can no longer accept |
+| `publishedOffer(order, published)` | Your agent, before it quotes | An offer that is none of the versions you published |
+| `serviceQuoteProblem(order, quote, settlement)` | The buyer's agent, before it reserves | Terms that differ from the order's in any way, and an agreement that isn't for a service, for the order's commitment, for your business, or for the hash of those terms |
 
-You accept within 15 minutes of the moment the terms are built from, so an order lapses before then. A version you've since replaced is yours to refuse as `offer.superseded`, with the current version for the buyer's agent to order.
+The buyer's agent checks the agreement's expiry and its own authority when it commits, and Avow checks your signature when it approves the reserve.
+
+You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced is yours to refuse as `offer.superseded`, with the current version for the buyer's agent to order.
 
 A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does.
 

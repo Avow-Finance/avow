@@ -1,7 +1,14 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import type { JobTerms } from './job.js'
-import { address, bytes32, u64, u256 } from './json-fields.js'
+import { address, bytes32, u64 } from './json-fields.js'
+import {
+  businessIdJson,
+  type MailboxReserve,
+  type OrderStage,
+  orderStagesJson,
+  readOrNull,
+} from './order-wire.js'
 import {
   type JobRequirement,
   jobRequirementJson,
@@ -61,37 +68,13 @@ export interface MailboxOrderRequest {
 export const MAILBOX_STATUSES = ['requested', 'quoted', 'expired', 'reserved', 'accepted'] as const
 export type MailboxStatus = (typeof MAILBOX_STATUSES)[number]
 
-/**
- * The reserve the buyer funded, as Avow read it from the buyer's lock. Avow reads the lock itself,
- * so the transaction is there only when the agent saw it land, and null after a restart.
- */
-export interface MailboxReserve {
-  fundedIn: Hex | null
-  amount: bigint
-  /** The lock's deadline for the supplier to accept, after which the reserve goes back. */
-  acceptBy: bigint
-}
-
 interface MailboxOrderBase extends MailboxOrderRequest {
   buyer: JobBuyer
   requestedAt: bigint
 }
 
 /** An order as the mailbox answers it, to either side or to either business's console. */
-export type MailboxOrder =
-  | (MailboxOrderBase & { status: 'requested' })
-  | (MailboxOrderBase & { status: 'expired'; quote: QuoteRequest | null })
-  | (MailboxOrderBase & { status: 'quoted'; quote: QuoteRequest })
-  | (MailboxOrderBase & { status: 'reserved'; quote: QuoteRequest; reserve: MailboxReserve })
-  | (MailboxOrderBase & {
-      status: 'accepted'
-      quote: QuoteRequest
-      reserve: MailboxReserve
-      /** The acceptance's transaction when the supplier's agent saw it land, or null. */
-      acceptedIn: Hex | null
-    })
-
-const businessIdJson = z.string().min(1).max(100)
+export type MailboxOrder = MailboxOrderBase & OrderStage<QuoteRequest>
 
 export const jobBuyerJson = z.strictObject({
   businessId: businessIdJson,
@@ -110,54 +93,28 @@ export const mailboxOrderRequestJson = z.strictObject({
   expiry: u64,
 })
 
-const reserveJson = z.strictObject({ fundedIn: bytes32.nullable(), amount: u256, acceptBy: u64 })
-
 const base = { ...mailboxOrderRequestJson.shape, buyer: jobBuyerJson, requestedAt: u64 }
 
-export const mailboxOrderJson = z.discriminatedUnion('status', [
-  z.strictObject({ ...base, status: z.literal('requested') }),
-  z.strictObject({ ...base, status: z.literal('expired'), quote: quoteRequestJson.nullable() }),
-  z.strictObject({ ...base, status: z.literal('quoted'), quote: quoteRequestJson }),
-  z.strictObject({
-    ...base,
-    status: z.literal('reserved'),
-    quote: quoteRequestJson,
-    reserve: reserveJson,
-  }),
-  z.strictObject({
-    ...base,
-    status: z.literal('accepted'),
-    quote: quoteRequestJson,
-    reserve: reserveJson,
-    acceptedIn: bytes32.nullable(),
-  }),
-])
+export const mailboxOrderJson = orderStagesJson(base, quoteRequestJson)
 
 /** What the buyer sends once its reserve is on the lock, which Avow then reads for itself. */
 export const mailboxReservedJson = z.strictObject({ fundedIn: bytes32.nullable() })
 /** What the supplier sends once the lock shows its acceptance, which Avow then reads for itself. */
 export const mailboxAcceptedJson = z.strictObject({ acceptedIn: bytes32.nullable() })
 
-const read =
-  <T>(schema: z.ZodType<T>) =>
-  (json: unknown): T | null => {
-    const parsed = schema.safeParse(json)
-    return parsed.success ? parsed.data : null
-  }
-
-export const parseMailboxOrderRequest = read(
+export const parseMailboxOrderRequest = readOrNull(
   mailboxOrderRequestJson as unknown as z.ZodType<MailboxOrderRequest>,
 )
-export const parseMailboxOrder = read(mailboxOrderJson as unknown as z.ZodType<MailboxOrder>)
-export const parseMailboxInbox = read(
+export const parseMailboxOrder = readOrNull(mailboxOrderJson as unknown as z.ZodType<MailboxOrder>)
+export const parseMailboxInbox = readOrNull(
   z.strictObject({
     orders: z.array(mailboxOrderJson).max(MAILBOX_INBOX_MAX),
   }) as unknown as z.ZodType<{
     orders: MailboxOrder[]
   }>,
 )
-export const parseMailboxReserved = read(mailboxReservedJson)
-export const parseMailboxAccepted = read(mailboxAcceptedJson)
+export const parseMailboxReserved = readOrNull(mailboxReservedJson)
+export const parseMailboxAccepted = readOrNull(mailboxAcceptedJson)
 
 /**
  * Where an order stands at `now`, from what the mailbox holds. An order nobody funded is expired
@@ -172,3 +129,5 @@ export function mailboxStatusAt(
   }
   return held.status
 }
+
+export type { MailboxReserve }
