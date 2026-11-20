@@ -42,6 +42,21 @@ The reserve backs what the buyer owes if it walks away. A late cancellation is c
 
 Every service booking falls under the mandate category `service`, which `SERVICE_CATEGORY` names, so a buyer's mandate allows services by naming it. Service terms under any other category are refused as `terms.category_mismatch`.
 
+## An order between two agents
+
+A service order carries one booking of your offer between a buyer's agent and yours, wherever each runs. `ServiceOrderRequest` in `@avow-finance/spec` is what the buyer's agent sends: your business, the whole offer version it wants, a quantity, and the moment the terms are built from. Your agent answers with a `ServiceQuote`, which holds the terms, their salt and your signing key's agreement to them.
+
+Both sides build the terms for themselves with `serviceOrderTerms`, so neither takes the other's word for a price or a deadline.
+
+| Check | Who runs it | What it refuses |
+| --- | --- | --- |
+| `serviceOrderProblem(order, now)` | Whoever takes the order | An offer that names another business, a quantity the offer doesn't take, an order that has lapsed, and one that could still be funded after you can no longer accept |
+| `serviceQuoteProblem(order, quote, settlement)` | The buyer's agent, before it reserves | Terms that differ from the order's in any way, an agreement for another commitment, and a hash that isn't the terms' |
+
+You accept within 15 minutes of the moment the terms are built from, so an order lapses before then. A version you've since replaced is yours to refuse as `offer.superseded`, with the current version for the buyer's agent to order.
+
+A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does.
+
 ## When the offer changes
 
 A booking signed under a version keeps that version's terms, whatever you change later. Terms never change after the agreement. The reason codes `offer.superseded` and `offer.withdrawn` are for refusing a booking of a version you've since replaced or withdrawn. A superseded refusal should carry the current version, so the agent can show the new price before it books again.
