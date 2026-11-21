@@ -107,7 +107,7 @@ export const SANDBOX_PATHS = {
   /** Where the supplier's agent says its acceptance landed. */
   mailboxAccepted: (orderId: string) =>
     `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/accepted`,
-  // The six paths of a service order. Avow's sandbox doesn't serve them yet.
+  // The six paths of a service order, which Avow's testnet sandbox serves.
   /** Where a buyer's agent sends a service order to another business. */
   serviceOrders: '/v1/sandbox/mailbox/service-orders',
   /** Where a supplier's agent reads the service orders waiting on it. */
