@@ -46,6 +46,8 @@ navigation:
         path: ./docs/pages/tools.mdx
       - page: Services sold by quantity
         path: ./docs/pages/services.mdx
+      - page: Negotiation threads
+        path: ./docs/pages/negotiation.mdx
       - api: API reference
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx

@@ -26,6 +26,16 @@ export const REASON_CODES = {
   'offer.superseded':
     'The supplier replaced the offer version booked with a newer one, which the answer carries for review before booking again',
   'offer.withdrawn': "The supplier withdrew the offer, so it can't be booked",
+  'capacity.exhausted':
+    'The supplier has no capacity for this now. The answer says when to ask again, or how many units are free, when the supplier gave them',
+  'quantity.out_of_range':
+    "The offer doesn't take that many units in one booking. The answer says how many it takes when the supplier gave it",
+  'terms.not_negotiable': "The proposal changes a term the offer doesn't open to bargaining",
+  'proposal.unacceptable':
+    'The other side refuses the proposal as it stands, and says nothing about what it would take',
+  'counterparty.not_eligible': "The other business isn't one this side may deal with",
+  'negotiation.rounds_exhausted':
+    'The thread has taken as many proposals and counter-offers as a thread can',
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
   'mandate.token_not_allowed': "The lock's token isn't one the mandate allows",
   'mandate.over_payment_limit': "The amount is above the mandate's payment limit for the token",
