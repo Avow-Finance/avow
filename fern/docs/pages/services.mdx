@@ -103,4 +103,12 @@ A booking's reserve backs the two charges the offer names and nothing else. The 
 
 A booking signed under a version keeps that version's terms, whatever you change later. Terms never change after the agreement. The reason codes `offer.superseded` and `offer.withdrawn` are for refusing a booking of a version you've since replaced or withdrawn. A superseded refusal should carry the current version, so the agent can show the new price before it books again.
 
+Publishing a new price, or withdrawing the offer, changes nothing about an order you've already quoted. Three things hold the terms where they were signed.
+
+- The quote carries the terms whole, and your agreement signs their hash. The buyer's lock holds the commitment under that same hash, so terms that differ by a byte don't match it.
+- The order carries the offer version whole. Anyone holding the order can build its terms again with `serviceOfferTerms`, hash them under the quote's salt with `termsHash`, and compare the result with the agreement and with the lock. That check needs nothing from your folder and nothing from Avow.
+- The sandbox package's seller accepts by the hash of the agreement it signed. It never reads the offer again once it has quoted, so an edited offer can't reach an order already quoted.
+
+Your edit takes effect on the next order. An order for the version you replaced or withdrew isn't quoted.
+
 A service relies on no other booking in version 1, so its terms are always version 2.
