@@ -38,7 +38,7 @@ import { serviceTermsJson, termsAgreementJson, toWire } from './wire.js'
  *
  * A service order has paths and a shape of its own, so a reader that knows only job orders never
  * meets one. This module holds the messages and what each side can check for itself. Avow's
- * sandbox doesn't serve the paths yet.
+ * testnet sandbox serves the paths.
  */
 
 /** How far ahead of a reader's clock an order's build moment may be, in seconds. */
