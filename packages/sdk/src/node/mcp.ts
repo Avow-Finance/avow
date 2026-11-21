@@ -26,7 +26,13 @@ import {
   whenRetryPasses,
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
-import { PREFLIGHT_UNCHECKED, Refusal, type SandboxAgent, sandboxAgent } from '../sandbox/agent.js'
+import {
+  PREFLIGHT_UNCHECKED,
+  Refusal,
+  type SandboxAgent,
+  SERVICE_PREFLIGHT_UNCHECKED,
+  sandboxAgent,
+} from '../sandbox/agent.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -154,7 +160,7 @@ export const MCP_TOOLS = [
   },
   {
     name: 'check',
-    title: 'Check a booking',
+    title: 'Check a booking or an order',
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -162,11 +168,14 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Says whether a booking would pass right now, without booking it or moving any money. It runs the mandate check Avow runs, against what the lock holds under the mandate, and what the key can still move today. A booking that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. Avow's relay budget and the supplier's own answer aren't checked, since only booking asks them.",
+      "Says whether a GPU booking or a service order would pass right now, without booking, ordering or moving any money. Give a reserve to check a GPU booking, or an offer to check an order for a service. Either way it runs the mandate check Avow runs, under the mandate your agent holds now, against what the lock holds under it and what the key can still move today. For an order it also prices the offer in that quantity and asks Avow whether it knows the seller. The mandate's limits count the reserve. A service's price is paid outside the lock and no limit counts it, so the answer gives the price for you to weigh. A check that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. It can't know Avow's relay budget or the other side's answer, and for an order it can't know whether the seller still publishes that offer or has capacity left.",
     inputSchema: {
       type: 'object',
       properties: {
-        reserve: { type: 'number', description: 'The reserve in dollars, such as 200' },
+        reserve: {
+          type: 'number',
+          description: 'For a GPU booking, the reserve in dollars, such as 200',
+        },
         gpu: { type: 'string', description: 'The GPU model, H100 when left out' },
         count: { type: 'integer', description: 'How many GPUs, 8 when left out' },
         hours: { type: 'number', description: 'How many hours, 1 when left out' },
@@ -174,8 +183,13 @@ export const MCP_TOOLS = [
           type: 'string',
           description: "The supplier's business id, the agent's first supplier when left out",
         },
+        offer: {
+          type: 'object',
+          description:
+            "For a service order, the offer, whole, as the supplier's agent gave it. Leave reserve out",
+        },
+        quantity: { type: 'integer', description: 'How many units of the offer, 1 when left out' },
       },
-      required: ['reserve'],
       additionalProperties: false,
     },
   },
@@ -577,9 +591,80 @@ export function mcpAgent(
     }
   }
 
+  /** Whether an order from an offer would pass, as `check` answers for a service. */
+  async function checkOrder(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const offer = readSharedOffer(args.offer)
+    if (!offer) throw new RangeError("Give the offer, whole, as the supplier's agent gave it.")
+    const quantity = args.quantity === undefined ? 1 : args.quantity
+    if (typeof quantity !== 'number') throw new RangeError('The quantity is a number of units')
+    const agent = await open('check')
+    const answer = await agent.checkOrder({ offer, quantity })
+    const dollars = (micros: bigint | null) => (micros === null ? null : Number(micros) / 1_000_000)
+    const amounts = answer.amounts && {
+      needed: dollars(answer.amounts.needed),
+      heldAtOnceLeft: dollars(answer.amounts.left),
+      heldAtOnce: dollars(answer.amounts.authority),
+      perCommitment: dollars(answer.amounts.capPerCommitment),
+      movedPerDay: dollars(answer.amounts.dailyLimit),
+      movedTodayLeft: dollars(answer.amounts.dailyLeft),
+    }
+    const what = `${quantity} of ${offer.item.name} from ${offer.supplier}`
+    const price = dollars(answer.price)
+    const unchecked = `It can't check ${SERVICE_PREFLIGHT_UNCHECKED.join(', ')}. The order can still be refused or lapse for any of those.`
+    const shared = { supplier: offer.supplier, item: offer.item.name, quantity, price, amounts }
+    if (answer.passes) {
+      return {
+        text: [
+          `Ordering ${what} would pass now, and nothing was ordered.`,
+          `It would reserve ${usd(amounts?.needed ?? null)}, which is what your mandate's limits count. The price is ${usd(price)}, paid outside the lock, and no limit in your mandate counts it.`,
+          `Your agent has ${usd(amounts?.heldAtOnceLeft ?? null)} left of its ${usd(amounts?.heldAtOnce ?? null)} held at once, and its key ${usd(amounts?.movedTodayLeft ?? null)} of today's ${usd(amounts?.movedPerDay ?? null)}.`,
+          unchecked,
+        ].join(' '),
+        structured: {
+          status: 'would_pass',
+          ...shared,
+          unchecked: [...SERVICE_PREFLIGHT_UNCHECKED],
+        },
+        isError: false,
+      }
+    }
+    const layer = answer.layer === 'sdk' ? 'the SDK' : answer.layer
+    const refused = answer.amounts && {
+      code: answer.code,
+      layer: answer.layer,
+      amounts: answer.amounts,
+    }
+    return {
+      text: [
+        `Ordering ${what} wouldn't pass: ${layer} would refuse it, with reason code ${answer.code}. Nothing was ordered.`,
+        ...(refused
+          ? [refusalSentence(refused), whenRetryPasses(refused)]
+          : [
+              "The offer can't be priced in that quantity, so check the offer and how many units it takes in one booking.",
+            ]),
+      ].join(' '),
+      structured: {
+        status: 'would_be_refused',
+        code: answer.code,
+        layer: answer.layer,
+        ...(refused ? { sentence: refusalSentence(refused), retry: whenRetryPasses(refused) } : {}),
+        ...shared,
+      },
+      isError: false,
+    }
+  }
+
   async function check(args: Record<string, unknown>): Promise<ToolAnswer> {
+    if (args.offer !== undefined) {
+      if (args.reserve !== undefined) {
+        throw new RangeError('Give a reserve to check a GPU booking, or an offer to check an order')
+      }
+      return checkOrder(args)
+    }
     const reserve = args.reserve
-    if (typeof reserve !== 'number') throw new RangeError('The check needs a reserve in dollars')
+    if (typeof reserve !== 'number') {
+      throw new RangeError('The check needs a reserve in dollars, or an offer to order from')
+    }
     const agent = await open('check')
     const gpu = typeof args.gpu === 'string' ? args.gpu : 'H100'
     const count = typeof args.count === 'number' ? args.count : 8

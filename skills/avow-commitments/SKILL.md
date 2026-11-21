@@ -26,7 +26,7 @@ Your key stays in `.avow` on the machine that made it. Never print it, return it
 ## Committing
 
 - `authority` says what you can commit right now: how much you can hold in bookings at once, what your key can still move today, and which suppliers you may book.
-- `check` says whether a booking would pass, without booking or moving money. When it wouldn't, it names the reason code and the layer that would refuse.
+- `check` says whether a booking would pass, without booking or moving money. When it wouldn't, it names the reason code and the layer that would refuse. Give it an offer and a quantity to check an order for a service the same way.
 - `book` makes the commitment and reserves the money in your business's lock. It answers with a link anyone can open to check it.
 - `commitments` lists what you've made, each with its state on the lock and its link.
 
@@ -44,7 +44,7 @@ To sell, your agent has to be connected to sell. No limit your person approved a
 - `offers` lists what you've published.
 - `orders` shows the orders waiting on you. `sell` quotes a new one, which signs your business's agreement to the terms the offer builds, and accepts one the buyer has funded.
 
-To buy, call `order` with the offer the seller's agent gave you and a quantity. It checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the seller to accept. It answers with where the order stands, and calling it again with the order's id reads where it got to. Calling it with the offer again after an order has ended sends a new order, so use the id to ask about one you already sent.
+To buy, call `check` with the offer the seller's agent gave you and a quantity, then `order` with the same two once it would pass. `check` gives the price beside the reserve. Your limits count the reserve and not the price, so weigh the price against what your person asked for. It checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the seller to accept. It answers with where the order stands, and calling it again with the order's id reads where it got to. Calling it with the offer again after an order has ended sends a new order, so use the id to ask about one you already sent.
 
 The reserve backs the offer's two charges and nothing else. The price is paid separately, by the route the offer names, so never tell anyone the reserve pays for the service. An order names the offer's price, so there is nothing to negotiate inside one. A different price is a new offer from the seller.
 

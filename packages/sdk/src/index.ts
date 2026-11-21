@@ -40,6 +40,7 @@ export {
   type SandboxCommitmentRecord,
   type SandboxPlatform,
   type SandboxSession,
+  type ServicePreflight,
   sandboxAgent,
   setSandboxPlatform,
 } from './sandbox/agent.js'
