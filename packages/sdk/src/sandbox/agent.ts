@@ -24,7 +24,13 @@ import {
   refusalSentence,
   type SandboxDeployment,
   type SandboxTool,
+  SERVICE_CATEGORY,
+  type ServiceOfferVersion,
+  type ServiceTerms,
   type SessionEvent,
+  serviceOfferTerms,
+  serviceOrderProblem,
+  servicePrice,
   TESTNET_DEMO_PROFILE,
   tempoKeychainCheck,
   toTokenUnits,
@@ -56,6 +62,7 @@ import {
   type SandboxStore,
   type SandboxSupplier,
 } from './store.js'
+import { sandboxSupplierProfile } from './supplier-profile.js'
 import { connectSupplier } from './suppliers.js'
 import { micros, type SandboxResource, sandboxTerms, toDollars } from './terms.js'
 
@@ -156,6 +163,36 @@ export type SandboxPreflight =
 /** What a check can't know without sending the booking. */
 export const PREFLIGHT_UNCHECKED = ["Avow's relay budget", "the supplier's own answer"] as const
 
+/**
+ * Whether ordering units of a service from an offer would pass the checks the buyer's agent can
+ * make before it sends anything, with the price and the amounts behind the answer. An order whose
+ * offer can't be priced in that quantity has no price or amounts to give.
+ *
+ * The mandate's limits count the reserve, which is the larger of the offer's two charges. The
+ * price is paid outside the lock, and no limit a person signed counts it yet, so the answer
+ * carries it for the agent to weigh itself.
+ */
+export type ServicePreflight =
+  | { passes: true; price: bigint; amounts: RefusalAmounts }
+  | {
+      passes: false
+      code: ReasonCode
+      layer: RefusalLayer
+      price: bigint | null
+      amounts: RefusalAmounts | null
+    }
+
+/**
+ * What a check of a service order can't know without sending it. The offer in an order is the
+ * buyer's copy, so only the seller can say it still publishes that version and has capacity left.
+ */
+export const SERVICE_PREFLIGHT_UNCHECKED = [
+  "Avow's relay budget",
+  'whether the seller still publishes this version of the offer',
+  "how much of the seller's capacity is left",
+  'how many orders your business already has waiting',
+] as const
+
 /** One check the agent's machine made, and why it failed if it did. */
 export interface SandboxCheck {
   name: string
@@ -231,6 +268,15 @@ export interface SandboxAgent {
    * asks Avow only for the agent's mandates, at most every half minute.
    */
   check(booking: SandboxBooking): Promise<SandboxPreflight>
+  /**
+   * Whether ordering `quantity` units from a service offer would pass now, without sending the
+   * order, signing or moving money. It prices the offer, asks Avow whether it knows the seller,
+   * then runs the mandate check Avow runs on the terms the offer builds, under the mandate the
+   * agent holds now: the seller and the service category, the reserve against each cap, what the
+   * lock already holds, the mandate's end against the commitment's window, and what the keychain
+   * lets the key move today. Nothing is sent to the seller.
+   */
+  checkOrder(order: { offer: ServiceOfferVersion; quantity: number }): Promise<ServicePreflight>
   /**
    * Books with one of the agent's suppliers. It resolves with the commitment once the reserve is
    * funded, and throws a `Refusal` when the booking is refused before any money moves.
@@ -523,12 +569,18 @@ function booker(m: {
    */
   async function limits(
     h: Held,
-    supplierId: string,
-    terms: GpuReservationTerms,
+    ask: {
+      supplier: string
+      category: string
+      terms: GpuReservationTerms | ServiceTerms
+      /** Whether the SDK refuses the supplier itself, before the mandate is read. */
+      unreachable: boolean
+    },
   ): Promise<{
     refused: { code: ReasonCode; layer: RefusalLayer } | null
     amounts: RefusalAmounts
   }> {
+    const { terms } = ask
     const reserve = terms.backing.amount
     const { mandate } = h
     const cap = capOf(h)
@@ -543,19 +595,15 @@ function booker(m: {
     }
     const no = (code: ReasonCode, layer: RefusalLayer) => ({ refused: { code, layer }, amounts })
     if (problem) return no('service.unavailable', 'avow')
-    // The SDK refuses a supplier the mandate doesn't name, or one this deployment can't reach.
-    const known = m.suppliers.some((s) => s.id === supplierId)
-    if (!known || !mandate.message.suppliers.includes(supplierId)) {
-      return no('mandate.supplier_not_allowed', 'sdk')
-    }
+    if (ask.unreachable) return no('mandate.supplier_not_allowed', 'sdk')
     const allowed = checkMandate({
       mandate: mandate.message,
       request: {
         commitmentId: zeroHash,
         agentKey: m.agentKey.accessKeyAddress,
-        supplier: supplierId,
+        supplier: ask.supplier,
         payee: zeroAddress,
-        category: 'compute',
+        category: ask.category,
         terms,
       },
       token,
@@ -576,6 +624,19 @@ function booker(m: {
     }
     return { refused: null, amounts }
   }
+
+  /**
+   * A GPU booking as `limits` takes it. The SDK refuses a supplier the mandate doesn't name, or
+   * one this deployment can't reach, before anything else.
+   */
+  const gpuAsk = (h: Held, supplierId: string, terms: GpuReservationTerms) => ({
+    supplier: supplierId,
+    category: 'compute',
+    terms,
+    unreachable:
+      !m.suppliers.some((s) => s.id === supplierId) ||
+      !h.mandate.message.suppliers.includes(supplierId),
+  })
 
   /** A refusal under the mandate the booking ran under, with what's left now. */
   async function refusal(
@@ -652,8 +713,58 @@ function booker(m: {
     async check(b: SandboxBooking): Promise<SandboxPreflight> {
       const reserve = micros(b.reserve, 'reserve')
       const terms = sandboxTerms({ deployment, resource: b.resource, reserve, now: systemClock() })
-      const { refused, amounts } = await limits(await current(), b.supplier, terms)
+      const h = await current()
+      const { refused, amounts } = await limits(h, gpuAsk(h, b.supplier, terms))
       return refused ? { passes: false, ...refused, amounts } : { passes: true, amounts }
+    },
+
+    async checkOrder(o): Promise<ServicePreflight> {
+      const now = systemClock()
+      const early = (code: ReasonCode, layer: RefusalLayer): ServicePreflight => ({
+        passes: false,
+        code,
+        layer,
+        price: null,
+        amounts: null,
+      })
+      // The order's own times are set when it's sent, so the check gives it ones that pass and
+      // reads only whether the offer can be priced in this quantity.
+      const unpriced = serviceOrderProblem(
+        {
+          orderId: '0'.repeat(32),
+          commitmentId: zeroHash,
+          offer: o.offer,
+          quantity: o.quantity,
+          builtAt: now,
+          expiry: now + 1n,
+        },
+        now,
+      )
+      if (unpriced) return early(unpriced, 'sdk')
+      const terms = serviceOfferTerms(o.offer, o.quantity, now, {
+        arbiter: deployment.arbiter,
+        day90SupplierShareBps: deployment.day90SupplierShareBps,
+      })
+      const price = servicePrice(terms)
+      const { supplier } = o.offer
+      const h = await current()
+      const { refused, amounts } = await limits(h, {
+        supplier,
+        category: SERVICE_CATEGORY,
+        terms,
+        unreachable: false,
+      })
+      // Avow refuses an order a business sends itself, or one for a seller it doesn't know.
+      const outright: ReasonCode | null =
+        supplier === m.business.businessId
+          ? 'order.supplier_mismatch'
+          : (await sandboxSupplierProfile(deployment.apiUrl, supplier, send))
+            ? null
+            : 'supplier.unknown'
+      if (outright) return { passes: false, code: outright, layer: 'avow', price, amounts }
+      return refused
+        ? { passes: false, ...refused, price, amounts }
+        : { passes: true, price, amounts }
     },
 
     book(b: SandboxBooking): Promise<SandboxCommitment> {
@@ -676,7 +787,7 @@ function booker(m: {
       // One mandate for the whole booking, so a refusal reports the limits it ran under.
       const h = await current()
       const { mandate, hash: mandateHash } = h
-      const before = await limits(h, supplierId, terms)
+      const before = await limits(h, gpuAsk(h, supplierId, terms))
       const leftBefore = before.amounts.left
       // The lock caps each mandate hash on its own, so the agent checks the total itself before
       // it signs anything, whatever cap Avow's approval carries.

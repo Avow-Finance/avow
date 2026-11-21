@@ -14,9 +14,17 @@ import { deployment, LOCK } from '../test/sandbox-business.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
 import { readSharedOffer } from './services.js'
 
+// The lock holds nothing under the agent's mandate, and its key can still move $1,000 today.
+vi.mock('../lock.js', async (original) => ({
+  ...(await original<typeof import('../lock.js')>()),
+  readOpenReserves: async () => 0n,
+}))
 vi.mock('../moderato.js', async (original) => ({
   ...(await original<typeof import('../moderato.js')>()),
-  moderatoClient: () => ({ readContract: async () => LOCK }),
+  moderatoClient: () => ({
+    readContract: async (call: { functionName: string }) =>
+      call.functionName === 'getRemainingLimitWithPeriod' ? [1_000_000_000n, 0n] : LOCK,
+  }),
 }))
 
 const { mcpAgent } = await import('./mcp.js')
@@ -111,6 +119,44 @@ describe("the MCP server's tools for services", () => {
     expect((await seller.call('offers', {})).structured.offers).toHaveLength(1)
     // Publishing reaches Avow for nothing but the deployment.
     expect(new Set(paths)).toEqual(new Set(['/config.json']))
+  })
+
+  it('check an order from the offer without sending it, with the price beside what is reserved', async () => {
+    const sellerSide = mcpAgent(await folder(SELLER, true), { fetch: avow(() => null).fetch })
+    const { structured } = await sellerSide.call('publish_offer', asked)
+    const account = '0x00000000000000000000000000000000000000c3'
+    const { fetch, paths } = avow((path) =>
+      path === SANDBOX_PATHS.supplier(SELLER)
+        ? json({ businessId: SELLER, account, payee: account, signingKey: account })
+        : null,
+    )
+    const buyer = mcpAgent(await folder(BUYER), { fetch })
+    const passes = await buyer.call('check', { offer: structured.offer, quantity: 2 })
+    expect(passes.isError).toBe(false)
+    expect(passes.structured).toMatchObject({
+      status: 'would_pass',
+      supplier: SELLER,
+      quantity: 2,
+      price: 100,
+      amounts: { needed: 50, heldAtOnce: 1000, perCommitment: 500 },
+    })
+    expect(passes.text).toMatch(/would pass now, and nothing was ordered/)
+    expect(passes.text).toMatch(/reserve \$50.*The price is \$100, paid outside the lock/)
+    expect(passes.text).toMatch(/whether the seller still publishes this version of the offer/)
+    // More units than one booking takes can't be priced, and the answer says so with its code.
+    const tooMany = await buyer.call('check', { offer: structured.offer, quantity: 11 })
+    expect(tooMany.structured).toMatchObject({
+      status: 'would_be_refused',
+      code: 'terms.template_invalid',
+      layer: 'sdk',
+      price: null,
+    })
+    // A check is of one thing or the other.
+    const both = await buyer.call('check', { offer: structured.offer, reserve: 100 })
+    expect(both.isError).toBe(true)
+    // No order was sent, and the seller's agent was asked nothing.
+    expect(paths).not.toContain(SANDBOX_PATHS.serviceOrders)
+    expect(paths.filter((p) => p === SANDBOX_PATHS.supplier(SELLER))).toHaveLength(1)
   })
 
   it('order from the offer, send one order however often it is asked, and say when it lapses', async () => {

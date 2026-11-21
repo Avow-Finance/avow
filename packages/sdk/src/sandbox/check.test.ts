@@ -1,4 +1,11 @@
-import { dollars, mandateHash, SANDBOX_PATHS } from '@avow-finance/spec'
+import {
+  dollars,
+  JOB_CATEGORY,
+  mandateHash,
+  SANDBOX_PATHS,
+  SERVICE_CATEGORY,
+  type ServiceOfferVersion,
+} from '@avow-finance/spec'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +15,7 @@ import { sandboxMandate } from './mandate.js'
 import { memoryStore, saveAgentItem } from './store.js'
 
 // What the lock holds under the mandate and what the key can still move today, in base units.
-const chain = vi.hoisted(() => ({ open: 0n, leftToday: 0n, sent: 0 }))
+const chain = vi.hoisted(() => ({ open: 0n, leftToday: 0n, sent: 0, toSeller: 0 }))
 vi.mock('../lock.js', async (original) => ({
   ...(await original<typeof import('../lock.js')>()),
   readOpenReserves: async () => chain.open,
@@ -25,8 +32,14 @@ vi.mock('../moderato.js', async (original) => ({
 
 const { sandboxAgent } = await import('./agent.js')
 
-/** An agent enrolled with $500 a commitment, $1,000 held at once and $1,000 a day. */
-async function enrolled() {
+const SELLER = 'sandbox-00000000000000000000000000000000000000c3'
+const STRANGER = 'sandbox-00000000000000000000000000000000000000d4'
+
+/**
+ * An agent enrolled with $500 a commitment, $1,000 held at once and $1,000 a day, for the example
+ * supplier's compute unless `o` names other suppliers and categories.
+ */
+async function enrolled(o: { suppliers?: string[]; categories?: string[]; days?: bigint } = {}) {
   const root = Account.fromSecp256k1(generatePrivateKey())
   const agentKey = generatePrivateKey()
   const agent = Account.fromSecp256k1(agentKey, { access: root.address })
@@ -35,12 +48,13 @@ async function enrolled() {
     agentId: 'agt_test',
     account: root.address,
     agentKey: agent.accessKeyAddress,
-    suppliers: [supplier.id],
+    suppliers: o.suppliers ?? [supplier.id],
+    ...(o.categories ? { categories: o.categories } : {}),
     token: TOKEN,
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(1000),
     dailyLimit: dollars(1000),
-    expiry: BigInt(Math.floor(Date.now() / 1000)) + 30n * 86_400n,
+    expiry: BigInt(Math.floor(Date.now() / 1000)) + (o.days ?? 300n) * 86_400n,
   })
   const store = memoryStore()
   await saveAgentItem(store, {
@@ -66,6 +80,15 @@ async function enrolled() {
     if (String(input).endsWith(SANDBOX_PATHS.agentMandates)) {
       return Response.json({ error: { code: 'request.invalid' } }, { status: 404 })
     }
+    // Avow publishes the seller's profile, and has none for a business it doesn't know.
+    if (String(input).endsWith(SANDBOX_PATHS.supplier(SELLER))) {
+      chain.toSeller++
+      const account = '0x00000000000000000000000000000000000000c3'
+      return Response.json({ businessId: SELLER, account, payee: account, signingKey: account })
+    }
+    if (String(input).endsWith(SANDBOX_PATHS.supplier(STRANGER))) {
+      return Response.json({ error: { reason: 'supplier.unknown' } }, { status: 404 })
+    }
     chain.sent++
     return new Response('{}', { status: 500 })
   }) as typeof globalThis.fetch
@@ -82,6 +105,7 @@ beforeEach(() => {
   chain.open = 0n
   chain.leftToday = dollars(1000)
   chain.sent = 0
+  chain.toSeller = 0
 })
 
 describe("checking a booking before it's made", () => {
@@ -134,5 +158,150 @@ describe("checking a booking before it's made", () => {
       amounts: { dailyLeft: dollars(250) },
     })
     expect(chain.sent).toBe(0)
+  })
+})
+
+const HOUR = 3600n
+
+/** Transcription at $50 a unit. Not taking delivery can cost half the price, the larger charge. */
+const transcripts = (from = SELLER): ServiceOfferVersion => ({
+  supplier: from,
+  item: { name: 'Transcript', summary: 'One hour of audio transcribed into English text' },
+  currency: 'USD',
+  unitPrice: dollars(50),
+  rules: {
+    evidence: 'The transcript is delivered to the buyer as a text file',
+    leadTime: 24n * HOUR,
+    maxPerBooking: 10,
+    dailyCapacity: 20,
+    freeCancelWindow: 2n * HOUR,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+    payment: { route: 'transfer', dueAfterDelivery: 7n * 24n * HOUR },
+  },
+})
+
+/** A buyer whose mandate names the seller and the categories an order between businesses needs. */
+const buyer = (o: { suppliers?: string[]; categories?: string[]; days?: bigint } = {}) =>
+  enrolled({
+    suppliers: [SELLER, STRANGER, 'sandbox-business'],
+    categories: ['compute', JOB_CATEGORY, SERVICE_CATEGORY],
+    ...o,
+  })
+
+describe("checking a service order before it's sent", () => {
+  it('passes an order inside every limit, with the price and the reserve, and orders nothing', async () => {
+    chain.open = dollars(200)
+    const agent = await buyer()
+    // Four units cost $200, and reserve half of that.
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 4 })).toEqual({
+      passes: true,
+      price: dollars(200),
+      amounts: {
+        needed: dollars(100),
+        left: dollars(800),
+        authority: dollars(1000),
+        capPerCommitment: dollars(500),
+        dailyLimit: dollars(1000),
+        dailyLeft: dollars(1000),
+      },
+    })
+    // It asked Avow whether it knows the seller, and nothing else left the machine.
+    expect(chain.toSeller).toBe(1)
+    expect(chain.sent).toBe(0)
+  })
+
+  it("refuses an offer that can't be priced in that quantity, before anything is read", async () => {
+    const agent = await buyer()
+    for (const order of [
+      { offer: transcripts(), quantity: 11 },
+      { offer: transcripts(), quantity: 0 },
+      { offer: { ...transcripts(), unitPrice: 0n }, quantity: 1 },
+    ]) {
+      expect(await agent.checkOrder(order)).toEqual({
+        passes: false,
+        code: 'terms.template_invalid',
+        layer: 'sdk',
+        price: null,
+        amounts: null,
+      })
+    }
+    expect(chain.sent).toBe(0)
+  })
+
+  it("refuses a seller the mandate doesn't name, and a mandate that names no services", async () => {
+    const named = await buyer({ suppliers: [supplier.id] })
+    expect(await named.checkOrder({ offer: transcripts(), quantity: 1 })).toMatchObject({
+      passes: false,
+      code: 'mandate.supplier_not_allowed',
+      layer: 'sdk',
+      price: dollars(50),
+    })
+    const computeOnly = await buyer({ categories: ['compute'] })
+    expect(await computeOnly.checkOrder({ offer: transcripts(), quantity: 1 })).toMatchObject({
+      passes: false,
+      code: 'mandate.category_not_allowed',
+      layer: 'sdk',
+    })
+  })
+
+  it("refuses a seller Avow doesn't know, and an order a business sends itself", async () => {
+    const agent = await buyer()
+    expect(await agent.checkOrder({ offer: transcripts(STRANGER), quantity: 1 })).toMatchObject({
+      passes: false,
+      code: 'supplier.unknown',
+      layer: 'avow',
+    })
+    const own = transcripts('sandbox-business')
+    expect(await agent.checkOrder({ offer: own, quantity: 1 })).toMatchObject({
+      passes: false,
+      code: 'order.supplier_mismatch',
+      layer: 'avow',
+    })
+  })
+
+  it('counts the reserve against each limit, and never the price', async () => {
+    const agent = await buyer()
+    // Ten units cost $500 and reserve $250, inside a $500 cap on one commitment.
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 10 })).toMatchObject({
+      passes: true,
+      price: dollars(500),
+      amounts: { needed: dollars(250) },
+    })
+    // A dearer service's reserve passes the cap on one commitment.
+    const dear = { ...transcripts(), unitPrice: dollars(200) }
+    expect(await agent.checkOrder({ offer: dear, quantity: 10 })).toMatchObject({
+      passes: false,
+      code: 'mandate.over_commitment_cap',
+      layer: 'sdk',
+      price: dollars(2000),
+      amounts: { needed: dollars(1000) },
+    })
+    // What the lock already holds leaves too little.
+    chain.open = dollars(900)
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 10 })).toMatchObject({
+      passes: false,
+      code: 'mandate.over_open_reserves_cap',
+      layer: 'avow',
+      amounts: { left: dollars(100) },
+    })
+    // The keychain refuses what the key can't move today.
+    chain.open = 0n
+    chain.leftToday = dollars(200)
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 10 })).toMatchObject({
+      passes: false,
+      code: 'keychain.over_daily_limit',
+      layer: 'keychain',
+    })
+  })
+
+  it("refuses when the mandate ends before the commitment's window does", async () => {
+    // A transcript is delivered a day after it's ordered, and its window ends after that.
+    const agent = await buyer({ days: 1n })
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 1 })).toMatchObject({
+      passes: false,
+      code: 'mandate.ends_before_window',
+      layer: 'sdk',
+    })
   })
 })

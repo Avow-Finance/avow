@@ -1,7 +1,5 @@
 import {
   type JobBuyer,
-  parseSupplierProfile,
-  SANDBOX_PATHS,
   type SandboxDeployment,
   type SupplierProfile,
   TESTNET_DEMO_PROFILE,
@@ -34,6 +32,7 @@ import { fundFees } from './fees.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import { type AgentItem, loadAgentItem, type SandboxStore } from './store.js'
 import { loadSupplierItem, type SupplierItem } from './supplier-key.js'
+import { sandboxSupplierProfile } from './supplier-profile.js'
 
 /**
  * What every kind of order through the sandbox mailbox needs from the agent in a folder: its keys,
@@ -116,12 +115,9 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
   })
 
   async function supplierProfile(businessId: string): Promise<SupplierProfile> {
-    const answer = await send(`${deployment.apiUrl}${SANDBOX_PATHS.supplier(businessId)}`, {
-      signal: AbortSignal.timeout(15_000),
-    })
-    const profile = parseSupplierProfile(await answer.json().catch(() => null))
-    if (!answer.ok || !profile.ok) throw new Error(`Avow has no sandbox supplier ${businessId}`)
-    return profile.value
+    const profile = await sandboxSupplierProfile(deployment.apiUrl, businessId, send)
+    if (!profile) throw new Error(`Avow has no sandbox supplier ${businessId}`)
+    return profile
   }
 
   function commit(quote: SignedQuote): Promise<QuoteResult> {
