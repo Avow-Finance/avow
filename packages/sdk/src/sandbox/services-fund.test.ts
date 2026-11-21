@@ -1,9 +1,12 @@
 import {
   dollars,
+  offerVersionId,
   parseServiceOrder,
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
   type ServiceOfferVersion,
+  serviceOfferTerms,
+  termsHash,
 } from '@avow-finance/spec'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
@@ -285,6 +288,49 @@ describe('a supplier accepting', () => {
     expect(accepts).toHaveBeenCalledTimes(1)
     expect(accepts.mock.calls[0]?.[1]).toBe(funded.quote)
     expect(steps).toEqual(['accepted'])
+  })
+})
+
+describe('the terms of an order the seller has quoted', () => {
+  it('stand as signed, whatever the seller publishes or withdraws after', async () => {
+    const two = await twoAgents()
+    const { version, id } = await two.selling.publish(draft)
+    const placed = await two.buying.order({ offer: version, quantity: 2 })
+    const waiting = parseServiceOrder(two.order())
+    if (!waiting) throw new Error("the mailbox's order didn't parse")
+    await two.selling.sell(waiting)
+
+    // The seller doubles the price of the same item, then takes the item down altogether.
+    const dearer = await two.selling.publish({ ...draft, unitPrice: dollars(100) })
+    expect(await two.selling.withdraw(dearer.id)).toBe(true)
+    expect(await two.selling.published()).toEqual([])
+
+    two.at('reserved')
+    const funded = parseServiceOrder(two.order())
+    if (funded?.status !== 'reserved') throw new Error("the mailbox's order didn't parse")
+    const { quote } = funded
+    // The quote still names the version that was ordered, at the price it had then.
+    expect(quote.terms.subject.offer).toBe(id)
+    expect(quote.terms.consideration.amount).toBe(dollars(50))
+    // Anyone holding the order can build its terms again and check them against the agreement
+    // the seller signed, with nothing from the seller's folder.
+    const settlement = {
+      arbiter: deployment.arbiter,
+      day90SupplierShareBps: deployment.day90SupplierShareBps,
+    }
+    const rebuilt = serviceOfferTerms(placed.offer, placed.quantity, placed.builtAt, settlement)
+    expect(offerVersionId(placed.offer)).toBe(id)
+    expect(termsHash(rebuilt, quote.salt)).toBe(quote.agreement.termsHash)
+
+    // The seller accepts the agreement it signed, as it signed it. It never reads the offer again.
+    accepts.mockResolvedValue(ACCEPTED)
+    await two.selling.sell(funded)
+    expect(accepts).toHaveBeenCalledTimes(1)
+    expect(accepts.mock.calls[0]?.[1]).toEqual(quote)
+    // A new order for the version it took down is another matter, and isn't quoted.
+    await expect(two.selling.sell({ ...waiting, orderId: 'ef'.repeat(16) })).rejects.toThrow(
+      "hasn't published",
+    )
   })
 })
 
