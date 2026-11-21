@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Address, Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import type { AvowDomain, NegotiationMove } from './eip712.js'
 import {
-  DECLINE_NEXT,
+  DECLINE_RETRY_MAX,
+  DECLINE_RULES,
   moveDigest,
   type NegotiationRules,
   type NegotiationThread,
@@ -15,6 +18,7 @@ import {
   THREAD_MOVE_SECONDS,
   THREAD_PROPOSALS_MAX,
   THREAD_SECONDS,
+  threadProblem,
   threadStateAt,
 } from './negotiation.js'
 import { REASON_CODES } from './reasons.js'
@@ -79,9 +83,9 @@ const blank = {
   currentOffer: ZERO,
 }
 
-/** The supplier's quote for a proposal, with the hash its move states. */
+/** The supplier's quote for a proposal, standing as long as its move, with the hash it states. */
 function quoteFor(
-  proposal: Pick<NegotiationMove, 'unitPrice' | 'leadTime' | 'quantity' | 'builtAt'>,
+  proposal: Pick<NegotiationMove, 'unitPrice' | 'leadTime' | 'quantity' | 'builtAt' | 'expiry'>,
 ) {
   const salt = id('01')
   const hash = termsHash(proposalTerms(base, proposal, settlement), salt)
@@ -97,7 +101,7 @@ function quoteFor(
         supplierBusinessId: SELLER,
         mandateHash: buyer.mandateHash,
         nonce: 1n,
-        expiry: NOW + 120n,
+        expiry: proposal.expiry,
       },
       supplierSignature: '0xab' as Hex,
     },
@@ -107,7 +111,7 @@ function quoteFor(
 /** Builds a thread move by move, each taking the next number and naming the one before. */
 function thread(rules: NegotiationRules = negotiationRules(base)) {
   const moves: SignedMove[] = []
-  const held = (): NegotiationThread & { buyer: typeof buyer } => ({ base, moves, buyer })
+  const held = (): NegotiationThread => ({ base, buyer, settlement, moves })
   const next = (fields: Partial<NegotiationMove> & Pick<NegotiationMove, 'side' | 'kind'>) => {
     const last = moves.at(-1)?.move
     const proposal = {
@@ -121,9 +125,8 @@ function thread(rules: NegotiationRules = negotiationRules(base)) {
       seq: moves.length,
       previous: last ? moveDigest(last, DOMAIN) : ZERO,
       ...(fields.kind === 'decline'
-        ? { quantity: 0, unitPrice: 0n, leadTime: 0n, builtAt: 0n }
-        : proposal),
-      expiry: NOW + 120n,
+        ? { quantity: 0, unitPrice: 0n, leadTime: 0n, builtAt: 0n, expiry: 0n }
+        : { ...proposal, expiry: NOW + 120n }),
       ...fields,
     }
     return move
@@ -141,7 +144,7 @@ function thread(rules: NegotiationRules = negotiationRules(base)) {
     current: null,
   })
   const problem = (signed: SignedMove, at = NOW) =>
-    signedMoveProblem(held(), signed, DOMAIN, at, settlement, rules)
+    signedMoveProblem(held(), signed, DOMAIN, at, rules)
   /** Adds a move, failing the test when the thread refuses it. */
   const add = (signed: SignedMove, at = NOW) => {
     expect(problem(signed, at)).toBeNull()
@@ -157,6 +160,8 @@ function thread(rules: NegotiationRules = negotiationRules(base)) {
     problem,
     add,
     state: (at = NOW) => threadStateAt(held(), at),
+    /** Whether the thread so far replays, as a reader of someone else's copy would check it. */
+    replays: () => threadProblem(held(), DOMAIN, rules),
   }
 }
 
@@ -248,9 +253,9 @@ describe('who can move, and when', () => {
     expect(t.problem({ ...accept, move: { ...accept.move, thread: id('bb') } })).toBe(
       'message.invalid',
     )
-    expect(
-      t.problem({ ...accept, move: { ...accept.move, commitmentId: id('57') } }),
-    ).not.toBeNull()
+    expect(t.problem({ ...accept, move: { ...accept.move, commitmentId: id('57') } })).toBe(
+      'order.commitment_mismatch',
+    )
     expect(t.problem({ ...accept, move: { ...accept.move, baseOffer: id('99') } })).toBe(
       'message.invalid',
     )
@@ -273,9 +278,7 @@ describe('who can move, and when', () => {
     expect(moveDigest(proposal, elsewhere)).not.toBe(moveDigest(proposal, DOMAIN))
     // A move that follows it on this lock doesn't follow it on another.
     const accept = t.quoted({ kind: 'accept' })
-    expect(signedMoveProblem(t.held(), accept, elsewhere, NOW, settlement)).toBe(
-      'order.out_of_step',
-    )
+    expect(signedMoveProblem(t.held(), accept, elsewhere, NOW)).toBe('order.out_of_step')
   })
 })
 
@@ -316,7 +319,58 @@ describe('declines', () => {
       available: 1,
     })
     expect(t.problem(later)).toBeNull()
-    expect(t.problem({ ...later, move: { ...later.move, retryAt: NOW } })).toBe('message.invalid')
+    const carrying = (fields: Partial<NegotiationMove>) =>
+      t.problem({ ...later, move: { ...later.move, ...fields } })
+    // The time is after the thread began, and within a week of it.
+    expect(carrying({ retryAt: NOW })).toBe('message.invalid')
+    expect(carrying({ retryAt: NOW + DECLINE_RETRY_MAX })).toBeNull()
+    expect(carrying({ retryAt: NOW + DECLINE_RETRY_MAX + 1n })).toBe('message.invalid')
+  })
+
+  it('lets a reason carry only what that reason allows', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    const decline = (reason: string, fields: Partial<NegotiationMove>) =>
+      t.problem(t.plain({ side: 'supplier', kind: 'decline', reason, ...fields }))
+    expect(decline('quantity.out_of_range', { available: 5 })).toBeNull()
+    expect(decline('quantity.out_of_range', { retryAt: NOW + HOUR })).toBe('message.invalid')
+    expect(decline('approval.human_required', { retryAt: NOW + HOUR })).toBeNull()
+    expect(decline('approval.human_required', { available: 1 })).toBe('message.invalid')
+    expect(decline('offer.withdrawn', { retryAt: NOW + HOUR })).toBe('message.invalid')
+    expect(decline('offer.withdrawn', { available: 1 })).toBe('message.invalid')
+    expect(decline('proposal.unacceptable', { available: 1 })).toBe('message.invalid')
+  })
+
+  it('takes a reason about the offer or its capacity from the supplier only', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    for (const [reason, rule] of Object.entries(DECLINE_RULES)) {
+      // A replaced offer has to name its replacement, which another test covers.
+      if (reason === 'offer.superseded') continue
+      const from = (side: 'buyer' | 'supplier') =>
+        t.problem(t.plain({ side, kind: 'decline', reason }))
+      expect(from('supplier')).toBeNull()
+      expect(from('buyer')).toBe(rule.by === 'supplier' ? 'message.invalid' : null)
+    }
+  })
+
+  it('has no expiry, and comes only while the thread is still running', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    const decline = t.plain({ side: 'supplier', kind: 'decline', reason: 'offer.withdrawn' })
+    expect(t.problem({ ...decline, move: { ...decline.move, expiry: NOW + 120n } })).toBe(
+      'message.invalid',
+    )
+    // Once the proposal has expired the thread is closed, and nothing follows it.
+    expect(t.problem(decline, NOW + 119n)).toBeNull()
+    expect(t.problem(decline, NOW + 120n)).toBe('message.expired')
+    // The same holds once an agreement has lapsed with nothing reserved.
+    const agreed = thread()
+    agreed.add(agreed.plain({ side: 'buyer', kind: 'propose' }))
+    agreed.add(agreed.quoted({ kind: 'accept' }))
+    const walk = agreed.plain({ side: 'buyer', kind: 'decline', reason: 'proposal.unacceptable' })
+    expect(agreed.problem(walk, NOW + 119n)).toBeNull()
+    expect(agreed.problem(walk, NOW + 120n)).toBe('message.expired')
   })
 
   it('names the version that replaced the offer, and brings it whole', () => {
@@ -341,6 +395,26 @@ describe('declines', () => {
     expect(t.problem({ ...replaced, current: { ...current, supplier: 'someone-else' } })).toBe(
       'message.invalid',
     )
+    // The replacement is a newer version of the item ordered, and never another item.
+    const elsewise = { ...current, item: { ...current.item, name: 'Translation' } }
+    expect(
+      t.problem({
+        ...replaced,
+        move: { ...replaced.move, currentOffer: offerVersionId(elsewise) },
+        current: elsewise,
+      }),
+    ).toBe('message.invalid')
+    // A decline for a replaced offer has to name the replacement, and no other reason names one.
+    expect(
+      t.problem(t.plain({ side: 'supplier', kind: 'decline', reason: 'offer.superseded' })),
+    ).toBe('message.invalid')
+    const withdrawn = t.plain({
+      side: 'supplier',
+      kind: 'decline',
+      reason: 'offer.withdrawn',
+      currentOffer: offerVersionId(current),
+    })
+    expect(t.problem({ ...withdrawn, current })).toBe('message.invalid')
     // Only a supplier's decline for a replaced offer names one, and never the base itself.
     const byBuyer = t.plain({
       side: 'buyer',
@@ -379,10 +453,30 @@ describe('declines', () => {
   })
 
   it('gives every reason a next step, and every reason is a reason code', () => {
-    for (const [reason, next] of Object.entries(DECLINE_NEXT)) {
+    for (const [reason, rule] of Object.entries(DECLINE_RULES)) {
       expect(REASON_CODES).toHaveProperty([reason])
-      expect(['retry', 'retry_later', 'change_order', 'choose_another']).toContain(next)
+      expect(['retry_later', 'change_order', 'choose_another']).toContain(rule.next)
     }
+    // A replaced offer is a new offer to check, and never the same order sent again.
+    expect(DECLINE_RULES['offer.superseded'].next).toBe('change_order')
+  })
+
+  it('is listed in the reference page as the rules have it', () => {
+    const page = readFileSync(
+      join(import.meta.dirname, '../../../fern/docs/pages/negotiation.mdx'),
+      'utf8',
+    )
+    const rows = [
+      ...page.matchAll(/^\| `([a-z_.]+)` \| `([a-z_]+)` \| (Supplier|Either side) \|/gm),
+    ]
+    expect(Object.fromEntries(rows.map(([, reason, next, by]) => [reason, { next, by }]))).toEqual(
+      Object.fromEntries(
+        Object.entries(DECLINE_RULES).map(([reason, rule]) => [
+          reason,
+          { next: rule.next, by: rule.by === 'supplier' ? 'Supplier' : 'Either side' },
+        ]),
+      ),
+    )
   })
 })
 
@@ -409,6 +503,7 @@ describe('the supplier’s quote on a move', () => {
     expect(agreeing({ commitmentId: id('57') })).toBe('order.commitment_mismatch')
     expect(agreeing({ supplierBusinessId: 'someone-else' })).toBe('agreement.parties_mismatch')
     expect(agreeing({ buyerBusinessId: 'someone-else' })).toBe('agreement.parties_mismatch')
+    expect(agreeing({ mandateHash: id('ce') })).toBe('agreement.parties_mismatch')
     expect(agreeing({ category: 'compute' })).toBe('terms.category_mismatch')
     expect(t.problem({ ...accept, quote: { ...quote, salt: id('02') } })).toBe(
       'terms.hash_mismatch',
@@ -417,6 +512,26 @@ describe('the supplier’s quote on a move', () => {
     expect(t.problem({ ...accept, move: { ...accept.move, termsHash: id('79') } })).toBe(
       'terms.hash_mismatch',
     )
+  })
+
+  it('has to stand at least as long as the move that carries it', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    const accept = t.quoted({ kind: 'accept' })
+    const quote = accept.quote as NonNullable<SignedMove['quote']>
+    const lasting = (expiry: bigint) =>
+      t.problem({ ...accept, quote: { ...quote, agreement: { ...quote.agreement, expiry } } })
+    expect(lasting(accept.move.expiry - 1n)).toBe('message.invalid')
+    expect(lasting(accept.move.expiry + 600n)).toBeNull()
+  })
+
+  it('is to terms built with the settlement the thread states', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    const accept = t.quoted({ kind: 'accept' })
+    // A copy of the thread that states another arbiter's share no longer fits the supplier's hash.
+    const restated = { ...t.held(), settlement: { ...settlement, day90SupplierShareBps: 4_000 } }
+    expect(signedMoveProblem(restated, accept, DOMAIN, NOW)).toBe('terms.hash_mismatch')
   })
 })
 
@@ -457,10 +572,13 @@ describe('bargaining, once an offer opens its terms', () => {
     expect(accept({ unitPrice: 47_000_000n })).toBe('order.terms_changed')
     expect(accept({ quantity: 3 })).toBe('order.terms_changed')
     expect(accept({})).toBeNull()
+    // The buyer has as long to reserve as the supplier's proposal stands, and no longer.
+    expect(accept({ expiry: counter.move.expiry + 1n })).toBe('message.validity_too_long')
+    expect(accept({ expiry: counter.move.expiry - 30n })).toBeNull()
   })
 
-  it('takes six proposals and counters, and no seventh', () => {
-    const t = thread(bargaining)
+  it('takes six proposals and counters, and no seventh, whatever its rules say', () => {
+    const t = thread({ ...bargaining, proposalsMax: 100 })
     t.add(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
     for (let n = 1; n < THREAD_PROPOSALS_MAX; n++) {
       const unitPrice = 40_000_000n + BigInt(n) * 1_000_000n
@@ -518,37 +636,92 @@ describe('how long a move and a thread stand', () => {
 
   it('ends a thread thirty minutes after its first proposal was built, whatever stands', () => {
     const t = thread(bargaining)
-    const step = THREAD_MOVE_SECONDS - 5n
-    const built = (n: number) => NOW + BigInt(n) * step
-    // Six proposals, each sent just before the one it answers expires, use nearly all the time.
-    for (let n = 0; n < THREAD_PROPOSALS_MAX; n++) {
-      const fields = {
-        kind: n === 0 ? ('propose' as const) : ('counter' as const),
-        unitPrice: 40_000_000n + BigInt(n) * 1_000_000n,
-        builtAt: built(n),
-        expiry: built(n) + THREAD_MOVE_SECONDS,
-      }
-      t.add(n % 2 === 1 ? t.quoted(fields) : t.plain({ side: 'buyer', ...fields }), built(n))
+    // Each move is sent five seconds before the one it answers expires, and stands as long as a
+    // reader allows, so five proposals use nearly all the thread's time.
+    const step = THREAD_MOVE_SECONDS + 55n
+    const sent = (n: number) => NOW + BigInt(n) * step
+    const fields = (n: number) => ({
+      kind: n === 0 ? ('propose' as const) : ('counter' as const),
+      unitPrice: 40_000_000n + BigInt(n) * 1_000_000n,
+      builtAt: sent(n),
+      expiry: sent(n) + THREAD_MOVE_SECONDS + 60n,
+    })
+    for (let n = 0; n < 5; n++) {
+      t.add(n % 2 === 1 ? t.quoted(fields(n)) : t.plain({ side: 'buyer', ...fields(n) }), sent(n))
     }
     const end = NOW + THREAD_SECONDS
-    const last = built(THREAD_PROPOSALS_MAX - 1)
-    expect(t.state(last).status).toBe('open')
-    // An acceptance can stand to the thread's end and no further.
+    // The supplier's sixth proposal can stand to the thread's end and no further.
+    const sixth = (expiry: bigint) => t.problem(t.quoted({ ...fields(5), expiry }), sent(5))
+    expect(sixth(end + 1n)).toBe('message.validity_too_long')
+    expect(sixth(end)).toBeNull()
+    // Nor can its acceptance of the buyer's fifth.
     const accept = (expiry: bigint) =>
       t.problem(
-        t.plain({
-          side: 'buyer',
-          kind: 'accept',
-          unitPrice: 45_000_000n,
-          builtAt: last,
-          termsHash: t.moves.at(-1)?.move.termsHash as Hex,
-          expiry,
-        }),
-        last + 1n,
+        t.quoted({ kind: 'accept', unitPrice: fields(4).unitPrice, builtAt: sent(4), expiry }),
+        sent(5),
       )
     expect(accept(end + 1n)).toBe('message.validity_too_long')
     expect(accept(end)).toBeNull()
+    t.add(t.quoted({ ...fields(5), expiry: end }), sent(5))
+    expect(t.state(end - 1n).status).toBe('open')
     expect(t.state(end)).toEqual({ status: 'closed', why: 'expired' })
+    // A thread that used nearly all its time still replays for a reader of someone else's copy.
+    expect(t.replays()).toBeNull()
+  })
+})
+
+describe('a thread read from someone else', () => {
+  /** A fixed-price thread that was agreed and then declined, which is as long as one gets. */
+  const whole = () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    t.add(t.quoted({ kind: 'accept' }))
+    t.add(t.plain({ side: 'buyer', kind: 'decline', reason: 'approval.human_required' }))
+    return t
+  }
+  const check = (moves: readonly SignedMove[], rules?: NegotiationRules) =>
+    threadProblem({ base, buyer, settlement, moves }, DOMAIN, rules)
+
+  it('replays when every move was taken in its turn', () => {
+    expect(whole().replays()).toBeNull()
+    const bargained = thread(bargaining)
+    bargained.add(bargained.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
+    bargained.add(bargained.quoted({ kind: 'counter', unitPrice: 48_000_000n }))
+    expect(bargained.replays()).toBeNull()
+    // The same moves under rules that open no term were never a thread.
+    expect(check(bargained.moves)).toBe('terms.not_negotiable')
+  })
+
+  it('is refused with a move missing, moved or changed', () => {
+    const [propose, accept, decline] = whole().moves as [SignedMove, SignedMove, SignedMove]
+    expect(check([])).toBe('message.invalid')
+    expect(check([accept, decline])).toBe('order.out_of_step')
+    expect(check([propose, decline])).toBe('order.out_of_step')
+    expect(check([accept, propose, decline])).toBe('order.out_of_step')
+    const more = { ...propose, move: { ...propose.move, quantity: 3 } }
+    // A changed proposal has another digest, so the acceptance no longer follows it.
+    expect(check([more, accept, decline])).toBe('order.out_of_step')
+    expect(check([propose, { ...accept, quote: null }, decline])).toBe('message.invalid')
+  })
+
+  it('is refused when an answer could only have come after its proposal expired', () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    // A move stands six minutes at most by a reader's clock, so an acceptance that stands until
+    // six minutes after the proposal ended was sent no earlier than the moment it ended.
+    const longest = THREAD_MOVE_SECONDS + 60n
+    const late = t.quoted({ kind: 'accept', expiry: NOW + 120n + longest })
+    expect(check([...t.moves, late])).toBe('message.expired')
+    const inTime = t.quoted({ kind: 'accept', expiry: NOW + 119n + longest })
+    expect(check([...t.moves, inTime])).toBeNull()
+  })
+
+  it('has to pass before its state is read, since the state trusts the moves', () => {
+    const [, accept] = whole().moves as [SignedMove, SignedMove]
+    const headless = { base, buyer, settlement, moves: [accept] }
+    expect(threadProblem(headless, DOMAIN)).toBe('order.out_of_step')
+    expect(() => threadStateAt(headless, NOW)).toThrow(RangeError)
+    expect(() => threadStateAt({ moves: [] }, NOW)).toThrow(RangeError)
   })
 })
 
@@ -557,9 +730,15 @@ describe('a thread on the wire', () => {
     const t = thread()
     t.add(t.plain({ side: 'buyer', kind: 'propose' }))
     t.add(t.quoted({ kind: 'accept' }))
-    const read = parseNegotiationThread(toWire({ base, moves: t.moves }))
-    expect(read).toEqual({ base, moves: t.moves })
+    const read = parseNegotiationThread(toWire(t.held()))
+    expect(read).toEqual(t.held())
+    expect(threadProblem(read as NegotiationThread, DOMAIN)).toBeNull()
     expect(threadStateAt(read as NegotiationThread, NOW).status).toBe('agreed')
+    // A thread names its buyer and what its terms settle by.
+    const { buyer: _, ...buyerless } = t.held()
+    expect(parseNegotiationThread(toWire(buyerless))).toBeNull()
+    const { settlement: __, ...unsettled } = t.held()
+    expect(parseNegotiationThread(toWire(unsettled))).toBeNull()
   })
 
   it('refuses an unknown field, a reason that isn’t a code, and an offer the template refuses', () => {
@@ -574,7 +753,9 @@ describe('a thread on the wire', () => {
     ).toBeNull()
     expect(parseSignedMove({ ...wire, move: { ...wire.move, kind: 'insist' } })).toBeNull()
     const free = { ...base, rules: { ...base.rules, lateCancellationBps: 0, noShowBps: 0 } }
-    expect(parseNegotiationThread(toWire({ base: free, moves: [signed] }))).toBeNull()
-    expect(parseNegotiationThread(toWire({ base, moves: [] }))).toBeNull()
+    const held = { base, buyer, settlement, moves: [signed] }
+    expect(parseNegotiationThread(toWire(held))).toEqual(held)
+    expect(parseNegotiationThread(toWire({ ...held, base: free }))).toBeNull()
+    expect(parseNegotiationThread(toWire({ ...held, moves: [] }))).toBeNull()
   })
 })

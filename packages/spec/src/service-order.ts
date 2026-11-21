@@ -2,7 +2,7 @@ import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
 import type { TermsAgreement } from './eip712.js'
-import { bytes32, hexBytes, u64 } from './json-fields.js'
+import { bytes32, hexBytes, sameHex as same, u64 } from './json-fields.js'
 import { type JobBuyer, jobBuyerJson, MAILBOX_INBOX_MAX } from './mailbox.js'
 import { type OrderStage, orderStagesJson, readOrNull } from './order-wire.js'
 import type { ReasonCode } from './reasons.js'
@@ -49,6 +49,14 @@ export const SERVICE_ORDER_CLOCK_SKEW = 60n
  * funded at the order's last moment still leaves the supplier this long to accept it.
  */
 export const SERVICE_ORDER_ACCEPT_MARGIN = 5n * 60n
+
+/**
+ * Whether something that stands until `expiry` leaves the supplier its time to accept terms built
+ * at `builtAt`. The terms give the supplier `SERVICE_ACCEPT_WITHIN` from the build moment, so a
+ * reserve funded at the last moment still leaves it `SERVICE_ORDER_ACCEPT_MARGIN`.
+ */
+export const leavesTimeToAccept = (expiry: bigint, builtAt: bigint): boolean =>
+  expiry + SERVICE_ORDER_ACCEPT_MARGIN <= builtAt + SERVICE_ACCEPT_WITHIN
 
 /** What a buyer's agent sends to order units of a business's offer. */
 export interface ServiceOrderRequest {
@@ -107,9 +115,7 @@ export function serviceOrderProblem(order: ServiceOrderRequest, now: bigint): Re
   if (order.builtAt > now + SERVICE_ORDER_CLOCK_SKEW) return 'message.invalid'
   if (order.expiry <= now) return 'message.expired'
   if (order.expiry <= order.builtAt) return 'message.invalid'
-  if (order.expiry + SERVICE_ORDER_ACCEPT_MARGIN > order.builtAt + SERVICE_ACCEPT_WITHIN) {
-    return 'message.validity_too_long'
-  }
+  if (!leavesTimeToAccept(order.expiry, order.builtAt)) return 'message.validity_too_long'
   try {
     // Hashing and pricing the offer refuse a version its rules refuse, text that can't be
     // written canonically, and a quantity the version doesn't take.
@@ -152,6 +158,41 @@ const onWire = (terms: ServiceTerms) =>
   )
 
 /**
+ * Why a supplier's agreement isn't to these terms for this booking, or null when it is. It has to
+ * carry the hash of the terms under the salt given, name the commitment and the supplier, and be
+ * for a service. Given the buyer, it has to name the buyer's business and mandate too. It never
+ * throws, and it leaves the supplier's signature and the agreement's expiry to its callers.
+ */
+export function serviceAgreementProblem(
+  booking: {
+    commitmentId: Hex
+    supplier: string
+    buyer?: Pick<JobBuyer, 'businessId' | 'mandateHash'>
+  },
+  terms: ServiceTerms,
+  quote: Pick<ServiceQuote, 'salt' | 'agreement'>,
+): ReasonCode | null {
+  const { agreement } = quote
+  try {
+    if (!same(agreement.termsHash, termsHash(terms, quote.salt))) return 'terms.hash_mismatch'
+  } catch {
+    // A salt the hash refuses or text that can't be written canonically hashes to nothing.
+    return 'order.terms_changed'
+  }
+  if (!same(agreement.commitmentId, booking.commitmentId)) return 'order.commitment_mismatch'
+  if (agreement.category !== SERVICE_CATEGORY) return 'terms.category_mismatch'
+  if (agreement.supplierBusinessId !== booking.supplier) return 'agreement.parties_mismatch'
+  if (
+    booking.buyer &&
+    (agreement.buyerBusinessId !== booking.buyer.businessId ||
+      !same(agreement.mandateHash, booking.buyer.mandateHash))
+  ) {
+    return 'agreement.parties_mismatch'
+  }
+  return null
+}
+
+/**
  * Why a quote doesn't answer its order, or null when it does. The quote's terms have to be the
  * ones `serviceOfferTerms` builds from the order, with nothing moved. Its agreement has to be for
  * a service, name the order's commitment and the offer's supplier, and carry the hash of those
@@ -169,28 +210,23 @@ export function serviceQuoteProblem(
   quote: ServiceQuote,
   settlement: ServiceSettlement,
 ): ReasonCode | null {
-  const { agreement } = quote
-  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
   try {
     const expected = serviceOfferTerms(order.offer, order.quantity, order.builtAt, settlement)
     if (onWire(expected) !== onWire(quote.terms)) return 'order.terms_changed'
-    if (!same(agreement.termsHash, termsHash(quote.terms, quote.salt))) return 'terms.hash_mismatch'
   } catch {
-    // An offer the template refuses, a salt the hash refuses or text that can't be written
-    // canonically all mean the quote isn't for these terms.
+    // An offer the template refuses or text that can't be written canonically means the quote
+    // isn't for these terms.
     return 'order.terms_changed'
   }
-  if (!same(agreement.commitmentId, order.commitmentId)) return 'order.commitment_mismatch'
-  if (agreement.category !== SERVICE_CATEGORY) return 'terms.category_mismatch'
-  if (agreement.supplierBusinessId !== order.offer.supplier) return 'agreement.parties_mismatch'
-  if (
-    order.buyer &&
-    (agreement.buyerBusinessId !== order.buyer.businessId ||
-      !same(agreement.mandateHash, order.buyer.mandateHash))
-  ) {
-    return 'agreement.parties_mismatch'
-  }
-  return null
+  return serviceAgreementProblem(
+    {
+      commitmentId: order.commitmentId,
+      supplier: order.offer.supplier,
+      ...(order.buyer ? { buyer: order.buyer } : {}),
+    },
+    quote.terms,
+    quote,
+  )
 }
 
 export const serviceOrderRequestJson = z

@@ -299,11 +299,13 @@ export type MoveKind = keyof typeof MOVE_KINDS
 
 /**
  * One move in a negotiation thread, signed by the key that makes it: the buyer's agent key, or
- * the supplier's signing key. A thread is about one prospective commitment in the buyer's lock,
- * which the domain names, so a move fits no other chain, lock or thread.
+ * the supplier's signing key. A thread is about one prospective commitment in the buyer's lock.
+ * The domain names the chain and that lock, and the thread's id with the digest of the move before
+ * tie a move to one place in one thread.
  *
- * Moves are numbered from zero, and each names the digest of the move before it, so a thread is a
- * chain nobody can reorder or cut. A proposing move states the whole of what it proposes: the
+ * Moves are numbered from zero, and each names the digest of the move before it, so a copy of a
+ * thread can't be reordered. A key can still sign two different moves for one number, and the two
+ * signatures together prove it did. A proposing move states the whole of what it proposes: the
  * quantity, the unit price and the lead time, against one base offer that never changes. An
  * accepting move restates the proposal it accepts. A declining move leaves them at zero and gives
  * a reason code, with a time or a quantity when the code calls for one. `negotiation.ts` holds
@@ -344,7 +346,7 @@ export interface NegotiationMove {
   available: number
   /** On a decline for a replaced offer, the id of the version that replaced it, or zero. */
   currentOffer: Hex
-  /** When the move stops standing, in unix seconds. */
+  /** When the move stops standing, in unix seconds. Zero on a decline, which nothing follows. */
   expiry: bigint
 }
 

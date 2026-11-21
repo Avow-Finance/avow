@@ -31,3 +31,6 @@ export const hexBytes = z
   .regex(/^0x([0-9a-fA-F]{2})*$/)
   .transform((s) => s.toLowerCase() as Hex)
 export const side = z.enum(['buyer', 'supplier'])
+
+/** Whether two hex strings hold the same bytes, whatever case each is written in. */
+export const sameHex = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
