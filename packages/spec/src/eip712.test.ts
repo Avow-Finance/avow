@@ -25,6 +25,8 @@ import {
   mandateHash,
   mandateTypedData,
   messageKey,
+  type NegotiationMove,
+  negotiationMoveTypedData,
   type ReleaseConsent,
   releaseConsentTypedData,
   reportTypedData,
@@ -222,6 +224,26 @@ const stamp: Timestamp = {
 
 const OTHER_DOMAIN = { chainId: CHAIN_ID, verifyingContract: OTHER_LOCK }
 
+const move: NegotiationMove = {
+  thread: id('thread-1'),
+  commitmentId: id('commitment-1'),
+  seq: 1,
+  previous: id('move-0'),
+  side: 'supplier',
+  kind: 'accept',
+  baseOffer: id('offer version'),
+  quantity: 2,
+  unitPrice: 50_000_000n,
+  leadTime: 86_400n,
+  builtAt: 1_800_000_000n,
+  termsHash: id('terms'),
+  reason: '',
+  retryAt: 0n,
+  available: 0,
+  currentOffer: `0x${'00'.repeat(32)}`,
+  expiry: 1_800_000_300n,
+}
+
 const builders = {
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
   agreement: (d = DOMAIN) => termsAgreementTypedData(agreement, d),
@@ -229,6 +251,7 @@ const builders = {
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
   human: (d = DOMAIN) => humanApprovalTypedData(human, d),
   receipt: (d = DOMAIN) => startReceiptTypedData(receipt, d),
+  move: (d = DOMAIN) => negotiationMoveTypedData(move, d),
   request: (d = DOMAIN) => apiRequestTypedData(apiRequest, d),
   timestamp: (d = DOMAIN) => timestampTypedData(stamp, d),
   acceptance: (d = DOMAIN) => acceptanceTypedData(acceptance, d),
@@ -285,6 +308,7 @@ describe('signed messages', () => {
       SupplierAuthorization: { typedData: builders.authorization(), from: authorization },
       HumanApproval: { typedData: builders.human(), from: human },
       StartReceipt: { typedData: builders.receipt(), from: receipt },
+      NegotiationMove: { typedData: builders.move(), from: move },
       ApiRequest: { typedData: builders.request(), from: apiRequest },
       Timestamp: { typedData: builders.timestamp(), from: stamp },
       Acceptance: { typedData: builders.acceptance(), from: acceptance },

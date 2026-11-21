@@ -293,6 +293,63 @@ export interface StartReceipt {
   expiry: bigint
 }
 
+/** Each kind of move in a negotiation thread, by the code its signature covers. */
+export const MOVE_KINDS = { propose: 0, counter: 1, accept: 2, decline: 3 } as const
+export type MoveKind = keyof typeof MOVE_KINDS
+
+/**
+ * One move in a negotiation thread, signed by the key that makes it: the buyer's agent key, or
+ * the supplier's signing key. A thread is about one prospective commitment in the buyer's lock.
+ * The domain names the chain and that lock, and the thread's id with the digest of the move before
+ * tie a move to one place in one thread.
+ *
+ * Moves are numbered from zero, and each names the digest of the move before it, so a copy of a
+ * thread can't be reordered. A key can still sign two different moves for one number, and the two
+ * signatures together prove it did. A proposing move states the whole of what it proposes: the
+ * quantity, the unit price and the lead time, against one base offer that never changes. An
+ * accepting move restates the proposal it accepts. A declining move leaves them at zero and gives
+ * a reason code, with a time or a quantity when the code calls for one. `negotiation.ts` holds
+ * what makes a move valid where it stands.
+ */
+export interface NegotiationMove {
+  /** The thread, which its first move names and every later move repeats. */
+  thread: Hex
+  /** The commitment the thread is about, fixed by the first move. */
+  commitmentId: Hex
+  /** The move's place in the thread, from zero. */
+  seq: number
+  /** The digest of the move before, or zero for the first. */
+  previous: Hex
+  /** Which side makes the move. */
+  side: Side
+  kind: MoveKind
+  /** The id of the offer version the thread is about, which no move changes. */
+  baseOffer: Hex
+  /** How many units, or zero on a decline. */
+  quantity: number
+  /** The price of one unit, in micros. */
+  unitPrice: bigint
+  /** How long after `builtAt` delivery is due, in seconds. */
+  leadTime: bigint
+  /** The moment the proposal's terms are built from, in unix seconds. */
+  builtAt: bigint
+  /**
+   * The hash of the proposal's terms under the supplier's salt, on a move where the supplier
+   * proposes or accepts and on a buyer's acceptance of one. Zero otherwise.
+   */
+  termsHash: Hex
+  /** A decline's reason code, or empty. */
+  reason: string
+  /** On a decline, when asking again could succeed, in unix seconds, or zero. */
+  retryAt: bigint
+  /** On a decline, how many units could be had, or zero when the code gives none. */
+  available: number
+  /** On a decline for a replaced offer, the id of the version that replaced it, or zero. */
+  currentOffer: Hex
+  /** When the move stops standing, in unix seconds. Zero on a decline, which nothing follows. */
+  expiry: bigint
+}
+
 /**
  * One request to Avow's API, signed by the key that sends it: an agent key the business enrolled,
  * or a supplier's signing key. The signature names the deployment, the method, the path and the
@@ -537,6 +594,28 @@ export const START_RECEIPT_TYPES = {
     { name: 'startRequestHash', type: 'bytes32' },
     { name: 'startedAt', type: 'uint64' },
     { name: 'nonce', type: 'uint256' },
+    { name: 'expiry', type: 'uint64' },
+  ],
+} as const
+
+export const NEGOTIATION_MOVE_TYPES = {
+  NegotiationMove: [
+    { name: 'thread', type: 'bytes32' },
+    { name: 'commitmentId', type: 'bytes32' },
+    { name: 'seq', type: 'uint32' },
+    { name: 'previous', type: 'bytes32' },
+    { name: 'side', type: 'uint8' },
+    { name: 'kind', type: 'uint8' },
+    { name: 'baseOffer', type: 'bytes32' },
+    { name: 'quantity', type: 'uint32' },
+    { name: 'unitPrice', type: 'uint256' },
+    { name: 'leadTime', type: 'uint64' },
+    { name: 'builtAt', type: 'uint64' },
+    { name: 'termsHash', type: 'bytes32' },
+    { name: 'reason', type: 'string' },
+    { name: 'retryAt', type: 'uint64' },
+    { name: 'available', type: 'uint32' },
+    { name: 'currentOffer', type: 'bytes32' },
     { name: 'expiry', type: 'uint64' },
   ],
 } as const
@@ -800,6 +879,15 @@ export function startReceiptTypedData(r: StartReceipt, d: AvowDomain) {
   }
 }
 
+export function negotiationMoveTypedData(m: NegotiationMove, d: AvowDomain) {
+  return {
+    domain: domain(d, MESSAGE_VERSIONS.NegotiationMove),
+    types: NEGOTIATION_MOVE_TYPES,
+    primaryType: 'NegotiationMove' as const,
+    message: { ...m, side: SIDE_CODES[m.side], kind: MOVE_KINDS[m.kind] },
+  }
+}
+
 export function apiRequestTypedData(r: ApiRequest, d: AvowDomain) {
   return {
     domain: domain(d, MESSAGE_VERSIONS.ApiRequest),
@@ -853,6 +941,7 @@ export type AvowTypedData =
   | ReturnType<typeof supplierAuthorizationTypedData>
   | ReturnType<typeof humanApprovalTypedData>
   | ReturnType<typeof startReceiptTypedData>
+  | ReturnType<typeof negotiationMoveTypedData>
   | ReturnType<typeof apiRequestTypedData>
   | ReturnType<typeof timestampTypedData>
   | ReturnType<typeof acceptanceTypedData>
@@ -918,6 +1007,10 @@ interface InterfacesMatchTables {
     FieldNames<typeof HUMAN_APPROVAL_TYPES.HumanApproval>
   >
   StartReceipt: SameFields<keyof StartReceipt, FieldNames<typeof START_RECEIPT_TYPES.StartReceipt>>
+  NegotiationMove: SameFields<
+    keyof NegotiationMove,
+    FieldNames<typeof NEGOTIATION_MOVE_TYPES.NegotiationMove>
+  >
   ApiRequest: SameFields<keyof ApiRequest, FieldNames<typeof API_REQUEST_TYPES.ApiRequest>>
   Timestamp: SameFields<keyof Timestamp, FieldNames<typeof TIMESTAMP_TYPES.Timestamp>>
   Acceptance: SameFields<keyof Acceptance, FieldNames<typeof ACCEPTANCE_TYPES.Acceptance>>
@@ -946,6 +1039,7 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   SupplierAuthorization: true,
   HumanApproval: true,
   StartReceipt: true,
+  NegotiationMove: true,
   ApiRequest: true,
   Timestamp: true,
   Acceptance: true,
@@ -976,6 +1070,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'HumanApproval':
       return hashTypedData(td)
     case 'StartReceipt':
+      return hashTypedData(td)
+    case 'NegotiationMove':
       return hashTypedData(td)
     case 'ApiRequest':
       return hashTypedData(td)

@@ -25,6 +25,7 @@ export const MESSAGE_VERSIONS = {
   SupplierAuthorization: '1',
   HumanApproval: '1',
   StartReceipt: '1',
+  NegotiationMove: '1',
   ApiRequest: '1',
   Timestamp: '1',
 } as const
@@ -52,6 +53,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   SupplierAuthorization: [MESSAGE_VERSIONS.SupplierAuthorization],
   HumanApproval: [MESSAGE_VERSIONS.HumanApproval],
   StartReceipt: [MESSAGE_VERSIONS.StartReceipt],
+  NegotiationMove: [MESSAGE_VERSIONS.NegotiationMove],
   ApiRequest: [MESSAGE_VERSIONS.ApiRequest],
   Timestamp: [MESSAGE_VERSIONS.Timestamp],
 }
