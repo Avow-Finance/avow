@@ -107,6 +107,23 @@ export const SANDBOX_PATHS = {
   /** Where the supplier's agent says its acceptance landed. */
   mailboxAccepted: (orderId: string) =>
     `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/accepted`,
+  // The six paths of a service order. Avow's sandbox doesn't serve them yet.
+  /** Where a buyer's agent sends a service order to another business. */
+  serviceOrders: '/v1/sandbox/mailbox/service-orders',
+  /** Where a supplier's agent reads the service orders waiting on it. */
+  serviceInbox: '/v1/sandbox/mailbox/service-inbox',
+  /** Where either side reads one service order. */
+  serviceOrder: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}`,
+  /** Where the supplier's agent sends its quote for a service order. */
+  serviceQuote: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/quote`,
+  /** Where the buyer's agent says its reserve for a service order landed. */
+  serviceReserved: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/reserved`,
+  /** Where the supplier's agent says its acceptance of a service order landed. */
+  serviceAccepted: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/accepted`,
   sessionEvents: (sessionId: string) => {
     if (!isSessionId(sessionId)) throw new RangeError(`${sessionId} isn't a session id`)
     return `/v1/sandbox/sessions/${sessionId}/events`

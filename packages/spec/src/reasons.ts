@@ -102,9 +102,9 @@ export const REASON_CODES = {
   'order.out_of_step':
     "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
   'order.terms_changed':
-    "The quote's terms differ from the offer's beyond the compute bookings they add",
+    "The quote's terms differ from the order's. A job's quote may add the compute bookings it relies on, and a service's quote may change nothing",
   'order.commitment_mismatch':
-    "The quote's terms agreement names another commitment id than the one the order's offer names",
+    "The quote's terms agreement names another commitment id than the order's",
   'agreement.parties_mismatch':
     "The terms agreement names another buyer, mandate or supplier than the agent's business, its mandate and the supplier it deals with",
   'commitment.unknown': 'Avow has no record of this commitment',
