@@ -15,7 +15,14 @@ import { type Address, type Hex, isAddress } from 'viem'
  * commitments the agent made. `request` holds the key of an agent that asked a business for
  * authority and is waiting for the answer, so asking again after a restart keeps the same key.
  */
-export type SandboxStoreItem = 'business' | 'agent' | 'supplier' | 'state' | 'request' | 'mailbox'
+export type SandboxStoreItem =
+  | 'business'
+  | 'agent'
+  | 'supplier'
+  | 'state'
+  | 'request'
+  | 'mailbox'
+  | 'services'
 
 /**
  * Where a sandbox keeps its items, as text. In Node it's the `.avow` folder of the working

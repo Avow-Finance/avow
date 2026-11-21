@@ -8,7 +8,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 ## MCP tools
 
-`connect` and `status` set the agent up, and `verify` works without connecting. The others act within the limits the administrator approved, and refuse until the agent is connected.
+`connect` and `status` set the agent up, and `verify` works without connecting. The others refuse until the agent is connected. Every tool that reserves money acts within the limits the administrator approved. The last five carry a service between two businesses' agents, which [Services sold by quantity](/docs/reference/services) describes. No mandate holds what an agent sells, so `publish_offer` and `sell` are bound only by the agent's signing key and the offers in its folder.
 
 | Tool | Changes anything | What it does |
 | --- | --- | --- |
@@ -19,10 +19,15 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
 | `commitments` | No | The agent's commitments, each with its state on the lock and its link |
+| `publish_offer` | Keeps an offer in the folder | Publishes an offer of a service the business sells by the unit, and answers with the offer to hand a buyer's agent. Nothing is sent to Avow |
+| `offers` | No | The offers the business has published from this folder, each with its id and the offer to hand over |
+| `order` | Reserves money | Orders units from an offer a supplier's agent handed over, checks the quote against the order, funds the commitment and waits for the acceptance |
+| `orders` | No | The service orders waiting on the agent, as a supplier to quote or accept and as a buyer to see through |
+| `sell` | Signs an agreement, or accepts on the lock | Takes the next step on an order to the business. It quotes a new order for an offer the business published, and accepts a funded one |
 
 ### Inputs
 
-`connect` takes `name`, what the administrator sees, such as `"Research agent"`. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs for the business too, with a signing key of its own.
+`connect` takes `name`, what the administrator sees, such as `"Research agent"`. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs and service orders for the business too, with a signing key of its own. No limit the administrator sets applies to what that key sells.
 
 `check` and `book` take the same inputs, so a booking that passes `check` is the one `book` makes.
 
@@ -36,11 +41,32 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 `verify` takes `link`, the `#verify=` link the other agent shared or the token after it, and optionally `payee`, your payout address.
 
+`publish_offer` takes the offer in the units a person sets it in. Both charges are required, since a booking reserves the larger of them from the buyer. The price and the charges are the person's to set, and the agent asks for them.
+
+| Input | Required | Meaning |
+| --- | --- | --- |
+| `name` | Yes | What the offer sells, such as `"Transcript"` |
+| `summary` | Yes | One sentence on what the buyer gets |
+| `price` | Yes | The price of one unit in dollars |
+| `evidence` | Yes | What counts as evidence of delivery |
+| `late_cancellation_percent` | Yes | What cancelling late can cost, as a percentage of the price |
+| `no_show_percent` | Yes | What the buyer not being there to take delivery can cost, as a percentage of the price. One of the two charges has to be above zero |
+| `lead_hours` | No | How long after booking the supplier delivers by, `24` when left out |
+| `max_per_booking` | No | The most units one booking takes, `1` when left out |
+| `per_day` | No | How many bookings the supplier takes in a day, `10` when left out. The agent counts against it as it quotes |
+| `free_cancel_hours` | No | How long after booking the buyer can cancel at no charge. Left out, no booking is free to cancel |
+| `payment` | No | `transfer` or `invoice`, `transfer` when left out |
+| `payment_due_days` | No | How long after the delivery deadline payment is due, `7` when left out |
+
+`order` takes `offer`, the offer whole as the supplier's agent gave it, and `quantity`, `1` when left out. Each step waits on the other agent, so it answers with where the order stands after 45 seconds and the server keeps seeing the order through. Call it again with `order`, the order's id, to read where it got to. Asking again with the same offer and quantity carries on an order that's still open, and sends a new one once the first has ended.
+
+`sell` takes `order`, the id of an order from `orders`. To decline an order, leave it, and it lapses with nothing reserved.
+
 ### Answers and refusals
 
 Every tool answers in text a model can read and in structured JSON with the same facts. A refusal names its reason code and its layer, with the amounts behind it where they apply. The layer is `sdk` for the agent's own mandate check, `avow` for Avow's API, `supplier` when the supplier declines, `relay` for the service that sends the transaction, `lock` for the lock and `keychain` for Tempo's keychain. When a tool refuses, tell the person the reason code and what would change it, and don't work around the limit.
 
-Each tool carries a title and hints a client reads. `connect` and `book` are the two that change anything, and none deletes anything.
+Each tool carries a title and hints a client reads. `connect`, `book`, `publish_offer`, `order` and `sell` are the ones that change anything, and none deletes anything.
 
 ## Terminal commands
 
@@ -48,11 +74,12 @@ Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
 
 | Command | What it does |
 | --- | --- |
-| `connect` | Connects the agent in this folder to a business through a link where the person signs in or sets up the business and approves. `--business <id>` names one up front, `--name` sets what the console calls it, and `--sell` also lets it quote and accept jobs |
+| `connect` | Connects the agent in this folder to a business through a link where the person signs in or sets up the business and approves. `--business <id>` names one up front, `--name` sets what the console calls it, and `--sell` also lets it quote and accept jobs and service orders |
 | `verify <link>` | Checks a commitment someone shared against the chain, with `--payee <address>` to check it pays you. It needs no agent or business, and exits with 1 when the chain doesn't back the commitment or it pays someone else |
 | `mcp add claude-code` | Adds this folder's agent to Claude Code as an MCP server. `mcp add claude-desktop` does the same for Claude Desktop |
-| `order` | Orders the demo job from another business with `--supplier <id>`, checks the quote, funds it and waits for the acceptance |
-| `listen` | Reads the business's inbox and quotes and accepts each order until you stop it |
+| `offer publish` | Publishes an offer of a service from `--name`, `--summary`, `--price`, `--evidence`, `--late-cancellation` and `--no-show`, and writes the file a buyer's agent orders from. `--lead-hours`, `--max`, `--per-day`, `--free-cancel-hours`, `--payment` and `--due-days` set the rest. `offer list` shows what's published, and `offer withdraw <id>` takes one back |
+| `order` | Orders units of a supplier's offer with `--offer <file>` and `--quantity`, or the demo job from another business with `--supplier <id>`. Either way it checks the quote, funds it and waits for the acceptance |
+| `listen` | Reads the business's inbox and quotes and accepts each order until you stop it. A service order is quoted only for an offer the business published |
 | `start` | In a folder made by the sample agent, sets up its business, opens its screen and runs its agent |
 | `job` | In the same folder, runs one job with no input |
 | `fresh` | Moves the sample business aside, keys and all, and sets up a fresh one |

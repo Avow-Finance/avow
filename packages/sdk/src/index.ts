@@ -71,6 +71,15 @@ export {
 } from './sandbox/mailbox.js'
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
+export {
+  type SandboxServices,
+  SERVICE_ORDER_SECONDS,
+  type ServiceBuyOutcome,
+  type ServiceBuyStep,
+  type ServiceOfferDraft,
+  type ServiceSellStep,
+  sandboxServices,
+} from './sandbox/services.js'
 export * from './sandbox/session.js'
 export {
   cancelSandboxCommitment,
@@ -88,5 +97,6 @@ export {
 } from './sandbox/store.js'
 export * from './sandbox/terms.js'
 export * from './send.js'
+export * from './service/quote.js'
 export * from './sign.js'
 export * from './supplier.js'
