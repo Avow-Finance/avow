@@ -6,6 +6,7 @@ import {
   PAYMENT_ROUTES,
   type PaymentRoute,
   parseServiceOfferVersion,
+  SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
   type ServiceOrder,
   serviceOfferQuote,
@@ -48,8 +49,17 @@ export interface OfferInput {
   payment_due_days?: unknown
 }
 
-const number = (v: unknown, otherwise: number | null): number | null =>
-  v === undefined ? otherwise : typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
+/** The most each input takes, so an offer always reads back from the folder it's kept in. */
+const MOST = { dollars: 1_000_000_000, hours: 24 * 365, days: 365 }
+
+/** A number from zero to `most`, exact to `step`, or null. Left out, it's `otherwise`. */
+function amount(v: unknown, most: number, step: number, otherwise: number | null): number | null {
+  if (v === undefined) return otherwise
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > most) return null
+  // 12.345% or a price past six decimals would be rounded without saying so, so it's refused.
+  const steps = v / step
+  return Math.abs(steps - Math.round(steps)) < 1e-6 ? v : null
+}
 
 /**
  * An offer as its supplier sets it, in dollars, percentages, hours and days, turned into the draft
@@ -64,23 +74,30 @@ export function readOfferInput(input: OfferInput): ServiceOfferDraft | { error: 
   if (!name) return { error: 'Name what the offer sells.' }
   if (!summary) return { error: 'Say in a sentence what the buyer gets.' }
   if (!evidence) return { error: 'Say what counts as delivery.' }
-  const price = number(input.price, null)
-  if (price === null || price === 0) return { error: 'Give the price of one unit in dollars.' }
-  const late = number(input.late_cancellation_percent, null)
-  const noShow = number(input.no_show_percent, null)
-  if (late === null || noShow === null || late > 100 || noShow > 100) {
+  const price = amount(input.price, MOST.dollars, 0.000001, null)
+  if (price === null || price === 0) {
     return {
-      error:
-        'Give both charges as percentages of the price from 0 to 100, what cancelling late can cost and what not being there to take delivery can cost.',
+      error: 'Give the price of one unit in dollars, above zero and to six decimals at most.',
     }
   }
-  const lead = number(input.lead_hours, 24)
-  const most = number(input.max_per_booking, 1)
-  const perDay = number(input.per_day, 10)
-  const free = number(input.free_cancel_hours, 0)
-  const due = number(input.payment_due_days, 7)
-  if (lead === null || most === null || perDay === null || free === null || due === null) {
-    return { error: 'Hours, days and counts are numbers from zero up.' }
+  const late = amount(input.late_cancellation_percent, 100, 0.01, null)
+  const noShow = amount(input.no_show_percent, 100, 0.01, null)
+  if (late === null || noShow === null) {
+    return {
+      error:
+        'Give both charges as percentages of the price from 0 to 100, to two decimals at most, what cancelling late can cost and what not being there to take delivery can cost.',
+    }
+  }
+  const lead = amount(input.lead_hours, MOST.hours, 1 / 3600, 24)
+  const free = amount(input.free_cancel_hours, MOST.hours, 1 / 3600, 0)
+  const due = amount(input.payment_due_days, MOST.days, 1 / 86_400, 7)
+  if (lead === null || free === null || due === null) {
+    return { error: 'Hours run from zero to a year, and days to pay from zero to 365.' }
+  }
+  const most = amount(input.max_per_booking, SERVICE_QUANTITY_MAX, 1, 1)
+  const perDay = amount(input.per_day, SERVICE_QUANTITY_MAX, 1, 10)
+  if (!most || !perDay) {
+    return { error: 'Units a booking and bookings a day are whole numbers from 1 up.' }
   }
   const route = input.payment === undefined ? 'transfer' : input.payment
   if (!(PAYMENT_ROUTES as readonly unknown[]).includes(route)) {
@@ -182,15 +199,19 @@ export function readSharedOffer(shared: unknown): ServiceOfferVersion | null {
   return offer.ok ? offer.value : null
 }
 
-/** The unfinished order this agent already sent for an offer and quantity, to pick up. */
+/**
+ * The unfinished order this agent already sent for an offer and quantity, to pick up. One past its
+ * expiry is left alone, since a new order is what's wanted then.
+ */
 export async function unfinishedFor(
   services: SandboxServices,
   offer: ServiceOfferVersion,
   quantity: number,
 ): Promise<string | null> {
   const id = offerVersionId(offer)
+  const now = BigInt(Math.floor(Date.now() / 1000))
   const left = (await services.unfinished()).find(
-    (r) => r.quantity === quantity && offerVersionId(r.offer) === id,
+    (r) => r.quantity === quantity && r.expiry > now && offerVersionId(r.offer) === id,
   )
   return left?.orderId ?? null
 }
@@ -222,7 +243,7 @@ export function readPublishArgs(args: readonly string[]): OfferInput | { error: 
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i] as string
     const value = args[i + 1]
-    const known = PUBLISH_FLAGS[flag]
+    const known = Object.hasOwn(PUBLISH_FLAGS, flag) ? PUBLISH_FLAGS[flag] : undefined
     if (!known) return { error: `offer publish doesn't take ${flag}` }
     if (value === undefined || value.startsWith('--')) return { error: `${flag} needs a value` }
     if (known[1] === 'number' && !/^[0-9]+(\.[0-9]+)?$/.test(value)) {

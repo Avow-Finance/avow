@@ -222,6 +222,90 @@ describe("the MCP server's tools for services", () => {
     expect(gone.text).toMatch(/No order cdcd/)
   })
 
+  it('send one order while the first is still open, and say whether anything is seeing it through', async () => {
+    const sellerSide = mcpAgent(await folder(SELLER, true), { fetch: avow(() => null).fetch })
+    const { structured } = await sellerSide.call('publish_offer', asked)
+    const sent: Record<string, unknown>[] = []
+    let status = 'requested'
+    const { fetch } = avow((path, body) => {
+      const extra = status === 'expired' ? { quote: null } : {}
+      if (path === SANDBOX_PATHS.serviceOrders) {
+        if (!sent.some((s) => s.orderId === body.orderId)) sent.push(body)
+        return json(held(body, status, extra))
+      }
+      // The mailbox knows one more order, which this folder never kept.
+      const id = path.split('/').pop()
+      const order = sent.find((s) => s.orderId === id) ?? { ...sent[0], orderId: id }
+      return json(held(order, status, extra))
+    })
+    const buyer = mcpAgent(await folder(BUYER), { fetch, pollEvery: 10, orderWait: 40 })
+    const first = await buyer.call('order', { offer: structured.offer, quantity: 2 })
+    expect(first.text).toMatch(/keeps seeing it through while it runs/)
+    expect(first.structured).toMatchObject({ status: 'requested', seeingThrough: true })
+    // A client that asks again, after a timeout or a lost answer, gets the same order.
+    const again = await buyer.call('order', { offer: structured.offer, quantity: 2 })
+    expect(again.text).toMatch(/You had sent this order already/)
+    expect(again.structured.order).toBe(first.structured.order)
+    expect(sent).toHaveLength(1)
+    const listed = await buyer.call('orders', {})
+    expect(listed.structured.buying).toEqual([
+      expect.objectContaining({ order: first.structured.order, status: 'requested' }),
+    ])
+    // An order this folder doesn't keep is only read, and the answer says so.
+    const other = await buyer.call('order', { order: 'cd'.repeat(16) })
+    expect(other.text).toMatch(/isn't seeing that order through/)
+    expect(other.structured).toMatchObject({ seeingThrough: false, ended: null })
+    expect(sent).toHaveLength(1)
+    // Once the first has ended, the same offer and quantity is a new order.
+    status = 'expired'
+    const ended = await buyer.call('order', { order: first.structured.order })
+    expect(ended.structured).toMatchObject({ ended: 'order.expired', seeingThrough: false })
+    status = 'requested'
+    const second = await buyer.call('order', { offer: structured.offer, quantity: 2 })
+    expect(second.structured.order).not.toBe(first.structured.order)
+    expect(sent).toHaveLength(2)
+    status = 'expired'
+    await buyer.call('order', { order: second.structured.order })
+  })
+
+  it("tell a supplier when the sandbox can't carry service orders, and take no step it has none of", async () => {
+    let inbox: unknown[] | null = null
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.serviceInbox && inbox ? json({ orders: inbox }) : null,
+    )
+    const seller = mcpAgent(await folder(SELLER, true), { fetch })
+    const { structured } = await seller.call('publish_offer', asked)
+    const unserved = await seller.call('orders', {})
+    expect(unserved.isError).toBe(true)
+    expect(unserved.text).toMatch(/doesn't carry service orders yet/)
+    // A quoted order waits on the buyer, so selling it does nothing and says nothing was done.
+    const builtAt = String(Math.floor(Date.now() / 1000))
+    const request = {
+      orderId: 'ab'.repeat(16),
+      commitmentId: `0x${'12'.repeat(32)}`,
+      offer: structured.offer,
+      quantity: 1,
+      builtAt,
+      expiry: String(Number(builtAt) + 600),
+    }
+    inbox = [held(request, 'expired', { quote: null })]
+    const nothing = await seller.call('sell', { order: request.orderId })
+    expect(nothing.isError).toBe(false)
+    expect(nothing.structured.step).toBeNull()
+    expect(nothing.text).toMatch(/no step for your business/)
+    expect(nothing.text).not.toMatch(/Accepted|Quoted/)
+    // An order for an offer the buyer wrote is shown as one sell won't quote.
+    inbox = [
+      held(
+        { ...request, offer: { ...(structured.offer as object), unitPrice: '1000000' } },
+        'requested',
+      ),
+    ]
+    expect((await seller.call('orders', {})).text).toMatch(
+      /haven't published, so sell won't quote it/,
+    )
+  })
+
   it('refuse to sell for an agent connected only to buy', async () => {
     const buyer = mcpAgent(await folder(BUYER), { fetch: avow(() => null).fetch })
     const answer = await buyer.call('sell', { order: 'ab'.repeat(16) })

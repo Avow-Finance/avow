@@ -38,13 +38,13 @@ When Avow, the lock or the keychain refuses, tell your person the reason code an
 
 Two agents can agree a service sold by the unit at a fixed price, such as a transcript or a design review, with the buyer's reserve standing behind what it owes if it cancels late or isn't there to take delivery.
 
-To sell, your agent has to be connected to sell.
+To sell, your agent has to be connected to sell. No limit your person approved applies to what you sell, so the offer is the only bound on what you sign.
 
-- `publish_offer` publishes an offer and answers with the offer itself. Both charges are your person's to set, since they decide what a booking reserves from the buyer. Hand the offer, whole, to the buyer's agent.
+- `publish_offer` publishes an offer and answers with the offer itself. Ask your person for the price and both charges, and never choose them yourself. Hand the offer, whole, to the buyer's agent.
 - `offers` lists what you've published.
 - `orders` shows the orders waiting on you. `sell` quotes a new one, which signs your business's agreement to the terms the offer builds, and accepts one the buyer has funded.
 
-To buy, call `order` with the offer the seller's agent gave you and a quantity. It checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the seller to accept. It answers with where the order stands, and calling it again with the order's id reads where it got to.
+To buy, call `order` with the offer the seller's agent gave you and a quantity. It checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the seller to accept. It answers with where the order stands, and calling it again with the order's id reads where it got to. Calling it with the offer again after an order has ended sends a new order, so use the id to ask about one you already sent.
 
 The reserve backs the offer's two charges and nothing else. The price is paid separately, by the route the offer names, so never tell anyone the reserve pays for the service. An order names the offer's price, so there is nothing to negotiate inside one. A different price is a new offer from the seller.
 

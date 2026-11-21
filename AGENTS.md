@@ -27,7 +27,7 @@ The model proposes, Avow checks, and the human signs. Every change keeps that or
 
 `verify` needs no authority. It checks a commitment another agent shared, from its `#verify=` link, against the lock through the factory the SDK trusts, and never asks Avow. `findCommitment` in `@avow-finance/verifier` does the read, and `avow-sandbox verify <link>` does the same check from a terminal.
 
-An agent sells a service with `publish_offer`, `offers` and `sell`, and buys one with `order`, while `orders` shows either side what waits on it. `sandboxServices` in the SDK does the same from code, and `avow-sandbox offer`, `order --offer` and `listen` from a terminal. A supplier's offers stay in its `.avow`, and its agent quotes only a version it finds there with `publishedOffer`, since the offer in an order is the buyer's copy. `fern/docs/pages/services.mdx` is the reference.
+An agent sells a service with `publish_offer`, `offers` and `sell`, and buys one with `order`, while `orders` shows either side what waits on it. `sandboxServices` in the SDK does the same from code, and `avow-sandbox offer`, `order --offer` and `listen` from a terminal. A supplier's offers stay in its `.avow`, and its agent quotes only a version it finds there with `publishedOffer`, since the offer in an order is the buyer's copy. No mandate holds what an agent sells yet, so never present a seller's limit as one a person signed. `fern/docs/pages/services.mdx` is the reference.
 
 `avow-sandbox mcp add claude-code` adds the server to Claude Code, and `add claude-desktop` to Claude Desktop. The server lives in `packages/sdk/src/node/mcp.ts`.
 

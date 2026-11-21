@@ -70,7 +70,7 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
   connect  connects the agent in this folder to a business, through a link where you sign in
            or set up the business and approve, with --business <id> to name one up front,
            --name for what the console calls it, and --sell when it also quotes and accepts
-           jobs for the business
+           jobs and service orders for the business
   offer    publish makes an offer of a service this business sells, from --name, --summary,
            --price, --evidence, --late-cancellation and --no-show, and writes the file a buyer's
            agent orders from. list shows what's published, and withdraw <id> takes one back

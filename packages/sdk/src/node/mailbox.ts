@@ -1,6 +1,6 @@
 import { type MailboxOrder, mailboxStatusAt } from '@avow-finance/spec'
 import { MAILBOX_ORDER_SECONDS, sandboxMailbox } from '../sandbox/mailbox.js'
-import { sandboxServices } from '../sandbox/services.js'
+import { SERVICE_ORDERS_UNSERVED, sandboxServices } from '../sandbox/services.js'
 import { fileStore } from './platform.js'
 
 /** What `avow-sandbox order` takes, read from its arguments, or why it can't run. */
@@ -76,19 +76,35 @@ export async function listenCommand(): Promise<void> {
     sandboxServices({ store }),
   ])
   const offers = await services.published()
-  console.log(
-    `Listening for orders to ${mailbox.businessId}, for jobs and for ${
-      offers.length === 0
-        ? 'no offers yet, since it has published none'
-        : offers.map((v) => v.item.name).join(', ')
-    }. Stop with Ctrl+C.`,
-  )
+  // Asked once up front, so a sandbox that can't carry service orders is said and not polled.
+  const unserved = services.sells
+    ? await services.inbox().then(
+        () => null,
+        (error: unknown) =>
+          error instanceof Error && error.message === SERVICE_ORDERS_UNSERVED
+            ? error.message
+            : null,
+      )
+    : null
+  const selling = unserved
+    ? `not for services. ${unserved}`
+    : offers.length === 0
+      ? 'for no services yet, since it has published no offers'
+      : `for ${offers.map((v) => v.item.name).join(', ')}`
+  console.log(`Listening for orders to ${mailbox.businessId}, for jobs and ${selling}`)
+  console.log('Stop with Ctrl+C.')
+  // A step that fails is tried again on every read, so its reason is said once an order.
+  const said = new Set<string>()
   const told = {
     signal: stop.signal,
     onStep: (order: { orderId: string }, step: { step: string }) =>
       console.log(`${order.orderId}: ${step.step}`),
-    onError: (order: { orderId: string }, error: unknown) =>
-      console.error(`${order.orderId}: ${error instanceof Error ? error.message : String(error)}`),
+    onError: (order: { orderId: string }, error: unknown) => {
+      const line = `${order.orderId}: ${error instanceof Error ? error.message : String(error)}`
+      if (!said.has(line)) console.error(line)
+      said.add(line)
+    },
   }
+  if (unserved) return mailbox.listen(told)
   await Promise.all([mailbox.listen(told), services.listen(told)])
 }

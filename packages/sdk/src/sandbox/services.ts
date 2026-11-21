@@ -13,6 +13,7 @@ import {
   type ServiceOfferVersion,
   type ServiceOrder,
   type ServiceOrderRequest,
+  type ServiceQuote,
   serviceOfferProblem,
   serviceOrderProblem,
   serviceQuoteProblem,
@@ -29,7 +30,14 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
-import { addCommitment, isRecord, loadCommitments, readJson, write } from './store.js'
+import {
+  addCommitment,
+  isRecord,
+  loadCommitments,
+  readJson,
+  type SandboxStore,
+  write,
+} from './store.js'
 
 /**
  * Services through the sandbox mailbox, from an agent's side. A supplier's agent publishes offers
@@ -40,16 +48,37 @@ import { addCommitment, isRecord, loadCommitments, readJson, write } from './sto
  * answered the same, so it never makes a second commitment.
  */
 
+/** What a sandbox with no route for service orders is told, whichever call found out. */
+export const SERVICE_ORDERS_UNSERVED = "This Avow sandbox doesn't carry service orders yet."
+
 /**
  * A request to the mailbox, with the answer of a sandbox that has no route for service orders said
- * plainly. Any other failure passes through as it came.
+ * plainly. Any other failure passes through as it came, a missing order included.
  */
 const carried = <T>(sent: Promise<T>): Promise<T> =>
   sent.catch((error: unknown) => {
     const unserved =
-      error instanceof AvowApiError && error.status === 404 && error.reason === 'request.invalid'
-    throw unserved ? new Error("This Avow sandbox doesn't carry service orders yet.") : error
+      error instanceof AvowApiError &&
+      error.status === 404 &&
+      error.reason === 'request.invalid' &&
+      /no such route/i.test(error.message)
+    throw unserved ? new Error(SERVICE_ORDERS_UNSERVED) : error
   })
+
+/**
+ * One change at a time to what a store keeps, in this process. Each change reads the file and
+ * writes it back, so two at once would lose one. Another process on the same folder isn't held
+ * back by this, so run one seller on a folder at a time.
+ */
+const turns = new WeakMap<SandboxStore, Promise<unknown>>()
+function inTurn<T>(store: SandboxStore, change: () => Promise<T>): Promise<T> {
+  const turn = (turns.get(store) ?? Promise.resolve()).then(change, change)
+  turns.set(
+    store,
+    turn.catch(() => {}),
+  )
+  return turn
+}
 
 const random = (bytes: number): Hex => toHex(crypto.getRandomValues(new Uint8Array(bytes)))
 
@@ -80,6 +109,8 @@ export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>
 
 export interface SandboxServices {
   readonly businessId: string
+  /** Whether the folder holds a signing key, so the agent can quote and accept as a supplier. */
+  readonly sells: boolean
   /**
    * Publishes an offer under this business, and answers with the version and its id. A version of
    * the same item it had published is replaced, since an item has one current version. Publishing
@@ -122,8 +153,9 @@ export interface SandboxServices {
   /**
    * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one.
    * It throws for an order whose offer this business never published, and for one past the offer's
-   * capacity for the day, and quotes nothing for either. A quote counts against the capacity
-   * whether or not the buyer funds it, since the signed agreement is what the buyer can fund.
+   * capacity for the day, and quotes nothing for either. A quote holds its place while the order
+   * can still be accepted, and an accepted order holds it for the day. It accepts only an order
+   * whose quote it signed.
    */
   sell(order: ServiceOrder, onStep?: (step: ServiceSellStep) => void): Promise<void>
   /**
@@ -140,11 +172,19 @@ export interface SandboxServices {
   }): Promise<void>
 }
 
-/** An order this business quoted, which counts against its item's capacity for a day. */
+/**
+ * An order this business quoted. It holds a place in its item's capacity until the supplier can no
+ * longer accept it, and for the rest of the day once the supplier has.
+ */
 interface Quoted {
   orderId: string
   item: string
   at: bigint
+  /** The last moment the supplier can accept the order, in unix seconds. */
+  until: bigint
+  accepted: boolean
+  /** The terms hash of each agreement this agent signed for the order. */
+  hashes: Hex[]
 }
 
 /** What the store keeps for services: a supplier's offers and quotes, and a buyer's unfinished orders. */
@@ -153,6 +193,9 @@ interface Kept {
   buying: ServiceOrderRequest[]
   quoted: Quoted[]
 }
+
+const isSeconds = (v: unknown): v is string => typeof v === 'string' && /^[0-9]{1,15}$/.test(v)
+const isHash = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/.test(v)
 
 /** Services for the agent in this folder, as buyer and, when it holds a signing key, supplier. */
 export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxServices> {
@@ -188,19 +231,36 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     const quoted = (Array.isArray(json.quoted) ? json.quoted : []).flatMap(
       (q: unknown): Quoted[] => {
         if (!isRecord(q) || typeof q.orderId !== 'string' || typeof q.item !== 'string') return []
-        if (typeof q.at !== 'string' || !/^[0-9]{1,15}$/.test(q.at)) return []
+        if (!isSeconds(q.at) || !isSeconds(q.until) || typeof q.accepted !== 'boolean') return []
+        const hashes = Array.isArray(q.hashes) ? q.hashes.filter(isHash) : []
         const at = BigInt(q.at)
         // A quote older than a day no longer counts, so it's dropped the next time the file is kept.
-        return at > since ? [{ orderId: q.orderId, item: q.item, at }] : []
+        return at > since
+          ? [
+              {
+                orderId: q.orderId,
+                item: q.item,
+                at,
+                until: BigInt(q.until),
+                accepted: q.accepted,
+                hashes,
+              },
+            ]
+          : []
       },
     )
     return { published, buying, quoted }
   }
 
-  async function keep(change: (k: Kept) => Partial<Kept>) {
-    const now = await kept()
-    await write(store, 'services', toWire({ ...now, ...change(now) }) as object)
-  }
+  /**
+   * Changes what's kept, one change at a time. The change sees the file as it is when its turn
+   * comes, and a change that throws writes nothing.
+   */
+  const keep = (change: (k: Kept) => Partial<Kept>) =>
+    inTurn(store, async () => {
+      const now = await kept()
+      await write(store, 'services', toWire({ ...now, ...change(now) }) as object)
+    })
 
   // The supplier's offers.
 
@@ -208,6 +268,10 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     const version: ServiceOfferVersion = { ...draft, supplier: business.businessId }
     const problem = serviceOfferProblem(version)
     if (problem) throw new RangeError(problem)
+    // An offer that wouldn't read back, such as one with a time too long to write, is never kept.
+    if (!parseServiceOfferVersion(JSON.parse(JSON.stringify(toWire(version)))).ok) {
+      throw new RangeError('The offer holds a number too large to keep.')
+    }
     const id = offerVersionId(version)
     await keep((k) => ({
       published: [...k.published.filter((v) => v.item.name !== version.item.name), version],
@@ -218,11 +282,13 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   const published = async () => (await kept()).published
 
   async function withdraw(id: Hex): Promise<boolean> {
-    const before = await published()
-    const after = before.filter((v) => offerVersionId(v) !== id.toLowerCase())
-    if (after.length === before.length) return false
-    await keep(() => ({ published: after }))
-    return true
+    let gone = false
+    await keep((k) => {
+      const left = k.published.filter((v) => offerVersionId(v) !== id.toLowerCase())
+      gone = left.length !== k.published.length
+      return { published: left }
+    })
+    return gone
   }
 
   // The buyer's side.
@@ -235,7 +301,8 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       asAgent({ domain, path: SANDBOX_PATHS.serviceOrders, body: request, read: orderReader }),
     )
 
-  async function order(p: Parameters<SandboxServices['order']>[0]): Promise<ServiceOrder> {
+  /** Keeps a new order, then sends it, and answers with both the request and the mailbox's order. */
+  async function send(p: Parameters<SandboxServices['order']>[0]) {
     const builtAt = systemClock()
     const wait = p.expiresIn ?? SERVICE_ORDER_SECONDS
     const request: ServiceOrderRequest = {
@@ -250,12 +317,15 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     const problem = serviceOrderProblem(request, builtAt)
     if (problem) throw new RangeError(`The order can't be sent: ${problem}`)
     await keep((k) => ({ buying: [...k.buying, request] }))
-    return place(request).catch(async (error: unknown) => {
+    const order = await place(request).catch(async (error: unknown) => {
       // An order Avow refused outright was never held, so there's nothing to pick up later.
       if (!(error instanceof AvowApiError) || error.definite) await finish(request.orderId)
       throw error
     })
+    return { request, order }
   }
+
+  const order = async (p: Parameters<SandboxServices['order']>[0]) => (await send(p)).order
 
   const unfinished = async () => (await kept()).buying
 
@@ -266,28 +336,41 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   async function buy(p: Parameters<SandboxServices['buy']>[0]): Promise<ServiceBuyOutcome> {
     const every = p.pollEvery ?? 3000
+    // The request this agent kept is what every later check is made against. The mailbox's copy
+    // of the order says where it stands and carries the quote, and is trusted for nothing else.
+    let mine: ServiceOrderRequest
     let current: ServiceOrder
     if ('resume' in p) {
       const resumed = (await unfinished()).find((r) => r.orderId === p.resume)
       if (!resumed) throw new Error(`This agent has no unfinished order ${p.resume}.`)
+      mine = resumed
       // Sending a kept order again is answered with where it stands.
-      current = await place(resumed)
+      current = await place(mine).catch(async (error: unknown) => {
+        // An order Avow refuses, past its expiry, with nothing on the lock, can never be funded.
+        const refused = !(error instanceof AvowApiError) || error.definite
+        if (refused && mine.expiry < systemClock() && !(await context.held(mine.commitmentId))) {
+          await finish(mine.orderId)
+        }
+        throw error
+      })
     } else {
-      current = await order(p)
+      const sent = await send(p)
+      mine = sent.request
+      current = sent.order
     }
     p.onStep?.({ step: 'ordered', order: current })
     const end = async (outcome: ServiceBuyOutcome) => {
-      await finish(current.orderId)
+      await finish(mine.orderId)
       return outcome
     }
     while (current.status === 'requested') {
       await pause(every, p.signal)
-      current = await read(current.orderId)
+      current = await read(mine.orderId)
     }
     if (current.status === 'expired')
       return end({ ok: false, reason: 'order.expired', order: current })
     if (current.status === 'quoted') {
-      const funded = await fund(current, p)
+      const funded = await fund(mine, current, p)
       if ('reason' in funded) return end(funded)
       current = funded.order
     }
@@ -296,32 +379,39 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   /** Checks the quote and funds it, unless the lock already holds it, and tells the mailbox. */
   async function fund(
+    mine: ServiceOrderRequest,
     current: Extract<ServiceOrder, { status: 'quoted' }>,
     p: Parameters<SandboxServices['buy']>[0],
   ): Promise<{ order: ServiceOrder } | Extract<ServiceBuyOutcome, { ok: false }>> {
     p.onStep?.({ step: 'quoted', order: current })
     const { quote } = current
 
-    // The buyer's own check, before anything is reserved: the quote has to answer this order.
-    const changed = serviceQuoteProblem(current, quote, settlement)
+    // The buyer's own check, before anything is reserved. The quote has to answer the order this
+    // agent kept, for this business, whatever the mailbox's copy of the order now says.
+    const buyer = { businessId: business.businessId, mandateHash: current.buyer.mandateHash }
+    const changed = serviceQuoteProblem({ ...mine, buyer }, quote, settlement)
     if (changed) return { ok: false, reason: changed, order: current }
 
     // A reserve already on the lock, from a run that stopped after funding, is reported as it is.
     let fundedIn: Hex | null = null
-    if (!(await context.held(current.commitmentId))) {
+    if (!(await context.held(mine.commitmentId))) {
       const result = await context.commit({
-        supplier: await context.supplierProfile(current.offer.supplier),
+        supplier: await context.supplierProfile(mine.offer.supplier),
         terms: quote.terms,
         salt: quote.salt,
         agreement: quote.agreement,
         supplierSignature: quote.supplierSignature,
       })
-      if (!result.ok) return { ok: false, reason: result.reason, order: current }
-      fundedIn = result.commitment.reservedIn ?? null
+      if (result.ok) {
+        fundedIn = result.commitment.reservedIn ?? null
+      } else if (!(await context.held(mine.commitmentId))) {
+        return { ok: false, reason: result.reason, order: current }
+      }
+      // Refused with the reserve on the lock means another run of this agent funded it meanwhile.
     }
-    await record(current)
+    await record(mine, quote)
     const reported = await context.reportReserved(
-      SANDBOX_PATHS.serviceReserved(current.orderId),
+      SANDBOX_PATHS.serviceReserved(mine.orderId),
       fundedIn,
       orderReader,
       p.signal,
@@ -331,25 +421,26 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   }
 
   /** Adds the commitment to the ones this agent made, once, so it's listed with the others. */
-  async function record(funded: Extract<ServiceOrder, { status: 'quoted' }>) {
-    const reference: CommitmentReference = {
-      kind: 'commitment',
-      chainId: deployment.chainId,
-      lock: business.lock,
-      commitmentId: funded.commitmentId,
-      side: 'buyer',
-      termsHash: funded.quote.agreement.termsHash,
-    }
-    const made = await loadCommitments(store)
-    if (made.some((c) => c.reference.commitmentId === reference.commitmentId)) return
-    await addCommitment(store, {
-      reference,
-      amount: funded.quote.terms.backing.amount,
-      supplier: funded.offer.supplier,
-      mandateHash: funded.quote.agreement.mandateHash,
-      madeAt: systemClock(),
+  const record = (mine: ServiceOrderRequest, quote: ServiceQuote) =>
+    inTurn(store, async () => {
+      const reference: CommitmentReference = {
+        kind: 'commitment',
+        chainId: deployment.chainId,
+        lock: business.lock,
+        commitmentId: mine.commitmentId,
+        side: 'buyer',
+        termsHash: quote.agreement.termsHash,
+      }
+      const made = await loadCommitments(store)
+      if (made.some((c) => c.reference.commitmentId === reference.commitmentId)) return
+      await addCommitment(store, {
+        reference,
+        amount: quote.terms.backing.amount,
+        supplier: mine.offer.supplier,
+        mandateHash: quote.agreement.mandateHash,
+        madeAt: systemClock(),
+      })
     })
-  }
 
   async function awaitAcceptance(
     from: ServiceOrder,
@@ -363,6 +454,15 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   }
 
   // The supplier's side.
+
+  const sells = (() => {
+    try {
+      context.needSupplier()
+      return true
+    } catch {
+      return false
+    }
+  })()
 
   async function inbox(): Promise<ServiceOrder[]> {
     const { asSupplier } = context.needSupplier()
@@ -379,35 +479,51 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     )
   }
 
+  const change = (orderId: string, to: (q: Quoted) => Quoted) =>
+    keep((k) => ({ quoted: k.quoted.map((q) => (q.orderId === orderId ? to(q) : q)) }))
+
   async function sell(sale: ServiceOrder, onStep?: (step: ServiceSellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = context.needSupplier()
     if (sale.status === 'requested') {
       // The offer in an order is the buyer's copy, so only a version published here is quoted.
       const version = publishedOffer(sale, await published())
       if (!version) throw new Error("The order is for an offer this business hasn't published.")
-      const problem = serviceOrderProblem(sale, systemClock())
+      const now = systemClock()
+      const problem = serviceOrderProblem(sale, now)
       if (problem) throw new Error(`The order can't be quoted: ${problem}`)
       // The terms don't carry the offer's capacity, so the supplier's own agent counts against it.
-      // An order it already quoted is quoted again without counting twice.
-      const { quoted } = await kept()
+      // The count and the place it takes are one change, so two orders at once can't share the
+      // last place. An order already quoted is quoted again without taking a second.
       const name = version.item.name
-      if (!quoted.some((q) => q.orderId === sale.orderId)) {
-        if (quoted.filter((q) => q.item === name).length >= version.rules.dailyCapacity) {
+      await keep((k) => {
+        if (k.quoted.some((q) => q.orderId === sale.orderId)) return {}
+        const taken = k.quoted.filter((q) => q.item === name && (q.accepted || q.until > now))
+        if (taken.length >= version.rules.dailyCapacity) {
           throw new Error(
             "The offer's capacity for the day is taken, so the order is left to lapse.",
           )
         }
-        const taken = { orderId: sale.orderId, item: name, at: systemClock() }
-        await keep((k) => ({ quoted: [...k.quoted, taken] }))
-      }
+        const place: Quoted = {
+          orderId: sale.orderId,
+          item: name,
+          at: now,
+          until: sale.builtAt + SERVICE_ACCEPT_WITHIN,
+          accepted: false,
+          hashes: [],
+        }
+        return { quoted: [...k.quoted, place] }
+      })
       const quote = await quoteService({
         order: { ...sale, offer: version },
         buyer: sale.buyer,
         supplier: supplier.profile,
         signingKey: signingRequestKey(signing),
         settlement,
-        expiry: systemClock() + QUOTE_VALIDITY,
+        expiry: now + QUOTE_VALIDITY,
       })
+      // Kept before it's sent, so the agent knows every agreement it signed when one comes back.
+      const signed = quote.agreement.termsHash.toLowerCase() as Hex
+      await change(sale.orderId, (q) => ({ ...q, hashes: [...q.hashes, signed] }))
       await asSupplier({
         domain,
         path: SANDBOX_PATHS.serviceQuote(sale.orderId),
@@ -418,8 +534,14 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       return
     }
     if (sale.status === 'reserved') {
+      // The order comes from the mailbox, so its quote has to be one this agent signed.
+      const signed = (await kept()).quoted.find((q) => q.orderId === sale.orderId)
+      if (!signed?.hashes.includes(sale.quote.agreement.termsHash.toLowerCase() as Hex)) {
+        throw new Error("The order's quote isn't one this agent signed, so it isn't accepted.")
+      }
       // Null when an earlier run's acceptance was already on the lock, which Avow reads either way.
       const acceptedIn = await context.accept(sale.buyer, sale.quote)
+      await change(sale.orderId, (q) => ({ ...q, accepted: true }))
       await asSupplier({
         domain,
         path: SANDBOX_PATHS.serviceAccepted(sale.orderId),
@@ -435,6 +557,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   return {
     businessId: business.businessId,
+    sells,
     publish,
     published,
     withdraw,

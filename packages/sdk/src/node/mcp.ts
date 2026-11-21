@@ -16,6 +16,7 @@ import {
   formatUsd,
   isSessionId,
   offerVersionId,
+  publishedOffer,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
@@ -78,9 +79,10 @@ const noInput = { type: 'object', properties: {}, additionalProperties: false } 
 type FreeTool = 'connect' | 'status' | 'verify'
 
 /**
- * The tools for services between two agents. The first two and `sell` are a supplier's, for an
- * agent connected to sell, and `order` is a buyer's. They act under the same mandate and keys as
- * the rest, and none reports to the runner's screen.
+ * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
+ * mandate like any other commitment. The first two and `sell` are a supplier's, for an agent
+ * connected to sell. No mandate holds what an agent sells. Its signing key and the offers in its
+ * folder are its only limits, and the tools say so. None reports to the runner's screen.
  */
 const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
@@ -114,7 +116,7 @@ export const MCP_TOOLS = [
         sell: {
           type: 'boolean',
           description:
-            'Also ask to quote and accept jobs for the business, with a signing key of its own. Leave it out to only buy.',
+            'Also ask to quote and accept jobs and service orders for the business, with a signing key of its own. No limit the administrator sets applies to what it sells. Leave it out to only buy.',
         },
       },
       required: [],
@@ -254,7 +256,7 @@ export const MCP_TOOLS = [
       openWorldHint: false,
     },
     description:
-      "Publishes an offer of a service your business sells by the unit at a fixed price, such as a transcript or a design review, for an agent connected to sell. It keeps the offer in this folder and answers with the offer to hand a buyer's agent, which orders from it. Nothing is sent to Avow and no directory lists it. Both charges are yours to set, since a booking reserves the larger of them from the buyer and the supplier can charge nothing else. Publishing an item of the same name again replaces its offer, and orders for the old one are no longer quoted.",
+      "Publishes an offer of a service your business sells by the unit at a fixed price, such as a transcript or a design review, for an agent connected to sell. It keeps the offer in this folder and answers with the offer to hand a buyer's agent, which orders from it. Nothing is sent to Avow and no directory lists it. Take the price and both charges from your person and never choose them yourself. No limit your administrator approved applies to what this agent sells, so the offer is the only bound on what sell will sign. A booking reserves the larger of the two charges from the buyer, and the supplier can charge nothing else. Publishing an item of the same name again replaces its offer, and orders for the old one are no longer quoted.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -335,7 +337,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Orders units of a service from the offer a supplier's agent gave you, and sees the order through. It sends the order with nothing reserved, waits for the supplier's quote, checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the supplier to accept. The reserve is the larger of the offer's two charges, and it backs only those charges. The price is paid separately, by the route the offer names. Each step waits on the other agent, so the tool answers with where the order stands after a while, and this server keeps seeing the order through while it runs. Call it again with the order's id to read where it got to, which never makes a second commitment. A refusal comes back with its reason code.",
+      "Orders units of a service from the offer a supplier's agent gave you, and sees the order through. It sends the order with nothing reserved, waits for the supplier's quote, checks the quote carries exactly the terms the offer builds, funds the commitment under your mandate and waits for the supplier to accept. The reserve is the larger of the offer's two charges, and it backs only those charges. The price is paid separately, by the route the offer names. Each step waits on the other agent, so the tool answers with where the order stands after a while, and this server keeps seeing the order through while it runs. Call it again with the order's id to read where it got to, which never makes a second commitment. Calling it with the offer again carries on an order that's still open, and sends a new order once the first has ended. A refusal comes back with its reason code.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -377,7 +379,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. To decline an order, leave it, and it lapses with nothing reserved.",
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. Those are its only limits, since no mandate holds what an agent sells. To decline an order, leave it, and it lapses with nothing reserved.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -494,7 +496,10 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
 }
 
 /** The MCP agent for one folder, answering each tool call through the SDK's agent. */
-export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery?: number } = {}) {
+export function mcpAgent(
+  dir: string,
+  options: { fetch?: typeof fetch; pollEvery?: number; orderWait?: number } = {},
+) {
   const store = fileStore(join(dir, SANDBOX_DIR))
   const log = (line: string) => process.stderr.write(`${line}\n`)
   const connection = mcpConnection({
@@ -860,8 +865,8 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
       const quantity = args.quantity === undefined ? 1 : args.quantity
       if (typeof quantity !== 'number') throw new RangeError('The quantity is a number of units')
       said.push(bookingSentence(offer, quantity))
-      // An order for the same offer and quantity that was never seen through is carried on, so
-      // asking twice sends one order.
+      // An order for the same offer and quantity that's still open is carried on, so asking twice
+      // while it's open sends one order. Once it has ended, asking again is a new order.
       const left = await unfinishedFor(mine, offer, quantity)
       orderId = left ?? (await mine.order({ offer, quantity })).orderId
       if (left) said.push('You had sent this order already, so it carries on from where it stood.')
@@ -870,12 +875,13 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
     const run = buying.get(orderId) ?? (known ? seeThrough(mine, orderId) : null)
     if (run) {
       const started = Date.now()
-      while (!run.ended && !run.failed && Date.now() - started < ORDER_WAIT_MS) {
-        await new Promise((done) => setTimeout(done, 500).unref())
+      const wait = options.orderWait ?? ORDER_WAIT_MS
+      while (!run.ended && !run.failed && Date.now() - started < wait) {
+        await new Promise((done) => setTimeout(done, Math.min(500, wait)).unref())
       }
     }
     if (run?.failed) {
-      // The order is still kept in the folder, so calling again picks it up.
+      // An order the folder still keeps is picked up by the next call.
       buying.delete(orderId)
       throw run.failed.error
     }
@@ -884,15 +890,18 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
     // An order this folder no longer keeps was seen through earlier, and the mailbox still has it.
     const now = outcome ? outcome.order : await mine.read(orderId)
     const link = linkOf(now)
+    const open = now.status !== 'accepted' && now.status !== 'expired'
     return {
       text: [
         ...said,
         orderSentence(now),
         outcome
           ? outcomeSentence(outcome)
-          : now.status === 'accepted' || now.status === 'expired'
+          : !open
             ? ''
-            : `This server keeps seeing it through. Call order again with order ${orderId} to read where it got to.`,
+            : run
+              ? `This server keeps seeing it through while it runs. Call order again with order ${orderId} to read where it got to.`
+              : "This agent isn't seeing that order through, so this is only where it stands.",
         link ? `Anyone can check the commitment at ${link}` : '',
       ]
         .filter(Boolean)
@@ -900,6 +909,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
       structured: {
         ...orderFacts(now),
         ended: outcome ? (outcome.ok ? 'accepted' : outcome.reason) : null,
+        seeingThrough: run !== null && outcome === null,
         link,
       },
       isError: false,
@@ -908,15 +918,32 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
 
   async function orders(): Promise<ToolAnswer> {
     const mine = await services()
-    // An agent connected only to buy has no inbox, which isn't an error here.
-    const selling = await mine.inbox().catch(() => null)
-    const sent = await Promise.all((await mine.unfinished()).map((r) => mine.read(r.orderId)))
+    // An agent connected only to buy has no inbox. One connected to sell hears why a read failed.
+    const selling = mine.sells ? await mine.inbox() : null
+    const offered = selling ? await mine.published() : []
+    // One order that can't be read doesn't hide the rest.
+    const kept = await mine.unfinished()
+    const read = await Promise.allSettled(kept.map((r) => mine.read(r.orderId)))
+    const sent = read.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    const unread = kept.filter((_, i) => read[i]?.status === 'rejected').map((r) => r.orderId)
+    const next = (o: ServiceOrder) =>
+      o.status === 'requested'
+        ? publishedOffer(o, offered)
+          ? 'Call sell to quote it.'
+          : "It names an offer you haven't published, so sell won't quote it."
+        : o.status === 'reserved'
+          ? 'Call sell to accept it.'
+          : ''
     const lines = [
-      ...(selling ?? []).map(
-        (o) =>
-          `To your business. ${orderSentence(o)} ${o.status === 'requested' ? 'Call sell to quote it.' : 'Call sell to accept it.'}`,
+      ...(selling ?? []).map((o) => `To your business. ${orderSentence(o)} ${next(o)}`.trim()),
+      ...sent.map((o) =>
+        buying.has(o.orderId)
+          ? `From you. ${orderSentence(o)}`
+          : `From you. ${orderSentence(o)} Call order with order ${o.orderId} to carry it on.`,
       ),
-      ...sent.map((o) => `From you. ${orderSentence(o)}`),
+      ...unread.map(
+        (id) => `From you. Order ${id} couldn't be read. Call order with order ${id} to hear why.`,
+      ),
     ]
     return {
       text:
@@ -928,6 +955,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
       structured: {
         selling: selling === null ? null : selling.map(orderFacts),
         buying: sent.map(orderFacts),
+        unread,
       },
       isError: false,
     }
@@ -945,6 +973,14 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
         isError: true,
       }
     }
+    if (waiting.status !== 'requested' && waiting.status !== 'reserved') {
+      // Nothing was done, so nothing is said to have been.
+      return {
+        text: `${orderSentence(waiting)} There's no step for your business to take on it now.`,
+        structured: { ...orderFacts(waiting), step: null, acceptedIn: null },
+        isError: false,
+      }
+    }
     let acceptedIn: string | null = null
     await mine.sell(waiting, (step) => {
       if (step.step === 'accepted') acceptedIn = step.acceptedIn
@@ -952,7 +988,7 @@ export function mcpAgent(dir: string, options: { fetch?: typeof fetch; pollEvery
     const quoted = waiting.status === 'requested'
     return {
       text: quoted
-        ? `Quoted. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
+        ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
         : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`,
       structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
       isError: false,

@@ -48,6 +48,22 @@ describe("an offer's inputs", () => {
     expect(readOfferInput({ ...asked, lead_hours: '24' })).toHaveProperty('error')
   })
 
+  it('refuse a number the folder could never read back, or one that would be rounded', () => {
+    // Each of the first four once published and then made the folder's services file unreadable.
+    expect(readOfferInput({ ...asked, lead_hours: 1e17 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, price: 1e80 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, price: 1e305 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, payment_due_days: 1e9 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, late_cancellation_percent: 12.345 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, price: 0.0000001 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, max_per_booking: 1.5 })).toHaveProperty('error')
+    expect(readOfferInput({ ...asked, per_day: 0 })).toHaveProperty('error')
+    // Halves and cents are exact, so they pass.
+    expect(
+      readOfferInput({ ...asked, price: 12.5, no_show_percent: 12.5, lead_hours: 0.5 }),
+    ).toMatchObject({ unitPrice: 12_500_000n, rules: { noShowBps: 1_250, leadTime: 1_800n } })
+  })
+
   it('read from the flags of offer publish', () => {
     expect(
       readPublishArgs(['--name', 'Transcript', '--price', '12.5', '--no-show', '50', '--max', '4']),
@@ -55,6 +71,7 @@ describe("an offer's inputs", () => {
     expect(readPublishArgs(['--price', 'fifty'])).toEqual({ error: '--price takes a number' })
     expect(readPublishArgs(['--name'])).toEqual({ error: '--name needs a value' })
     expect(readPublishArgs(['--supplier', 'x'])).toHaveProperty('error')
+    expect(readPublishArgs(['toString', 'x'])).toHaveProperty('error')
   })
 })
 

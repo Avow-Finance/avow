@@ -1,10 +1,17 @@
-import { dollars, parseServiceOrder, SANDBOX_PATHS, SERVICE_CATEGORY } from '@avow-finance/spec'
+import {
+  dollars,
+  parseServiceOrder,
+  SANDBOX_PATHS,
+  SERVICE_CATEGORY,
+  type ServiceOfferVersion,
+} from '@avow-finance/spec'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
 import { loadCommitments } from './store.js'
 
 const commits = vi.fn()
+const accepts = vi.fn()
 /** What the buyer's lock holds for the commitment, as far as these tests go. */
 let onLock: { state: string } | null = null
 
@@ -21,6 +28,7 @@ vi.mock('./mailbox-context.js', async (original) => {
       ...(await real.mailboxContext(o)),
       held: async () => onLock,
       commit: commits,
+      accept: accepts,
       supplierProfile: async (businessId: string) => ({ businessId }),
     }),
   }
@@ -49,6 +57,8 @@ const draft = {
     payment: { route: 'transfer', dueAfterDelivery: 7n * 24n * HOUR },
   },
 } as const
+
+const offer: ServiceOfferVersion = { ...draft, supplier: SELLER }
 
 const folder = (businessId: string, sells = false) =>
   folderWithAgent(businessId, { sells, suppliers: [SELLER], categories: [SERVICE_CATEGORY] })
@@ -113,13 +123,28 @@ async function twoAgents() {
     store: buyer.store,
     order,
     reported,
+    /** Changes the order as the mailbox holds it, as a faulty mailbox could. */
+    tamper(change: (request: Record<string, unknown>) => Record<string, unknown>) {
+      request = change(request)
+    },
+    at(next: string) {
+      status = next
+    },
   }
 }
 
 beforeEach(() => {
   commits.mockReset()
+  accepts.mockReset()
   onLock = null
+  vi.restoreAllMocks()
 })
+
+/** Moves the clock every reader of the time sees, by seconds. */
+function later(seconds: number) {
+  const now = Date.now() + seconds * 1000
+  vi.spyOn(Date, 'now').mockReturnValue(now)
+}
 
 describe('a service order between two agents', () => {
   it('is quoted by the seller, funded once by the buyer, and listed among its commitments', async () => {
@@ -193,7 +218,168 @@ describe('a service order between two agents', () => {
   })
 })
 
+describe("the buyer's own order", () => {
+  it('is what the quote is checked against, whatever the mailbox says the order was', async () => {
+    const two = await twoAgents()
+    const { version } = await two.selling.publish(draft)
+    const placed = await two.buying.order({ offer: version, quantity: 1 })
+    // The mailbox now holds ten units of a dearer version under the same order id, and the
+    // seller honestly quotes what it was shown.
+    const dearer = await two.selling.publish({ ...draft, unitPrice: dollars(90) })
+    two.tamper((request) => ({ ...request, offer: wire(dearer.version), quantity: 10 }))
+    const shown = parseServiceOrder(two.order())
+    if (!shown) throw new Error("the mailbox's order didn't parse")
+    await two.selling.sell(shown)
+    const outcome = await two.buying.buy({ resume: placed.orderId, pollEvery: 1 })
+    expect(outcome).toMatchObject({ ok: false, reason: 'order.terms_changed' })
+    expect(commits).not.toHaveBeenCalled()
+    expect(two.reported).toEqual([])
+  })
+
+  it('counts as funded when another run of the agent reserved it first', async () => {
+    const two = await twoAgents()
+    const { version } = await two.selling.publish(draft)
+    const placed = await two.buying.order({ offer: version, quantity: 2 })
+    const waiting = parseServiceOrder(two.order())
+    if (!waiting) throw new Error("the mailbox's order didn't parse")
+    await two.selling.sell(waiting)
+    // The other run's reserve lands between this run's look at the lock and its own attempt.
+    commits.mockImplementation(async () => {
+      onLock = { state: 'reserved' }
+      return { ok: false, reason: 'chain.reverted', layer: 'lock' }
+    })
+    const outcome = await two.buying.buy({ resume: placed.orderId, pollEvery: 1 })
+    expect(outcome.ok).toBe(true)
+    expect(two.reported.map((r) => r.body)).toEqual([{ fundedIn: null }])
+  })
+})
+
+describe('a supplier accepting', () => {
+  it('accepts an order whose quote it signed, and no other', async () => {
+    const two = await twoAgents()
+    const { version } = await two.selling.publish(draft)
+    await two.buying.order({ offer: version, quantity: 2 })
+    const waiting = parseServiceOrder(two.order())
+    if (!waiting) throw new Error("the mailbox's order didn't parse")
+    await two.selling.sell(waiting)
+    two.at('reserved')
+    const funded = parseServiceOrder(two.order())
+    if (funded?.status !== 'reserved') throw new Error("the mailbox's order didn't parse")
+    // The same order with an agreement to other terms, which this agent never signed.
+    const other = {
+      ...funded,
+      quote: {
+        ...funded.quote,
+        agreement: { ...funded.quote.agreement, termsHash: `0x${'77'.repeat(32)}` as const },
+      },
+    }
+    await expect(two.selling.sell(other)).rejects.toThrow("isn't one this agent signed")
+    // An order it never quoted at all is refused the same way.
+    await expect(two.selling.sell({ ...funded, orderId: 'ef'.repeat(16) })).rejects.toThrow(
+      "isn't one this agent signed",
+    )
+    expect(accepts).not.toHaveBeenCalled()
+    accepts.mockResolvedValue(ACCEPTED)
+    const steps: string[] = []
+    await two.selling.sell(funded, (s) => steps.push(s.step))
+    expect(accepts).toHaveBeenCalledTimes(1)
+    expect(accepts.mock.calls[0]?.[1]).toBe(funded.quote)
+    expect(steps).toEqual(['accepted'])
+  })
+})
+
+describe('what a folder keeps', () => {
+  it('holds every change made at once, and gives the last place to one order only', async () => {
+    const two = await twoAgents()
+    const names = ['One', 'Two', 'Three']
+    await Promise.all(
+      names.map((name) => two.selling.publish({ ...draft, item: { ...draft.item, name } })),
+    )
+    expect((await two.selling.published()).map((v) => v.item.name).sort()).toEqual(
+      [...names].sort(),
+    )
+
+    const { version } = await two.selling.publish({
+      ...draft,
+      rules: { ...draft.rules, dailyCapacity: 1 },
+    })
+    await two.buying.order({ offer: version, quantity: 1 })
+    const first = parseServiceOrder(two.order())
+    if (!first) throw new Error("the mailbox's order didn't parse")
+    const three = [
+      first,
+      { ...first, orderId: 'e1'.repeat(16) },
+      { ...first, orderId: 'e2'.repeat(16) },
+    ]
+    const sold = await Promise.allSettled(three.map((o) => two.selling.sell(o)))
+    expect(sold.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected', 'rejected'])
+  })
+
+  it('drops an order that lapsed unfunded once Avow refuses it, so it blocks nothing after', async () => {
+    const { store } = await folder(BUYER)
+    let refuse = false
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      const body = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))
+      return refuse
+        ? json({ error: { reason: 'message.expired', message: 'The order lapsed' } }, 409)
+        : json(held(body, 'requested'))
+    }) as typeof globalThis.fetch
+    const buying = await sandboxServices({ store, fetch })
+    const placed = await buying.order({ offer, quantity: 1 })
+    expect((await buying.unfinished()).map((r) => r.orderId)).toEqual([placed.orderId])
+    // While the order could still be funded, a refusal leaves it for another try.
+    refuse = true
+    await expect(buying.buy({ resume: placed.orderId, pollEvery: 1 })).rejects.toThrow('lapsed')
+    expect(await buying.unfinished()).toHaveLength(1)
+    later(20 * 60)
+    await expect(buying.buy({ resume: placed.orderId, pollEvery: 1 })).rejects.toThrow('lapsed')
+    expect(await buying.unfinished()).toEqual([])
+  })
+})
+
 describe("an offer's bookings for the day", () => {
+  it('free a place once its order can no longer be accepted, and keep an accepted one for the day', async () => {
+    const two = await twoAgents()
+    const { version } = await two.selling.publish({
+      ...draft,
+      rules: { ...draft.rules, dailyCapacity: 1 },
+    })
+    await two.buying.order({ offer: version, quantity: 1 })
+    const first = parseServiceOrder(two.order())
+    if (!first) throw new Error("the mailbox's order didn't parse")
+    await two.selling.sell(first)
+    const next = (id: string) => {
+      const builtAt = BigInt(Math.floor(Date.now() / 1000))
+      return { ...first, orderId: id.repeat(16), builtAt, expiry: builtAt + 600n }
+    }
+    await expect(two.selling.sell(next('a1'))).rejects.toThrow('capacity for the day')
+    // Nobody funded the first order, and the supplier's time to accept it has passed.
+    later(16 * 60)
+    const second = next('a2')
+    await two.selling.sell(second)
+    // The second is funded and accepted, so its place holds past that time.
+    accepts.mockResolvedValue(ACCEPTED)
+    const signed = (two.order() as unknown as { quote: unknown }).quote
+    const funded = parseServiceOrder({
+      ...(wire(second) as object),
+      status: 'reserved',
+      quote: signed,
+      reserve: {
+        fundedIn: null,
+        amount: String(dollars(25)),
+        acceptBy: String(second.expiry + 300n),
+      },
+    })
+    if (!funded) throw new Error("the funded order didn't parse")
+    await two.selling.sell(funded)
+    later(32 * 60)
+    await expect(two.selling.sell(next('a3'))).rejects.toThrow('capacity for the day')
+    later(25 * 60 * 60)
+    await two.selling.sell(next('a4'))
+  })
+
   it('are counted by the seller as it quotes, once an order, and refused past the capacity', async () => {
     const two = await twoAgents()
     await two.selling.publish({ ...draft, rules: { ...draft.rules, dailyCapacity: 1 } })

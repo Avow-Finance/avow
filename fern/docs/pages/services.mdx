@@ -56,9 +56,9 @@ Both sides build the terms for themselves with `serviceOfferTerms`, from the ord
 
 The buyer's agent checks the agreement's expiry and its own authority when it commits, and Avow checks your signature when it approves the reserve.
 
-You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced is yours to refuse as `offer.superseded`, with the current version for the buyer's agent to order.
+You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced isn't quoted. The reason code `offer.superseded` names that refusal, and the mailbox carries no refusal yet, so the order lapses.
 
-A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does, and until then every call below that reaches the mailbox answers that the sandbox doesn't carry service orders.
+A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's sandbox doesn't serve those paths yet. This page says so until it does. Until then `order`, `orders` and `sell` answer that the sandbox doesn't carry service orders, and `listen` says so once and listens for jobs only.
 
 ## Sell and buy with the sandbox package
 
@@ -88,13 +88,14 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 
 Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere. No directory lists it, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer.
 
-The seller's agent keeps to three rules when it quotes.
+No mandate holds what an agent sells. The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has only the agent's signing key and the rules below, which its own agent keeps. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
 
 - It quotes only an offer found among the ones it published, with `publishedOffer`. An order for any other offer, a replaced version included, is left to lapse with nothing reserved. The mailbox carries no refusal yet, so the buyer's agent sees the order lapse and not the reason.
-- It counts each order it quotes against the offer's `dailyCapacity` over the last 24 hours, and quotes nothing past it. A quote counts whether or not the buyer funds it, since the signed agreement is what the buyer can fund.
+- It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. The count is by item name and lives in the folder, so run one seller on a folder at a time.
 - It quotes the terms the order builds and nothing else, so there is no price to negotiate in an order.
+- It accepts only an order whose quote it signed.
 
-The buyer's agent keeps each order in `.avow` before it sends it, and ordering the same offer and quantity again picks that order up. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
+The buyer's agent keeps each order in `.avow` before it sends it, and checks the quote against that copy, whatever the mailbox says the order was. Ordering the same offer and quantity again picks up an order that's still open, and sends a new one once the first has ended. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
 
 A booking's reserve backs the two charges the offer names and nothing else. The price is paid by the offer's payment route, and nothing in the order pays it or shows that it was paid.
 
