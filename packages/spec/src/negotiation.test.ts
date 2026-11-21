@@ -577,6 +577,16 @@ describe('bargaining, once an offer opens its terms', () => {
     expect(accept({ expiry: counter.move.expiry - 30n })).toBeNull()
   })
 
+  it('takes the opening proposal and no counter under a limit that isn’t a whole number', () => {
+    for (const proposalsMax of [Number.NaN, 2.5, 0, -1]) {
+      const t = thread({ ...bargaining, proposalsMax })
+      t.add(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
+      expect(t.problem(t.quoted({ kind: 'counter', unitPrice: 48_000_000n }))).toBe(
+        'negotiation.rounds_exhausted',
+      )
+    }
+  })
+
   it('takes six proposals and counters, and no seventh, whatever its rules say', () => {
     const t = thread({ ...bargaining, proposalsMax: 100 })
     t.add(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
@@ -714,6 +724,25 @@ describe('a thread read from someone else', () => {
     expect(check([...t.moves, late])).toBe('message.expired')
     const inTime = t.quoted({ kind: 'accept', expiry: NOW + 119n + longest })
     expect(check([...t.moves, inTime])).toBeNull()
+  })
+
+  it('is refused, never thrown on, when a move is offered to a copy nobody replayed', () => {
+    const [, accept] = whole().moves as [SignedMove, SignedMove]
+    const headless = { base, buyer, settlement, moves: [accept] }
+    const t = thread()
+    const decline = t.plain({ side: 'buyer', kind: 'decline', reason: 'proposal.unacceptable' })
+    expect(
+      signedMoveProblem(headless, { ...decline, move: { ...decline.move, seq: 1 } }, DOMAIN, NOW),
+    ).toBe('order.out_of_step')
+    const previous = moveDigest(accept.move, DOMAIN)
+    expect(
+      signedMoveProblem(
+        headless,
+        { ...decline, move: { ...decline.move, seq: 1, previous } },
+        DOMAIN,
+        NOW,
+      ),
+    ).toBe('message.invalid')
   })
 
   it('has to pass before its state is read, since the state trusts the moves', () => {

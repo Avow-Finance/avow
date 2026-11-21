@@ -309,6 +309,16 @@ function moved(
   return terms
 }
 
+/**
+ * The most proposals and counters a thread under these rules takes, from 1 to
+ * `THREAD_PROPOSALS_MAX`. A limit that isn't a whole number allows the opening proposal only.
+ */
+function proposalLimit(rules: NegotiationRules): number {
+  const { proposalsMax } = rules
+  if (!Number.isSafeInteger(proposalsMax)) return 1
+  return Math.max(1, Math.min(proposalsMax, THREAD_PROPOSALS_MAX))
+}
+
 /** Why a proposing move can't stand, or null. */
 function proposalProblem(
   base: ServiceOfferVersion,
@@ -432,7 +442,13 @@ export function moveProblem(
   if (!same(next.commitmentId, first.commitmentId)) return 'order.commitment_mismatch'
   if (next.kind === 'propose') return 'order.out_of_step'
 
-  const state = threadStateAt(thread, now)
+  let state: ThreadState
+  try {
+    state = threadStateAt(thread, now)
+  } catch {
+    // Moves no thread could hold, from a copy nobody replayed with `threadProblem`.
+    return 'message.invalid'
+  }
   if (state.status === 'closed') {
     return state.why === 'declined' ? 'order.out_of_step' : 'message.expired'
   }
@@ -445,7 +461,7 @@ export function moveProblem(
 
   if (next.kind === 'counter') {
     // Rules can lower the most proposals a thread takes, and never raise it.
-    if (state.proposals >= Math.min(rules.proposalsMax, THREAD_PROPOSALS_MAX)) {
+    if (state.proposals >= proposalLimit(rules)) {
       return 'negotiation.rounds_exhausted'
     }
     return proposalProblem(base, next, state.head, rules, now)
@@ -558,8 +574,9 @@ const latest = (...times: bigint[]) => times.reduce((a, b) => (a > b ? a : b), 0
  * It replays the thread from its first move with `signedMoveProblem`, each move at the earliest
  * moment it could have been sent, given its own times and the moves before it. A thread whose
  * moves were each taken in turn always passes, since a move valid when it was sent is valid at
- * that earlier moment too. A decline carries no time, so the replay can't show a decline arrived
- * before the thread ran out, which only whoever took it in knows. It checks no signature.
+ * that earlier moment too. No move carries the moment it was sent, so the replay shows only that
+ * each move could have arrived in time. When it did arrive is known only to whoever took it in,
+ * and the copy that whoever keeps the thread holds decides. It checks no signature.
  */
 export function threadProblem(
   thread: NegotiationThread,

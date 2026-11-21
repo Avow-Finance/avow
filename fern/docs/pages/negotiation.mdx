@@ -28,7 +28,7 @@ A `NegotiationThread` holds four things.
 | `settlement` | The arbiter and the day-90 share the terms are built with |
 | `moves` | Every move in order, each with its signature and what it brings along |
 
-No move signs the settlement. A supplier's agreement covers it through the terms hash, so a copy of a thread that states another settlement no longer fits the supplier's quote. Whoever reserves still compares it with the settlement Avow's approvals name.
+No move signs the settlement. A supplier's agreement covers it through the terms hash, so once the supplier has quoted, a copy of the thread that states another settlement no longer fits its quote. Until then nothing in the thread checks the settlement. Whoever reserves still compares it with the settlement Avow's approvals name.
 
 ## The moves
 
@@ -81,7 +81,7 @@ An agreed thread is no commitment. Nothing is reserved until the buyer's lock ta
 
 Each answers a reason code or null, and none checks a signature. The caller recovers the signer and checks it's the side the move names, before it asks whether the move fits.
 
-Run `threadProblem` on every thread you read from someone else, before `threadStateAt` or anything else trusts its moves. `parseNegotiationThread` checks only the shape. The replay can't show that a decline arrived before the thread ran out, since a decline carries no time, so only whoever took the move in knows that.
+Run `threadProblem` on every thread you read from someone else, before `threadStateAt` or anything else trusts its moves. `parseNegotiationThread` checks the shape and refuses a base offer the template refuses, and nothing more. No move carries the moment it was sent, so the replay shows only that each move could have arrived in time. When it did arrive is known only to whoever took it in, and the copy kept by whoever keeps the thread decides. Two copies can disagree on whether a late answer counts.
 
 ## Limits
 
@@ -102,7 +102,7 @@ A decline carries a reason code and no free text. `DECLINE_RULES` gives each cod
 | `offer.superseded` | `change_order` | Supplier | The replacing version's id, with the version whole beside the move. It has to carry both |
 | `offer.withdrawn` | `choose_another` | Supplier | |
 | `capacity.exhausted` | `retry_later` | Supplier | When to ask again, and how many units are free |
-| `quantity.out_of_range` | `change_order` | Supplier | The most one booking takes |
+| `quantity.out_of_range` | `change_order` | Supplier | How many units the supplier would take |
 | `terms.not_negotiable` | `change_order` | Either side | |
 | `proposal.unacceptable` | `change_order` | Either side | |
 | `counterparty.not_eligible` | `choose_another` | Either side | |
