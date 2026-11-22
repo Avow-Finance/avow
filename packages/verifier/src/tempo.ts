@@ -316,7 +316,7 @@ export interface TempoReaderOptions {
 }
 
 /** The chain's id from the options or the client, or a setup mistake when neither names one. */
-function chainIdOf(client: Client, options: TempoReaderOptions): number {
+function chainIdOf(client: Client, options: { chainId?: number }): number {
   const chainId = options.chainId ?? client.chain?.id
   if (chainId === undefined) throw new Error("Name the chain's id, or give the client a chain")
   return chainId
@@ -368,26 +368,46 @@ export function tempoLockReader(client: Client, options: TempoReaderOptions): Pi
   }
 }
 
+export interface TempoChainReaderOptions extends Omit<TempoReaderOptions, 'factory'> {
+  /**
+   * The factory the supplier trusts, or every factory it trusts, oldest first. A lock counts as
+   * Avow's when one of them created it, so locks from an earlier factory stay readable after a
+   * new one is deployed.
+   */
+  factory: Address | readonly Address[]
+}
+
 /**
  * Reads Tempo directly: the lock's settings and its record of a commitment, the agent key in the
  * keychain, and account signatures through Tempo's own signature verifier. A lock counts as
- * Avow's only when the factory the supplier pinned says it created it, since any contract can name
+ * Avow's only when a factory the supplier pinned says it created it, since any contract can name
  * a factory. The supplier trusts the node the client talks to, so it uses one it chose.
  */
-export function tempoChainReader(client: Client, options: TempoReaderOptions): ChainReader {
+export function tempoChainReader(client: Client, options: TempoChainReaderOptions): ChainReader {
   const chainId = chainIdOf(client, options)
+  const factories: readonly Address[] =
+    typeof options.factory === 'string' ? [options.factory] : options.factory
   const check = tempoKeychainCheck(client)
   const tokenOf = (lock: Address) =>
     readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' })
 
+  /** The trusted factory that created the lock, asked in order, or null when none did. */
+  async function creatorOf(lock: Address): Promise<Address | null> {
+    for (const factory of factories) {
+      const created = await readContract(client, {
+        address: factory,
+        abi: FACTORY_ABI,
+        functionName: 'isLock',
+        args: [lock],
+      })
+      if (created) return factory
+    }
+    return null
+  }
+
   async function lock(lock: Address): Promise<LockInfo | null> {
-    const created = await readContract(client, {
-      address: options.factory,
-      abi: FACTORY_ABI,
-      functionName: 'isLock',
-      args: [lock],
-    })
-    if (!created) return null
+    const creator = await creatorOf(lock)
+    if (!creator) return null
     const at = { address: lock, abi: LOCK_ABI } as const
     const [
       factory,
@@ -409,7 +429,7 @@ export function tempoChainReader(client: Client, options: TempoReaderOptions): C
       readContract(client, { ...at, functionName: 'day90' }),
     ])
     return {
-      fromFactory: isAddressEqual(factory, options.factory),
+      fromFactory: isAddressEqual(factory, creator),
       account,
       token,
       timing: { minContestWindow, confirmWindow, rulingDelay, rulingKeyEnd, day90 },

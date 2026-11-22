@@ -10,7 +10,7 @@ import {
   tempoChainReader,
   tempoLockReader,
 } from '@avow-finance/verifier'
-import { type Address, type Hex, parseAbi } from 'viem'
+import { type Address, type Hex, isAddressEqual, parseAbi } from 'viem'
 import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { type AgentKey, createAgent, type QuoteResult, type SignedQuote } from '../agent.js'
@@ -27,7 +27,7 @@ import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { sendOwn, sendSponsored } from '../send.js'
 import { platformStore } from './agent.js'
 import { pause } from './connect.js'
-import { loadSandboxDeployment } from './deployment.js'
+import { loadSandboxDeployment, trustedFactories } from './deployment.js'
 import { fundFees } from './fees.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import { type AgentItem, loadAgentItem, type SandboxStore } from './store.js'
@@ -210,7 +210,14 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
           factory: deployment.factory,
           chainId: deployment.chainId,
         }),
-        dependencies: { readers: [lockReader] },
+        // An upstream booking can sit in a lock from any factory the SDK trusts.
+        dependencies: {
+          readers: trustedFactories(deployment.chainId).map((f) =>
+            isAddressEqual(f.address, deployment.factory)
+              ? lockReader
+              : tempoLockReader(client, { factory: f.address, chainId: deployment.chainId }),
+          ),
+        },
         authorize: (commitment) =>
           requestSupplierAuthorization(
             { baseUrl: deployment.apiUrl, key: signingRequestKey(signing), fetch: send },

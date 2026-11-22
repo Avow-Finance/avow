@@ -11,7 +11,7 @@ import {
 import { type ChainReader, findCommitment, tempoChainReader } from '@avow-finance/verifier'
 import { type Address, isAddress, isAddressEqual } from 'viem'
 import { moderatoClient } from '../moderato.js'
-import { trustedFactory } from './deployment.js'
+import { trustedFactories } from './deployment.js'
 import { verifyUrl } from './session.js'
 
 /**
@@ -54,14 +54,19 @@ export function sharedToken(link: string): string {
   return (at < 0 ? link : link.slice(at + '#verify='.length)).trim()
 }
 
-/** The chain reader for a chain this SDK trusts a factory on, or null for any other chain. */
+/**
+ * The chain reader for a chain this SDK trusts a factory on, which counts a lock any of them made,
+ * or null for any other chain.
+ */
 function trustedReader(chainId: number): ChainReader | null {
-  const factory = trustedFactory(chainId)
-  return factory ? tempoChainReader(moderatoClient(), { factory, chainId }) : null
+  const factories = trustedFactories(chainId).map((f) => f.address)
+  return factories.length > 0
+    ? tempoChainReader(moderatoClient(), { factory: factories, chainId })
+    : null
 }
 
 /**
- * Checks a shared commitment against the chain. It passes when the lock is one the trusted factory
+ * Checks a shared commitment against the chain. It passes when the lock is one a trusted factory
  * created and holds that commitment under the link's terms hash, and then it says what the lock
  * holds, whatever state the commitment is in. With `payee` it also says whether the lock pays that
  * address, which is how a supplier's agent tells a commitment to it from one to someone else.

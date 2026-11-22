@@ -8,7 +8,7 @@ import {
 } from 'viem'
 import { Abis, type Account, Addresses } from 'viem/tempo'
 import { ADMINISTRATOR_ABI, type Call } from '../lock.js'
-import { MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
+import { MODERATO_FACTORIES } from '../moderato.js'
 import { sendOwn } from '../send.js'
 import type { SandboxClient } from './fees.js'
 
@@ -54,7 +54,11 @@ export async function lockCreatedIn(m: {
   /** The block the factory was created in. */
   factoryCreatedIn?: bigint
 }): Promise<bigint> {
-  const floor = m.factoryCreatedIn ?? MODERATO_FACTORY_CREATED_IN
+  const known = MODERATO_FACTORIES.find((f) => isAddressEqual(f.address, m.factory))
+  const floor = m.factoryCreatedIn ?? known?.createdIn
+  if (floor === undefined) {
+    throw new Error(`The factory at ${m.factory} isn't one the SDK knows the creation block of`)
+  }
   for (let to = await m.client.getBlockNumber(); to >= floor; to -= STEP) {
     const from = to - STEP + 1n > floor ? to - STEP + 1n : floor
     const logs = await m.client.getLogs({

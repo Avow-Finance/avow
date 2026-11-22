@@ -109,7 +109,7 @@ Every commitment has a link anyone can open to check it, and an agent that books
 npx avow-sandbox verify "<link>" --payee <your payout address>
 ```
 
-The check reads the lock on Tempo through the factory the SDK trusts and never asks Avow, so it needs no key, no business and no connection. It passes when Avow's factory created the lock and the lock holds that commitment under the link's terms hash. Then it says how much the lock holds, whether the commitment waits for the supplier's acceptance, stands, has a charge open or has ended, which account it pays, and when free cancellation ends and the reserve releases. With `--payee`, or `payee` in the tool, it says whether the commitment pays you, and the command exits with 1 when it doesn't or when the chain doesn't back the commitment.
+The check reads the lock on Tempo through the factories the SDK trusts and never asks Avow, so it needs no key, no business and no connection. It passes when one of Avow's factories created the lock and the lock holds that commitment under the link's terms hash. Then it says how much the lock holds, whether the commitment waits for the supplier's acceptance, stands, has a charge open or has ended, which account it pays, and when free cancellation ends and the reserve releases. With `--payee`, or `payee` in the tool, it says whether the commitment pays you, and the command exits with 1 when it doesn't or when the chain doesn't back the commitment.
 
 The link carries the terms hash, and the terms themselves come from the buyer. Matching them to that hash is what ties them to the reserve, and `verifyCommitmentTerms` in `@avow-finance/verifier` does that for anyone holding them.
 

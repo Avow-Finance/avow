@@ -965,7 +965,7 @@ async function verifyCommitment(m: {
 }): Promise<SandboxCheck[]> {
   const { client, deployment, domain, commitment } = m
   const a = commitment.approval.message
-  const factory = trustedFactory(deployment.chainId)
+  const factory = trustedFactory(deployment.chainId, deployment.factory)
   const check = (name: string, reason: ReasonCode | null): SandboxCheck => ({
     name,
     passed: reason === null,
@@ -1000,7 +1000,10 @@ async function verifyCommitment(m: {
   if (!factory) {
     return [...checks, check('The SDK trusts a factory on this chain', 'chain.lock_unknown')]
   }
-  const reader = tempoChainReader(client, { factory, chainId: deployment.chainId })
+  const reader = tempoChainReader(client, {
+    factory: factory.address,
+    chainId: deployment.chainId,
+  })
   // A node a block behind the one the reserve landed in doesn't show it yet, so each read waits.
   const settled = async <T extends { ok: boolean }>(read: () => Promise<T>): Promise<T> => {
     let result = await read()

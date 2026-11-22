@@ -5,20 +5,25 @@ import {
   TEMPO_MODERATO,
 } from '@avow-finance/spec'
 import { type Address, isAddressEqual } from 'viem'
-import { MODERATO_FACTORY } from '../moderato.js'
+import { MODERATO_FACTORIES, type TrustedFactory } from '../moderato.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import type { StoredBusiness } from './store.js'
 
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300)
 
-/** The lock factory the SDK trusts on a chain, or null on a chain where it trusts none. */
-export function trustedFactory(chainId: number): Address | null {
-  return chainId === TEMPO_MODERATO ? MODERATO_FACTORY : null
+/** Every lock factory the SDK trusts on a chain, oldest first, and none on any other chain. */
+export function trustedFactories(chainId: number): readonly TrustedFactory[] {
+  return chainId === TEMPO_MODERATO ? MODERATO_FACTORIES : []
+}
+
+/** The trusted factory at this address on a chain, or null when the SDK doesn't trust it. */
+export function trustedFactory(chainId: number, address: Address): TrustedFactory | null {
+  return trustedFactories(chainId).find((f) => isAddressEqual(f.address, address)) ?? null
 }
 
 /**
  * The facts of the deployment the sandbox's screen runs against, as it publishes them. It refuses
- * a deployment whose factory isn't the one the SDK trusts on that chain, so a changed settings file
+ * a deployment whose factory isn't one the SDK trusts on that chain, so a changed settings file
  * can't point the sandbox, or its verifier, at another factory's locks.
  */
 export async function loadSandboxDeployment(
@@ -34,10 +39,11 @@ export async function loadSandboxDeployment(
   }
   const parsed = parseSandboxDeployment(await response.json().catch(() => null))
   if (!response.ok || !parsed.ok) throw new Error(`${url} doesn't describe a testnet deployment`)
-  const trusted = trustedFactory(parsed.value.chainId)
-  if (!trusted || !isAddressEqual(trusted, parsed.value.factory)) {
+  const { chainId, factory } = parsed.value
+  if (!trustedFactory(chainId, factory)) {
+    const trusted = trustedFactories(chainId).map((f) => f.address)
     throw new Error(
-      `${url} names the factory ${parsed.value.factory}, but on chain ${parsed.value.chainId} the SDK trusts only ${trusted ?? 'none'}`,
+      `${url} names the factory ${factory}, but on chain ${chainId} the SDK trusts only ${trusted.join(', ') || 'none'}`,
     )
   }
   return parsed.value
