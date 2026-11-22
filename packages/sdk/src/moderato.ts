@@ -14,14 +14,28 @@ import { tempoModerato } from 'viem/chains'
 /** Moderato's public RPC. Moderato is Tempo's testnet, where every Avow deployment so far runs. */
 export const MODERATO_RPC_URL = 'https://rpc.moderato.tempo.xyz'
 
-/**
- * Avow's lock factory on Moderato. The SDK trusts a lock as Avow's only when this factory made it,
- * whatever a deployment's published settings say.
- */
-export const MODERATO_FACTORY: Address = '0x8fa7177c84BE069df2a51F096ED28d5D661B8283'
+/** A lock factory the SDK trusts, with the block it was created in, the first with its code. */
+export interface TrustedFactory {
+  address: Address
+  createdIn: bigint
+}
 
-/** The block that factory was created in, the first with its code, so no lock it made is older. */
-export const MODERATO_FACTORY_CREATED_IN = 41_801_818n
+/**
+ * Avow's lock factories on Moderato, oldest first. The SDK trusts a lock as Avow's only when one
+ * of these made it, whatever a deployment's published settings say. A deployment names the one
+ * new businesses get their lock from, and locks from an earlier one stay checkable.
+ */
+export const MODERATO_FACTORIES: readonly TrustedFactory[] = Object.freeze(
+  [{ address: '0x8fa7177c84BE069df2a51F096ED28d5D661B8283', createdIn: 41_801_818n }].map((f) =>
+    Object.freeze(f as TrustedFactory),
+  ),
+)
+
+/** The first factory on Moderato, which the earliest sandbox businesses' locks came from. */
+export const MODERATO_FACTORY: Address = (MODERATO_FACTORIES[0] as TrustedFactory).address
+
+/** The block the first factory was created in, so no lock it made is older. */
+export const MODERATO_FACTORY_CREATED_IN = (MODERATO_FACTORIES[0] as TrustedFactory).createdIn
 
 /** A transaction's page in Moderato's explorer. */
 export const moderatoTransactionUrl = (hash: Hex): string =>

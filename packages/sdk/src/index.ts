@@ -52,7 +52,12 @@ export {
   connectToBusiness,
   SANDBOX_CONSOLE_URL,
 } from './sandbox/connect.js'
-export { loadSandboxDeployment, madeOn, trustedFactory } from './sandbox/deployment.js'
+export {
+  loadSandboxDeployment,
+  madeOn,
+  trustedFactories,
+  trustedFactory,
+} from './sandbox/deployment.js'
 export * from './sandbox/fees.js'
 export {
   approvedSuppliers,

@@ -95,7 +95,10 @@ export interface ContestOnChain extends ObservedContest {
 export { MAX_REPORTS } from '@avow-finance/spec'
 
 export interface LockInfo {
-  /** True when Avow's factory, as the reader was set up with it, created the lock. */
+  /**
+   * True when one of the factories the reader trusts says it created the lock and the lock names
+   * that same factory.
+   */
   fromFactory: boolean
   /** The business account that owns the lock. */
   account: Address

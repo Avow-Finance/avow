@@ -8,16 +8,16 @@ import {
   type ReasonCode,
   toWire,
 } from '@avow-finance/spec'
-import { type ChainReader, findCommitment, tempoChainReader } from '@avow-finance/verifier'
+import { type ChainReader, findCommitment } from '@avow-finance/verifier'
 import { type Address, isAddress, isAddressEqual } from 'viem'
 import { moderatoClient } from '../moderato.js'
-import { trustedFactory } from './deployment.js'
 import { verifyUrl } from './session.js'
+import { trustedChainReader } from './trusted-readers.js'
 
 /**
  * Checking a commitment someone shared, such as a buyer's agent sending its link to a supplier's
  * agent. The link carries only where the backing sits and the terms hash, so the check reads the
- * rest from the lock, through the factory this SDK trusts, and never asks Avow. It needs no key and
+ * rest from the lock, through the factories this SDK trusts, and never asks Avow. It needs no key and
  * no business, so an agent that has never connected to Avow can run it.
  */
 
@@ -55,13 +55,11 @@ export function sharedToken(link: string): string {
 }
 
 /** The chain reader for a chain this SDK trusts a factory on, or null for any other chain. */
-function trustedReader(chainId: number): ChainReader | null {
-  const factory = trustedFactory(chainId)
-  return factory ? tempoChainReader(moderatoClient(), { factory, chainId }) : null
-}
+const trustedReader = (chainId: number): ChainReader | null =>
+  trustedChainReader(moderatoClient(), chainId)
 
 /**
- * Checks a shared commitment against the chain. It passes when the lock is one the trusted factory
+ * Checks a shared commitment against the chain. It passes when the lock is one a trusted factory
  * created and holds that commitment under the link's terms hash, and then it says what the lock
  * holds, whatever state the commitment is in. With `payee` it also says whether the lock pays that
  * address, which is how a supplier's agent tells a commitment to it from one to someone else.

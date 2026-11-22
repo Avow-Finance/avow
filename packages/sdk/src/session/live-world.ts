@@ -14,7 +14,6 @@ import {
   readBacking,
   reportCall,
   signReport,
-  tempoChainReader,
   tempoLockReader,
 } from '@avow-finance/verifier'
 import { type Address, type Hex, keccak256, parseAbi, stringToHex } from 'viem'
@@ -29,6 +28,7 @@ import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/fees.js'
 import type { SandboxStore } from '../sandbox/store.js'
 import { loadSupplierItem } from '../sandbox/supplier-key.js'
+import { trustedChainReader, trustedLockReaders } from '../sandbox/trusted-readers.js'
 import { landedReverted, sendErrorIn, sendOwn } from '../send.js'
 import { chargeStanding } from './charge.js'
 import type { CancelOutcome, JobWorld, LockRead, WorldBooking } from './world.js'
@@ -85,10 +85,11 @@ export async function liveWorld(options: {
     chainId: deployment.chainId,
   })
 
-  const chain = tempoChainReader(client, {
-    factory: deployment.factory,
-    chainId: deployment.chainId,
-  })
+  // A lock from any factory the SDK trusts counts, and one from no trusted factory never does.
+  const trusted = trustedChainReader(client, deployment.chainId)
+  if (!trusted) throw new Error(`The SDK trusts no factory on chain ${deployment.chainId}`)
+  const chain = trusted
+  const lockReaders = trustedLockReaders(client, deployment.chainId)
   const latestTime = async () => (await client.getBlock()).timestamp
 
   /** A commitment at the latest finalized block. */
@@ -233,7 +234,7 @@ export async function liveWorld(options: {
             signingKey: profile.signingKey,
           },
           chain,
-          dependencies: { readers: [lockReader] },
+          dependencies: { readers: lockReaders },
           authorize: (commitment) =>
             requestSupplierAuthorization(
               { baseUrl: deployment.apiUrl, key: signingRequestKey(signing), fetch: send },

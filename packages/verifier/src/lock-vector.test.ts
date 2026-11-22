@@ -54,6 +54,10 @@ const id = (label: string): Hex => keccak256(stringToHex(label))
 const CHAIN_ID = 42431
 const LOCK: Address = '0x0000000000000000000000000000000000002510'
 const FACTORY: Address = '0x0000000000000000000000000000000000002511'
+/** A trusted factory that created no lock here, as an earlier factory would. */
+const EARLIER_FACTORY: Address = '0x0000000000000000000000000000000000002509'
+/** A trusted factory that says it created the lock, though the lock names another factory. */
+const CLAIMING_FACTORY: Address = '0x0000000000000000000000000000000000002508'
 const ALPHA_USD: Address = '0x20C0000000000000000000000000000000000001'
 const START = 1_800_000_000n
 const NOW = START - 3600n
@@ -274,6 +278,12 @@ function node(commitment: Hex) {
       async request({ method, params }) {
         if (method !== 'eth_call') throw new Error(`The test node doesn't answer ${method}`)
         const [{ to, data }] = params as [{ to: Address; data: Hex }]
+        if (isAddressEqual(to, CLAIMING_FACTORY)) {
+          return encodeFunctionResult({ abi: FACTORY_ABI, functionName: 'isLock', result: true })
+        }
+        if (isAddressEqual(to, EARLIER_FACTORY)) {
+          return encodeFunctionResult({ abi: FACTORY_ABI, functionName: 'isLock', result: false })
+        }
         if (isAddressEqual(to, FACTORY)) {
           const call = decodeFunctionData({ abi: FACTORY_ABI, data })
           if (call.functionName !== 'isLock') {
@@ -564,6 +574,18 @@ describe("the lock's own bytes, read by the Tempo reader", () => {
 
   it("read no lock that the pinned factory didn't create", async () => {
     expect(await chainOver(RESERVED).lock('0x0000000000000000000000000000000000002512')).toBeNull()
+  })
+
+  it('read a lock that any of the trusted factories created, and none that only another did', async () => {
+    const over = (factory: Address | readonly Address[]) =>
+      tempoChainReader(node(RESERVED), { factory, chainId: CHAIN_ID })
+    // An earlier factory that didn't create the lock is asked first, then the one that did.
+    const both = await over([EARLIER_FACTORY, FACTORY]).lock(LOCK)
+    expect(both).toMatchObject({ fromFactory: true, account: business.address })
+    expect(await over([EARLIER_FACTORY]).lock(LOCK)).toBeNull()
+    expect(await over([]).lock(LOCK)).toBeNull()
+    // A lock counts as from the factory only when the lock names the factory that says it made it.
+    expect(await over([CLAIMING_FACTORY]).lock(LOCK)).toMatchObject({ fromFactory: false })
   })
 })
 

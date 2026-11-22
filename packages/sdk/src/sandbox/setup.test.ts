@@ -2,7 +2,7 @@ import type { Address } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { MODERATO_FACTORY } from '../moderato.js'
+import { MODERATO_FACTORY, MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
 import { fakeChain } from '../test/fake-chain.js'
 import {
   config,
@@ -110,6 +110,41 @@ describe("the business's side, when the agent writes to .avow", () => {
     )
     expect(chain.writes).toEqual([])
   })
+
+  it('scans for keys to revoke from the oldest trusted factory, so a key from an earlier lock is found', async () => {
+    const b = await enrolledBusiness()
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: b.root.address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      keys: [
+        { key: b.agentKey, block: LOCK_BLOCK + 5n, witness: b.witness, revoked: true },
+        // A key authorized for the account's lock from an earlier factory, before this lock.
+        {
+          key: '0x00000000000000000000000000000000000000a1',
+          block: MODERATO_FACTORY_CREATED_IN + 5n,
+        },
+      ],
+    })
+    const { prompts } = recordingPrompts(true)
+    // The fake chain sends nothing, so setup stops at the revocation, its first transaction.
+    await expect(
+      prepareSandboxBusiness({
+        config,
+        prompts,
+        store: b.store,
+        deployment,
+        client: chain.client,
+        session: null,
+        log: () => {},
+      }),
+    ).rejects.toThrow()
+    expect(chain.keyRanges.length).toBeGreaterThan(0)
+    expect(chain.keyRanges.map(([from]) => from).sort()[0]).toBe(MODERATO_FACTORY_CREATED_IN)
+    expect(chain.writes.length).toBeGreaterThan(0)
+  }, 60_000)
 
   it("asks for a new mandate when the agent's file names a mandate its key wasn't authorized for", async () => {
     const b = await enrolledBusiness()

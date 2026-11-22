@@ -50,7 +50,7 @@ The reserve backs the offer's two charges and nothing else. The price is paid se
 
 ## Checking a commitment someone sent you
 
-Before you rely on a commitment another agent sent, call `verify` with its link and your payout address as `payee`, or run `npx avow-sandbox verify <link> --payee <address>`. It needs no connection. It reads the lock through the factory the SDK trusts, and it says whether the chain backs the commitment, how much the lock holds, where the commitment stands, who it pays, and when free cancellation ends and the reserve releases.
+Before you rely on a commitment another agent sent, call `verify` with its link and your payout address as `payee`, or run `npx avow-sandbox verify <link> --payee <address>`. It needs no connection. It reads the lock through the factories the SDK trusts, and it says whether the chain backs the commitment, how much the lock holds, where the commitment stands, who it pays, and when free cancellation ends and the reserve releases.
 
 Rely on it only when it stands and pays you. The terms come from the buyer, and the link's terms hash is what ties them to the reserve.
 

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { toWire } from '@avow-finance/spec'
-import { readBacking, tempoLockReader } from '@avow-finance/verifier'
+import { readBacking } from '@avow-finance/verifier'
 import { createPublicClient, http } from 'viem'
+import { trustedLockReaders } from '../sandbox/trusted-readers.js'
 import { decodeData } from '../session/data.js'
 import { isService, type ReservedJob } from '../session/service.js'
 import { type CommitmentChain, serviceChecks, snapshotChain } from '../session/service-check.js'
@@ -21,7 +22,8 @@ function chainOf(chain: ChildChain): CommitmentChain {
   if (chain.kind === 'snapshot') return snapshotChain(chain.snapshot)
   const client = createPublicClient({ transport: http(chain.url) })
   return {
-    readers: [tempoLockReader(client, { factory: chain.factory, chainId: chain.chainId })],
+    // An upstream booking can sit in a lock from any factory the SDK trusts on the chain.
+    readers: trustedLockReaders(client, chain.chainId),
     backing: (lock, commitmentId, side, at) =>
       readBacking(client, lock, commitmentId, side, { blockNumber: at }),
   }
