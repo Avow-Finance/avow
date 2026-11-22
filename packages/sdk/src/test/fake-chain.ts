@@ -66,12 +66,15 @@ export function fakeChain(c: {
   client: SandboxClient
   writes: string[]
   ranges: [bigint, bigint][]
+  /** Each block range the keychain's key events were read over, in order. */
+  keyRanges: [bigint, bigint][]
   /** Each account whose fee balance was read, in order. */
   feeReads: Address[]
 } {
   const keys = c.keys ?? []
   const writes: string[] = []
   const ranges: [bigint, bigint][] = []
+  const keyRanges: [bigint, bigint][] = []
   const feeReads: Address[] = []
   const keyAuthorized = (k: FakeKey) =>
     log(
@@ -171,6 +174,7 @@ export function fakeChain(c: {
           return inRange(c.lockBlock) ? [lockCreated] : []
         }
         if (f.topics[0] === topic('KeyAuthorized')) {
+          keyRanges.push([from, to])
           return keys.filter((k) => !k.admin && inRange(k.block)).map(keyAuthorized)
         }
         if (f.topics[0] === topic('AdminKeyAuthorized')) {
@@ -211,5 +215,5 @@ export function fakeChain(c: {
   const client: SandboxClient = createClient({ chain, transport: custom({ request }) }).extend(
     publicActions,
   )
-  return { client, writes, ranges, feeReads }
+  return { client, writes, ranges, keyRanges, feeReads }
 }

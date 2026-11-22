@@ -391,8 +391,8 @@ export function tempoChainReader(client: Client, options: TempoChainReaderOption
   const tokenOf = (lock: Address) =>
     readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' })
 
-  /** The trusted factory that created the lock, asking every one at once, or null when none did. */
-  async function creatorOf(lock: Address): Promise<Address | null> {
+  /** The trusted factories that say they created the lock, asking every one at once. */
+  async function claimersOf(lock: Address): Promise<Address[]> {
     const created = await Promise.all(
       factories.map((factory) =>
         readContract(client, {
@@ -403,12 +403,12 @@ export function tempoChainReader(client: Client, options: TempoChainReaderOption
         }),
       ),
     )
-    return factories[created.indexOf(true)] ?? null
+    return factories.filter((_, i) => created[i])
   }
 
   async function lock(lock: Address): Promise<LockInfo | null> {
-    const creator = await creatorOf(lock)
-    if (!creator) return null
+    const claimers = await claimersOf(lock)
+    if (claimers.length === 0) return null
     const at = { address: lock, abi: LOCK_ABI } as const
     const [
       factory,
@@ -430,7 +430,8 @@ export function tempoChainReader(client: Client, options: TempoChainReaderOption
       readContract(client, { ...at, functionName: 'day90' }),
     ])
     return {
-      fromFactory: isAddressEqual(factory, creator),
+      // The lock has to name a trusted factory that says it made it.
+      fromFactory: claimers.some((claimer) => isAddressEqual(claimer, factory)),
       account,
       token,
       timing: { minContestWindow, confirmWindow, rulingDelay, rulingKeyEnd, day90 },
