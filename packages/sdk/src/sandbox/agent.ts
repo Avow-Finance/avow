@@ -215,7 +215,7 @@ export interface SandboxCommitment {
   /**
    * Checks the commitment on this machine with the open verifier, every check the buyer's side can
    * make. Avow's approval has to name this commitment, the supplier, the lock's token, the terms
-   * and the mandate's caps and hash. The lock has to be one the trusted factory made, holding the
+   * and the mandate's caps and hash. The lock has to be one its business's trusted factory made, holding the
    * commitment under the terms hash, enforcing what the terms map to, under the approval checked.
    * The agent's key has to be on the account, bound to the mandate's hash.
    */

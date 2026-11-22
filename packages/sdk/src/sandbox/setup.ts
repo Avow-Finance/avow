@@ -24,9 +24,9 @@ import {
 } from './agent.js'
 import { createSandboxBusiness, type SandboxBusinessStep } from './business.js'
 import { type BusinessItem, loadBusinessItem, saveBusinessItem } from './business-store.js'
-import { loadSandboxDeployment, madeOn } from './deployment.js'
+import { loadSandboxDeployment, madeOn, oldestTrustedBlock } from './deployment.js'
 import type { SandboxClient } from './fees.js'
-import { approvedSuppliers, lockCreatedIn, revokeOtherKeys } from './keys.js'
+import { approvedSuppliers, revokeOtherKeys } from './keys.js'
 import { enrollSandboxAgent, SANDBOX_DAILY_LIMIT, sandboxMandate } from './mandate.js'
 import { SANDBOX_SCREEN_URL, sessionRelay } from './session.js'
 import {
@@ -505,14 +505,10 @@ export async function prepareSandboxBusiness(
   }
   const root = await openRoot()
   log("Signing and enrolling your agent's mandate", 'wait')
-  // The scan starts where the factory created the lock, read from the chain, so nothing on this
-  // machine can move it past a key.
-  const since = await lockCreatedIn({
-    client,
-    factory: deployment.factory,
-    account: root.address,
-    lock,
-  })
+  // The scan starts where the oldest factory the SDK trusts was created. The account can have a
+  // lock from each trusted factory, and a key authorized for an earlier lock stays live until it's
+  // revoked, so the scan can't start at this lock. Nothing on this machine can move it.
+  const since = oldestTrustedBlock(deployment.chainId)
 
   // The revocation goes first, in a transaction of its own, so nothing after it can stop it.
   const revoked = await revokeOtherKeys({ client, root, since })

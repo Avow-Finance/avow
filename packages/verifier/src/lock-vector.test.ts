@@ -56,6 +56,8 @@ const LOCK: Address = '0x0000000000000000000000000000000000002510'
 const FACTORY: Address = '0x0000000000000000000000000000000000002511'
 /** A trusted factory that created no lock here, as an earlier factory would. */
 const EARLIER_FACTORY: Address = '0x0000000000000000000000000000000000002509'
+/** A trusted factory that says it created the lock, though the lock names another factory. */
+const CLAIMING_FACTORY: Address = '0x0000000000000000000000000000000000002508'
 const ALPHA_USD: Address = '0x20C0000000000000000000000000000000000001'
 const START = 1_800_000_000n
 const NOW = START - 3600n
@@ -276,6 +278,9 @@ function node(commitment: Hex) {
       async request({ method, params }) {
         if (method !== 'eth_call') throw new Error(`The test node doesn't answer ${method}`)
         const [{ to, data }] = params as [{ to: Address; data: Hex }]
+        if (isAddressEqual(to, CLAIMING_FACTORY)) {
+          return encodeFunctionResult({ abi: FACTORY_ABI, functionName: 'isLock', result: true })
+        }
         if (isAddressEqual(to, EARLIER_FACTORY)) {
           return encodeFunctionResult({ abi: FACTORY_ABI, functionName: 'isLock', result: false })
         }
@@ -579,6 +584,8 @@ describe("the lock's own bytes, read by the Tempo reader", () => {
     expect(both).toMatchObject({ fromFactory: true, account: business.address })
     expect(await over([EARLIER_FACTORY]).lock(LOCK)).toBeNull()
     expect(await over([]).lock(LOCK)).toBeNull()
+    // A lock counts as from the factory only when the lock names the factory that says it made it.
+    expect(await over([CLAIMING_FACTORY]).lock(LOCK)).toMatchObject({ fromFactory: false })
   })
 })
 

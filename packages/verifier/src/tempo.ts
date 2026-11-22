@@ -391,18 +391,19 @@ export function tempoChainReader(client: Client, options: TempoChainReaderOption
   const tokenOf = (lock: Address) =>
     readContract(client, { address: lock, abi: LOCK_ABI, functionName: 'token' })
 
-  /** The trusted factory that created the lock, asked in order, or null when none did. */
+  /** The trusted factory that created the lock, asking every one at once, or null when none did. */
   async function creatorOf(lock: Address): Promise<Address | null> {
-    for (const factory of factories) {
-      const created = await readContract(client, {
-        address: factory,
-        abi: FACTORY_ABI,
-        functionName: 'isLock',
-        args: [lock],
-      })
-      if (created) return factory
-    }
-    return null
+    const created = await Promise.all(
+      factories.map((factory) =>
+        readContract(client, {
+          address: factory,
+          abi: FACTORY_ABI,
+          functionName: 'isLock',
+          args: [lock],
+        }),
+      ),
+    )
+    return factories[created.indexOf(true)] ?? null
   }
 
   async function lock(lock: Address): Promise<LockInfo | null> {

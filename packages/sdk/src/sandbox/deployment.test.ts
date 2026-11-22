@@ -1,10 +1,22 @@
 import { toWire } from '@avow-finance/spec'
-import type { Address } from 'viem'
+import { type Address, getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { MODERATO_FACTORIES, MODERATO_FACTORY, MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
-import { deployment } from '../test/sandbox-business.js'
-import { loadSandboxDeployment, trustedFactories, trustedFactory } from './deployment.js'
-import { lockCreatedIn } from './keys.js'
+import {
+  MODERATO_FACTORIES,
+  MODERATO_FACTORY,
+  MODERATO_FACTORY_CREATED_IN,
+  type TrustedFactory,
+} from '../moderato.js'
+import { fakeChain } from '../test/fake-chain.js'
+import { deployment, LOCK, LOCK_BLOCK } from '../test/sandbox-business.js'
+import {
+  loadSandboxDeployment,
+  oldestTrustedBlock,
+  trustedFactories,
+  trustedFactory,
+} from './deployment.js'
+import { liveKeys, lockCreatedIn } from './keys.js'
+import { trustedChainReader, trustedLockReaders } from './trusted-readers.js'
 
 const STRANGER: Address = '0x00000000000000000000000000000000000000ff'
 
@@ -22,6 +34,32 @@ describe('the factories the SDK trusts', () => {
       address: MODERATO_FACTORY,
       createdIn: MODERATO_FACTORY_CREATED_IN,
     })
+  })
+
+  it("can't be changed by anything else running in the process", () => {
+    expect(() =>
+      (MODERATO_FACTORIES as TrustedFactory[]).push(MODERATO_FACTORIES[0] as never),
+    ).toThrow(TypeError)
+    expect(() => {
+      ;(MODERATO_FACTORIES[0] as { address: Address }).address = STRANGER
+    }).toThrow(TypeError)
+    expect(trustedFactory(42431, STRANGER)).toBeNull()
+  })
+
+  it('give a reader over all of them, and one lock reader each, on a chain the SDK trusts', () => {
+    const client = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: STRANGER,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK,
+    }).client
+    expect(trustedChainReader(client, 42431)).not.toBeNull()
+    expect(trustedChainReader(client, 1)).toBeNull()
+    expect(trustedLockReaders(client, 42431).map((r) => r.factory)).toEqual(
+      MODERATO_FACTORIES.map((f) => f.address),
+    )
+    expect(trustedLockReaders(client, 1)).toEqual([])
   })
 
   it('find a factory by address in any case, and only on its own chain', () => {
@@ -52,7 +90,46 @@ describe('loading the sandbox deployment', () => {
   })
 })
 
+describe('where the scan for live keys starts', () => {
+  it('is the oldest trusted factory, so a key authorized for a lock from an earlier factory is found', async () => {
+    const oldKey: Address = getAddress('0x00000000000000000000000000000000000000a1')
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: STRANGER,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      // A key from the account's earlier lock, authorized before this lock was created.
+      keys: [{ key: oldKey, block: MODERATO_FACTORY_CREATED_IN + 5n }],
+    })
+    expect(oldestTrustedBlock(42431)).toBe(MODERATO_FACTORY_CREATED_IN)
+    expect(await liveKeys(chain.client, STRANGER, oldestTrustedBlock(42431))).toContain(oldKey)
+    // Starting at this lock's block would have missed it.
+    expect(await liveKeys(chain.client, STRANGER, LOCK_BLOCK)).not.toContain(oldKey)
+    expect(() => oldestTrustedBlock(1)).toThrow('trusts no factory on chain 1')
+  })
+})
+
 describe('finding the block a lock was created in', () => {
+  it("starts from the creation block of the lock's own factory", async () => {
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: STRANGER,
+      lock: LOCK,
+      lockBlock: MODERATO_FACTORY_CREATED_IN,
+      latest: MODERATO_FACTORY_CREATED_IN + 10n,
+    })
+    expect(
+      await lockCreatedIn({
+        client: chain.client,
+        factory: MODERATO_FACTORY,
+        account: STRANGER,
+        lock: LOCK,
+      }),
+    ).toBe(MODERATO_FACTORY_CREATED_IN)
+    expect(chain.ranges.at(-1)?.[0]).toBe(MODERATO_FACTORY_CREATED_IN)
+  })
+
   it("refuses a factory whose creation block the SDK doesn't know", async () => {
     await expect(
       lockCreatedIn({

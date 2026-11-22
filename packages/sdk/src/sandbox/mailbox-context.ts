@@ -4,13 +4,8 @@ import {
   type SupplierProfile,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
-import {
-  type LockedBacking,
-  readBacking,
-  tempoChainReader,
-  tempoLockReader,
-} from '@avow-finance/verifier'
-import { type Address, type Hex, isAddressEqual, parseAbi } from 'viem'
+import { type ChainReader, type LockedBacking, readBacking } from '@avow-finance/verifier'
+import { type Address, type Hex, parseAbi } from 'viem'
 import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { type AgentKey, createAgent, type QuoteResult, type SignedQuote } from '../agent.js'
@@ -27,12 +22,13 @@ import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { sendOwn, sendSponsored } from '../send.js'
 import { platformStore } from './agent.js'
 import { pause } from './connect.js'
-import { loadSandboxDeployment, trustedFactories } from './deployment.js'
+import { loadSandboxDeployment } from './deployment.js'
 import { fundFees } from './fees.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import { type AgentItem, loadAgentItem, type SandboxStore } from './store.js'
 import { loadSupplierItem, type SupplierItem } from './supplier-key.js'
 import { sandboxSupplierProfile } from './supplier-profile.js'
+import { trustedChainReader, trustedLockReaders } from './trusted-readers.js'
 
 /**
  * What every kind of order through the sandbox mailbox needs from the agent in a folder: its keys,
@@ -103,10 +99,12 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
   const { business } = item
   const agentKey: AgentKey = Account.fromSecp256k1(item.agentKey, { access: business.account })
   const domain = { chainId: deployment.chainId, verifyingContract: business.lock }
-  const lockReader = tempoLockReader(client, {
-    factory: deployment.factory,
-    chainId: deployment.chainId,
-  })
+  // An upstream booking can sit in a lock from any factory the SDK trusts.
+  const lockReaders = trustedLockReaders(client, deployment.chainId)
+  // The deployment names a trusted factory, so the chain has a trusted reader.
+  const trustedReader = trustedChainReader(client, deployment.chainId)
+  if (!trustedReader) throw new Error(`The SDK trusts no factory on chain ${deployment.chainId}`)
+  const trustedChain: ChainReader = trustedReader
   const asAgent = avowRequests({
     baseUrl: deployment.apiUrl,
     key: agentRequestKey(agentKey),
@@ -144,7 +142,7 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
         })
         return { transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }
       },
-      dependencies: { readers: [lockReader] },
+      dependencies: { readers: lockReaders },
     }).commitToQuote(quote)
   }
 
@@ -206,18 +204,9 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
           account: supplier.profile.account,
           signingKey: supplier.profile.signingKey,
         },
-        chain: tempoChainReader(client, {
-          factory: deployment.factory,
-          chainId: deployment.chainId,
-        }),
-        // An upstream booking can sit in a lock from any factory the SDK trusts.
-        dependencies: {
-          readers: trustedFactories(deployment.chainId).map((f) =>
-            isAddressEqual(f.address, deployment.factory)
-              ? lockReader
-              : tempoLockReader(client, { factory: f.address, chainId: deployment.chainId }),
-          ),
-        },
+        // A buyer's lock can come from any factory the SDK trusts.
+        chain: trustedChain,
+        dependencies: { readers: lockReaders },
         authorize: (commitment) =>
           requestSupplierAuthorization(
             { baseUrl: deployment.apiUrl, key: signingRequestKey(signing), fetch: send },

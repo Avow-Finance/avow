@@ -25,9 +25,11 @@ export interface TrustedFactory {
  * of these made it, whatever a deployment's published settings say. A deployment names the one
  * new businesses get their lock from, and locks from an earlier one stay checkable.
  */
-export const MODERATO_FACTORIES: readonly TrustedFactory[] = [
-  { address: '0x8fa7177c84BE069df2a51F096ED28d5D661B8283', createdIn: 41_801_818n },
-]
+export const MODERATO_FACTORIES: readonly TrustedFactory[] = Object.freeze(
+  [{ address: '0x8fa7177c84BE069df2a51F096ED28d5D661B8283', createdIn: 41_801_818n }].map((f) =>
+    Object.freeze(f as TrustedFactory),
+  ),
+)
 
 /** The first factory on Moderato, which the earliest sandbox businesses' locks came from. */
 export const MODERATO_FACTORY: Address = (MODERATO_FACTORIES[0] as TrustedFactory).address
