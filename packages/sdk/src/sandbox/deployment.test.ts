@@ -10,6 +10,7 @@ import {
 import { fakeChain } from '../test/fake-chain.js'
 import { deployment, LOCK, LOCK_BLOCK } from '../test/sandbox-business.js'
 import {
+  factoriesToRead,
   loadSandboxDeployment,
   oldestTrustedBlock,
   trustedFactories,
@@ -49,6 +50,16 @@ describe('the factories the SDK trusts', () => {
       )
     }
     expect(oldestTrustedBlock(42431)).toBe(MODERATO_FACTORY_CREATED_IN)
+  })
+
+  it('are what a service reads, and a service started with any other factory stops', () => {
+    expect(factoriesToRead(42431, MODERATO_FACTORY)).toEqual(
+      MODERATO_FACTORIES.map((f) => f.address),
+    )
+    expect(() => factoriesToRead(42431, STRANGER)).toThrow(
+      "isn't one the SDK trusts on chain 42431",
+    )
+    expect(() => factoriesToRead(1, MODERATO_FACTORY)).toThrow('on chain 1')
   })
 
   it("can't be changed by anything else running in the process", () => {

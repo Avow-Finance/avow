@@ -54,6 +54,7 @@ export {
   SANDBOX_CONSOLE_URL,
 } from './sandbox/connect.js'
 export {
+  factoriesToRead,
   loadSandboxDeployment,
   madeOn,
   trustedFactories,

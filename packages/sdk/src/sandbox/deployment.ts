@@ -26,6 +26,18 @@ export function oldestTrustedBlock(chainId: number): bigint {
   return oldest.createdIn
 }
 
+/**
+ * The factories whose locks a service reads, oldest first: every one the SDK trusts on the chain.
+ * It throws when the factory the service makes new locks from isn't among them, so a service
+ * started with the wrong factory stops at once rather than reading locks it shouldn't.
+ */
+export function factoriesToRead(chainId: number, current: Address): Address[] {
+  if (!trustedFactory(chainId, current)) {
+    throw new Error(`The factory ${current} isn't one the SDK trusts on chain ${chainId}`)
+  }
+  return trustedFactories(chainId).map((f) => f.address)
+}
+
 /** The trusted factory at this address on a chain, or null when the SDK doesn't trust it. */
 export function trustedFactory(chainId: number, address: Address): TrustedFactory | null {
   return trustedFactories(chainId).find((f) => isAddressEqual(f.address, address)) ?? null
