@@ -290,7 +290,10 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
     await pause(o.pollEvery ?? 5000, o.signal)
     status = await askAt(lock).catch((error: unknown) => {
-      throw notHeld(error) ? new Error(unknown) : error
+      if (!notHeld(error)) throw error
+      throw new Error(
+        `Avow no longer holds the request for ${businessId}, so the business or its request went away. Connect again to ask afresh.`,
+      )
     })
   }
 

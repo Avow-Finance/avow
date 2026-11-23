@@ -364,6 +364,33 @@ describe('connecting an agent to a business', () => {
     }
   })
 
+  it('connects at the first lock when the stray lock is at the later factory', async () => {
+    const stray = privateKeyToAccount(generatePrivateKey()).address
+    factoryLocks.set(MODERATO_FACTORIES[1]?.address.toLowerCase() as string, stray)
+    try {
+      const store = memoryStore()
+      const world = sandbox(store, 0)
+      await connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: world.fetch })
+      const kept = (await loadAgentItem(store))?.business
+      expect(kept?.lock).toBe(LOCK)
+      expect(kept?.factory).toBe(MODERATO_FACTORIES[0]?.address)
+    } finally {
+      factoryLocks.clear()
+    }
+  })
+
+  it('stops at a refusal that says anything other than that Avow holds no business at the lock', async () => {
+    const store = memoryStore()
+    const world = sandbox(store, 0)
+    const refusing = (async (input: string | URL | Request, init?: RequestInit) =>
+      new URL(String(input)).pathname === SANDBOX_PATHS.agentRequests
+        ? json({ error: { reason: 'sandbox.limit_reached', message: 'Too many waiting' } }, 429)
+        : world.fetch(input, init)) as typeof globalThis.fetch
+    await expect(
+      connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: refusing }),
+    ).rejects.toThrow('Too many waiting')
+  })
+
   it('names the console when the business ID is unknown', async () => {
     const store = memoryStore()
     const world = sandbox(store)

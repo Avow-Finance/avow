@@ -8,7 +8,10 @@ export interface SupplierSettings {
   /** Avow's API, an origin such as `https://api.testnet.avow.finance`. */
   apiUrl: string
   rpcUrl: string
-  /** Avow's lock factory. A booking counts only on a lock it made. */
+  /**
+   * Avow's current lock factory, which the SDK has to trust. A booking counts on a lock from any
+   * factory the SDK trusts, so buyers keep their locks when the sandbox moves to a newer one.
+   */
   factory: Address
   /** The token reserves are held in. */
   token: Address

@@ -78,7 +78,8 @@ export async function loadSandboxDeployment(
 /**
  * Whether a business was made on this deployment, so its lock and registration still hold. Its
  * lock may come from an earlier factory the SDK still trusts, since a business keeps its lock when
- * the sandbox moves to a newer factory.
+ * the sandbox moves to a newer factory. The deployment's own factory always counts, which matters
+ * only for a deployment on a factory the SDK doesn't trust, as tests use.
  */
 export const madeOn = (b: StoredBusiness, d: SandboxDeployment): boolean =>
   b.chainId === d.chainId &&
