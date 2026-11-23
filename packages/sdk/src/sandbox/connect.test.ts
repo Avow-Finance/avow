@@ -10,14 +10,24 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it, vi } from 'vitest'
+import { MODERATO_FACTORIES } from '../moderato.js'
 import { accountSigner, signMandate } from '../sign.js'
 import { deployment, domain, LOCK, supplier, TOKEN } from '../test/sandbox-business.js'
 import { sandboxMandate } from './mandate.js'
 import { loadAgentItem, memoryStore, saveAgentItem } from './store.js'
 
+/**
+ * The lock each factory makes for the business's account, and all of them are on chain. Every
+ * factory answers the business's lock unless a test names another for a factory.
+ */
+const factoryLocks = new Map<string, `0x${string}`>()
 vi.mock('../moderato.js', async (original) => ({
   ...(await original<typeof import('../moderato.js')>()),
-  moderatoClient: () => ({ readContract: async () => LOCK }),
+  moderatoClient: () => ({
+    readContract: async ({ address }: { address: string }) =>
+      factoryLocks.get(address.toLowerCase()) ?? LOCK,
+    getCode: async () => '0x6080',
+  }),
 }))
 
 const { approvalLink, connectToBusiness } = await import('./connect.js')
@@ -90,7 +100,17 @@ function sandbox(store: ReturnType<typeof memoryStore>, approveAfter = 1, bindAf
       })
     }
     if (path === SANDBOX_PATHS.agentRequests) {
-      if ((body as { businessId: string }).businessId !== BUSINESS) {
+      // Avow holds the business at LOCK alone, and refuses an ask signed under any other lock.
+      const under = verifyApiRequest({
+        audience: deployment.apiUrl,
+        chainId: deployment.chainId,
+        method: 'POST',
+        path,
+        body: init.body as Uint8Array,
+        authorization: new Headers(init.headers).get('authorization'),
+      })
+      const atLock = under.ok && under.value.credentials.lock.toLowerCase() === LOCK.toLowerCase()
+      if ((body as { businessId: string }).businessId !== BUSINESS || !atLock) {
         return json({ error: { reason: 'business.unknown', message: 'No such business' } }, 404)
       }
       asks.push({ body, signer: new Headers(init?.headers).get('authorization') })
@@ -325,6 +345,50 @@ describe('connecting an agent to a business', () => {
     await expect(
       connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: world.fetch }),
     ).rejects.toThrow(/already has an agent/)
+  })
+
+  it('connects at the lock Avow holds the business at, when someone made it a lock at another factory too', async () => {
+    // Anyone can create an account's lock at any factory. Here a stray lock from the oldest
+    // trusted factory is on chain beside the business's own, which Avow registered.
+    const stray = privateKeyToAccount(generatePrivateKey()).address
+    factoryLocks.set(MODERATO_FACTORIES[0]?.address.toLowerCase() as string, stray)
+    try {
+      const store = memoryStore()
+      const world = sandbox(store, 0)
+      await connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: world.fetch })
+      const kept = (await loadAgentItem(store))?.business
+      expect(kept?.lock).toBe(LOCK)
+      expect(kept?.factory).toBe(MODERATO_FACTORIES[1]?.address)
+    } finally {
+      factoryLocks.clear()
+    }
+  })
+
+  it('connects at the first lock when the stray lock is at the later factory', async () => {
+    const stray = privateKeyToAccount(generatePrivateKey()).address
+    factoryLocks.set(MODERATO_FACTORIES[1]?.address.toLowerCase() as string, stray)
+    try {
+      const store = memoryStore()
+      const world = sandbox(store, 0)
+      await connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: world.fetch })
+      const kept = (await loadAgentItem(store))?.business
+      expect(kept?.lock).toBe(LOCK)
+      expect(kept?.factory).toBe(MODERATO_FACTORIES[0]?.address)
+    } finally {
+      factoryLocks.clear()
+    }
+  })
+
+  it('stops at a refusal that says anything other than that Avow holds no business at the lock', async () => {
+    const store = memoryStore()
+    const world = sandbox(store, 0)
+    const refusing = (async (input: string | URL | Request, init?: RequestInit) =>
+      new URL(String(input)).pathname === SANDBOX_PATHS.agentRequests
+        ? json({ error: { reason: 'sandbox.limit_reached', message: 'Too many waiting' } }, 429)
+        : world.fetch(input, init)) as typeof globalThis.fetch
+    await expect(
+      connectToBusiness({ businessId: BUSINESS, label: 'x', store, fetch: refusing }),
+    ).rejects.toThrow('Too many waiting')
   })
 
   it('names the console when the business ID is unknown', async () => {

@@ -15,11 +15,11 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
 import { AvowApiError, agentRequestKey, avowRequests, enrollAgent } from '../http.js'
-import { FACTORY_ABI } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
+import { type AccountLock, accountLocks } from './account-lock.js'
 import { platformStore } from './agent.js'
-import { loadSandboxDeployment } from './deployment.js'
+import { loadSandboxDeployment, trustedFactoryAddresses } from './deployment.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import {
   type AgentItem,
@@ -238,18 +238,14 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     o.onEvent?.({ type: 'bound', businessId })
   }
 
-  // The business's account from its id, and its lock from the factory on chain. Avow refuses the
-  // ask for a business it doesn't hold at that lock.
+  // The business's account from its id. Anyone can create an account's lock at any factory, so
+  // the account may have one at more than one trusted factory, and Avow, which holds the business
+  // at one of them, refuses the ask at any other. The first lock Avow takes the ask at is the
+  // business's.
   const account = accountOfSandboxId(businessId)
   const unknown = `Avow has no sandbox business ${businessId}. Copy its ID from the console.`
   if (!account) throw new Error(unknown)
   const client = moderatoClient(deployment.rpcUrl)
-  const lock: Address = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [account],
-  })
   const agentKey: AgentKey = Account.fromSecp256k1(keyHex, { access: account })
 
   const config = {
@@ -259,11 +255,9 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     fetch: send,
   }
   const ask = avowRequests(config)
-  const domain = { chainId: deployment.chainId, verifyingContract: lock }
-  let status: AgentRequestStatus
-  for (;;) {
-    status = await ask({
-      domain,
+  const askAt = (lock: Address) =>
+    ask({
+      domain: { chainId: deployment.chainId, verifyingContract: lock },
       path: SANDBOX_PATHS.agentRequests,
       body: {
         businessId,
@@ -274,15 +268,34 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
         const read = parseAgentRequestStatus(json)
         return read ? { ok: true, value: read } : { ok: false, reason: 'message.invalid' }
       },
-    }).catch((error: unknown) => {
-      if (error instanceof AvowApiError && error.reason === 'business.unknown') {
-        throw new Error(unknown)
-      }
+    })
+  const notHeld = (error: unknown) =>
+    error instanceof AvowApiError && error.reason === 'business.unknown'
+
+  let held: { at: AccountLock; status: AgentRequestStatus } | null = null
+  const factories = trustedFactoryAddresses(deployment.chainId)
+  for (const at of await accountLocks({ client, factories, account })) {
+    const status = await askAt(at.lock).catch((error: unknown) => {
+      if (notHeld(error)) return null
       throw error
     })
-    if (status.state === 'approved') break
+    if (status) {
+      held = { at, status }
+      break
+    }
+  }
+  if (!held) throw new Error(unknown)
+  const { lock, factory } = held.at
+  let status = held.status
+  while (status.state !== 'approved') {
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
     await pause(o.pollEvery ?? 5000, o.signal)
+    status = await askAt(lock).catch((error: unknown) => {
+      if (!notHeld(error)) throw error
+      throw new Error(
+        `Avow no longer holds the request for ${businessId}, so the business or its request went away. Connect again to ask afresh.`,
+      )
+    })
   }
 
   const approval = parseEnrollmentRequest(status.approval, { chainId: deployment.chainId, lock })
@@ -305,7 +318,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   const business: StoredBusiness = {
     chainId: deployment.chainId,
     apiUrl: deployment.apiUrl,
-    factory: deployment.factory,
+    factory,
     token: deployment.token,
     account,
     lock,

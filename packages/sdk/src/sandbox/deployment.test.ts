@@ -10,6 +10,7 @@ import {
 import { fakeChain } from '../test/fake-chain.js'
 import { deployment, LOCK, LOCK_BLOCK } from '../test/sandbox-business.js'
 import {
+  factoriesToRead,
   loadSandboxDeployment,
   oldestTrustedBlock,
   trustedFactories,
@@ -49,6 +50,14 @@ describe('the factories the SDK trusts', () => {
       )
     }
     expect(oldestTrustedBlock(42431)).toBe(MODERATO_FACTORY_CREATED_IN)
+  })
+
+  it('are what a service on a trusted factory reads, and a service on its own factory reads that one', () => {
+    expect(factoriesToRead(42431, MODERATO_FACTORY)).toEqual(
+      MODERATO_FACTORIES.map((f) => f.address),
+    )
+    expect(factoriesToRead(42431, STRANGER)).toEqual([STRANGER])
+    expect(factoriesToRead(1, MODERATO_FACTORY)).toEqual([MODERATO_FACTORY])
   })
 
   it("can't be changed by anything else running in the process", () => {

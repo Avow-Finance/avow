@@ -10,9 +10,10 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { rootRequestKey } from '../http.js'
-import { cancelFreeCall, FACTORY_ABI, removeSupplierCall } from '../lock.js'
+import { cancelFreeCall, removeSupplierCall } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { sendOwn } from '../send.js'
+import { currentLock, isAccountLock } from './account-lock.js'
 import {
   checkSession,
   dailyLimitOf,
@@ -267,24 +268,26 @@ export async function prepareSandboxBusiness(
   }
 
   // Whether the business is set up comes from the chain, never from the file alone, since anything
-  // running as the developer can write the file. The lock is the factory's for the sealed key's
-  // account, and the file's record counts only when it names that lock and the lock is on chain.
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [sealed.account],
-  })
-  const lockMade = (await client.getCode({ address: lock })) !== undefined
+  // running as the developer can write the file. The file's record counts only when the chain shows
+  // a trusted factory made its lock for the sealed key's account, which keeps a business set up
+  // under an earlier factory on its own lock. Without one, the lock is the current factory's.
   const recorded = item.business
-  let business =
-    recorded &&
+  const kept =
+    recorded !== null &&
     madeOn(recorded, deployment) &&
     isAddressEqual(recorded.account, sealed.account) &&
-    isAddressEqual(recorded.lock, lock) &&
-    lockMade
+    (await isAccountLock({
+      client,
+      chainId: deployment.chainId,
+      account: sealed.account,
+      recorded,
+    }))
       ? recorded
       : null
+  const { lock, made: lockMade } = kept
+    ? { lock: kept.lock, made: true }
+    : await currentLock({ client, factory: deployment.factory, account: sealed.account })
+  let business = kept
   let setUpAgain = false
   let fundedNow: bigint | null = null
   if (!business) {
@@ -329,7 +332,7 @@ export async function prepareSandboxBusiness(
     business = {
       chainId: deployment.chainId,
       apiUrl: deployment.apiUrl,
-      factory: deployment.factory,
+      factory: made.factory,
       token: deployment.token,
       account: made.account,
       lock: made.lock,
@@ -679,13 +682,16 @@ export async function cancelSandboxCommitment(options: {
     options.deployment ??
     (await loadSandboxDeployment(options.screenUrl ?? SANDBOX_SCREEN_URL, send))
   const client = options.client ?? moderatoClient(deployment.rpcUrl)
-  // The lock is the factory's for the account, read from the chain, whatever the file names.
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [item.account],
+  // The lock the file names counts only once the chain shows a trusted factory made it for the
+  // account, so a changed file can't send the cancel anywhere else.
+  const { lock } = item.business
+  const held = await isAccountLock({
+    client,
+    chainId: deployment.chainId,
+    account: item.account,
+    recorded: item.business,
   })
+  if (!held) throw new Error(`${lock} isn't a lock a trusted factory made for this business`)
   const root = Account.fromSecp256k1(
     await openKey(item.key, await options.prompts.passphrase(), item.account),
   )

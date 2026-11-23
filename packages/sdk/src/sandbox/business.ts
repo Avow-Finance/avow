@@ -7,8 +7,9 @@ import {
 import type { Address, Hex } from 'viem'
 import type { Account as TempoAccount } from 'viem/tempo'
 import { AvowApiError, avowRequests, rootRequestKey } from '../http.js'
-import { createLockCall, FACTORY_ABI } from '../lock.js'
+import { createLockCall } from '../lock.js'
 import { sendOwn } from '../send.js'
+import { type AccountLock, currentLock, isAccountLock } from './account-lock.js'
 import { balanceOf, fundFees, type SandboxClient } from './fees.js'
 
 /** How long a registration the root key signs stays valid, well inside the API's five minutes. */
@@ -27,6 +28,8 @@ export type SandboxBusinessStep =
 export interface SandboxBusiness {
   account: Address
   lock: Address
+  /** The factory that made the lock, which is an earlier trusted one for an older business. */
+  factory: Address
   businessId: string
   /** The faucet transactions that funded the account's fees, empty when it held enough already. */
   feeHashes: Hex[]
@@ -41,6 +44,11 @@ export interface SandboxBusinessDeps {
   client: SandboxClient
   /** The business account's root key, made where the business runs and kept there. */
   root: TempoAccount.RootAccount
+  /**
+   * The lock the business has already, when it was set up under an earlier trusted factory. It's
+   * checked against the chain and kept. Without it, the business takes the current factory's lock.
+   */
+  lock?: AccountLock
   legalName: string
   /** Two capital letters, such as `US`. */
   country: string
@@ -57,9 +65,39 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
 
 /**
+ * The business's lock: the one it names, once the chain shows a trusted factory made it for the
+ * account, or else the current factory's, created here when it isn't on chain yet.
+ */
+async function businessLock(
+  deps: Pick<SandboxBusinessDeps, 'deployment' | 'client' | 'root' | 'lock'>,
+  account: Address,
+): Promise<AccountLock & { lockCreatedIn: Hex | null }> {
+  const { deployment, client } = deps
+  if (deps.lock) {
+    const known = { client, chainId: deployment.chainId, account, recorded: deps.lock }
+    if (!(await isAccountLock(known))) {
+      throw new Error(
+        `${deps.lock.lock} isn't a lock a trusted factory made for ${account}, so the business can't keep it`,
+      )
+    }
+    return { ...deps.lock, lockCreatedIn: null }
+  }
+  const factory = deployment.factory
+  const current = await currentLock({ client, factory, account })
+  if (current.made) return { factory, lock: current.lock, lockCreatedIn: null }
+  const receipt = await sendOwn({
+    client,
+    account: deps.root,
+    calls: [createLockCall(factory, account)],
+  })
+  return { factory, lock: current.lock, lockCreatedIn: receipt.transactionHash }
+}
+
+/**
  * Makes a sandbox business from its root key and registers it, in a browser or in Node.
  * Moderato's faucet funds the account's fees, the root key creates the lock from Avow's factory,
- * and then signs the sandbox registration, which has Avow's sandbox faucet pay the account its
+ * or keeps the lock the business names from an earlier trusted factory, and then signs the sandbox
+ * registration, which has Avow's sandbox faucet pay the account its
  * test dollars. Every step is safe to run again. An account that holds fees isn't funded twice, a
  * lock that exists isn't created again, and Avow answers a second registration of the same account
  * with the first one's answer and pays nothing more.
@@ -74,21 +112,7 @@ export async function createSandboxBusiness(deps: SandboxBusinessDeps): Promise<
   const feeHashes = await fundFees(client, account)
   onStep({ step: 'fees', hashes: feeHashes })
 
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [account],
-  })
-  let lockCreatedIn: Hex | null = null
-  if ((await client.getCode({ address: lock })) === undefined) {
-    const receipt = await sendOwn({
-      client,
-      account: root,
-      calls: [createLockCall(deployment.factory, account)],
-    })
-    lockCreatedIn = receipt.transactionHash
-  }
+  const { factory, lock, lockCreatedIn } = await businessLock(deps, account)
   onStep({ step: 'lock', lock, createdIn: lockCreatedIn })
 
   const body = await signBusinessRegistration({
@@ -136,6 +160,7 @@ export async function createSandboxBusiness(deps: SandboxBusinessDeps): Promise<
       return {
         account,
         lock,
+        factory,
         businessId: registered.businessId,
         feeHashes,
         lockCreatedIn,

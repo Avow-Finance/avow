@@ -18,6 +18,10 @@ A run exits with status 1 when a step failed, a transaction's outcome is unknown
 
 The factory creates a lock for any account, at anyone's request, so a keeper meets locks no business uses, and someone can create thousands of them. The keeper is built to keep going when they do. A query the node refuses for holding more than 20,000 logs is split and asked again. A query that fails leaves only its own blocks unread, and the run says which. Each group's due steps go out before the next group is read, and the turn moves which group goes first and where its checks start, so locks behind a pile of empty ones and sides behind a long queue still get reached. A run asks for time before every query and every side it checks, starts neither after `RUN_MINUTES`, and gives the count of locks and open sides it didn't reach.
 
+## One keeper per factory
+
+A keeper serves the locks of the one factory `AVOW_FACTORY` names. When Avow deploys a newer factory, businesses set up under the earlier one keep their locks there, so run a keeper for each factory whose locks you want served.
+
 ## Why anyone can run it
 
 `trigger` takes a commitment and a side and nothing else. It needs no signature and no particular caller, it does nothing until a deadline has passed, and it pays only the parties the lock recorded. The lock alone decides what each step does. So the keeper holds nothing worth stealing. Its key exists for one run, in memory, and holds only what the testnet faucet sent it. If you'd rather not depend on Avow's uptime, run your own.

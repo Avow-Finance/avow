@@ -38,7 +38,6 @@ import {
 import {
   readAgentKey,
   readBacking,
-  tempoChainReader,
   verifyCommitmentReference,
   verifyCommitmentTerms,
 } from '@avow-finance/verifier'
@@ -65,6 +64,7 @@ import {
 import { sandboxSupplierProfile } from './supplier-profile.js'
 import { connectSupplier } from './suppliers.js'
 import { micros, type SandboxResource, sandboxTerms, toDollars } from './terms.js'
+import { trustedChainReader } from './trusted-readers.js'
 
 /**
  * A booking refused before any money moved, by the SDK, Avow, Avow's relay, the lock or the
@@ -966,7 +966,6 @@ async function verifyCommitment(m: {
 }): Promise<SandboxCheck[]> {
   const { client, deployment, domain, commitment } = m
   const a = commitment.approval.message
-  const factory = trustedFactory(deployment.chainId, deployment.factory)
   const check = (name: string, reason: ReasonCode | null): SandboxCheck => ({
     name,
     passed: reason === null,
@@ -998,13 +997,14 @@ async function verifyCommitment(m: {
       approvalReason,
     ),
   ]
-  if (!factory) {
+  // A lock from any factory the SDK trusts counts, so a business set up under an earlier one
+  // still checks its own bookings.
+  const reader = trustedFactory(deployment.chainId, deployment.factory)
+    ? trustedChainReader(client, deployment.chainId)
+    : null
+  if (!reader) {
     return [...checks, check('The SDK trusts a factory on this chain', 'chain.lock_unknown')]
   }
-  const reader = tempoChainReader(client, {
-    factory: factory.address,
-    chainId: deployment.chainId,
-  })
   // A node a block behind the one the reserve landed in doesn't show it yet, so each read waits.
   const settled = async <T extends { ok: boolean }>(read: () => Promise<T>): Promise<T> => {
     let result = await read()

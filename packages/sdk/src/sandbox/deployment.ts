@@ -16,6 +16,10 @@ export function trustedFactories(chainId: number): readonly TrustedFactory[] {
   return chainId === TEMPO_MODERATO ? MODERATO_FACTORIES : []
 }
 
+/** The addresses of every lock factory the SDK trusts on a chain, oldest first. */
+export const trustedFactoryAddresses = (chainId: number): Address[] =>
+  trustedFactories(chainId).map((f) => f.address)
+
 /**
  * The block the oldest factory the SDK trusts on a chain was created in. No lock of Avow's on the
  * chain, and no key authorized for one, is older. It throws on a chain where the SDK trusts none.
@@ -24,6 +28,15 @@ export function oldestTrustedBlock(chainId: number): bigint {
   const oldest = trustedFactories(chainId)[0]
   if (!oldest) throw new Error(`The SDK trusts no factory on chain ${chainId}`)
   return oldest.createdIn
+}
+
+/**
+ * The factories whose locks a service reads, oldest first. A service on a factory the SDK trusts
+ * reads every trusted factory, so a business keeps its lock when the sandbox moves to a newer one.
+ * A service on any other factory, such as one a rehearsal deploys for itself, reads that one alone.
+ */
+export function factoriesToRead(chainId: number, current: Address): Address[] {
+  return trustedFactory(chainId, current) ? trustedFactoryAddresses(chainId) : [current]
 }
 
 /** The trusted factory at this address on a chain, or null when the SDK doesn't trust it. */
@@ -59,9 +72,14 @@ export async function loadSandboxDeployment(
   return parsed.value
 }
 
-/** Whether a business was made on this deployment, so its lock and registration still hold. */
+/**
+ * Whether a business was made on this deployment, so its lock and registration still hold. Its
+ * lock may come from an earlier factory the SDK still trusts, since a business keeps its lock when
+ * the sandbox moves to a newer factory. The deployment's own factory always counts, which matters
+ * only for a deployment on a factory the SDK doesn't trust, as tests use.
+ */
 export const madeOn = (b: StoredBusiness, d: SandboxDeployment): boolean =>
   b.chainId === d.chainId &&
   b.apiUrl === d.apiUrl &&
-  isAddressEqual(b.factory, d.factory) &&
+  (isAddressEqual(b.factory, d.factory) || trustedFactory(d.chainId, b.factory) !== null) &&
   isAddressEqual(b.token, d.token)

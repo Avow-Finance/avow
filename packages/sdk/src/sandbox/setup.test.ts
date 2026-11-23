@@ -2,7 +2,7 @@ import type { Address } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { MODERATO_FACTORY, MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
+import { MODERATO_FACTORIES, MODERATO_FACTORY, MODERATO_FACTORY_CREATED_IN } from '../moderato.js'
 import { fakeChain } from '../test/fake-chain.js'
 import {
   config,
@@ -38,6 +38,31 @@ describe("the business's side, when the agent writes to .avow", () => {
       log: () => {},
     })
     expect(prepared).toMatchObject({ signed: false, authority: 500, lock: LOCK })
+    expect(asked).toEqual([])
+    expect(chain.writes).toEqual([])
+  })
+
+  it('stands on its lock from an earlier factory after the sandbox moves to a newer one', async () => {
+    const b = await enrolledBusiness()
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: b.root.address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      keys: [{ key: b.agentKey, block: LOCK_BLOCK + 5n, witness: b.witness }],
+    })
+    const { asked, prompts } = recordingPrompts()
+    const prepared = await prepareSandboxBusiness({
+      config,
+      prompts,
+      store: b.store,
+      deployment: { ...deployment, factory: MODERATO_FACTORIES[1]?.address as Address },
+      client: chain.client,
+      session: null,
+      log: () => {},
+    })
+    expect(prepared).toMatchObject({ signed: false, lock: LOCK })
     expect(asked).toEqual([])
     expect(chain.writes).toEqual([])
   })

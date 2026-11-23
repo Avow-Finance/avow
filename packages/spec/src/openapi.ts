@@ -144,9 +144,10 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Agents',
     summary: 'Ask a business for authority',
     description:
-      "An agent asks a named business for authority, signed by the key it made, under that business's lock. It hears the answer by sending the same request again. The answer carries a pairing code the administrator checks in the console, and once approved, the body the agent enrolls with. The request grants nothing, since only the business account's root key approves.",
+      "An agent asks a named business for authority, signed by the key it made, under that business's lock. It hears the answer by sending the same request again. The answer carries a pairing code the administrator checks in the console, and once approved, the body the agent enrolls with. The request grants nothing, since only the business account's root key approves.\n\nAvow answers `business.unknown` for an ask signed under any lock it doesn't hold the business at. An account can have a lock at more than one trusted factory, since anyone can create one, so an agent that finds several asks at each until Avow answers.",
     signedBy: "The agent's key",
     domain: 'lock',
+    refusals: [404],
     request: {
       schema: agentRequestJson,
       example: {

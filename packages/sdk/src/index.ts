@@ -28,6 +28,12 @@ export * from './job/quote.js'
 export * from './lock.js'
 export * from './moderato.js'
 export {
+  type AccountLock,
+  accountLocks,
+  currentLock,
+  isAccountLock,
+} from './sandbox/account-lock.js'
+export {
   dailyLimitOf,
   fundingRefusal,
   keyLeftToday,
@@ -53,10 +59,12 @@ export {
   SANDBOX_CONSOLE_URL,
 } from './sandbox/connect.js'
 export {
+  factoriesToRead,
   loadSandboxDeployment,
   madeOn,
   trustedFactories,
   trustedFactory,
+  trustedFactoryAddresses,
 } from './sandbox/deployment.js'
 export * from './sandbox/fees.js'
 export {
@@ -102,6 +110,7 @@ export {
   type SandboxSupplier,
 } from './sandbox/store.js'
 export * from './sandbox/terms.js'
+export { lockReadersFor } from './sandbox/trusted-readers.js'
 export * from './send.js'
 export * from './service/quote.js'
 export * from './sign.js'

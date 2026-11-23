@@ -4,8 +4,8 @@ import {
   tempoChainReader,
   tempoLockReader,
 } from '@avow-finance/verifier'
-import type { Client } from 'viem'
-import { trustedFactories } from './deployment.js'
+import type { Address, Client } from 'viem'
+import { trustedFactoryAddresses } from './deployment.js'
 
 /**
  * A chain reader that counts a lock as Avow's when any factory the SDK trusts on the chain made
@@ -13,17 +13,26 @@ import { trustedFactories } from './deployment.js'
  * earlier trusted factory still reads through this.
  */
 export function trustedChainReader(client: Client, chainId: number): ChainReader | null {
-  const factories = trustedFactories(chainId).map((f) => f.address)
+  const factories = trustedFactoryAddresses(chainId)
   return factories.length > 0 ? tempoChainReader(client, { factory: factories, chainId }) : null
 }
 
 /**
- * One pinned lock reader for each factory the SDK trusts on the chain, as the dependency check
- * takes them, so an upstream booking in a lock from any of them can be read. None on a chain
- * where it trusts none, so the check refuses.
+ * One pinned lock reader for each of these factories, as the dependency check takes them, so an
+ * upstream booking in a lock from any of them can be read.
+ */
+export function lockReadersFor(
+  client: Client,
+  chainId: number,
+  factories: readonly Address[],
+): PinnedLockReader[] {
+  return factories.map((factory) => tempoLockReader(client, { factory, chainId }))
+}
+
+/**
+ * One pinned lock reader for each factory the SDK trusts on the chain. None on a chain where it
+ * trusts none, so the check refuses.
  */
 export function trustedLockReaders(client: Client, chainId: number): PinnedLockReader[] {
-  return trustedFactories(chainId).map((f) =>
-    tempoLockReader(client, { factory: f.address, chainId }),
-  )
+  return lockReadersFor(client, chainId, trustedFactoryAddresses(chainId))
 }
