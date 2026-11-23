@@ -36,6 +36,21 @@ describe('the factories the SDK trusts', () => {
     })
   })
 
+  it('include the factory with the supplier registry, created after the first', () => {
+    const registryFactory = trustedFactory(42431, '0xeec6e0c0a212868d4bb7c5857338de57e4ca8b91')
+    expect(registryFactory).toEqual({
+      address: '0xEeC6E0C0a212868D4BB7C5857338DE57E4Ca8b91',
+      createdIn: 45_516_423n,
+    })
+    // Oldest first, so the scan for live keys still starts at the first factory.
+    for (let i = 1; i < MODERATO_FACTORIES.length; i++) {
+      expect(MODERATO_FACTORIES[i]?.createdIn).toBeGreaterThan(
+        MODERATO_FACTORIES[i - 1]?.createdIn ?? 0n,
+      )
+    }
+    expect(oldestTrustedBlock(42431)).toBe(MODERATO_FACTORY_CREATED_IN)
+  })
+
   it("can't be changed by anything else running in the process", () => {
     expect(() =>
       (MODERATO_FACTORIES as TrustedFactory[]).push(MODERATO_FACTORIES[0] as never),
