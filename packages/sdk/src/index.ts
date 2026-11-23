@@ -64,6 +64,7 @@ export {
   madeOn,
   trustedFactories,
   trustedFactory,
+  trustedFactoryAddresses,
 } from './sandbox/deployment.js'
 export * from './sandbox/fees.js'
 export {
@@ -109,6 +110,7 @@ export {
   type SandboxSupplier,
 } from './sandbox/store.js'
 export * from './sandbox/terms.js'
+export { lockReadersFor } from './sandbox/trusted-readers.js'
 export * from './send.js'
 export * from './service/quote.js'
 export * from './sign.js'

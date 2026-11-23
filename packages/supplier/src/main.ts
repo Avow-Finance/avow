@@ -112,7 +112,7 @@ async function serve() {
   const { account, signingKey } = keysOf(store)
   const client = moderatoClient(settings.rpcUrl)
   // A buyer's lock from any factory the SDK trusts counts, so buyers keep their locks when the
-  // sandbox moves to a newer factory, and a factory the SDK doesn't trust stops the adapter here.
+  // sandbox moves to a newer factory.
   const factories = factoriesToRead(TEMPO_MODERATO, settings.factory)
   const chain = tempoChainReader(client, { factory: factories, chainId: TEMPO_MODERATO })
   const profile: SupplierProfile = {

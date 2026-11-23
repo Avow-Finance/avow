@@ -46,18 +46,26 @@ describe("the current factory's lock", () => {
 })
 
 describe("an account's locks", () => {
-  it('lists every one a trusted factory made, oldest factory first', async () => {
+  it('lists every one the given factories made, oldest factory first', async () => {
     expect(
-      await accountLocks({ client: chain([SECOND, FIRST]), chainId: 42431, account: ACCOUNT }),
+      await accountLocks({
+        client: chain([SECOND, FIRST]),
+        factories: [FIRST, SECOND],
+        account: ACCOUNT,
+      }),
     ).toEqual([
       { factory: FIRST, lock: lockOf(FIRST) },
       { factory: SECOND, lock: lockOf(SECOND) },
     ])
-    expect(await accountLocks({ client: chain([]), chainId: 42431, account: ACCOUNT })).toEqual([])
+    expect(
+      await accountLocks({ client: chain([]), factories: [FIRST, SECOND], account: ACCOUNT }),
+    ).toEqual([])
   })
 
-  it('lists none on a chain where the SDK trusts no factory', async () => {
-    expect(await accountLocks({ client: chain([FIRST]), chainId: 1, account: ACCOUNT })).toEqual([])
+  it('asks only the factories it is given', async () => {
+    expect(
+      await accountLocks({ client: chain([FIRST]), factories: [SECOND], account: ACCOUNT }),
+    ).toEqual([])
   })
 })
 

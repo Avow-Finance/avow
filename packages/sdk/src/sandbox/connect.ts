@@ -19,7 +19,7 @@ import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
 import { type AccountLock, accountLocks } from './account-lock.js'
 import { platformStore } from './agent.js'
-import { loadSandboxDeployment } from './deployment.js'
+import { loadSandboxDeployment, trustedFactoryAddresses } from './deployment.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
 import {
   type AgentItem,
@@ -273,7 +273,8 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     error instanceof AvowApiError && error.reason === 'business.unknown'
 
   let held: { at: AccountLock; status: AgentRequestStatus } | null = null
-  for (const at of await accountLocks({ client, chainId: deployment.chainId, account })) {
+  const factories = trustedFactoryAddresses(deployment.chainId)
+  for (const at of await accountLocks({ client, factories, account })) {
     const status = await askAt(at.lock).catch((error: unknown) => {
       if (notHeld(error)) return null
       throw error

@@ -1,6 +1,6 @@
 import { type Address, isAddressEqual } from 'viem'
 import { FACTORY_ABI } from '../lock.js'
-import { trustedFactory, trustedFactoryAddresses } from './deployment.js'
+import { trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
 
 /** A lock and the factory that made it. */
@@ -36,17 +36,18 @@ export async function currentLock(m: {
 }
 
 /**
- * Every lock on chain that a trusted factory made for the account, oldest factory first. A factory
+ * Every lock on chain that one of these factories made for the account, oldest factory first. A factory
  * lets anyone create any account's lock, so more than one can be there. Which is the business's
  * comes from Avow's record or the business's own, never from this list alone.
  */
 export async function accountLocks(m: {
   client: Reads
-  chainId: number
+  /** The factories to ask, oldest first, which `factoriesToRead` gives a service. */
+  factories: readonly Address[]
   account: Address
 }): Promise<AccountLock[]> {
   const found: AccountLock[] = []
-  for (const factory of trustedFactoryAddresses(m.chainId)) {
+  for (const factory of m.factories) {
     const lock = await lockAddress(m.client, factory, m.account)
     if (await onChain(m.client, lock)) found.push({ factory, lock })
   }

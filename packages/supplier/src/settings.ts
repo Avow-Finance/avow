@@ -9,8 +9,8 @@ export interface SupplierSettings {
   apiUrl: string
   rpcUrl: string
   /**
-   * Avow's current lock factory, which the SDK has to trust. A booking counts on a lock from any
-   * factory the SDK trusts, so buyers keep their locks when the sandbox moves to a newer one.
+   * Avow's current lock factory. When the SDK trusts it, a booking counts on a lock from any factory
+   * the SDK trusts, so buyers keep their locks when the sandbox moves to a newer one.
    */
   factory: Address
   /** The token reserves are held in. */

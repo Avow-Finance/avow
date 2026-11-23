@@ -31,15 +31,12 @@ export function oldestTrustedBlock(chainId: number): bigint {
 }
 
 /**
- * The factories whose locks a service reads, oldest first: every one the SDK trusts on the chain.
- * It throws when the factory the service makes new locks from isn't among them, so a service
- * started with the wrong factory stops at once rather than reading locks it shouldn't.
+ * The factories whose locks a service reads, oldest first. A service on a factory the SDK trusts
+ * reads every trusted factory, so a business keeps its lock when the sandbox moves to a newer one.
+ * A service on any other factory, such as one a rehearsal deploys for itself, reads that one alone.
  */
 export function factoriesToRead(chainId: number, current: Address): Address[] {
-  if (!trustedFactory(chainId, current)) {
-    throw new Error(`The factory ${current} isn't one the SDK trusts on chain ${chainId}`)
-  }
-  return trustedFactoryAddresses(chainId)
+  return trustedFactory(chainId, current) ? trustedFactoryAddresses(chainId) : [current]
 }
 
 /** The trusted factory at this address on a chain, or null when the SDK doesn't trust it. */
