@@ -59,9 +59,13 @@ export async function loadSandboxDeployment(
   return parsed.value
 }
 
-/** Whether a business was made on this deployment, so its lock and registration still hold. */
+/**
+ * Whether a business was made on this deployment, so its lock and registration still hold. Its
+ * lock may come from an earlier factory the SDK still trusts, since a business keeps its lock when
+ * the sandbox moves to a newer factory.
+ */
 export const madeOn = (b: StoredBusiness, d: SandboxDeployment): boolean =>
   b.chainId === d.chainId &&
   b.apiUrl === d.apiUrl &&
-  isAddressEqual(b.factory, d.factory) &&
+  (isAddressEqual(b.factory, d.factory) || trustedFactory(d.chainId, b.factory) !== null) &&
   isAddressEqual(b.token, d.token)

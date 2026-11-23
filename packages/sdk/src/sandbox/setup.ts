@@ -10,9 +10,10 @@ import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { rootRequestKey } from '../http.js'
-import { cancelFreeCall, FACTORY_ABI, removeSupplierCall } from '../lock.js'
+import { cancelFreeCall, removeSupplierCall } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { sendOwn } from '../send.js'
+import { accountLock } from './account-lock.js'
 import {
   checkSession,
   dailyLimitOf,
@@ -267,15 +268,15 @@ export async function prepareSandboxBusiness(
   }
 
   // Whether the business is set up comes from the chain, never from the file alone, since anything
-  // running as the developer can write the file. The lock is the factory's for the sealed key's
-  // account, and the file's record counts only when it names that lock and the lock is on chain.
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [sealed.account],
+  // running as the developer can write the file. The lock is the sealed key's account's, from the
+  // first trusted factory that made one, and the file's record counts only when it names that lock
+  // and the lock is on chain.
+  const { lock, made: lockMade } = await accountLock({
+    client,
+    chainId: deployment.chainId,
+    current: deployment.factory,
+    account: sealed.account,
   })
-  const lockMade = (await client.getCode({ address: lock })) !== undefined
   const recorded = item.business
   let business =
     recorded &&
@@ -329,7 +330,7 @@ export async function prepareSandboxBusiness(
     business = {
       chainId: deployment.chainId,
       apiUrl: deployment.apiUrl,
-      factory: deployment.factory,
+      factory: made.factory,
       token: deployment.token,
       account: made.account,
       lock: made.lock,
@@ -679,12 +680,12 @@ export async function cancelSandboxCommitment(options: {
     options.deployment ??
     (await loadSandboxDeployment(options.screenUrl ?? SANDBOX_SCREEN_URL, send))
   const client = options.client ?? moderatoClient(deployment.rpcUrl)
-  // The lock is the factory's for the account, read from the chain, whatever the file names.
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [item.account],
+  // The account's lock, read from the chain, whatever the file names.
+  const { lock } = await accountLock({
+    client,
+    chainId: deployment.chainId,
+    current: deployment.factory,
+    account: item.account,
   })
   const root = Account.fromSecp256k1(
     await openKey(item.key, await options.prompts.passphrase(), item.account),

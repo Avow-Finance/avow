@@ -7,8 +7,9 @@ import {
 import type { Address, Hex } from 'viem'
 import type { Account as TempoAccount } from 'viem/tempo'
 import { AvowApiError, avowRequests, rootRequestKey } from '../http.js'
-import { createLockCall, FACTORY_ABI } from '../lock.js'
+import { createLockCall } from '../lock.js'
 import { sendOwn } from '../send.js'
+import { accountLock } from './account-lock.js'
 import { balanceOf, fundFees, type SandboxClient } from './fees.js'
 
 /** How long a registration the root key signs stays valid, well inside the API's five minutes. */
@@ -27,6 +28,8 @@ export type SandboxBusinessStep =
 export interface SandboxBusiness {
   account: Address
   lock: Address
+  /** The factory that made the lock, which is an earlier trusted one for an older business. */
+  factory: Address
   businessId: string
   /** The faucet transactions that funded the account's fees, empty when it held enough already. */
   feeHashes: Hex[]
@@ -58,8 +61,9 @@ const systemClock = () => BigInt(Math.floor(Date.now() / 1000))
 
 /**
  * Makes a sandbox business from its root key and registers it, in a browser or in Node.
- * Moderato's faucet funds the account's fees, the root key creates the lock from Avow's factory,
- * and then signs the sandbox registration, which has Avow's sandbox faucet pay the account its
+ * Moderato's faucet funds the account's fees, the root key creates the lock from Avow's factory
+ * unless the account has one from a factory the SDK trusts already, and then signs the sandbox
+ * registration, which has Avow's sandbox faucet pay the account its
  * test dollars. Every step is safe to run again. An account that holds fees isn't funded twice, a
  * lock that exists isn't created again, and Avow answers a second registration of the same account
  * with the first one's answer and pays nothing more.
@@ -74,14 +78,14 @@ export async function createSandboxBusiness(deps: SandboxBusinessDeps): Promise<
   const feeHashes = await fundFees(client, account)
   onStep({ step: 'fees', hashes: feeHashes })
 
-  const lock = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [account],
+  const { lock, made, factory } = await accountLock({
+    client,
+    chainId: deployment.chainId,
+    current: deployment.factory,
+    account,
   })
   let lockCreatedIn: Hex | null = null
-  if ((await client.getCode({ address: lock })) === undefined) {
+  if (!made) {
     const receipt = await sendOwn({
       client,
       account: root,
@@ -136,6 +140,7 @@ export async function createSandboxBusiness(deps: SandboxBusinessDeps): Promise<
       return {
         account,
         lock,
+        factory,
         businessId: registered.businessId,
         feeHashes,
         lockCreatedIn,

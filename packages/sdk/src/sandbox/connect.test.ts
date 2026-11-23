@@ -17,7 +17,8 @@ import { loadAgentItem, memoryStore, saveAgentItem } from './store.js'
 
 vi.mock('../moderato.js', async (original) => ({
   ...(await original<typeof import('../moderato.js')>()),
-  moderatoClient: () => ({ readContract: async () => LOCK }),
+  // Every factory answers the business's lock, and it's on chain, so the oldest trusted one has it.
+  moderatoClient: () => ({ readContract: async () => LOCK, getCode: async () => '0x6080' }),
 }))
 
 const { approvalLink, connectToBusiness } = await import('./connect.js')

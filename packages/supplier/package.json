@@ -1,6 +1,6 @@
 {
   "name": "@avow-finance/supplier",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "The adapter a supplier runs beside its booking system: it signs agreements for agents, checks and accepts each reserve, calls the supplier's webhook and answers a local check of a commitment",
   "license": "Apache-2.0",

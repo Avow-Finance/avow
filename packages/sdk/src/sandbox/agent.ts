@@ -51,7 +51,7 @@ import { readOpenReserves } from '../lock.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { landedReverted, sendErrorIn, sendSponsored } from '../send.js'
 import { SupplierDeclined } from '../supplier.js'
-import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
+import { loadSandboxDeployment, madeOn, trustedFactories, trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
 import { heldMandates } from './mandates.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
@@ -1001,8 +1001,10 @@ async function verifyCommitment(m: {
   if (!factory) {
     return [...checks, check('The SDK trusts a factory on this chain', 'chain.lock_unknown')]
   }
+  // A lock from any factory the SDK trusts counts, so a business set up under an earlier one
+  // still checks its own bookings.
   const reader = tempoChainReader(client, {
-    factory: factory.address,
+    factory: trustedFactories(deployment.chainId).map((f) => f.address),
     chainId: deployment.chainId,
   })
   // A node a block behind the one the reserve landed in doesn't show it yet, so each read waits.

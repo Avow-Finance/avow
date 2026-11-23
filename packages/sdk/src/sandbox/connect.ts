@@ -15,9 +15,9 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import type { AgentKey } from '../agent.js'
 import { AvowApiError, agentRequestKey, avowRequests, enrollAgent } from '../http.js'
-import { FACTORY_ABI } from '../lock.js'
 import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
+import { accountLock } from './account-lock.js'
 import { platformStore } from './agent.js'
 import { loadSandboxDeployment } from './deployment.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
@@ -238,17 +238,17 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     o.onEvent?.({ type: 'bound', businessId })
   }
 
-  // The business's account from its id, and its lock from the factory on chain. Avow refuses the
-  // ask for a business it doesn't hold at that lock.
+  // The business's account from its id, and its lock on chain from the first trusted factory that
+  // made one. Avow refuses the ask for a business it doesn't hold at that lock.
   const account = accountOfSandboxId(businessId)
   const unknown = `Avow has no sandbox business ${businessId}. Copy its ID from the console.`
   if (!account) throw new Error(unknown)
   const client = moderatoClient(deployment.rpcUrl)
-  const lock: Address = await client.readContract({
-    address: deployment.factory,
-    abi: FACTORY_ABI,
-    functionName: 'lockAddress',
-    args: [account],
+  const { lock, factory } = await accountLock({
+    client,
+    chainId: deployment.chainId,
+    current: deployment.factory,
+    account,
   })
   const agentKey: AgentKey = Account.fromSecp256k1(keyHex, { access: account })
 
@@ -305,7 +305,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   const business: StoredBusiness = {
     chainId: deployment.chainId,
     apiUrl: deployment.apiUrl,
-    factory: deployment.factory,
+    factory,
     token: deployment.token,
     account,
     lock,
