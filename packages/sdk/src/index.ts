@@ -27,6 +27,7 @@ export * from './job/customer.js'
 export * from './job/quote.js'
 export * from './lock.js'
 export * from './moderato.js'
+export { type AccountLock, accountLock } from './sandbox/account-lock.js'
 export {
   dailyLimitOf,
   fundingRefusal,
