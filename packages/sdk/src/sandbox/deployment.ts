@@ -16,6 +16,10 @@ export function trustedFactories(chainId: number): readonly TrustedFactory[] {
   return chainId === TEMPO_MODERATO ? MODERATO_FACTORIES : []
 }
 
+/** The addresses of every lock factory the SDK trusts on a chain, oldest first. */
+export const trustedFactoryAddresses = (chainId: number): Address[] =>
+  trustedFactories(chainId).map((f) => f.address)
+
 /**
  * The block the oldest factory the SDK trusts on a chain was created in. No lock of Avow's on the
  * chain, and no key authorized for one, is older. It throws on a chain where the SDK trusts none.
@@ -35,7 +39,7 @@ export function factoriesToRead(chainId: number, current: Address): Address[] {
   if (!trustedFactory(chainId, current)) {
     throw new Error(`The factory ${current} isn't one the SDK trusts on chain ${chainId}`)
   }
-  return trustedFactories(chainId).map((f) => f.address)
+  return trustedFactoryAddresses(chainId)
 }
 
 /** The trusted factory at this address on a chain, or null when the SDK doesn't trust it. */

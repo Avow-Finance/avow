@@ -2,77 +2,84 @@ import { type Address, getAddress, isAddressEqual } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { FACTORY_ABI } from '../lock.js'
 import { MODERATO_FACTORIES } from '../moderato.js'
-import { accountLock } from './account-lock.js'
+import { accountLocks, currentLock, isAccountLock } from './account-lock.js'
 import { madeOn } from './deployment.js'
 
 const ACCOUNT: Address = getAddress('0x00000000000000000000000000000000000000ac')
+const OTHER: Address = getAddress('0x00000000000000000000000000000000000000bd')
 const [FIRST, SECOND] = MODERATO_FACTORIES.map((f) => f.address) as [Address, Address]
 const UNTRUSTED: Address = getAddress('0x00000000000000000000000000000000000000fa')
 
-/** Each factory's lock for the account is an address of its own, and only the listed ones exist. */
-const lockFrom = (factory: Address): Address =>
-  getAddress(`0x${factory.slice(2, 22)}${'0'.repeat(20)}`) as Address
+/** Each factory gives each account a lock address of its own. */
+const lockOf = (factory: Address, account: Address = ACCOUNT): Address =>
+  getAddress(`0x${factory.slice(2, 22)}${account.slice(22, 42)}`) as Address
 
+/** A chain where the locks of these factories, for ACCOUNT, are on chain. */
 function chain(made: Address[]) {
-  const asked: Address[] = []
   return {
-    asked,
-    client: {
-      readContract: async (call: {
-        address: Address
-        abi: unknown
-        functionName: string
-        args: unknown[]
-      }) => {
-        expect(call.functionName).toBe('lockAddress')
-        expect(call.abi).toBe(FACTORY_ABI)
-        expect(call.args).toEqual([ACCOUNT])
-        asked.push(call.address)
-        return lockFrom(call.address)
-      },
-      getCode: async ({ address }: { address: Address }) =>
-        made.some((f) => isAddressEqual(lockFrom(f), address)) ? ('0x6080' as const) : undefined,
-    } as never,
-  }
+    readContract: async (call: {
+      address: Address
+      abi: unknown
+      functionName: string
+      args: [Address]
+    }) => {
+      expect(call.functionName).toBe('lockAddress')
+      expect(call.abi).toBe(FACTORY_ABI)
+      return lockOf(call.address, call.args[0])
+    },
+    getCode: async ({ address }: { address: Address }) =>
+      made.some((f) => isAddressEqual(lockOf(f), address)) ? ('0x6080' as const) : undefined,
+  } as never
 }
 
-describe("an account's lock", () => {
-  it('is the one an earlier trusted factory made, when the sandbox has moved to a newer one', async () => {
-    const c = chain([FIRST])
+describe("the current factory's lock", () => {
+  it('is what a new business takes, whether or not an earlier factory made one for it', async () => {
+    // Anyone can create an account's lock at any factory, so a lock at the first factory says
+    // nothing about which one the business has.
     expect(
-      await accountLock({ client: c.client, chainId: 42431, current: SECOND, account: ACCOUNT }),
-    ).toEqual({ factory: FIRST, lock: lockFrom(FIRST), made: true })
-  })
-
-  it('is the oldest one when more than one trusted factory made a lock, as Avow registered it first', async () => {
-    const c = chain([FIRST, SECOND])
-    const found = await accountLock({
-      client: c.client,
-      chainId: 42431,
-      current: SECOND,
-      account: ACCOUNT,
-    })
-    expect(found.factory).toBe(FIRST)
-  })
-
-  it("is the current factory's lock, not yet made, when no trusted factory made one", async () => {
-    const c = chain([])
+      await currentLock({ client: chain([FIRST]), factory: SECOND, account: ACCOUNT }),
+    ).toEqual({ lock: lockOf(SECOND), made: false })
     expect(
-      await accountLock({ client: c.client, chainId: 42431, current: SECOND, account: ACCOUNT }),
-    ).toEqual({ factory: SECOND, lock: lockFrom(SECOND), made: false })
-    expect(c.asked).toEqual([FIRST, SECOND])
+      await currentLock({ client: chain([SECOND]), factory: SECOND, account: ACCOUNT }),
+    ).toEqual({ lock: lockOf(SECOND), made: true })
+  })
+})
+
+describe("an account's locks", () => {
+  it('lists every one a trusted factory made, oldest factory first', async () => {
+    expect(
+      await accountLocks({ client: chain([SECOND, FIRST]), chainId: 42431, account: ACCOUNT }),
+    ).toEqual([
+      { factory: FIRST, lock: lockOf(FIRST) },
+      { factory: SECOND, lock: lockOf(SECOND) },
+    ])
+    expect(await accountLocks({ client: chain([]), chainId: 42431, account: ACCOUNT })).toEqual([])
   })
 
-  it('asks only the current factory on a chain where the SDK trusts none', async () => {
-    const c = chain([])
-    const found = await accountLock({
-      client: c.client,
-      chainId: 1,
-      current: UNTRUSTED,
-      account: ACCOUNT,
-    })
-    expect(found).toEqual({ factory: UNTRUSTED, lock: lockFrom(UNTRUSTED), made: false })
-    expect(c.asked).toEqual([UNTRUSTED])
+  it('lists none on a chain where the SDK trusts no factory', async () => {
+    expect(await accountLocks({ client: chain([FIRST]), chainId: 1, account: ACCOUNT })).toEqual([])
+  })
+})
+
+describe('a recorded lock', () => {
+  const at = (factory: Address, lock = lockOf(factory)) => ({ factory, lock })
+  const holds = (made: Address[], recorded: { factory: Address; lock: Address }) =>
+    isAccountLock({ client: chain(made), chainId: 42431, account: ACCOUNT, recorded })
+
+  it('counts when a trusted factory made it for the account, so a business keeps its lock', async () => {
+    expect(await holds([FIRST], at(FIRST))).toBe(true)
+    expect(await holds([SECOND], at(SECOND))).toBe(true)
+  })
+
+  it("keeps counting when someone else creates the account's lock at another factory", async () => {
+    // A business set up under the second factory, and a lock someone created for it at the first.
+    expect(await holds([FIRST, SECOND], at(SECOND))).toBe(true)
+  })
+
+  it("doesn't count when it isn't on chain, isn't the account's, or isn't from a trusted factory", async () => {
+    expect(await holds([], at(FIRST))).toBe(false)
+    expect(await holds([FIRST], at(FIRST, lockOf(FIRST, OTHER)))).toBe(false)
+    expect(await holds([FIRST], { factory: UNTRUSTED, lock: lockOf(FIRST) })).toBe(false)
   })
 })
 
@@ -90,7 +97,7 @@ describe('a business made on a deployment', () => {
       factory,
       token: '0x20c00000000000000000000058fbF8a39A171185',
       account: ACCOUNT,
-      lock: lockFrom(factory),
+      lock: lockOf(factory),
       businessId: 'sandbox-x',
     }) as never
 

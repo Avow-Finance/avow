@@ -54,6 +54,7 @@ export interface SandboxSupplier {
 export interface StoredBusiness {
   chainId: number
   apiUrl: string
+  /** The factory that made the business's lock, which can be an earlier one the SDK trusts. */
   factory: Address
   token: Address
   account: Address

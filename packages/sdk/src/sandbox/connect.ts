@@ -17,7 +17,7 @@ import type { AgentKey } from '../agent.js'
 import { AvowApiError, agentRequestKey, avowRequests, enrollAgent } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
-import { accountLock } from './account-lock.js'
+import { type AccountLock, accountLocks } from './account-lock.js'
 import { platformStore } from './agent.js'
 import { loadSandboxDeployment } from './deployment.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
@@ -238,18 +238,14 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     o.onEvent?.({ type: 'bound', businessId })
   }
 
-  // The business's account from its id, and its lock on chain from the first trusted factory that
-  // made one. Avow refuses the ask for a business it doesn't hold at that lock.
+  // The business's account from its id. Anyone can create an account's lock at any factory, so
+  // the account may have one at more than one trusted factory, and Avow, which holds the business
+  // at one of them, refuses the ask at any other. The first lock Avow takes the ask at is the
+  // business's.
   const account = accountOfSandboxId(businessId)
   const unknown = `Avow has no sandbox business ${businessId}. Copy its ID from the console.`
   if (!account) throw new Error(unknown)
   const client = moderatoClient(deployment.rpcUrl)
-  const { lock, factory } = await accountLock({
-    client,
-    chainId: deployment.chainId,
-    current: deployment.factory,
-    account,
-  })
   const agentKey: AgentKey = Account.fromSecp256k1(keyHex, { access: account })
 
   const config = {
@@ -259,11 +255,9 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     fetch: send,
   }
   const ask = avowRequests(config)
-  const domain = { chainId: deployment.chainId, verifyingContract: lock }
-  let status: AgentRequestStatus
-  for (;;) {
-    status = await ask({
-      domain,
+  const askAt = (lock: Address) =>
+    ask({
+      domain: { chainId: deployment.chainId, verifyingContract: lock },
       path: SANDBOX_PATHS.agentRequests,
       body: {
         businessId,
@@ -274,15 +268,30 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
         const read = parseAgentRequestStatus(json)
         return read ? { ok: true, value: read } : { ok: false, reason: 'message.invalid' }
       },
-    }).catch((error: unknown) => {
-      if (error instanceof AvowApiError && error.reason === 'business.unknown') {
-        throw new Error(unknown)
-      }
+    })
+  const notHeld = (error: unknown) =>
+    error instanceof AvowApiError && error.reason === 'business.unknown'
+
+  let held: { at: AccountLock; status: AgentRequestStatus } | null = null
+  for (const at of await accountLocks({ client, chainId: deployment.chainId, account })) {
+    const status = await askAt(at.lock).catch((error: unknown) => {
+      if (notHeld(error)) return null
       throw error
     })
-    if (status.state === 'approved') break
+    if (status) {
+      held = { at, status }
+      break
+    }
+  }
+  if (!held) throw new Error(unknown)
+  const { lock, factory } = held.at
+  let status = held.status
+  while (status.state !== 'approved') {
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
     await pause(o.pollEvery ?? 5000, o.signal)
+    status = await askAt(lock).catch((error: unknown) => {
+      throw notHeld(error) ? new Error(unknown) : error
+    })
   }
 
   const approval = parseEnrollmentRequest(status.approval, { chainId: deployment.chainId, lock })
