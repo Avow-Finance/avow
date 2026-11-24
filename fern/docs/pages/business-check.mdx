@@ -22,11 +22,13 @@ A lock takes a reserve for a supplier its business named, or for a listed suppli
 | Code | The lock's reason | What changes it |
 | --- | --- | --- |
 | `supplier.not_named` | The business never named the supplier, and the lock isn't open to listed suppliers | The business names the supplier, or opens the lock with its root key |
-| `supplier.removed` | The business named the supplier once and took it off, which a listing never undoes | The business names the supplier again |
+| `supplier.removed` | The business took the supplier off its lock, which a listing never undoes | The business names the supplier again |
 | `supplier.not_listed` | The lock is open, and the registry doesn't list the supplier | The supplier's check passes, or the business names the supplier |
 | `supplier.over_open_cap` | The reserve would pass the most the lock holds at once with suppliers the business didn't name | Open commitments with those suppliers end, or the business raises the cap with its root key |
 
-Only the business account's root key names a supplier, opens the lock or sets its cap. No agent's key does any of them.
+Naming or removing a supplier takes the business account's root key or one of its admin keys. Opening the lock or setting its cap takes the root key. No agent's key does any of them.
+
+A lock from Moderato's first factory has no supplier registry, so it can't be opened and takes only the suppliers its business named.
 
 ## Start and read a check
 
