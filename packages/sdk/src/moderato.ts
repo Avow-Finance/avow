@@ -28,7 +28,7 @@ export interface TrustedFactory {
 export const MODERATO_FACTORIES: readonly TrustedFactory[] = Object.freeze(
   [
     { address: '0x8fa7177c84BE069df2a51F096ED28d5D661B8283', createdIn: 41_801_818n },
-    // The factory whose locks also take suppliers from the verified-supplier registry.
+    // The factory whose locks also take suppliers from the supplier registry.
     { address: '0xEeC6E0C0a212868D4BB7C5857338DE57E4Ca8b91', createdIn: 45_516_423n },
   ].map((f) => Object.freeze(f as TrustedFactory)),
 )

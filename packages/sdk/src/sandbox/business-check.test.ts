@@ -80,7 +80,7 @@ const signerOf = (s: Seen, path: string) => {
 
 describe('sandboxBusinessChecks', () => {
   it("starts a check and reads it, each signed by the business's root key under its lock", async () => {
-    const { seen, fetcher } = fakeApi([json(201, started), json(200, passed)])
+    const { seen, fetcher } = fakeApi([json(200, started), json(200, passed)])
     const c = checks(fetcher)
     expect(await c.start()).toEqual(started)
     expect(await c.read()).toEqual(passed)

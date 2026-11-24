@@ -384,18 +384,18 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Suppliers',
     summary: 'Start a business check',
     description:
-      "A sandbox business starts a check of itself, and Avow answers with the checker's page, where a person finishes it. A check that's open, in review or passed is answered as it stands, so only a business with no check, or one that was declined or lapsed, starts a new one. The request has no body.\n\nOn testnet the checker runs in its own sandbox, so every check is simulated and the answer says so. A check changes no standing and no limit of the business. Avow lists a business whose check passed in the testnet's supplier registry, and delists it once the check no longer stands.",
+      "A sandbox business starts a check of itself, and Avow answers with the checker's page, where a person finishes it. A check that's open, in review or passed is answered as it stands, so only a business with no check, or one that was declined or lapsed, starts a new one. The request carries an empty object.\n\nOn testnet the checker runs in its own sandbox, so every check is simulated and the answer says so. A check changes no standing of the business and no limit on its agents. For a business that's also a sandbox supplier, a pass lists its account in the testnet's supplier registry, which says a simulated check passed and nothing about a real business.\n\nOne request at a time asks the checker about a business. A start that arrives while another asks is refused with `request.in_progress`, and the same request sent again is answered.",
     signedBy: "The business account's root key",
     domain: 'lock',
     answer: {
-      status: 201,
-      description: 'The check that started, or 200 with the check as it stands',
+      status: 200,
+      description: 'The check that started, or the one that already stands',
       schema: businessCheckJson,
       example: {
         state: 'started',
         by: 'didit',
         simulated: true,
-        url: 'https://verify.didit.me/session/3f1c9a2b7d4e',
+        url: 'https://verify.example/session/3f1c9a2b7d4e',
       },
     },
   },
@@ -406,7 +406,7 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Suppliers',
     summary: 'Read a business check',
     description:
-      "Where the business's check stands. While a check is open Avow asks the checker again on each read, so the answer follows the checker's decision. The request has no body.",
+      "Where the business's check stands. While a check is open Avow asks the checker again on each read, so the answer follows the checker's decision. The request carries an empty object.",
     signedBy: "The business account's root key",
     domain: 'lock',
     answer: {
