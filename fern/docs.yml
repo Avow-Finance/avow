@@ -48,6 +48,8 @@ navigation:
         path: ./docs/pages/services.mdx
       - page: Negotiation threads
         path: ./docs/pages/negotiation.mdx
+      - page: Business checks
+        path: ./docs/pages/business-check.mdx
       - api: API reference
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx

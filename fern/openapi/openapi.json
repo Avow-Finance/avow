@@ -26,7 +26,7 @@
     },
     {
       "name": "Suppliers",
-      "description": "Registering a business in the sandbox, registering a supplier's signing key, and reading a supplier's profile."
+      "description": "Registering a business in the sandbox, starting and reading its business check, registering a supplier's signing key, and reading a supplier's profile."
     },
     {
       "name": "Mailbox",
@@ -748,6 +748,96 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SupplierProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/business-checks": {
+      "post": {
+        "operationId": "startBusinessCheck",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Start a business check",
+        "description": "A sandbox business starts a check of itself, and Avow answers with the checker's page, where a person finishes it. A check that's open, in review or passed is answered as it stands, so only a business with no check, or one that was declined or lapsed, starts a new one. The request has no body.\n\nOn testnet the checker runs in its own sandbox, so every check is simulated and the answer says so. A check changes no standing and no limit of the business. Avow lists a business whose check passed in the testnet's supplier registry, and delists it once the check no longer stands.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The check that started, or 200 with the check as it stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartBusinessCheckAnswer"
+                },
+                "example": {
+                  "state": "started",
+                  "by": "didit",
+                  "simulated": true,
+                  "url": "https://verify.didit.me/session/3f1c9a2b7d4e"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/business-checks/current": {
+      "post": {
+        "operationId": "readBusinessCheck",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Read a business check",
+        "description": "Where the business's check stands. While a check is open Avow asks the checker again on each read, so the answer follows the checker's decision. The request has no body.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the business's check stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartBusinessCheckAnswer"
+                },
+                "example": {
+                  "state": "passed",
+                  "by": "didit",
+                  "simulated": true,
+                  "decidedAt": "1763420400"
                 }
               }
             }
@@ -4553,6 +4643,148 @@
           "signingKeySignature"
         ],
         "additionalProperties": false
+      },
+      "StartBusinessCheckAnswer": {
+        "$id": "#/components/schemas/StartBusinessCheckAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "not_available"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "not_started"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "started"
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "didit"
+                ]
+              },
+              "simulated": {
+                "type": "boolean"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "state",
+              "by",
+              "simulated",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "in_review"
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "didit"
+                ]
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "state",
+              "by",
+              "simulated"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "passed"
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "didit"
+                ]
+              },
+              "simulated": {
+                "type": "boolean"
+              },
+              "decidedAt": {
+                "type": "string",
+                "pattern": "^\\d{1,20}$"
+              }
+            },
+            "required": [
+              "state",
+              "by",
+              "simulated",
+              "decidedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "declined"
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "didit"
+                ]
+              },
+              "simulated": {
+                "type": "boolean"
+              },
+              "decidedAt": {
+                "type": "string",
+                "pattern": "^\\d{1,20}$"
+              }
+            },
+            "required": [
+              "state",
+              "by",
+              "simulated",
+              "decidedAt"
+            ],
+            "additionalProperties": false
+          }
+        ]
       },
       "SendOrderRequest": {
         "$id": "#/components/schemas/SendOrderRequest",
