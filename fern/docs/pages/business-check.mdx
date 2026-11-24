@@ -15,6 +15,19 @@ One thing follows from a pass, for a business that has also registered as a sand
 
 The registry holds a hash of the check's record and the time of the check, and nothing else about it. The record names the checker and says the check was simulated, and the listing carries no such flag. So a listing on testnet says a simulated check passed, and nothing about a real business.
 
+## When a lock turns a supplier away
+
+A lock takes a reserve for a supplier its business named, or for a listed supplier while the business keeps the lock open to those. Avow checks this before it approves a reserve, so an agent hears the reason before it signs a transaction the lock would refuse. The lock decides again when the reserve lands.
+
+| Code | The lock's reason | What changes it |
+| --- | --- | --- |
+| `supplier.not_named` | The business never named the supplier, and the lock isn't open to listed suppliers | The business names the supplier, or opens the lock with its root key |
+| `supplier.removed` | The business named the supplier once and took it off, which a listing never undoes | The business names the supplier again |
+| `supplier.not_listed` | The lock is open, and the registry doesn't list the supplier | The supplier's check passes, or the business names the supplier |
+| `supplier.over_open_cap` | The reserve would pass the most the lock holds at once with suppliers the business didn't name | Open commitments with those suppliers end, or the business raises the cap with its root key |
+
+Only the business account's root key names a supplier, opens the lock or sets its cap. No agent's key does any of them.
+
 ## Start and read a check
 
 ```ts
