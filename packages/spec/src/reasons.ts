@@ -104,6 +104,13 @@ export const REASON_CODES = {
     "Paying for the transaction would take one of Avow's relay budgets past the gas it allows in 24 hours",
   'business.unknown': 'Avow has no record of this business',
   'supplier.unknown': 'Avow has no profile for this supplier',
+  'supplier.not_named':
+    "The business's lock doesn't name this supplier, and isn't open to suppliers the registry lists",
+  'supplier.removed': 'The business removed this supplier from its lock',
+  'supplier.not_listed':
+    "The business's lock doesn't name this supplier, and the supplier registry doesn't list it",
+  'supplier.over_open_cap':
+    "The reserve would take the lock past the most it holds at once with suppliers the business didn't name",
   'order.supplier_mismatch':
     "The order was offered to another supplier, so only that supplier's signing key can quote it or report its delivery",
   'order.limit_reached':
