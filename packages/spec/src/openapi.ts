@@ -21,6 +21,7 @@ import {
   supplierAuthorizationAnswerJson,
 } from './api.js'
 import { API_AUTH_SCHEME, API_REQUEST_MAX_VALIDITY } from './api-request.js'
+import { businessCheckJson } from './business-check.js'
 import {
   mailboxAcceptedJson,
   mailboxOrderJson,
@@ -78,7 +79,7 @@ const TAG_DESCRIPTIONS: { readonly [T in ApiTag]: string } = {
   Commitments:
     "Avow's approval of a reserve, and the records Avow keeps on a commitment: cancellations, start requests and receipts, and contest statements.",
   Suppliers:
-    "Registering a business in the sandbox, registering a supplier's signing key, and reading a supplier's profile.",
+    "Registering a business in the sandbox, starting and reading its business check, registering a supplier's signing key, and reading a supplier's profile.",
   Mailbox:
     "The sandbox mailbox, which carries a job between two businesses' agents wherever each runs.",
 }
@@ -374,6 +375,45 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
       status: 200,
       description: "The supplier's profile as Avow registered it",
       schema: supplierProfileJson,
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.businessChecks,
+    operationId: 'startBusinessCheck',
+    tag: 'Suppliers',
+    summary: 'Start a business check',
+    description:
+      "A sandbox business starts a check of itself, and Avow answers with the checker's page, where a person finishes it. A check that's open, in review or passed is answered as it stands, so only a business with no check, or one that was declined or lapsed, starts a new one. The request carries an empty object.\n\nOn testnet the checker runs in its own sandbox, so every check is simulated and the answer says so. A check changes no standing of the business and no limit on its agents. For a business that's also a sandbox supplier, a pass lists its account in the testnet's supplier registry, which says a simulated check passed and nothing about a real business.\n\nOne request at a time asks the checker about a business. A start that arrives while another asks is refused with `request.in_progress`, and the same request sent again is answered.",
+    signedBy: "The business account's root key",
+    domain: 'lock',
+    answer: {
+      status: 200,
+      description: 'The check that started, or the one that already stands',
+      schema: businessCheckJson,
+      example: {
+        state: 'started',
+        by: 'didit',
+        simulated: true,
+        url: 'https://verify.example/session/3f1c9a2b7d4e',
+      },
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.businessCheck,
+    operationId: 'readBusinessCheck',
+    tag: 'Suppliers',
+    summary: 'Read a business check',
+    description:
+      "Where the business's check stands. While a check is open Avow asks the checker again on each read, so the answer follows the checker's decision. The request carries an empty object.",
+    signedBy: "The business account's root key",
+    domain: 'lock',
+    answer: {
+      status: 200,
+      description: "Where the business's check stands",
+      schema: businessCheckJson,
+      example: { state: 'passed', by: 'didit', simulated: true, decidedAt: '1763420400' },
     },
   },
   {

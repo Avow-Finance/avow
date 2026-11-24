@@ -36,6 +36,8 @@ describe("the API reference's OpenAPI document", () => {
       API_PATHS.sponsorships,
       SANDBOX_PATHS.businesses,
       SANDBOX_PATHS.suppliers,
+      SANDBOX_PATHS.businessChecks,
+      SANDBOX_PATHS.businessCheck,
       SANDBOX_PATHS.agentRequests,
       SANDBOX_PATHS.openAgentRequests,
       SANDBOX_PATHS.mailboxOrders,

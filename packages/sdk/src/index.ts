@@ -51,6 +51,7 @@ export {
   setSandboxPlatform,
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
+export * from './sandbox/business-check.js'
 export {
   approvalLink,
   type ConnectEvent,

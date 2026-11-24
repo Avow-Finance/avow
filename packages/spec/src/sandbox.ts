@@ -93,6 +93,13 @@ export const SANDBOX_PATHS = {
   agentMandate: (agentKey: Address) => `/v1/sandbox/agents/${agentKey.toLowerCase()}/mandate`,
   /** Where an agent reads every mandate it has held, the current one first, as `AgentMandates`. */
   agentMandates: '/v1/sandbox/agents/mandates',
+  /**
+   * Where a business starts a check of itself, signed by its account's root key under its own
+   * lock. Avow answers with a `BusinessCheck`, whose `url` is the checker's page.
+   */
+  businessChecks: '/v1/sandbox/business-checks',
+  /** Where the same key reads where the business's check stands, as a `BusinessCheck`. */
+  businessCheck: '/v1/sandbox/business-checks/current',
   /** Where a buyer's agent sends an order to another business. */
   mailboxOrders: '/v1/sandbox/mailbox/orders',
   /** Where a supplier's agent reads the orders waiting on it. */

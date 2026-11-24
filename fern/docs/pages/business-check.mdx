@@ -1,0 +1,62 @@
+---
+title: Business checks
+slug: docs/reference/business-checks
+---
+
+A sandbox business can ask Avow to check its company registration and the people behind it. The business's own code starts the check and reads where it stands, both signed by the account's root key, and a person finishes it on the checker's page. The business needs no console session, though the checker sends that person to Avow's console when they finish.
+
+On testnet the checker, Didit, runs in its own sandbox. Every check there is simulated, and each answer that names a checker says so with `simulated: true`. A pass on testnet confirms nothing about a real business.
+
+## What a check changes
+
+A check changes no standing of the business and no limit on its agents. The business stays a sandbox business, its commitments stay test data, and its agents' mandates hold exactly what they held before.
+
+One thing follows from a pass, for a business that has also registered as a sandbox supplier. Avow lists its account in the testnet's supplier registry. A buyer's lock that its business opened to listed suppliers then accepts a reserve for that account without the buyer naming it first.
+
+The registry holds a hash of the check's record and the time of the check, and nothing else about it. The record names the checker and says the check was simulated, and the listing carries no such flag. So a listing on testnet says a simulated check passed, and nothing about a real business.
+
+## Start and read a check
+
+```ts
+import { rootRequestKey, sandboxBusinessChecks } from '@avow-finance/sdk'
+
+const checks = sandboxBusinessChecks({
+  baseUrl: 'https://api.testnet.avow.finance',
+  key: rootRequestKey(root),
+  domain: { chainId: 42431, verifyingContract: lock },
+})
+
+const check = await checks.start()
+if (check.state === 'started') console.log(`Finish the check at ${check.url}`)
+
+const now = await checks.read()
+```
+
+`root` is the business account's root key and `lock` is the business's own lock. Avow refuses any other signer with `request.signer_unknown`, so an agent's key can neither start a check of its business nor read one.
+
+`start` is safe to call again. A check that's open, in review or passed comes back as it stands, and only a business with no check, or one whose check was declined or lapsed, starts a new one. `read` asks the checker again while the check is open, so polling it follows the checker's decision.
+
+## States
+
+| State | Means | Carries |
+| --- | --- | --- |
+| `not_available` | This deployment runs no checker, so `start` started nothing | Nothing |
+| `not_started` | The business never started a check, or its last one lapsed unfinished | Nothing |
+| `started` | The check waits for a person on the checker's page | `by`, `simulated`, `url` |
+| `in_review` | The checker has what it asked for and hasn't decided | `by`, `simulated` |
+| `passed` | The checker passed the business | `by`, `simulated`, `decidedAt` |
+| `declined` | The checker declined the business | `by`, `simulated`, `decidedAt` |
+
+`decidedAt` is when Avow recorded the decision, in unix seconds as a decimal string.
+
+## Refusals
+
+| Code | Status | When |
+| --- | --- | --- |
+| `request.signer_unknown` | 401 | The signer isn't a sandbox business's root key |
+| `message.wrong_contract` | 400 | The request is signed under a lock that isn't the business's own |
+| `request.invalid` | 400 | The request carries anything but an empty object |
+| `request.in_progress` | 409 | Another request is asking the checker about this business, on `start` only |
+| `service.unavailable` | 503 | Avow couldn't reach the checker to start the check |
+
+The SDK sends a request again by itself after `request.in_progress` and after a 503, and Avow answers a repeat of a request it recorded with its first answer, so a lost answer never starts a second check.
