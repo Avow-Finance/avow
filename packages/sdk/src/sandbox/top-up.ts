@@ -10,7 +10,7 @@ import { type AvowRequestConfig, avowRequests } from '../http.js'
 export interface TopUpsConfig extends Omit<AvowRequestConfig, 'key'> {
   /**
    * The business account's root key through `rootRequestKey`, or the key of one of its agents
-   * that holds authority. A top-up widens no limit, so either may ask.
+   * the business approved and hasn't revoked. A top-up widens no limit, so either may ask.
    */
   key: RequestKey
   /** The chain and the business's own lock, which the request is signed under. */

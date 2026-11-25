@@ -424,8 +424,8 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Suppliers',
     summary: "Top up a sandbox business's test dollars",
     description:
-      "Avow's sandbox faucet sends the business more test dollars, to its own account on Tempo and never to its lock. The request has no body. A business gets one top-up a day, so a second within the day is answered `not_yet` with when to ask again, and sends nothing.\n\nA top-up changes no mandate and no limit. An agent still reserves only what its mandate allows, so an agent that holds authority can ask for one as well as the root key. Test dollars have no value.",
-    signedBy: "The business account's root key, or an agent of the business that holds authority",
+      "Avow's sandbox faucet sends the business more test dollars, to its own account on Tempo and never to its lock. The request has no body. A business gets one top-up a day, so a second within the day is answered `not_yet` with when to ask again, and sends nothing.\n\nA top-up changes no mandate and no limit. An agent still reserves only what its mandate allows, so any agent the business approved and hasn't revoked can ask for one as well as the root key. Top-ups have a daily total across the sandbox of their own, apart from registrations'. Test dollars have no value.",
+    signedBy: "The business account's root key, or an agent of the business that isn't revoked",
     domain: 'lock',
     answer: {
       status: 201,

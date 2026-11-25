@@ -1107,8 +1107,8 @@ async function waitForAcceptance(
 
 /**
  * Asks the sandbox faucet for more test dollars for the agent's business, signed with the agent's
- * own key. It needs the agent to hold authority, since Avow takes a top-up only from the root key
- * or an agent of the business that isn't revoked. The dollars go to the business's account, never
+ * own key. Avow takes a top-up only from the root key or an agent the business approved and
+ * hasn't revoked, so the agent needs its approval first. The dollars go to the business's account, never
  * its lock, so they change nothing the agent may commit. A business gets one top-up a day.
  */
 export async function agentTopUp(

@@ -7,7 +7,7 @@ A sandbox business starts with test dollars from Avow's sandbox faucet, and can 
 
 ## Who can ask
 
-The business account's root key can ask, and so can any of the business's agents that holds authority. A revoked agent can't. Letting an agent ask is safe because a top-up widens nothing it may commit. The dollars land in the business's account and never in its lock, and an agent still reserves only what its mandate allows, within its key's daily limit.
+The business account's root key can ask, and so can any agent the business approved and hasn't revoked. A revoked agent, or one whose mandate was revoked, can't. Letting an agent ask is safe because a top-up widens nothing it may commit. The dollars land in the business's account and never in its lock, and an agent still reserves only what its mandate allows, within its key's daily limit.
 
 | From | How |
 | --- | --- |
@@ -25,4 +25,12 @@ A request is a signed `POST /v1/sandbox/top-ups` with an empty body, under the b
 
 Both carry `nextAt`, the unix time the business can ask again. Asking again early is harmless, so an agent can call `top_up` whenever its business runs low.
 
-The faucet's own limits still apply. While the sandbox is closed, its pool is empty or its fees are low, the request is refused with the same `sandbox.*` reason a registration gets.
+The faucet's own limits still apply. Top-ups have a daily dollar total of their own across the sandbox, the same size as registrations', so agents topping up never keep a new developer from registering. A business's top-ups and registrations share its client's daily dollars, and the faucet's total budget.
+
+| Refusal | When |
+| --- | --- |
+| `sandbox.limit_reached` | The client's daily dollars or the sandbox's daily top-up total is spent. `limit` names which, and `retryAt` says when it frees up |
+| `sandbox.budget_spent` | The faucet has sent everything its total budget allows |
+| `sandbox.pool_empty` | The faucet's pool can't cover the payout until Avow refills it |
+| `sandbox.faucet_fees_low` | The faucet is restoring its own fees, which takes minutes |
+| `sandbox.closed` | The sandbox is closed |

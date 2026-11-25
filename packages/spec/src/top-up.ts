@@ -4,8 +4,8 @@ import type { Parsed } from './wire.js'
 /**
  * A top-up of a sandbox business's test dollars. Avow's sandbox faucet sends them to the
  * business's own account on Tempo, never to its lock, so a top-up changes no mandate and no limit:
- * an agent still reserves only what its mandate allows. The business's root key or any of its
- * agents that holds authority asks for one, and a business gets at most one a day.
+ * an agent still reserves only what its mandate allows. The business's root key or any agent it
+ * approved and hasn't revoked asks for one, and a business gets at most one a day.
  */
 
 /** How long after one top-up the next can be asked for, in seconds. */
