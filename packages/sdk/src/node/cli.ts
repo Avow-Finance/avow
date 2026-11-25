@@ -41,6 +41,7 @@ import {
 import { keepSession, sessionForNextRun } from './runner-session.js'
 import { offerCommand, orderServiceCommand } from './services.js'
 import { terminalInput } from './session-input.js'
+import { topUpCommand } from './top-up.js'
 import { verifyCommand } from './verify.js'
 
 /**
@@ -81,6 +82,8 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            service order is quoted only for an offer this business published
   verify   checks a commitment someone shared, from its link, against the chain, with
            --payee <address> to check it pays you. It needs no agent or business
+  top-up   asks the sandbox faucet for more test dollars for the business of the agent in this
+           folder, sent to its account and never its lock, once a day
   mcp      add claude-code or add claude-desktop gives a model in Claude this folder's agent,
            with tools to connect it to a business and commit within the limits approved
   fresh    moves your business aside, keys and all, and sets up a fresh one
@@ -132,6 +135,8 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === 'mcp') return mcpCommand(args.slice(1))
   // Checking a commitment someone shared, which needs no agent or business.
   if (args[0] === 'verify') return verifyCommand(args.slice(1))
+  // More test dollars for the agent's business, which widen nothing it may commit.
+  if (args[0] === 'top-up') return topUpCommand()
   const command = !args[0] || args[0].startsWith('--') ? 'start' : args[0]
   const flags = readJobFlags(args[0] === command ? args.slice(1) : args, process.env)
   if ('error' in flags) {

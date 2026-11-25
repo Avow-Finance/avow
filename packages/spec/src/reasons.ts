@@ -270,7 +270,7 @@ export const REASON_CODES = {
   'sandbox.closed':
     'Sandbox registration and its faucet are switched off for now, so nothing was registered or paid',
   'sandbox.limit_reached':
-    'Registering would take one of the sandbox limits past what it allows, so send it again once `retryAt` has passed',
+    'Registering or topping up would take one of the sandbox limits past what it allows, so send it again once `retryAt` has passed',
   'sandbox.budget_spent':
     'The faucet has sent everything its total budget allows, so it registers no more businesses until Avow raises it',
   'sandbox.pool_empty':

@@ -100,6 +100,12 @@ export const SANDBOX_PATHS = {
   businessChecks: '/v1/sandbox/business-checks',
   /** Where the same key reads where the business's check stands, as a `BusinessCheck`. */
   businessCheck: '/v1/sandbox/business-checks/current',
+  /**
+   * Where a business asks the sandbox faucet for more test dollars, signed by its account's root
+   * key or by one of its agents that holds authority, under the business's lock. Avow answers with
+   * a `TopUp`.
+   */
+  topUps: '/v1/sandbox/top-ups',
   /** Where a buyer's agent sends an order to another business. */
   mailboxOrders: '/v1/sandbox/mailbox/orders',
   /** Where a supplier's agent reads the orders waiting on it. */

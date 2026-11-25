@@ -27,6 +27,7 @@ import {
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
 import {
+  agentTopUp,
   PREFLIGHT_UNCHECKED,
   Refusal,
   type SandboxAgent,
@@ -40,6 +41,7 @@ import {
 } from '../sandbox/services.js'
 import { sessionUrl, verifyUrl } from '../sandbox/session.js'
 import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
+import { toDollars } from '../sandbox/terms.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
@@ -92,6 +94,13 @@ type FreeTool = 'connect' | 'status' | 'verify'
  */
 const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
+
+/**
+ * The tools for the business's own test dollars, which need authority but widen nothing an agent
+ * may commit, and report nothing to the runner's screen.
+ */
+const FUNDS_TOOLS = ['top_up'] as const
+type FundsTool = (typeof FUNDS_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -261,6 +270,19 @@ export const MCP_TOOLS = [
     inputSchema: noInput,
   },
   {
+    name: 'top_up',
+    title: "Top up the business's test dollars",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Asks the sandbox faucet to send your business more test dollars, when it's running low. They go to the business's own account, never its lock, so they change nothing your agent may commit: its mandate still sets that. A business gets one top-up a day, and asking again sooner sends nothing and says when it can. Test dollars have no value.",
+    inputSchema: noInput,
+  },
+  {
     name: 'publish_offer',
     title: 'Publish an offer',
     annotations: {
@@ -404,7 +426,7 @@ export const MCP_TOOLS = [
     },
   },
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool | ServiceTool
+  name: SandboxTool | FreeTool | ServiceTool | FundsTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -807,6 +829,30 @@ export function mcpAgent(
     }
   }
 
+  async function topUp(): Promise<ToolAnswer> {
+    const t = await agentTopUp({ store, ...(options.fetch ? { fetch: options.fetch } : {}) })
+    const next = new Date(Number(t.nextAt) * 1000).toISOString()
+    if (t.state === 'not_yet') {
+      return {
+        text: `Your business had its top-up for today, so nothing was sent. It can ask again at ${next}.`,
+        structured: { state: t.state, nextAt: Number(t.nextAt) },
+        isError: false,
+      }
+    }
+    const dollars = toDollars(BigInt(t.amount))
+    return {
+      text: `The sandbox faucet is sending your business ${usd(dollars)} in test dollars, to its account and not its lock, so your agent's limits are the same. The transfer is ${t.outcome === 'landed' ? 'on Tempo' : 'on its way to Tempo'}: ${t.transactionHash}. Your business can top up again at ${next}.`,
+      structured: {
+        state: t.state,
+        amount: dollars,
+        transactionHash: t.transactionHash,
+        outcome: t.outcome,
+        nextAt: Number(t.nextAt),
+      },
+      isError: false,
+    }
+  }
+
   async function commitments(): Promise<ToolAnswer> {
     const agent = await open('commitments')
     const list = await agent.commitments()
@@ -1080,6 +1126,8 @@ export function mcpAgent(
     }
   }
 
+  const isFundsTool = (name: string): name is FundsTool =>
+    (FUNDS_TOOLS as readonly string[]).includes(name)
   const isServiceTool = (name: string): name is ServiceTool =>
     (SERVICE_TOOLS as readonly string[]).includes(name)
 
@@ -1089,11 +1137,16 @@ export function mcpAgent(
         if (name === 'connect') return await connect(args)
         if (name === 'status') return connectionAnswer(await connection.status())
         if (name === 'verify') return await verify(args)
-        if (!SANDBOX_TOOLS.includes(name as SandboxTool) && !isServiceTool(name)) {
+        if (
+          !SANDBOX_TOOLS.includes(name as SandboxTool) &&
+          !isServiceTool(name) &&
+          !isFundsTool(name)
+        ) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
+        if (name === 'top_up') return await topUp()
         if (name === 'publish_offer') return await publishOffer(args)
         if (name === 'offers') return await offers()
         if (name === 'order') return await order(args)

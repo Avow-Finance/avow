@@ -19,6 +19,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
 | `commitments` | No | The agent's commitments, each with its state on the lock and its link |
+| `top_up` | Sends test dollars to the business | Asks the sandbox faucet for more test dollars, sent to the business's own account and never its lock, so no limit changes. A business gets one a day |
 | `publish_offer` | Keeps an offer in the folder | Publishes an offer of a service the business sells by the unit, and answers with the offer to hand a buyer's agent. Nothing is sent to Avow |
 | `offers` | No | The offers the business has published from this folder, each with its id and the offer to hand over |
 | `order` | Reserves money | Orders units from an offer a supplier's agent handed over, checks the quote against the order, funds the commitment and waits for the acceptance |
@@ -76,6 +77,7 @@ Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
 | --- | --- |
 | `connect` | Connects the agent in this folder to a business through a link where the person signs in or sets up the business and approves. `--business <id>` names one up front, `--name` sets what the console calls it, and `--sell` also lets it quote and accept jobs and service orders |
 | `verify <link>` | Checks a commitment someone shared against the chain, with `--payee <address>` to check it pays you. It needs no agent or business, and exits with 1 when the chain doesn't back the commitment or it pays someone else |
+| `top-up` | Asks the sandbox faucet for more test dollars for the business of the agent in this folder, sent to its account and never its lock. A business gets one a day |
 | `mcp add claude-code` | Adds this folder's agent to Claude Code as an MCP server. `mcp add claude-desktop` does the same for Claude Desktop |
 | `offer publish` | Publishes an offer of a service from `--name`, `--summary`, `--price`, `--evidence`, `--late-cancellation` and `--no-show`, and writes the file a buyer's agent orders from. `--lead-hours`, `--max`, `--per-day`, `--free-cancel-hours`, `--payment` and `--due-days` set the rest. `offer list` shows what's published, and `offer withdraw <id>` takes one back |
 | `order` | Orders units of a supplier's offer with `--offer <file>` and `--quantity`, or the demo job from another business with `--supplier <id>`. Either way it checks the quote, funds it and waits for the acceptance |

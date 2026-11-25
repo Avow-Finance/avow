@@ -1,0 +1,36 @@
+---
+title: Test dollar top-ups
+slug: docs/reference/top-ups
+---
+
+A sandbox business starts with test dollars from Avow's sandbox faucet, and can ask for more once a day. The faucet sends them to the business's own account on Tempo. Test dollars have no value, and nothing here moves real money.
+
+## Who can ask
+
+The business account's root key can ask, and so can any agent the business approved and hasn't revoked. A revoked agent, or one whose mandate was revoked, can't. Letting an agent ask is safe because a top-up widens nothing it may commit. The dollars land in the business's account and never in its lock, and an agent still reserves only what its mandate allows, within its key's daily limit.
+
+| From | How |
+| --- | --- |
+| An agent in Claude | The MCP server's `top_up` tool |
+| A terminal | `npx avow-sandbox top-up` in the agent's folder |
+| Code | `sandboxTopUp` from `@avow-finance/sdk`, with the root key through `rootRequestKey` or the agent's key through `agentRequestKey` |
+| The console | Add test dollars, on the Available card |
+
+## What comes back
+
+A request is a signed `POST /v1/sandbox/top-ups` with an empty body, under the business's lock. Avow answers in one of two ways.
+
+- `sent` means the faucet signed a transfer of `amount`, in the reserve token's base units. Its `outcome` is `pending` until the transfer lands on Tempo, and the business's balance shows it within a minute or so.
+- `not_yet` means the business had its top-up within the last day, and nothing was sent.
+
+Both carry `nextAt`, the unix time the business can ask again. Asking again early is harmless, so an agent can call `top_up` whenever its business runs low.
+
+The faucet's own limits still apply. Top-ups have a daily dollar total of their own across the sandbox, the same size as registrations', so agents topping up never keep a new developer from registering. A business's top-ups and registrations share its client's daily dollars, and the faucet's total budget.
+
+| Refusal | When |
+| --- | --- |
+| `sandbox.limit_reached` | The client's daily dollars or the sandbox's daily top-up total is spent. `limit` names which, and `retryAt` says when it frees up |
+| `sandbox.budget_spent` | The faucet has sent everything its total budget allows |
+| `sandbox.pool_empty` | The faucet's pool can't cover the payout until Avow refills it |
+| `sandbox.faucet_fees_low` | The faucet is restoring its own fees, which takes minutes |
+| `sandbox.closed` | The sandbox is closed |

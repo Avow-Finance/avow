@@ -41,6 +41,7 @@ describe('avow-sandbox-mcp', () => {
       'book',
       'verify',
       'commitments',
+      'top_up',
       'publish_offer',
       'offers',
       'order',
@@ -65,6 +66,7 @@ describe('avow-sandbox-mcp', () => {
     expect(tools.filter((t) => !t.annotations?.readOnlyHint).map((t) => t.name)).toEqual([
       'connect',
       'book',
+      'top_up',
       'publish_offer',
       'order',
       'sell',
@@ -111,7 +113,15 @@ describe('avow-sandbox-mcp', () => {
     expect(status.isError).toBe(false)
     expect(status.structuredContent).toEqual({ at: 'none' })
     expect(JSON.stringify(status.content)).toMatch(/call connect/)
-    for (const name of ['authority', 'commitments', 'check', 'offers', 'orders', 'order']) {
+    for (const name of [
+      'authority',
+      'commitments',
+      'check',
+      'top_up',
+      'offers',
+      'orders',
+      'order',
+    ]) {
       const answer = await c.callTool({ name, arguments: {} })
       expect(answer.isError).toBe(true)
       expect(JSON.stringify(answer.content)).toMatch(/isn't connected to a business yet/)
