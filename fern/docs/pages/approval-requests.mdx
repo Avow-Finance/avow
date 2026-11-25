@@ -1,0 +1,64 @@
+---
+title: Approval requests
+slug: docs/reference/approval-requests
+---
+
+When an agent needs authority it doesn't hold, it asks, and a person decides. Avow stores each ask as an approval request, one record of one shape, so a harness, the console and any inbox show it the same way. An agent can ask and read where its requests stand. It can never approve, decline or change one, its own or another agent's.
+
+## What an agent can ask for
+
+| Kind | What approving it changes | Reasons |
+| --- | --- | --- |
+| `agent_authority` | Puts the agent's key on the business's account under a mandate the administrator sets | `new_agent` |
+| `raise_limit` | Replaces the agent's mandate with one at the higher limit per commitment or on open reserves | `over_commitment_limit`, `reserves_limit_full` |
+| `name_supplier` | Names a supplier on the lock and adds it to the agent's mandate | `new_supplier` |
+| `open_mode` | Sets the lock's cap on reserves held with suppliers listed in the testnet's supplier registry | `listed_suppliers` |
+
+An agent asks for agent authority through `connect`, as it always has. Avow takes the other kinds as each ships, and refuses one it doesn't take yet with `approval_request.kind_unavailable`. None of them approves a single payment.
+
+The reason is a code from the list above, and Avow shows its own words for it. An agent writes no text into a request, so a request can't carry instructions to whoever reads it.
+
+## The record
+
+Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise or a supplier that's the hash of the agent's current mandate. For open mode it's the cap the lock held.
+
+The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
+
+A change to authority waits a day for a decision. Agent authority waits an hour, as an agent's request always has.
+
+## Deciding
+
+The business account's root key decides a request by signing an `ApprovalDecision` under the business's lock. It names the request id, the business, the agent, the hash of the kind, reason and terms, the hash of the basis, the expiry, and whether it approves or declines. A signature decides that request and no other. Signing in to the console proves who the administrator is, and never stands in for this signature.
+
+`approvalDecisionTypedData` in `@avow-finance/spec` builds what the root key signs, and the decision goes to `POST /v1/sandbox/approval-requests/{requestId}/decision`.
+
+Avow checks the signature first, then checks the basis again under a lock on the agent or the business. If what the request would change has changed since it was asked, such as the administrator cutting the limit while a raise waited, the request becomes `stale` and never applies. An approval can't overwrite a newer decision. The same decision sent again, even signed afresh, is answered with the request as it stands.
+
+## Where a request stands
+
+| State | Means |
+| --- | --- |
+| `waiting` | Nobody has decided it yet |
+| `approved` | The root key signed it, and its change hasn't landed yet |
+| `executing` | Its change is on its way, such as a transaction to the lock |
+| `active` | Its change landed, and the agent can use it |
+| `failed` | Its change didn't land, with the reason |
+| `declined` | The root key declined it |
+| `expired` | It lapsed before anyone decided it, or its change didn't start within an hour of approval, in which case it carries `approvedAt` |
+| `stale` | What it would change changed first, so it never applies |
+
+An agent treats what it asked for as usable only once its request is `active`. Applying a change is idempotent, so a retry never applies it twice.
+
+## Limits on asking
+
+A request is never a way to wear an administrator down, so Avow limits how agents ask.
+
+- An ask identical to one already waiting is answered with that request.
+- A different ask of the same kind while one waits is refused with `approval_request.already_waiting`. For suppliers, that's per supplier.
+- An agent asks one business for at most ten changes a day, refused after with `approval_request.asks_exhausted`. Asking for agent authority isn't counted.
+- After a decline the agent waits a day before asking the same again, refused meanwhile with `approval_request.cooling_down`.
+- The business decides which changes its agents may ask for with `POST /v1/sandbox/approval-policy`, signed by its root key, and reads it back at `POST /v1/sandbox/approval-policy/current`. A business that never set one lets its agents ask for every change, and asking for agent authority is always open.
+
+## Reading requests
+
+An agent reads its own requests at its business, signed by its key under the business's lock, at `POST /v1/sandbox/approval-requests/mine`, newest first, or one at `POST /v1/sandbox/approval-requests/{requestId}`.

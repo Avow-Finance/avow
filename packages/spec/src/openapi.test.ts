@@ -58,8 +58,10 @@ describe("the API reference's OpenAPI document", () => {
     expect(documented.some((p) => p.includes('/console/') || p.includes('/operator/'))).toBe(false)
   })
 
-  it('lets anyone call only the status routes and a supplier profile unsigned', () => {
+  it('lets anyone call only the status routes, a supplier profile and a decision unsigned', () => {
+    // A decision carries the root key's signature over the request in its body, which is what
+    // authorizes it, so it needs no signed request around it.
     const unsigned = API_OPERATIONS.filter((op) => op.signedBy === null).map((op) => op.operationId)
-    expect(unsigned).toEqual(['health', 'ready', 'supplierProfile'])
+    expect(unsigned).toEqual(['health', 'ready', 'decideRequest', 'supplierProfile'])
   })
 })

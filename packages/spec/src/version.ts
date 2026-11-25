@@ -28,6 +28,7 @@ export const MESSAGE_VERSIONS = {
   NegotiationMove: '1',
   ApiRequest: '1',
   Timestamp: '1',
+  ApprovalDecision: '1',
 } as const
 
 /**
@@ -56,6 +57,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   NegotiationMove: [MESSAGE_VERSIONS.NegotiationMove],
   ApiRequest: [MESSAGE_VERSIONS.ApiRequest],
   Timestamp: [MESSAGE_VERSIONS.Timestamp],
+  ApprovalDecision: [MESSAGE_VERSIONS.ApprovalDecision],
 }
 
 /**

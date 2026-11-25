@@ -6,6 +6,7 @@ import {
   recoverAddress,
   type TypedDataDomain,
 } from 'viem'
+import type { APPROVAL_DECISION_TYPES, approvalDecisionTypedData } from './approval-request.js'
 import type { ReasonCode } from './reasons.js'
 import type {
   ApprovalRule,
@@ -950,6 +951,7 @@ export type AvowTypedData =
   | ReturnType<typeof evidenceTypedData>
   | ReturnType<typeof businessActionTypedData>
   | ReturnType<typeof supplierActionTypedData>
+  | ReturnType<typeof approvalDecisionTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -983,6 +985,10 @@ type SameFields<Keys extends PropertyKey, Names extends PropertyKey> = [
  * `above` rule as `approvalAbove`.
  */
 interface InterfacesMatchTables {
+  ApprovalDecision: SameFields<
+    keyof ReturnType<typeof approvalDecisionTypedData>['message'],
+    FieldNames<typeof APPROVAL_DECISION_TYPES.ApprovalDecision>
+  >
   Mandate: SameFields<
     keyof ReplacementMandate | 'approvalAbove',
     FieldNames<typeof MANDATE_REPLACEMENT_TYPES.Mandate>
@@ -1030,6 +1036,7 @@ interface InterfacesMatchTables {
   >
 }
 const _interfacesMatchTables: InterfacesMatchTables = {
+  ApprovalDecision: true,
   Mandate: true,
   FirstMandate: true,
   PaymentLimit: true,
@@ -1088,6 +1095,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'BusinessAction':
       return hashTypedData(td)
     case 'SupplierAction':
+      return hashTypedData(td)
+    case 'ApprovalDecision':
       return hashTypedData(td)
   }
 }

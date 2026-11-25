@@ -6,6 +6,7 @@ import {
   type AgentSessionEvent,
 } from './agent-session.js'
 import { isApiAudience } from './api-request.js'
+import { isApprovalRequestId } from './approval-request.js'
 import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
 import { address, bytes32, u256 } from './json-fields.js'
 import { isTestnetChain } from './networks.js'
@@ -61,6 +62,11 @@ const mailboxOrderId = (orderId: string) => {
   return orderId
 }
 
+const approvalRequestId = (id: string) => {
+  if (!isApprovalRequestId(id)) throw new RangeError(`${id} isn't a request id`)
+  return id
+}
+
 export const SANDBOX_PATHS = {
   businesses: '/v1/sandbox/businesses',
   suppliers: '/v1/sandbox/suppliers',
@@ -106,6 +112,28 @@ export const SANDBOX_PATHS = {
    * a `TopUp`.
    */
   topUps: '/v1/sandbox/top-ups',
+  /**
+   * Where an agent asks for a change to the authority it holds, signed by its key under its
+   * business's lock, with an `ApprovalAsk`. Avow answers with the `ApprovalRequest`.
+   */
+  approvalRequests: '/v1/sandbox/approval-requests',
+  /** Where the same agent reads its own requests, newest first, as an `ApprovalRequestList`. */
+  approvalRequestsMine: '/v1/sandbox/approval-requests/mine',
+  /** Where the same agent reads one of its requests, as an `ApprovalRequest`. */
+  approvalRequest: (id: string) => `/v1/sandbox/approval-requests/${approvalRequestId(id)}`,
+  /**
+   * Where a decision on a request goes, as an `ApprovalDecision` the account's root key signed.
+   * It needs no other signature, since only that one decides.
+   */
+  approvalDecision: (id: string) =>
+    `/v1/sandbox/approval-requests/${approvalRequestId(id)}/decision`,
+  /**
+   * Where a business sets which changes its agents may ask for, signed by its account's root key
+   * under its lock, with an `ApprovalPolicy`. Avow answers with the policy it holds.
+   */
+  approvalPolicy: '/v1/sandbox/approval-policy',
+  /** Where the same key reads the policy the business has, as an `ApprovalPolicy`. */
+  approvalPolicyCurrent: '/v1/sandbox/approval-policy/current',
   /** Where a buyer's agent sends an order to another business. */
   mailboxOrders: '/v1/sandbox/mailbox/orders',
   /** Where a supplier's agent reads the orders waiting on it. */

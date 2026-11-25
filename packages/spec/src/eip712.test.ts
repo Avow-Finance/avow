@@ -1,5 +1,6 @@
 import { type Hex, hashTypedData } from 'viem'
 import { describe, expect, it } from 'vitest'
+import { type ApprovalRequest, approvalDecisionTypedData } from './approval-request.js'
 import { testnetDemoTerms } from './demo.js'
 import {
   type Acceptance,
@@ -244,7 +245,22 @@ const move: NegotiationMove = {
   expiry: 1_800_000_300n,
 }
 
+const decided: ApprovalRequest = {
+  id: 'ab'.repeat(16),
+  kind: 'open_mode',
+  businessId: 'sandbox-test',
+  agentKey: `0x${'11'.repeat(20)}`,
+  terms: { cap: 500_000_000n },
+  reason: 'listed_suppliers',
+  basis: { openCap: 0n },
+  requestedAt: 1_800_000_000n,
+  expiresAt: 1_800_086_400n,
+  status: { state: 'waiting' },
+}
+
 const builders = {
+  decision: (d = DOMAIN) =>
+    approvalDecisionTypedData(decided, { businessId: 'sandbox-test', decision: 'approve' }, d),
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
   agreement: (d = DOMAIN) => termsAgreementTypedData(agreement, d),
   approval: (d = DOMAIN) => approvalTypedData(approval, d),
@@ -302,6 +318,7 @@ describe('signed messages', () => {
     // without a sample fails the type check. Each value is typed as its interface, which has no
     // optional fields, so its keys are the interface's keys.
     const samples: { [T in MessageType]: { typedData: AvowTypedData; from: object } } = {
+      ApprovalDecision: { typedData: builders.decision(), from: builders.decision().message },
       Mandate: { typedData: builders.mandate(), from: mandate },
       TermsAgreement: { typedData: builders.agreement(), from: agreement },
       Approval: { typedData: builders.approval(), from: approval },

@@ -18,7 +18,7 @@
     },
     {
       "name": "Agents",
-      "description": "How an agent asks a business for authority, enrolls once approved, and gets its transactions sponsored."
+      "description": "How an agent asks a business for authority or a change to it, enrolls once approved, and gets its transactions sponsored, and how the business decides what its agents may ask."
     },
     {
       "name": "Commitments",
@@ -884,6 +884,418 @@
                   "transactionHash": "0x5b2f0d7c4c1e8a3f9b6d2e7a1c4f8b3d6e9a2c5f8b1d4e7a0c3f6b9d2e5a8c1f",
                   "outcome": "pending",
                   "nextAt": "1763506800"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-requests": {
+      "post": {
+        "operationId": "askForChange",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Ask for a change to authority",
+        "description": "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskForChangeRequest"
+              },
+              "example": {
+                "kind": "raise_limit",
+                "terms": {
+                  "limit": "per_commitment",
+                  "from": "250000000",
+                  "to": "400000000"
+                },
+                "reason": "over_commitment_limit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The request, or 200 with the identical request already waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskForChangeAnswer"
+                },
+                "example": {
+                  "id": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654",
+                  "kind": "raise_limit",
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "agentKey": "0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db",
+                  "terms": {
+                    "limit": "per_commitment",
+                    "from": "250000000",
+                    "to": "400000000"
+                  },
+                  "reason": "over_commitment_limit",
+                  "basis": {
+                    "mandate": "0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a"
+                  },
+                  "requestedAt": "1763420400",
+                  "expiresAt": "1763506800",
+                  "status": {
+                    "state": "waiting"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Refusal403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "429": {
+            "$ref": "#/components/responses/Refusal429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-requests/mine": {
+      "post": {
+        "operationId": "readMyRequests",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read an agent's requests",
+        "description": "Every request the agent made, newest first, up to 200, with where each stands. An agent treats what it asked for as usable only once its request is `active`, since approval and the change landing are separate steps. The request carries an empty object.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadMyRequestsAnswer"
+                },
+                "example": {
+                  "requests": [
+                    {
+                      "id": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654",
+                      "kind": "raise_limit",
+                      "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                      "agentKey": "0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db",
+                      "terms": {
+                        "limit": "per_commitment",
+                        "from": "250000000",
+                        "to": "400000000"
+                      },
+                      "reason": "over_commitment_limit",
+                      "basis": {
+                        "mandate": "0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a"
+                      },
+                      "requestedAt": "1763420400",
+                      "expiresAt": "1763506800",
+                      "status": {
+                        "state": "waiting"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-requests/{requestId}": {
+      "post": {
+        "operationId": "readMyRequest",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read one request",
+        "description": "Where one of the agent's requests stands. A request of another agent is answered `approval_request.unknown`. The request carries an empty object.\n\nSigned by the agent's key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "description": "The request's id, 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskForChangeAnswer"
+                },
+                "example": {
+                  "id": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654",
+                  "kind": "raise_limit",
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "agentKey": "0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db",
+                  "terms": {
+                    "limit": "per_commitment",
+                    "from": "250000000",
+                    "to": "400000000"
+                  },
+                  "reason": "over_commitment_limit",
+                  "basis": {
+                    "mandate": "0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a"
+                  },
+                  "requestedAt": "1763420400",
+                  "expiresAt": "1763506800",
+                  "status": {
+                    "state": "waiting"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Refusal404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-requests/{requestId}/decision": {
+      "post": {
+        "operationId": "decideRequest",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Decide a request",
+        "description": "The business account's root key approves or declines a request by signing an `ApprovalDecision`, which names the request, the business, the agent, the hash of the exact terms, the hash of the basis and the expiry. The body carries the decision and that signature, and needs no other, since only the root key decides.\n\nAvow checks the signature before it locks anything, then checks the basis again under a lock on the agent or the business. A request whose basis has changed becomes `stale` and never applies, so an approval can't overwrite a newer decision. An approved request is not yet usable. It's `active` once its change has landed, and it lapses if the change hasn't started within an hour. The same decision sent again, even signed afresh, is answered with the request as it stands.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "description": "The request's id, 32 lower-case hex characters",
+            "schema": {
+              "type": "string"
+            },
+            "example": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequestRequest"
+              },
+              "example": {
+                "decision": "approve",
+                "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                "signature": "0x"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request as it stands after the decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskForChangeAnswer"
+                },
+                "example": {
+                  "id": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654",
+                  "kind": "raise_limit",
+                  "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                  "agentKey": "0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db",
+                  "terms": {
+                    "limit": "per_commitment",
+                    "from": "250000000",
+                    "to": "400000000"
+                  },
+                  "reason": "over_commitment_limit",
+                  "basis": {
+                    "mandate": "0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a"
+                  },
+                  "requestedAt": "1763420400",
+                  "expiresAt": "1763506800",
+                  "status": {
+                    "state": "approved",
+                    "at": "1763424000"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Refusal403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Refusal404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Refusal410"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-policy": {
+      "post": {
+        "operationId": "setApprovalPolicy",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Set which changes agents may ask for",
+        "description": "A business names the changes its agents may ask for. Asking for agent authority is always open, since a request grants nothing. A business that never set a policy lets its agents ask for every change. A request already waiting stays waiting when a kind is taken off.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetApprovalPolicyRequest"
+              },
+              "example": {
+                "agentsMayAsk": [
+                  "raise_limit"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The policy Avow holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetApprovalPolicyRequest"
+                },
+                "example": {
+                  "agentsMayAsk": [
+                    "raise_limit"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/approval-policy/current": {
+      "post": {
+        "operationId": "readApprovalPolicy",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read which changes agents may ask for",
+        "description": "The policy the business has, or every change for a business that never set one. The request carries an empty object.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The policy Avow holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetApprovalPolicyRequest"
+                },
+                "example": {
+                  "agentsMayAsk": [
+                    "raise_limit",
+                    "name_supplier",
+                    "open_mode"
+                  ]
                 }
               }
             }
@@ -3928,7 +4340,18 @@
                   "sandbox.session_expired",
                   "sandbox.session_full",
                   "sandbox.event_too_large",
-                  "sandbox.session_rate"
+                  "sandbox.session_rate",
+                  "approval_request.unknown",
+                  "approval_request.kind_not_allowed",
+                  "approval_request.kind_unavailable",
+                  "approval_request.already_waiting",
+                  "approval_request.asks_exhausted",
+                  "approval_request.cooling_down",
+                  "approval_request.terms_mismatch",
+                  "approval_request.stale",
+                  "approval_request.expired",
+                  "approval_request.decided",
+                  "approval_request.signature_invalid"
                 ]
               }
             },
@@ -4171,7 +4594,18 @@
                   "sandbox.session_expired",
                   "sandbox.session_full",
                   "sandbox.event_too_large",
-                  "sandbox.session_rate"
+                  "sandbox.session_rate",
+                  "approval_request.unknown",
+                  "approval_request.kind_not_allowed",
+                  "approval_request.kind_unavailable",
+                  "approval_request.already_waiting",
+                  "approval_request.asks_exhausted",
+                  "approval_request.cooling_down",
+                  "approval_request.terms_mismatch",
+                  "approval_request.stale",
+                  "approval_request.expired",
+                  "approval_request.decided",
+                  "approval_request.signature_invalid"
                 ]
               }
             },
@@ -4483,7 +4917,18 @@
                   "sandbox.session_expired",
                   "sandbox.session_full",
                   "sandbox.event_too_large",
-                  "sandbox.session_rate"
+                  "sandbox.session_rate",
+                  "approval_request.unknown",
+                  "approval_request.kind_not_allowed",
+                  "approval_request.kind_unavailable",
+                  "approval_request.already_waiting",
+                  "approval_request.asks_exhausted",
+                  "approval_request.cooling_down",
+                  "approval_request.terms_mismatch",
+                  "approval_request.stale",
+                  "approval_request.expired",
+                  "approval_request.decided",
+                  "approval_request.signature_invalid"
                 ]
               }
             },
@@ -4903,6 +5348,2009 @@
           }
         ]
       },
+      "AskForChangeRequest": {
+        "$id": "#/components/schemas/AskForChangeRequest",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "raise_limit"
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "type": "string",
+                    "enum": [
+                      "per_commitment",
+                      "open_reserves"
+                    ]
+                  },
+                  "from": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "limit",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "over_commitment_limit",
+                  "reserves_limit_full"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "terms",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "name_supplier"
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "supplier": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,100}$"
+                  }
+                },
+                "required": [
+                  "supplier"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "new_supplier"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "terms",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "open_mode"
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "cap": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "cap"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "listed_suppliers"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "terms",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AskForChangeAnswer": {
+        "$id": "#/components/schemas/AskForChangeAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "waiting"
+                      }
+                    },
+                    "required": [
+                      "state"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "expired"
+                      },
+                      "approvedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "approvedAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "approved"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "executing"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "active"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "failed"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "business.unverified",
+                          "business.test_data",
+                          "administrator.no_authority",
+                          "agent.revoked",
+                          "agent.key_mismatch",
+                          "mandate.invalid",
+                          "mandate.ap2_mismatch",
+                          "mandate.signature_invalid",
+                          "mandate.missing",
+                          "mandate.expired",
+                          "mandate.revoked",
+                          "mandate.action_not_permitted",
+                          "mandate.supplier_not_allowed",
+                          "mandate.category_not_allowed",
+                          "terms.category_mismatch",
+                          "offer.superseded",
+                          "offer.withdrawn",
+                          "capacity.exhausted",
+                          "quantity.out_of_range",
+                          "terms.not_negotiable",
+                          "proposal.unacceptable",
+                          "counterparty.not_eligible",
+                          "negotiation.rounds_exhausted",
+                          "mandate.currency_not_allowed",
+                          "mandate.token_not_allowed",
+                          "mandate.over_payment_limit",
+                          "mandate.over_commitment_cap",
+                          "mandate.over_open_reserves_cap",
+                          "mandate.ends_before_window",
+                          "mandate.replaces_mismatch",
+                          "mandate.change_pending",
+                          "approval.human_required",
+                          "approval.human_invalid",
+                          "terms.invalid",
+                          "terms.reserve_mismatch",
+                          "terms.deadlines_out_of_order",
+                          "terms.contest_window_short",
+                          "terms.hash_mismatch",
+                          "terms.currency_mismatch",
+                          "terms.incomplete",
+                          "terms.dispute_invalid",
+                          "terms.version_unknown",
+                          "terms.template_unknown",
+                          "terms.template_invalid",
+                          "terms.backing_unsupported",
+                          "terms.charges_invalid",
+                          "message.schema_unknown",
+                          "message.invalid",
+                          "message.validity_too_long",
+                          "message.wrong_chain",
+                          "message.wrong_contract",
+                          "message.expired",
+                          "message.replayed",
+                          "message.signature_invalid",
+                          "message.signer_unknown",
+                          "request.unsigned",
+                          "request.invalid",
+                          "request.signer_unknown",
+                          "request.id_reused",
+                          "request.in_progress",
+                          "service.unavailable",
+                          "sponsorship.refused",
+                          "sponsorship.over_cap",
+                          "sponsorship.rate_limited",
+                          "sponsorship.simulation_failed",
+                          "sponsorship.altered",
+                          "sponsorship.budget_spent",
+                          "business.unknown",
+                          "supplier.unknown",
+                          "supplier.not_named",
+                          "supplier.removed",
+                          "supplier.not_listed",
+                          "supplier.over_open_cap",
+                          "order.supplier_mismatch",
+                          "order.limit_reached",
+                          "order.unknown",
+                          "order.out_of_step",
+                          "order.terms_changed",
+                          "order.commitment_mismatch",
+                          "agreement.parties_mismatch",
+                          "commitment.unknown",
+                          "commitment.cancel_on_lock",
+                          "commitment.cancel_closed",
+                          "commitment.ended",
+                          "authorization.payee_mismatch",
+                          "authorization.terms_mismatch",
+                          "authorization.commitment_mismatch",
+                          "authorization.mandate_mismatch",
+                          "authorization.buyer_mismatch",
+                          "authorization.accept_by_passed",
+                          "authorization.token_not_accepted",
+                          "approval.commitment_mismatch",
+                          "approval.parties_mismatch",
+                          "approval.terms_mismatch",
+                          "approval.charges_mismatch",
+                          "approval.dispute_mismatch",
+                          "approval.mandate_mismatch",
+                          "consent.not_releasable",
+                          "consent.count_passed",
+                          "consent.count_out_of_range",
+                          "report.not_reportable",
+                          "report.open",
+                          "report.limit_reached",
+                          "report.kind_not_allowed",
+                          "report.amount_invalid",
+                          "report.too_early",
+                          "contest.not_contestable",
+                          "contest.already_contested",
+                          "contest.window_closed",
+                          "contest.reason_not_for_charge",
+                          "contest.statement_invalid",
+                          "contest.not_on_chain",
+                          "contest.statement_mismatch",
+                          "chain.reserve_missing",
+                          "keychain.over_daily_limit",
+                          "chain.reserve_mismatch",
+                          "chain.reserve_accepted",
+                          "chain.acceptance_reverted",
+                          "chain.lock_unknown",
+                          "chain.agent_key_inactive",
+                          "chain.mandate_mismatch",
+                          "chain.approval_mismatch",
+                          "chain.lock_timing_unexpected",
+                          "chain.supplier_mismatch",
+                          "reference.commitment_mismatch",
+                          "reference.unreadable",
+                          "payment.not_found",
+                          "payment.failed",
+                          "payment.not_final",
+                          "payment.not_memo_transfer",
+                          "payment.token_not_accepted",
+                          "payment.token_mismatch",
+                          "payment.sender_mismatch",
+                          "payment.recipient_mismatch",
+                          "payment.amount_mismatch",
+                          "payment.memo_mismatch",
+                          "payment.attributed_twice",
+                          "dependency.lock_unknown",
+                          "dependency.not_owned",
+                          "dependency.not_found",
+                          "dependency.self_supplied",
+                          "dependency.not_accepted",
+                          "dependency.charge_pending",
+                          "dependency.cancellable",
+                          "dependency.ended",
+                          "dependency.terms_mismatch",
+                          "dependency.disclosure_invalid",
+                          "dependency.does_not_fit",
+                          "dependency.unreadable",
+                          "dependency.stale",
+                          "dependency.required",
+                          "dependency.elided",
+                          "dependency.unrecorded",
+                          "service.compute_off",
+                          "service.over_budget",
+                          "service.unknown_offer",
+                          "service.unknown_booking",
+                          "service.quantity_unavailable",
+                          "supplier.declined",
+                          "supplier.not_accepted",
+                          "service.check_failed",
+                          "service.cancel_late",
+                          "service.cancel_declined",
+                          "chain.cancel_reverted",
+                          "chain.report_reverted",
+                          "service.booking_required",
+                          "sandbox.closed",
+                          "sandbox.limit_reached",
+                          "sandbox.budget_spent",
+                          "sandbox.pool_empty",
+                          "sandbox.faucet_fees_low",
+                          "sandbox.taken",
+                          "sandbox.session_taken",
+                          "sandbox.session_expired",
+                          "sandbox.session_full",
+                          "sandbox.event_too_large",
+                          "sandbox.session_rate",
+                          "approval_request.unknown",
+                          "approval_request.kind_not_allowed",
+                          "approval_request.kind_unavailable",
+                          "approval_request.already_waiting",
+                          "approval_request.asks_exhausted",
+                          "approval_request.cooling_down",
+                          "approval_request.terms_mismatch",
+                          "approval_request.stale",
+                          "approval_request.expired",
+                          "approval_request.decided",
+                          "approval_request.signature_invalid"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "declined"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "stale"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "agent_authority"
+              },
+              "businessId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60,
+                    "pattern": "^[^\\p{Cc}]+$"
+                  },
+                  "signingKey": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{40}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "label",
+                  "signingKey"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "new_agent"
+                ]
+              },
+              "basis": {
+                "type": "object",
+                "properties": {
+                  "mandate": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "mandate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "agentKey",
+              "requestedAt",
+              "expiresAt",
+              "status",
+              "kind",
+              "businessId",
+              "terms",
+              "reason",
+              "basis"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "waiting"
+                      }
+                    },
+                    "required": [
+                      "state"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "expired"
+                      },
+                      "approvedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "approvedAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "approved"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "executing"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "active"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "failed"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "business.unverified",
+                          "business.test_data",
+                          "administrator.no_authority",
+                          "agent.revoked",
+                          "agent.key_mismatch",
+                          "mandate.invalid",
+                          "mandate.ap2_mismatch",
+                          "mandate.signature_invalid",
+                          "mandate.missing",
+                          "mandate.expired",
+                          "mandate.revoked",
+                          "mandate.action_not_permitted",
+                          "mandate.supplier_not_allowed",
+                          "mandate.category_not_allowed",
+                          "terms.category_mismatch",
+                          "offer.superseded",
+                          "offer.withdrawn",
+                          "capacity.exhausted",
+                          "quantity.out_of_range",
+                          "terms.not_negotiable",
+                          "proposal.unacceptable",
+                          "counterparty.not_eligible",
+                          "negotiation.rounds_exhausted",
+                          "mandate.currency_not_allowed",
+                          "mandate.token_not_allowed",
+                          "mandate.over_payment_limit",
+                          "mandate.over_commitment_cap",
+                          "mandate.over_open_reserves_cap",
+                          "mandate.ends_before_window",
+                          "mandate.replaces_mismatch",
+                          "mandate.change_pending",
+                          "approval.human_required",
+                          "approval.human_invalid",
+                          "terms.invalid",
+                          "terms.reserve_mismatch",
+                          "terms.deadlines_out_of_order",
+                          "terms.contest_window_short",
+                          "terms.hash_mismatch",
+                          "terms.currency_mismatch",
+                          "terms.incomplete",
+                          "terms.dispute_invalid",
+                          "terms.version_unknown",
+                          "terms.template_unknown",
+                          "terms.template_invalid",
+                          "terms.backing_unsupported",
+                          "terms.charges_invalid",
+                          "message.schema_unknown",
+                          "message.invalid",
+                          "message.validity_too_long",
+                          "message.wrong_chain",
+                          "message.wrong_contract",
+                          "message.expired",
+                          "message.replayed",
+                          "message.signature_invalid",
+                          "message.signer_unknown",
+                          "request.unsigned",
+                          "request.invalid",
+                          "request.signer_unknown",
+                          "request.id_reused",
+                          "request.in_progress",
+                          "service.unavailable",
+                          "sponsorship.refused",
+                          "sponsorship.over_cap",
+                          "sponsorship.rate_limited",
+                          "sponsorship.simulation_failed",
+                          "sponsorship.altered",
+                          "sponsorship.budget_spent",
+                          "business.unknown",
+                          "supplier.unknown",
+                          "supplier.not_named",
+                          "supplier.removed",
+                          "supplier.not_listed",
+                          "supplier.over_open_cap",
+                          "order.supplier_mismatch",
+                          "order.limit_reached",
+                          "order.unknown",
+                          "order.out_of_step",
+                          "order.terms_changed",
+                          "order.commitment_mismatch",
+                          "agreement.parties_mismatch",
+                          "commitment.unknown",
+                          "commitment.cancel_on_lock",
+                          "commitment.cancel_closed",
+                          "commitment.ended",
+                          "authorization.payee_mismatch",
+                          "authorization.terms_mismatch",
+                          "authorization.commitment_mismatch",
+                          "authorization.mandate_mismatch",
+                          "authorization.buyer_mismatch",
+                          "authorization.accept_by_passed",
+                          "authorization.token_not_accepted",
+                          "approval.commitment_mismatch",
+                          "approval.parties_mismatch",
+                          "approval.terms_mismatch",
+                          "approval.charges_mismatch",
+                          "approval.dispute_mismatch",
+                          "approval.mandate_mismatch",
+                          "consent.not_releasable",
+                          "consent.count_passed",
+                          "consent.count_out_of_range",
+                          "report.not_reportable",
+                          "report.open",
+                          "report.limit_reached",
+                          "report.kind_not_allowed",
+                          "report.amount_invalid",
+                          "report.too_early",
+                          "contest.not_contestable",
+                          "contest.already_contested",
+                          "contest.window_closed",
+                          "contest.reason_not_for_charge",
+                          "contest.statement_invalid",
+                          "contest.not_on_chain",
+                          "contest.statement_mismatch",
+                          "chain.reserve_missing",
+                          "keychain.over_daily_limit",
+                          "chain.reserve_mismatch",
+                          "chain.reserve_accepted",
+                          "chain.acceptance_reverted",
+                          "chain.lock_unknown",
+                          "chain.agent_key_inactive",
+                          "chain.mandate_mismatch",
+                          "chain.approval_mismatch",
+                          "chain.lock_timing_unexpected",
+                          "chain.supplier_mismatch",
+                          "reference.commitment_mismatch",
+                          "reference.unreadable",
+                          "payment.not_found",
+                          "payment.failed",
+                          "payment.not_final",
+                          "payment.not_memo_transfer",
+                          "payment.token_not_accepted",
+                          "payment.token_mismatch",
+                          "payment.sender_mismatch",
+                          "payment.recipient_mismatch",
+                          "payment.amount_mismatch",
+                          "payment.memo_mismatch",
+                          "payment.attributed_twice",
+                          "dependency.lock_unknown",
+                          "dependency.not_owned",
+                          "dependency.not_found",
+                          "dependency.self_supplied",
+                          "dependency.not_accepted",
+                          "dependency.charge_pending",
+                          "dependency.cancellable",
+                          "dependency.ended",
+                          "dependency.terms_mismatch",
+                          "dependency.disclosure_invalid",
+                          "dependency.does_not_fit",
+                          "dependency.unreadable",
+                          "dependency.stale",
+                          "dependency.required",
+                          "dependency.elided",
+                          "dependency.unrecorded",
+                          "service.compute_off",
+                          "service.over_budget",
+                          "service.unknown_offer",
+                          "service.unknown_booking",
+                          "service.quantity_unavailable",
+                          "supplier.declined",
+                          "supplier.not_accepted",
+                          "service.check_failed",
+                          "service.cancel_late",
+                          "service.cancel_declined",
+                          "chain.cancel_reverted",
+                          "chain.report_reverted",
+                          "service.booking_required",
+                          "sandbox.closed",
+                          "sandbox.limit_reached",
+                          "sandbox.budget_spent",
+                          "sandbox.pool_empty",
+                          "sandbox.faucet_fees_low",
+                          "sandbox.taken",
+                          "sandbox.session_taken",
+                          "sandbox.session_expired",
+                          "sandbox.session_full",
+                          "sandbox.event_too_large",
+                          "sandbox.session_rate",
+                          "approval_request.unknown",
+                          "approval_request.kind_not_allowed",
+                          "approval_request.kind_unavailable",
+                          "approval_request.already_waiting",
+                          "approval_request.asks_exhausted",
+                          "approval_request.cooling_down",
+                          "approval_request.terms_mismatch",
+                          "approval_request.stale",
+                          "approval_request.expired",
+                          "approval_request.decided",
+                          "approval_request.signature_invalid"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "declined"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "stale"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "raise_limit"
+              },
+              "businessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "type": "string",
+                    "enum": [
+                      "per_commitment",
+                      "open_reserves"
+                    ]
+                  },
+                  "from": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "limit",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "over_commitment_limit",
+                  "reserves_limit_full"
+                ]
+              },
+              "basis": {
+                "type": "object",
+                "properties": {
+                  "mandate": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "mandate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "agentKey",
+              "requestedAt",
+              "expiresAt",
+              "status",
+              "kind",
+              "businessId",
+              "terms",
+              "reason",
+              "basis"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "waiting"
+                      }
+                    },
+                    "required": [
+                      "state"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "expired"
+                      },
+                      "approvedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "approvedAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "approved"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "executing"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "active"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "failed"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "business.unverified",
+                          "business.test_data",
+                          "administrator.no_authority",
+                          "agent.revoked",
+                          "agent.key_mismatch",
+                          "mandate.invalid",
+                          "mandate.ap2_mismatch",
+                          "mandate.signature_invalid",
+                          "mandate.missing",
+                          "mandate.expired",
+                          "mandate.revoked",
+                          "mandate.action_not_permitted",
+                          "mandate.supplier_not_allowed",
+                          "mandate.category_not_allowed",
+                          "terms.category_mismatch",
+                          "offer.superseded",
+                          "offer.withdrawn",
+                          "capacity.exhausted",
+                          "quantity.out_of_range",
+                          "terms.not_negotiable",
+                          "proposal.unacceptable",
+                          "counterparty.not_eligible",
+                          "negotiation.rounds_exhausted",
+                          "mandate.currency_not_allowed",
+                          "mandate.token_not_allowed",
+                          "mandate.over_payment_limit",
+                          "mandate.over_commitment_cap",
+                          "mandate.over_open_reserves_cap",
+                          "mandate.ends_before_window",
+                          "mandate.replaces_mismatch",
+                          "mandate.change_pending",
+                          "approval.human_required",
+                          "approval.human_invalid",
+                          "terms.invalid",
+                          "terms.reserve_mismatch",
+                          "terms.deadlines_out_of_order",
+                          "terms.contest_window_short",
+                          "terms.hash_mismatch",
+                          "terms.currency_mismatch",
+                          "terms.incomplete",
+                          "terms.dispute_invalid",
+                          "terms.version_unknown",
+                          "terms.template_unknown",
+                          "terms.template_invalid",
+                          "terms.backing_unsupported",
+                          "terms.charges_invalid",
+                          "message.schema_unknown",
+                          "message.invalid",
+                          "message.validity_too_long",
+                          "message.wrong_chain",
+                          "message.wrong_contract",
+                          "message.expired",
+                          "message.replayed",
+                          "message.signature_invalid",
+                          "message.signer_unknown",
+                          "request.unsigned",
+                          "request.invalid",
+                          "request.signer_unknown",
+                          "request.id_reused",
+                          "request.in_progress",
+                          "service.unavailable",
+                          "sponsorship.refused",
+                          "sponsorship.over_cap",
+                          "sponsorship.rate_limited",
+                          "sponsorship.simulation_failed",
+                          "sponsorship.altered",
+                          "sponsorship.budget_spent",
+                          "business.unknown",
+                          "supplier.unknown",
+                          "supplier.not_named",
+                          "supplier.removed",
+                          "supplier.not_listed",
+                          "supplier.over_open_cap",
+                          "order.supplier_mismatch",
+                          "order.limit_reached",
+                          "order.unknown",
+                          "order.out_of_step",
+                          "order.terms_changed",
+                          "order.commitment_mismatch",
+                          "agreement.parties_mismatch",
+                          "commitment.unknown",
+                          "commitment.cancel_on_lock",
+                          "commitment.cancel_closed",
+                          "commitment.ended",
+                          "authorization.payee_mismatch",
+                          "authorization.terms_mismatch",
+                          "authorization.commitment_mismatch",
+                          "authorization.mandate_mismatch",
+                          "authorization.buyer_mismatch",
+                          "authorization.accept_by_passed",
+                          "authorization.token_not_accepted",
+                          "approval.commitment_mismatch",
+                          "approval.parties_mismatch",
+                          "approval.terms_mismatch",
+                          "approval.charges_mismatch",
+                          "approval.dispute_mismatch",
+                          "approval.mandate_mismatch",
+                          "consent.not_releasable",
+                          "consent.count_passed",
+                          "consent.count_out_of_range",
+                          "report.not_reportable",
+                          "report.open",
+                          "report.limit_reached",
+                          "report.kind_not_allowed",
+                          "report.amount_invalid",
+                          "report.too_early",
+                          "contest.not_contestable",
+                          "contest.already_contested",
+                          "contest.window_closed",
+                          "contest.reason_not_for_charge",
+                          "contest.statement_invalid",
+                          "contest.not_on_chain",
+                          "contest.statement_mismatch",
+                          "chain.reserve_missing",
+                          "keychain.over_daily_limit",
+                          "chain.reserve_mismatch",
+                          "chain.reserve_accepted",
+                          "chain.acceptance_reverted",
+                          "chain.lock_unknown",
+                          "chain.agent_key_inactive",
+                          "chain.mandate_mismatch",
+                          "chain.approval_mismatch",
+                          "chain.lock_timing_unexpected",
+                          "chain.supplier_mismatch",
+                          "reference.commitment_mismatch",
+                          "reference.unreadable",
+                          "payment.not_found",
+                          "payment.failed",
+                          "payment.not_final",
+                          "payment.not_memo_transfer",
+                          "payment.token_not_accepted",
+                          "payment.token_mismatch",
+                          "payment.sender_mismatch",
+                          "payment.recipient_mismatch",
+                          "payment.amount_mismatch",
+                          "payment.memo_mismatch",
+                          "payment.attributed_twice",
+                          "dependency.lock_unknown",
+                          "dependency.not_owned",
+                          "dependency.not_found",
+                          "dependency.self_supplied",
+                          "dependency.not_accepted",
+                          "dependency.charge_pending",
+                          "dependency.cancellable",
+                          "dependency.ended",
+                          "dependency.terms_mismatch",
+                          "dependency.disclosure_invalid",
+                          "dependency.does_not_fit",
+                          "dependency.unreadable",
+                          "dependency.stale",
+                          "dependency.required",
+                          "dependency.elided",
+                          "dependency.unrecorded",
+                          "service.compute_off",
+                          "service.over_budget",
+                          "service.unknown_offer",
+                          "service.unknown_booking",
+                          "service.quantity_unavailable",
+                          "supplier.declined",
+                          "supplier.not_accepted",
+                          "service.check_failed",
+                          "service.cancel_late",
+                          "service.cancel_declined",
+                          "chain.cancel_reverted",
+                          "chain.report_reverted",
+                          "service.booking_required",
+                          "sandbox.closed",
+                          "sandbox.limit_reached",
+                          "sandbox.budget_spent",
+                          "sandbox.pool_empty",
+                          "sandbox.faucet_fees_low",
+                          "sandbox.taken",
+                          "sandbox.session_taken",
+                          "sandbox.session_expired",
+                          "sandbox.session_full",
+                          "sandbox.event_too_large",
+                          "sandbox.session_rate",
+                          "approval_request.unknown",
+                          "approval_request.kind_not_allowed",
+                          "approval_request.kind_unavailable",
+                          "approval_request.already_waiting",
+                          "approval_request.asks_exhausted",
+                          "approval_request.cooling_down",
+                          "approval_request.terms_mismatch",
+                          "approval_request.stale",
+                          "approval_request.expired",
+                          "approval_request.decided",
+                          "approval_request.signature_invalid"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "declined"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "stale"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "name_supplier"
+              },
+              "businessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "supplier": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,100}$"
+                  }
+                },
+                "required": [
+                  "supplier"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "new_supplier"
+                ]
+              },
+              "basis": {
+                "type": "object",
+                "properties": {
+                  "mandate": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{64}$"
+                  }
+                },
+                "required": [
+                  "mandate"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "agentKey",
+              "requestedAt",
+              "expiresAt",
+              "status",
+              "kind",
+              "businessId",
+              "terms",
+              "reason",
+              "basis"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              "agentKey": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "requestedAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "expiresAt": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "waiting"
+                      }
+                    },
+                    "required": [
+                      "state"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "expired"
+                      },
+                      "approvedAt": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "approvedAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "approved"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "executing"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "active"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "transaction": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "transaction"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "failed"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "business.unverified",
+                          "business.test_data",
+                          "administrator.no_authority",
+                          "agent.revoked",
+                          "agent.key_mismatch",
+                          "mandate.invalid",
+                          "mandate.ap2_mismatch",
+                          "mandate.signature_invalid",
+                          "mandate.missing",
+                          "mandate.expired",
+                          "mandate.revoked",
+                          "mandate.action_not_permitted",
+                          "mandate.supplier_not_allowed",
+                          "mandate.category_not_allowed",
+                          "terms.category_mismatch",
+                          "offer.superseded",
+                          "offer.withdrawn",
+                          "capacity.exhausted",
+                          "quantity.out_of_range",
+                          "terms.not_negotiable",
+                          "proposal.unacceptable",
+                          "counterparty.not_eligible",
+                          "negotiation.rounds_exhausted",
+                          "mandate.currency_not_allowed",
+                          "mandate.token_not_allowed",
+                          "mandate.over_payment_limit",
+                          "mandate.over_commitment_cap",
+                          "mandate.over_open_reserves_cap",
+                          "mandate.ends_before_window",
+                          "mandate.replaces_mismatch",
+                          "mandate.change_pending",
+                          "approval.human_required",
+                          "approval.human_invalid",
+                          "terms.invalid",
+                          "terms.reserve_mismatch",
+                          "terms.deadlines_out_of_order",
+                          "terms.contest_window_short",
+                          "terms.hash_mismatch",
+                          "terms.currency_mismatch",
+                          "terms.incomplete",
+                          "terms.dispute_invalid",
+                          "terms.version_unknown",
+                          "terms.template_unknown",
+                          "terms.template_invalid",
+                          "terms.backing_unsupported",
+                          "terms.charges_invalid",
+                          "message.schema_unknown",
+                          "message.invalid",
+                          "message.validity_too_long",
+                          "message.wrong_chain",
+                          "message.wrong_contract",
+                          "message.expired",
+                          "message.replayed",
+                          "message.signature_invalid",
+                          "message.signer_unknown",
+                          "request.unsigned",
+                          "request.invalid",
+                          "request.signer_unknown",
+                          "request.id_reused",
+                          "request.in_progress",
+                          "service.unavailable",
+                          "sponsorship.refused",
+                          "sponsorship.over_cap",
+                          "sponsorship.rate_limited",
+                          "sponsorship.simulation_failed",
+                          "sponsorship.altered",
+                          "sponsorship.budget_spent",
+                          "business.unknown",
+                          "supplier.unknown",
+                          "supplier.not_named",
+                          "supplier.removed",
+                          "supplier.not_listed",
+                          "supplier.over_open_cap",
+                          "order.supplier_mismatch",
+                          "order.limit_reached",
+                          "order.unknown",
+                          "order.out_of_step",
+                          "order.terms_changed",
+                          "order.commitment_mismatch",
+                          "agreement.parties_mismatch",
+                          "commitment.unknown",
+                          "commitment.cancel_on_lock",
+                          "commitment.cancel_closed",
+                          "commitment.ended",
+                          "authorization.payee_mismatch",
+                          "authorization.terms_mismatch",
+                          "authorization.commitment_mismatch",
+                          "authorization.mandate_mismatch",
+                          "authorization.buyer_mismatch",
+                          "authorization.accept_by_passed",
+                          "authorization.token_not_accepted",
+                          "approval.commitment_mismatch",
+                          "approval.parties_mismatch",
+                          "approval.terms_mismatch",
+                          "approval.charges_mismatch",
+                          "approval.dispute_mismatch",
+                          "approval.mandate_mismatch",
+                          "consent.not_releasable",
+                          "consent.count_passed",
+                          "consent.count_out_of_range",
+                          "report.not_reportable",
+                          "report.open",
+                          "report.limit_reached",
+                          "report.kind_not_allowed",
+                          "report.amount_invalid",
+                          "report.too_early",
+                          "contest.not_contestable",
+                          "contest.already_contested",
+                          "contest.window_closed",
+                          "contest.reason_not_for_charge",
+                          "contest.statement_invalid",
+                          "contest.not_on_chain",
+                          "contest.statement_mismatch",
+                          "chain.reserve_missing",
+                          "keychain.over_daily_limit",
+                          "chain.reserve_mismatch",
+                          "chain.reserve_accepted",
+                          "chain.acceptance_reverted",
+                          "chain.lock_unknown",
+                          "chain.agent_key_inactive",
+                          "chain.mandate_mismatch",
+                          "chain.approval_mismatch",
+                          "chain.lock_timing_unexpected",
+                          "chain.supplier_mismatch",
+                          "reference.commitment_mismatch",
+                          "reference.unreadable",
+                          "payment.not_found",
+                          "payment.failed",
+                          "payment.not_final",
+                          "payment.not_memo_transfer",
+                          "payment.token_not_accepted",
+                          "payment.token_mismatch",
+                          "payment.sender_mismatch",
+                          "payment.recipient_mismatch",
+                          "payment.amount_mismatch",
+                          "payment.memo_mismatch",
+                          "payment.attributed_twice",
+                          "dependency.lock_unknown",
+                          "dependency.not_owned",
+                          "dependency.not_found",
+                          "dependency.self_supplied",
+                          "dependency.not_accepted",
+                          "dependency.charge_pending",
+                          "dependency.cancellable",
+                          "dependency.ended",
+                          "dependency.terms_mismatch",
+                          "dependency.disclosure_invalid",
+                          "dependency.does_not_fit",
+                          "dependency.unreadable",
+                          "dependency.stale",
+                          "dependency.required",
+                          "dependency.elided",
+                          "dependency.unrecorded",
+                          "service.compute_off",
+                          "service.over_budget",
+                          "service.unknown_offer",
+                          "service.unknown_booking",
+                          "service.quantity_unavailable",
+                          "supplier.declined",
+                          "supplier.not_accepted",
+                          "service.check_failed",
+                          "service.cancel_late",
+                          "service.cancel_declined",
+                          "chain.cancel_reverted",
+                          "chain.report_reverted",
+                          "service.booking_required",
+                          "sandbox.closed",
+                          "sandbox.limit_reached",
+                          "sandbox.budget_spent",
+                          "sandbox.pool_empty",
+                          "sandbox.faucet_fees_low",
+                          "sandbox.taken",
+                          "sandbox.session_taken",
+                          "sandbox.session_expired",
+                          "sandbox.session_full",
+                          "sandbox.event_too_large",
+                          "sandbox.session_rate",
+                          "approval_request.unknown",
+                          "approval_request.kind_not_allowed",
+                          "approval_request.kind_unavailable",
+                          "approval_request.already_waiting",
+                          "approval_request.asks_exhausted",
+                          "approval_request.cooling_down",
+                          "approval_request.terms_mismatch",
+                          "approval_request.stale",
+                          "approval_request.expired",
+                          "approval_request.decided",
+                          "approval_request.signature_invalid"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "declined"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "const": "stale"
+                      },
+                      "at": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "at"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "open_mode"
+              },
+              "businessId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "terms": {
+                "type": "object",
+                "properties": {
+                  "cap": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "cap"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "listed_suppliers"
+                ]
+              },
+              "basis": {
+                "type": "object",
+                "properties": {
+                  "openCap": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  }
+                },
+                "required": [
+                  "openCap"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "agentKey",
+              "requestedAt",
+              "expiresAt",
+              "status",
+              "kind",
+              "businessId",
+              "terms",
+              "reason",
+              "basis"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ReadMyRequestsAnswer": {
+        "$id": "#/components/schemas/ReadMyRequestsAnswer",
+        "type": "object",
+        "properties": {
+          "requests": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AskForChangeAnswer"
+            }
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "additionalProperties": false
+      },
+      "DecideRequestRequest": {
+        "$id": "#/components/schemas/DecideRequestRequest",
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "decline"
+            ]
+          },
+          "businessId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^0x([0-9a-fA-F]{2})*$"
+          }
+        },
+        "required": [
+          "decision",
+          "businessId",
+          "signature"
+        ],
+        "additionalProperties": false
+      },
+      "SetApprovalPolicyRequest": {
+        "$id": "#/components/schemas/SetApprovalPolicyRequest",
+        "type": "object",
+        "properties": {
+          "agentsMayAsk": {
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "raise_limit",
+                "name_supplier",
+                "open_mode"
+              ]
+            }
+          }
+        },
+        "required": [
+          "agentsMayAsk"
+        ],
+        "additionalProperties": false
+      },
       "SendOrderRequest": {
         "$id": "#/components/schemas/SendOrderRequest",
         "type": "object",
@@ -5193,7 +7641,18 @@
                   "sandbox.session_expired",
                   "sandbox.session_full",
                   "sandbox.event_too_large",
-                  "sandbox.session_rate"
+                  "sandbox.session_rate",
+                  "approval_request.unknown",
+                  "approval_request.kind_not_allowed",
+                  "approval_request.kind_unavailable",
+                  "approval_request.already_waiting",
+                  "approval_request.asks_exhausted",
+                  "approval_request.cooling_down",
+                  "approval_request.terms_mismatch",
+                  "approval_request.stale",
+                  "approval_request.expired",
+                  "approval_request.decided",
+                  "approval_request.signature_invalid"
                 ]
               },
               "message": {
