@@ -21,6 +21,13 @@ import {
   supplierAuthorizationAnswerJson,
 } from './api.js'
 import { API_AUTH_SCHEME, API_REQUEST_MAX_VALIDITY } from './api-request.js'
+import {
+  approvalAskJson,
+  approvalDecisionJson,
+  approvalPolicyJson,
+  approvalRequestJson,
+  approvalRequestListJson,
+} from './approval-request.js'
 import { businessCheckJson } from './business-check.js'
 import {
   mailboxAcceptedJson,
@@ -76,7 +83,7 @@ export type ApiTag = (typeof API_TAGS)[number]
 const TAG_DESCRIPTIONS: { readonly [T in ApiTag]: string } = {
   Status: 'Whether the API is up and ready. Anyone may call these, unsigned.',
   Agents:
-    'How an agent asks a business for authority, enrolls once approved, and gets its transactions sponsored.',
+    'How an agent asks a business for authority or a change to it, enrolls once approved, and gets its transactions sponsored, and how the business decides what its agents may ask.',
   Commitments:
     "Avow's approval of a reserve, and the records Avow keeps on a commitment: cancellations, start requests and receipts, and contest statements.",
   Suppliers:
@@ -91,6 +98,26 @@ const ZERO_ORDER = '0'.repeat(32)
 const onCommitment = (path: (id: `0x${string}`) => string) =>
   path(ZERO_ID).replace(ZERO_ID, '{commitmentId}')
 const onOrder = (path: (id: string) => string) => path(ZERO_ORDER).replace(ZERO_ORDER, '{orderId}')
+const onRequest = (path: (id: string) => string) =>
+  path(ZERO_ORDER).replace(ZERO_ORDER, '{requestId}')
+const REQUEST_ID = {
+  name: 'requestId',
+  description: "The request's id, 32 lower-case hex characters",
+  example: '7c1f0a9d3e5b48c2a6f1d0e9b8c7a654',
+}
+
+const RAISE_EXAMPLE = {
+  id: '7c1f0a9d3e5b48c2a6f1d0e9b8c7a654',
+  kind: 'raise_limit',
+  businessId: 'sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447',
+  agentKey: '0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db',
+  terms: { limit: 'per_commitment', from: '250000000', to: '400000000' },
+  reason: 'over_commitment_limit',
+  basis: { mandate: '0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a' },
+  requestedAt: '1763420400',
+  expiresAt: '1763506800',
+  status: { state: 'waiting' },
+}
 const SUPPLIER_PATH = SANDBOX_PATHS.supplier('BUSINESS').replace('BUSINESS', '{businessId}')
 
 const COMMITMENT_ID = {
@@ -439,6 +466,112 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
         outcome: 'pending',
         nextAt: '1763506800',
       },
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.approvalRequests,
+    operationId: 'askForChange',
+    tag: 'Agents',
+    summary: 'Ask for a change to authority',
+    description:
+      "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can make ten requests a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.",
+    signedBy: "The agent's key",
+    domain: 'lock',
+    refusals: [409, 429],
+    request: {
+      schema: approvalAskJson,
+      example: {
+        kind: 'raise_limit',
+        terms: { limit: 'per_commitment', from: '250000000', to: '400000000' },
+        reason: 'over_commitment_limit',
+      },
+    },
+    answer: {
+      status: 201,
+      description: 'The request, or 200 with the identical request already waiting',
+      schema: approvalRequestJson,
+      example: RAISE_EXAMPLE,
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.approvalRequestsMine,
+    operationId: 'readMyRequests',
+    tag: 'Agents',
+    summary: "Read an agent's requests",
+    description:
+      'Every request the agent made, newest first, up to 200, with where each stands. An agent treats what it asked for as usable only once its request is `active`, since approval and the change landing are separate steps. The request carries an empty object.',
+    signedBy: "The agent's key",
+    domain: 'lock',
+    answer: {
+      status: 200,
+      description: "The agent's requests",
+      schema: approvalRequestListJson,
+      example: { requests: [RAISE_EXAMPLE] },
+    },
+  },
+  {
+    method: 'post',
+    path: onRequest(SANDBOX_PATHS.approvalRequest),
+    operationId: 'readMyRequest',
+    tag: 'Agents',
+    summary: 'Read one request',
+    description:
+      "Where one of the agent's requests stands. A request of another agent is answered `approval_request.unknown`. The request carries an empty object.",
+    signedBy: "The agent's key",
+    domain: 'lock',
+    params: [REQUEST_ID],
+    refusals: [404],
+    answer: {
+      status: 200,
+      description: 'The request',
+      schema: approvalRequestJson,
+      example: RAISE_EXAMPLE,
+    },
+  },
+  {
+    method: 'post',
+    path: onRequest(SANDBOX_PATHS.approvalDecision),
+    operationId: 'decideRequest',
+    tag: 'Agents',
+    summary: 'Decide a request',
+    description:
+      "The business account's root key approves or declines a request by signing an `ApprovalDecision`, which names the request, the business, the agent, the hash of the exact terms, the hash of the basis and the expiry. The body carries the decision and that signature, and needs no other, since only the root key decides.\n\nAvow checks the basis again under a lock on the agent or the business. A request whose basis has changed becomes `stale` and never applies, so an approval can't overwrite a newer decision. An approved request is not yet usable. It's `active` once its change has landed. The same decision sent again is answered as before.",
+    signedBy: null,
+    params: [REQUEST_ID],
+    refusals: [403, 404, 409, 410],
+    request: {
+      schema: approvalDecisionJson,
+      example: {
+        decision: 'approve',
+        businessId: 'sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447',
+        signature: '0x',
+      },
+    },
+    answer: {
+      status: 200,
+      description: 'The request as it stands after the decision',
+      schema: approvalRequestJson,
+      example: { ...RAISE_EXAMPLE, status: { state: 'approved', at: '1763424000' } },
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.approvalPolicy,
+    operationId: 'setApprovalPolicy',
+    tag: 'Agents',
+    summary: 'Set which changes agents may ask for',
+    description:
+      'A business names the changes its agents may ask for. Asking for agent authority is always open, since a request grants nothing. A business that never set a policy lets its agents ask for every change. A request already waiting stays waiting when a kind is taken off.',
+    signedBy: "The business account's root key",
+    domain: 'lock',
+    request: { schema: approvalPolicyJson, example: { agentsMayAsk: ['raise_limit'] } },
+    answer: {
+      status: 200,
+      description: 'The policy Avow holds',
+      schema: approvalPolicyJson,
+      example: { agentsMayAsk: ['raise_limit'] },
     },
   },
   {

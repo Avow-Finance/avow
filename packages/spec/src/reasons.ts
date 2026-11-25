@@ -288,6 +288,25 @@ export const REASON_CODES = {
   'sandbox.event_too_large': 'The event is larger than a session keeps, so nothing was posted',
   'sandbox.session_rate':
     'Your business is posting events faster than the sandbox allows, so send it again once `retryAt` has passed',
+  'approval_request.unknown': 'No request has that id, or it belongs to another business or agent',
+  'approval_request.kind_not_allowed':
+    "The business doesn't let its agents ask for this kind of change, so nothing was asked",
+  'approval_request.kind_unavailable':
+    "Avow doesn't take requests of this kind yet, so nothing was asked",
+  'approval_request.already_waiting':
+    'The agent already has a different request of this kind waiting, which the answer names, so ask again once it is decided or has lapsed',
+  'approval_request.asks_exhausted':
+    'The agent has made as many requests today as one agent can, so ask again once `retryAt` has passed',
+  'approval_request.cooling_down':
+    'The administrator declined the same request recently, so the agent can ask it again once `retryAt` has passed',
+  'approval_request.terms_mismatch':
+    "The request's starting value isn't what the agent holds now, so nothing was asked",
+  'approval_request.stale':
+    'What the request would change has changed since it was asked, so it will never apply. Ask again from the authority the agent holds now',
+  'approval_request.expired': 'The request lapsed before anyone decided it, so it will never apply',
+  'approval_request.decided': 'The request was already decided, so this decision changes nothing',
+  'approval_request.signature_invalid':
+    "The decision isn't signed by the business account's root key over this request, its terms and its expiry",
 } as const
 
 export type ReasonCode = keyof typeof REASON_CODES

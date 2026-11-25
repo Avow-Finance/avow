@@ -52,6 +52,8 @@ navigation:
         path: ./docs/pages/business-check.mdx
       - page: Test dollar top-ups
         path: ./docs/pages/top-ups.mdx
+      - page: Approval requests
+        path: ./docs/pages/approval-requests.mdx
       - api: API reference
       - page: Relay refusals
         path: ./docs/pages/relay-refusals.mdx
