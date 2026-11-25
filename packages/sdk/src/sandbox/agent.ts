@@ -32,6 +32,7 @@ import {
   serviceOrderProblem,
   servicePrice,
   TESTNET_DEMO_PROFILE,
+  type TopUp,
   tempoKeychainCheck,
   toTokenUnits,
 } from '@avow-finance/spec'
@@ -64,6 +65,7 @@ import {
 import { sandboxSupplierProfile } from './supplier-profile.js'
 import { connectSupplier } from './suppliers.js'
 import { micros, type SandboxResource, sandboxTerms, toDollars } from './terms.js'
+import { sandboxTopUp } from './top-up.js'
 import { trustedChainReader } from './trusted-readers.js'
 
 /**
@@ -361,13 +363,13 @@ export async function keyLeftToday(
 }
 
 /**
- * The agent of a sandbox business, acting with only its own key under the mandate its business
- * signed. It reads the agent's item from the store and never the business's key, and it has no
- * call that signs a mandate, enrolls a key or changes the authority. Run `npm start` first, which
- * sets the business up and asks before it signs the agent's mandate.
+ * What any call the agent makes stands on: its item from the store, the deployment its business
+ * was set up on, its own key with the business's account, and the business's lock as the domain
+ * its requests are signed under. It never reads the business's key.
  */
-export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<SandboxAgent> {
-  const log = options.log ?? ((line: string) => console.log(line))
+async function agentContext(
+  options: Pick<SandboxAgentOptions, 'fetch' | 'store' | 'screenUrl' | 'deployment'>,
+) {
   const send = options.fetch ?? ((input, init) => fetch(input, init))
   const store = options.store ?? platform.store?.()
   if (!store) {
@@ -388,7 +390,6 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
       'The sandbox runs a new deployment now. Run npm start to set your business up on it.',
     )
   }
-  const client: SandboxClient = moderatoClient(deployment.rpcUrl)
   const agentKey: AgentKey = Account.fromSecp256k1(item.agentKey, {
     access: item.business.account,
   })
@@ -396,6 +397,19 @@ export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<S
     throw new Error("The agent's key isn't the one its mandate names")
   }
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: item.business.lock }
+  return { send, store, item, screenUrl, deployment, agentKey, domain }
+}
+
+/**
+ * The agent of a sandbox business, acting with only its own key under the mandate its business
+ * signed. It reads the agent's item from the store and never the business's key, and it has no
+ * call that signs a mandate, enrolls a key or changes the authority. Run `npm start` first, which
+ * sets the business up and asks before it signs the agent's mandate.
+ */
+export async function sandboxAgent(options: SandboxAgentOptions = {}): Promise<SandboxAgent> {
+  const log = options.log ?? ((line: string) => console.log(line))
+  const { send, store, item, screenUrl, deployment, agentKey, domain } = await agentContext(options)
+  const client: SandboxClient = moderatoClient(deployment.rpcUrl)
   const session = checkSession(
     options.session !== undefined ? options.session : (platform.session?.() ?? null),
   )
@@ -1089,4 +1103,22 @@ async function waitForAcceptance(
     if (now !== null && now > acceptBy + 60n) return false
     await pause(3000)
   }
+}
+
+/**
+ * Asks the sandbox faucet for more test dollars for the agent's business, signed with the agent's
+ * own key. It needs the agent to hold authority, since Avow takes a top-up only from the root key
+ * or an agent of the business that isn't revoked. The dollars go to the business's account, never
+ * its lock, so they change nothing the agent may commit. A business gets one top-up a day.
+ */
+export async function agentTopUp(
+  options: Pick<SandboxAgentOptions, 'fetch' | 'store' | 'screenUrl' | 'deployment'> = {},
+): Promise<TopUp> {
+  const { send, deployment, agentKey, domain } = await agentContext(options)
+  return sandboxTopUp({
+    baseUrl: deployment.apiUrl,
+    key: agentRequestKey(agentKey),
+    domain,
+    fetch: send,
+  })
 }

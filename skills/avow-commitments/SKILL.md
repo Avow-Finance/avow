@@ -29,6 +29,7 @@ Your key stays in `.avow` on the machine that made it. Never print it, return it
 - `check` says whether a booking would pass, without booking or moving money. When it wouldn't, it names the reason code and the layer that would refuse. Give it an offer and a quantity to check an order for a service the same way.
 - `book` makes the commitment and reserves the money in your business's lock. It answers with a link anyone can open to check it.
 - `commitments` lists what you've made, each with its state on the lock and its link.
+- `top_up` asks the sandbox faucet for more test dollars when your business runs low. They go to the business's account, never its lock, so your limits stay the same. A business gets one a day.
 
 Send the link to the business on the other side, so it can check the reserve itself.
 

@@ -26,7 +26,7 @@
     },
     {
       "name": "Suppliers",
-      "description": "Registering a business in the sandbox, starting and reading its business check, registering a supplier's signing key, and reading a supplier's profile."
+      "description": "Registering a business in the sandbox, starting and reading its business check, topping up its test dollars, registering a supplier's signing key, and reading a supplier's profile."
     },
     {
       "name": "Mailbox",
@@ -838,6 +838,52 @@
                   "by": "didit",
                   "simulated": true,
                   "decidedAt": "1763420400"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
+    "/v1/sandbox/top-ups": {
+      "post": {
+        "operationId": "topUpSandboxBusiness",
+        "tags": [
+          "Suppliers"
+        ],
+        "summary": "Top up a sandbox business's test dollars",
+        "description": "Avow's sandbox faucet sends the business more test dollars, to its own account on Tempo and never to its lock. The request has no body. A business gets one top-up a day, so a second within the day is answered `not_yet` with when to ask again, and sends nothing.\n\nA top-up changes no mandate and no limit. An agent still reserves only what its mandate allows, so an agent that holds authority can ask for one as well as the root key. Test dollars have no value.\n\nSigned by the business account's root key, or an agent of the business that holds authority, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The faucet's transfer, or 200 with `not_yet`, and when the business can ask again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopUpSandboxBusinessAnswer"
+                },
+                "example": {
+                  "state": "sent",
+                  "amount": "1500000000",
+                  "transactionHash": "0x5b2f0d7c4c1e8a3f9b6d2e7a1c4f8b3d6e9a2c5f8b1d4e7a0c3f6b9d2e5a8c1f",
+                  "outcome": "pending",
+                  "nextAt": "1763506800"
                 }
               }
             }
@@ -4793,6 +4839,65 @@
               "by",
               "simulated",
               "decidedAt"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "TopUpSandboxBusinessAnswer": {
+        "$id": "#/components/schemas/TopUpSandboxBusinessAnswer",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "sent"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^[1-9]\\d{0,29}$"
+              },
+              "transactionHash": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{64}$"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "landed"
+                ]
+              },
+              "nextAt": {
+                "type": "string",
+                "pattern": "^\\d{1,20}$"
+              }
+            },
+            "required": [
+              "state",
+              "amount",
+              "transactionHash",
+              "outcome",
+              "nextAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "not_yet"
+              },
+              "nextAt": {
+                "type": "string",
+                "pattern": "^\\d{1,20}$"
+              }
+            },
+            "required": [
+              "state",
+              "nextAt"
             ],
             "additionalProperties": false
           }

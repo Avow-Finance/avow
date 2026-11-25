@@ -1,0 +1,28 @@
+---
+title: Test dollar top-ups
+slug: docs/reference/top-ups
+---
+
+A sandbox business starts with test dollars from Avow's sandbox faucet, and can ask for more once a day. The faucet sends them to the business's own account on Tempo. Test dollars have no value, and nothing here moves real money.
+
+## Who can ask
+
+The business account's root key can ask, and so can any of the business's agents that holds authority. A revoked agent can't. Letting an agent ask is safe because a top-up widens nothing it may commit. The dollars land in the business's account and never in its lock, and an agent still reserves only what its mandate allows, within its key's daily limit.
+
+| From | How |
+| --- | --- |
+| An agent in Claude | The MCP server's `top_up` tool |
+| A terminal | `npx avow-sandbox top-up` in the agent's folder |
+| Code | `sandboxTopUp` from `@avow-finance/sdk`, with the root key through `rootRequestKey` or the agent's key through `agentRequestKey` |
+| The console | Add test dollars, on the Available card |
+
+## What comes back
+
+A request is a signed `POST /v1/sandbox/top-ups` with an empty body, under the business's lock. Avow answers in one of two ways.
+
+- `sent` means the faucet signed a transfer of `amount`, in the reserve token's base units. Its `outcome` is `pending` until the transfer lands on Tempo, and the business's balance shows it within a minute or so.
+- `not_yet` means the business had its top-up within the last day, and nothing was sent.
+
+Both carry `nextAt`, the unix time the business can ask again. Asking again early is harmless, so an agent can call `top_up` whenever its business runs low.
+
+The faucet's own limits still apply. While the sandbox is closed, its pool is empty or its fees are low, the request is refused with the same `sandbox.*` reason a registration gets.

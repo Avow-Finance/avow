@@ -37,6 +37,7 @@ import {
 } from './sandbox-registration.js'
 import { supplierProfileJson } from './supplier-adapter.js'
 import { jobRequirementJson, quoteRequestJson } from './test-customer.js'
+import { topUpJson } from './top-up.js'
 import { jobTermsJson } from './wire.js'
 
 /**
@@ -79,7 +80,7 @@ const TAG_DESCRIPTIONS: { readonly [T in ApiTag]: string } = {
   Commitments:
     "Avow's approval of a reserve, and the records Avow keeps on a commitment: cancellations, start requests and receipts, and contest statements.",
   Suppliers:
-    "Registering a business in the sandbox, starting and reading its business check, registering a supplier's signing key, and reading a supplier's profile.",
+    "Registering a business in the sandbox, starting and reading its business check, topping up its test dollars, registering a supplier's signing key, and reading a supplier's profile.",
   Mailbox:
     "The sandbox mailbox, which carries a job between two businesses' agents wherever each runs.",
 }
@@ -414,6 +415,30 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
       description: "Where the business's check stands",
       schema: businessCheckJson,
       example: { state: 'passed', by: 'didit', simulated: true, decidedAt: '1763420400' },
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.topUps,
+    operationId: 'topUpSandboxBusiness',
+    tag: 'Suppliers',
+    summary: "Top up a sandbox business's test dollars",
+    description:
+      "Avow's sandbox faucet sends the business more test dollars, to its own account on Tempo and never to its lock. The request has no body. A business gets one top-up a day, so a second within the day is answered `not_yet` with when to ask again, and sends nothing.\n\nA top-up changes no mandate and no limit. An agent still reserves only what its mandate allows, so an agent that holds authority can ask for one as well as the root key. Test dollars have no value.",
+    signedBy: "The business account's root key, or an agent of the business that holds authority",
+    domain: 'lock',
+    answer: {
+      status: 201,
+      description:
+        "The faucet's transfer, or 200 with `not_yet`, and when the business can ask again",
+      schema: topUpJson,
+      example: {
+        state: 'sent',
+        amount: '1500000000',
+        transactionHash: '0x5b2f0d7c4c1e8a3f9b6d2e7a1c4f8b3d6e9a2c5f8b1d4e7a0c3f6b9d2e5a8c1f',
+        outcome: 'pending',
+        nextAt: '1763506800',
+      },
     },
   },
   {
