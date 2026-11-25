@@ -163,7 +163,11 @@ describe('a decision', () => {
     // Its status isn't signed, since that's Avow's to change.
     expect(
       approvalDecisionDigest(raise, approve, DOMAIN) ===
-        approvalDecisionDigest({ ...raise, status: { state: 'expired' } }, approve, DOMAIN),
+        approvalDecisionDigest(
+          { ...raise, status: { state: 'expired', approvedAt: null } },
+          approve,
+          DOMAIN,
+        ),
     ).toBe(true)
     const signature = await root.signTypedData(approvalDecisionTypedData(raise, approve, DOMAIN))
     expect(await root.sign({ hash: digest })).toBe(signature)

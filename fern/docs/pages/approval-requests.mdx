@@ -22,7 +22,7 @@ The reason is a code from the list above, and Avow shows its own words for it. A
 
 Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise or a supplier that's the hash of the agent's current mandate. For open mode it's the cap the lock held.
 
-The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses a raise whose starting value isn't what the agent holds now with `approval_request.terms_mismatch`.
+The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
 
 A change to authority waits a day for a decision. Agent authority waits an hour, as an agent's request always has.
 
@@ -32,7 +32,7 @@ The business account's root key decides a request by signing an `ApprovalDecisio
 
 `approvalDecisionTypedData` in `@avow-finance/spec` builds what the root key signs, and the decision goes to `POST /v1/sandbox/approval-requests/{requestId}/decision`.
 
-Before an approval takes effect, Avow checks the basis again under a lock on the agent or the business. If what the request would change has changed since it was asked, such as the administrator cutting the limit while a raise waited, the request becomes `stale` and never applies. An approval can't overwrite a newer decision.
+Avow checks the signature first, then checks the basis again under a lock on the agent or the business. If what the request would change has changed since it was asked, such as the administrator cutting the limit while a raise waited, the request becomes `stale` and never applies. An approval can't overwrite a newer decision. The same decision sent again, even signed afresh, is answered with the request as it stands.
 
 ## Where a request stands
 
@@ -44,7 +44,7 @@ Before an approval takes effect, Avow checks the basis again under a lock on the
 | `active` | Its change landed, and the agent can use it |
 | `failed` | Its change didn't land, with the reason |
 | `declined` | The root key declined it |
-| `expired` | It lapsed before anyone decided it, or before its change started |
+| `expired` | It lapsed before anyone decided it, or its change didn't start within an hour of approval, in which case it carries `approvedAt` |
 | `stale` | What it would change changed first, so it never applies |
 
 An agent treats what it asked for as usable only once its request is `active`. Applying a change is idempotent, so a retry never applies it twice.
@@ -55,10 +55,10 @@ A request is never a way to wear an administrator down, so Avow limits how agent
 
 - An ask identical to one already waiting is answered with that request.
 - A different ask of the same kind while one waits is refused with `approval_request.already_waiting`. For suppliers, that's per supplier.
-- An agent makes at most ten requests a day, refused after with `approval_request.asks_exhausted`.
+- An agent asks one business for at most ten changes a day, refused after with `approval_request.asks_exhausted`. Asking for agent authority isn't counted.
 - After a decline the agent waits a day before asking the same again, refused meanwhile with `approval_request.cooling_down`.
-- The business decides which changes its agents may ask for with `POST /v1/sandbox/approval-policy`, signed by its root key. A business that never set one lets its agents ask for every change, and asking for agent authority is always open.
+- The business decides which changes its agents may ask for with `POST /v1/sandbox/approval-policy`, signed by its root key, and reads it back at `POST /v1/sandbox/approval-policy/current`. A business that never set one lets its agents ask for every change, and asking for agent authority is always open.
 
 ## Reading requests
 
-An agent reads its own requests, signed by its key under the business's lock, at `POST /v1/sandbox/approval-requests/mine`, newest first, or one at `POST /v1/sandbox/approval-requests/{requestId}`.
+An agent reads its own requests at its business, signed by its key under the business's lock, at `POST /v1/sandbox/approval-requests/mine`, newest first, or one at `POST /v1/sandbox/approval-requests/{requestId}`.

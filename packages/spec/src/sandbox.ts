@@ -132,6 +132,8 @@ export const SANDBOX_PATHS = {
    * under its lock, with an `ApprovalPolicy`. Avow answers with the policy it holds.
    */
   approvalPolicy: '/v1/sandbox/approval-policy',
+  /** Where the same key reads the policy the business has, as an `ApprovalPolicy`. */
+  approvalPolicyCurrent: '/v1/sandbox/approval-policy/current',
   /** Where a buyer's agent sends an order to another business. */
   mailboxOrders: '/v1/sandbox/mailbox/orders',
   /** Where a supplier's agent reads the orders waiting on it. */

@@ -51,8 +51,21 @@ export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   open_mode: DAY,
 }
 
-/** The most requests one agent can make in a day, counting every kind, merged repeats aside. */
+/** The window an agent's asks are counted over, in seconds. */
+export const APPROVAL_ASK_WINDOW = DAY
+
+/**
+ * The most changes one agent can ask one business for in `APPROVAL_ASK_WINDOW`, merged repeats
+ * aside. Asking for agent authority, which `connect` does, isn't counted.
+ */
 export const APPROVAL_ASKS_PER_DAY = 10
+
+/**
+ * How long an approved request has for its change to start, in seconds from its approval. One
+ * whose change never started by then lapses, so an approval can't be held back and applied much
+ * later.
+ */
+export const APPROVAL_EXECUTION_WINDOW = 60n * 60n
 
 /**
  * How long after a decline an agent waits before it can ask the same again, in seconds. The same
@@ -182,7 +195,7 @@ export type ApprovalState = (typeof APPROVAL_STATES)[number]
  * The moves a request can make, from each state. Approved moves to active directly where the
  * change lands with the approval itself, such as a mandate Avow holds, and through executing where
  * a transaction has to land. A request found stale when it would execute never executes, and an
- * approved request whose change never started by its expiry lapses. The last five states are final.
+ * approved request whose change never started within `APPROVAL_EXECUTION_WINDOW` lapses. The last five states are final.
  */
 export const APPROVAL_MOVES: { readonly [S in ApprovalState]: readonly ApprovalState[] } = {
   waiting: ['approved', 'declined', 'expired', 'stale'],
@@ -203,7 +216,8 @@ export const isApprovalFinal = (state: ApprovalState): boolean => APPROVAL_MOVES
 const at = u64
 export const approvalStatusJson = z.discriminatedUnion('state', [
   z.strictObject({ state: z.literal('waiting') }),
-  z.strictObject({ state: z.literal('expired') }),
+  /** When it was approved, for one that lapsed before its change started, or null. */
+  z.strictObject({ state: z.literal('expired'), approvedAt: at.nullable() }),
   z.strictObject({ state: z.literal('approved'), at }),
   /** The transaction carrying the change, or null where none has been sent yet. */
   z.strictObject({ state: z.literal('executing'), at, transaction: bytes32.nullable() }),

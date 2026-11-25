@@ -475,10 +475,10 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Agents',
     summary: 'Ask for a change to authority',
     description:
-      "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can make ten requests a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.",
+      "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.",
     signedBy: "The agent's key",
     domain: 'lock',
-    refusals: [409, 429],
+    refusals: [403, 409, 429],
     request: {
       schema: approvalAskJson,
       example: {
@@ -537,7 +537,7 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Agents',
     summary: 'Decide a request',
     description:
-      "The business account's root key approves or declines a request by signing an `ApprovalDecision`, which names the request, the business, the agent, the hash of the exact terms, the hash of the basis and the expiry. The body carries the decision and that signature, and needs no other, since only the root key decides.\n\nAvow checks the basis again under a lock on the agent or the business. A request whose basis has changed becomes `stale` and never applies, so an approval can't overwrite a newer decision. An approved request is not yet usable. It's `active` once its change has landed. The same decision sent again is answered as before.",
+      "The business account's root key approves or declines a request by signing an `ApprovalDecision`, which names the request, the business, the agent, the hash of the exact terms, the hash of the basis and the expiry. The body carries the decision and that signature, and needs no other, since only the root key decides.\n\nAvow checks the signature before it locks anything, then checks the basis again under a lock on the agent or the business. A request whose basis has changed becomes `stale` and never applies, so an approval can't overwrite a newer decision. An approved request is not yet usable. It's `active` once its change has landed, and it lapses if the change hasn't started within an hour. The same decision sent again, even signed afresh, is answered with the request as it stands.",
     signedBy: null,
     params: [REQUEST_ID],
     refusals: [403, 404, 409, 410],
@@ -572,6 +572,23 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
       description: 'The policy Avow holds',
       schema: approvalPolicyJson,
       example: { agentsMayAsk: ['raise_limit'] },
+    },
+  },
+  {
+    method: 'post',
+    path: SANDBOX_PATHS.approvalPolicyCurrent,
+    operationId: 'readApprovalPolicy',
+    tag: 'Agents',
+    summary: 'Read which changes agents may ask for',
+    description:
+      'The policy the business has, or every change for a business that never set one. The request carries an empty object.',
+    signedBy: "The business account's root key",
+    domain: 'lock',
+    answer: {
+      status: 200,
+      description: 'The policy Avow holds',
+      schema: approvalPolicyJson,
+      example: { agentsMayAsk: ['raise_limit', 'name_supplier', 'open_mode'] },
     },
   },
   {
