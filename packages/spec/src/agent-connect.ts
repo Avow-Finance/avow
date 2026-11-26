@@ -24,8 +24,11 @@ import { address, bytes32, hexBytes, u64 } from './json-fields.js'
  * key signed the agent's mandate. From then on the agent asks that business as any agent does.
  */
 
-/** How long a request waits for the administrator, in seconds, before it lapses unanswered. */
-export const AGENT_REQUEST_LIFETIME = 60n * 60n
+/**
+ * How long a request waits for the administrator, in seconds, before it lapses unanswered. A week,
+ * since people take days to approve a new agent, and opening its link never extends it.
+ */
+export const AGENT_REQUEST_LIFETIME = 7n * 24n * 60n * 60n
 
 /**
  * What an agent sends when it asks: the business it works for, a name its developer chose, and for

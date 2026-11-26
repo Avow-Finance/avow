@@ -2,6 +2,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
 import {
   APPROVAL_KINDS,
+  APPROVAL_LIFETIMES,
   APPROVAL_MOVES,
   APPROVAL_REASONS,
   APPROVAL_STATES,
@@ -16,6 +17,8 @@ import {
   parseApprovalDecision,
   parseApprovalPolicy,
   parseApprovalRequest,
+  signingHash,
+  signingIdOf,
 } from './approval-request.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 import { toWire } from './wire.js'
@@ -209,6 +212,23 @@ describe("a business's policy", () => {
     expect(parseApprovalPolicy({ agentsMayAsk: [] }).ok).toBe(true)
     expect(parseApprovalPolicy({ agentsMayAsk: ['raise_limit', 'raise_limit'] }).ok).toBe(false)
     expect(parseApprovalPolicy({ agentsMayAsk: ['agent_authority'] }).ok).toBe(false)
+  })
+})
+
+describe("a request's signing link", () => {
+  it('names the request by its id, and reads back only a well-formed one', () => {
+    expect(signingHash(raise.id)).toBe(`#sign-${raise.id}`)
+    expect(signingIdOf(signingHash(raise.id))).toBe(raise.id)
+    expect(signingIdOf(`#sign-${raise.id}x`)).toBe(null)
+    expect(signingIdOf(`#approve-${raise.id}`)).toBe(null)
+    expect(() => signingHash('../agents')).toThrow(RangeError)
+  })
+
+  it('waits a week for agent authority and a day for a change', () => {
+    expect(APPROVAL_LIFETIMES.agent_authority).toBe(7n * 86_400n)
+    expect(APPROVAL_LIFETIMES.raise_limit).toBe(86_400n)
+    expect(APPROVAL_LIFETIMES.name_supplier).toBe(86_400n)
+    expect(APPROVAL_LIFETIMES.open_mode).toBe(86_400n)
   })
 })
 

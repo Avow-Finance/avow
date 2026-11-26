@@ -42,7 +42,8 @@ const DAY = 86_400n
 
 /**
  * How long each kind waits for a decision, in seconds, before it lapses. A change to authority
- * waits a day. Agent authority keeps the hour an agent's request has always waited.
+ * waits a day. Agent authority waits a week, as an agent's request does. Opening a request's link
+ * never moves its expiry.
  */
 export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   agent_authority: AGENT_REQUEST_LIFETIME,
@@ -232,6 +233,22 @@ export type ApprovalStatus = z.infer<typeof approvalStatusJson>
 /** A request id: 16 random bytes as 32 lower-case hex characters. */
 const ID = /^[0-9a-f]{32}$/
 export const isApprovalRequestId = (text: string): boolean => ID.test(text)
+
+/**
+ * The hash of a console link that opens one request on its signing page. It names the request by
+ * its id and grants nothing, since whoever opens it still signs in, and only the account's root key
+ * decides what the page shows.
+ */
+export function signingHash(id: string): string {
+  if (!isApprovalRequestId(id)) throw new RangeError(`${id} isn't a request id`)
+  return `#sign-${id}`
+}
+
+/** The request a console link's hash names for signing, or null when it names none. */
+export function signingIdOf(hash: string): string | null {
+  const match = /^#sign-([0-9a-f]{32})$/.exec(hash)
+  return match ? (match[1] as string) : null
+}
 
 const recordBase = {
   id: z.string().regex(ID),
