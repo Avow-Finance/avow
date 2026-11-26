@@ -60,6 +60,14 @@ describe('the factories the SDK trusts', () => {
     expect(factoriesToRead(1, MODERATO_FACTORY)).toEqual([MODERATO_FACTORY])
   })
 
+  it('include the factory with the guarded changes, created after the others', () => {
+    expect(trustedFactory(42431, '0x1fc36829ce3f907ac103512a7dec87fa3af67a97')).toEqual({
+      address: '0x1fC36829ce3f907ac103512a7DeC87fA3aF67a97',
+      createdIn: 46_037_634n,
+    })
+    expect(MODERATO_FACTORIES.at(-1)?.address).toBe('0x1fC36829ce3f907ac103512a7DeC87fA3aF67a97')
+  })
+
   it("can't be changed by anything else running in the process", () => {
     expect(() =>
       (MODERATO_FACTORIES as TrustedFactory[]).push(MODERATO_FACTORIES[0] as never),

@@ -30,6 +30,9 @@ export const MODERATO_FACTORIES: readonly TrustedFactory[] = Object.freeze(
     { address: '0x8fa7177c84BE069df2a51F096ED28d5D661B8283', createdIn: 41_801_818n },
     // The factory whose locks also take suppliers from the supplier registry.
     { address: '0xEeC6E0C0a212868D4BB7C5857338DE57E4Ca8b91', createdIn: 45_516_423n },
+    // The factory whose locks refuse a supplier or open-cap change once the lock has moved on from
+    // the state an approval named, and report their version.
+    { address: '0x1fC36829ce3f907ac103512a7DeC87fA3aF67a97', createdIn: 46_037_634n },
   ].map((f) => Object.freeze(f as TrustedFactory)),
 )
 
