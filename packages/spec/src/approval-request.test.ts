@@ -224,8 +224,8 @@ describe("a request's signing link", () => {
     expect(() => signingHash('../agents')).toThrow(RangeError)
   })
 
-  it('waits a week for agent authority and a day for a change', () => {
-    expect(APPROVAL_LIFETIMES.agent_authority).toBe(7n * 86_400n)
+  it('waits an hour for agent authority and a day for a change', () => {
+    expect(APPROVAL_LIFETIMES.agent_authority).toBe(3600n)
     expect(APPROVAL_LIFETIMES.raise_limit).toBe(86_400n)
     expect(APPROVAL_LIFETIMES.name_supplier).toBe(86_400n)
     expect(APPROVAL_LIFETIMES.open_mode).toBe(86_400n)

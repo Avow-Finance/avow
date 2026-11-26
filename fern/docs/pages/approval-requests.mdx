@@ -24,13 +24,13 @@ Each request carries its id, its kind, the business, the agent's key, the exact 
 
 The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
 
-A change to authority waits a day for a decision. Agent authority waits a week, since people take days to approve a new agent. Opening a request's link never moves its expiry.
+A change to authority waits a day for a decision. Agent authority waits an hour, as an agent's request always has, since anyone can ask and each request holds one of the business's ten waiting places. Opening a request's link never moves its expiry.
 
 ## Deciding
 
 The business account's root key decides a request by signing an `ApprovalDecision` under the business's lock. It names the request id, the business, the agent, the hash of the kind, reason and terms, the hash of the basis, the expiry, and whether it approves or declines. A signature decides that request and no other. Signing in to the console proves who the administrator is, and never stands in for this signature.
 
-The console's signing page is where a person does this. `approvalRequestLink` in `@avow-finance/sdk` gives the link to one request, and an agent sends it to its person. The page shows the business, the agent, the kind and the terms with old beside new, and signs with the passkey that is the account's root key. The passkey belongs to the console's domain, so a page that copies this one anywhere else can't produce a signature Avow accepts. The link grants nothing to whoever opens it. Agent authority opens the same card the console has always shown for a new agent.
+The console's signing page is where a person does this. `approvalRequestLink` in `@avow-finance/sdk` gives the link to one request, and an agent sends it to its person. The page shows the business, the agent, the kind and the terms with old beside new, and signs with the passkey that is the account's root key. The passkey belongs to the console's domain, so a page that copies this one anywhere else can't produce a signature Avow accepts. The link grants nothing to whoever opens it. Agent authority opens the same card the console has always shown for a new agent, where the administrator approves it or declines it. A decline frees the request's waiting place at once.
 
 `approvalDecisionTypedData` in `@avow-finance/spec` builds what the root key signs, and the decision goes to `POST /v1/sandbox/approval-requests/{requestId}/decision`.
 
