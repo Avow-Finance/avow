@@ -30,7 +30,9 @@ vi.mock('../moderato.js', async (original) => ({
   }),
 }))
 
-const { approvalLink, connectToBusiness } = await import('./connect.js')
+const { approvalLink, approvalRequestLink, connectToBusiness, pollDelay } = await import(
+  './connect.js'
+)
 
 // The business's account, whose address its sandbox id is made from.
 const root = Account.fromSecp256k1(generatePrivateKey())
@@ -409,5 +411,20 @@ describe('the approval link', () => {
   it("opens the console on this agent's request, named by its key and nothing else", () => {
     const key = privateKeyToAccount(generatePrivateKey()).address
     expect(approvalLink(key)).toBe(`https://testnet.avow.finance/#approve-${key.toLowerCase()}`)
+  })
+
+  it('opens a request on its signing page, named by its id and nothing else', () => {
+    const id = 'ab'.repeat(16)
+    expect(approvalRequestLink(id)).toBe(`https://testnet.avow.finance/#sign-${id}`)
+    expect(() => approvalRequestLink('../agents')).toThrow(RangeError)
+  })
+})
+
+describe('waiting for an answer', () => {
+  it('asks often while the person is likely at the link, then every half minute', () => {
+    expect(pollDelay(0)).toBe(5000)
+    expect(pollDelay(9 * 60_000)).toBe(5000)
+    expect(pollDelay(10 * 60_000)).toBe(30_000)
+    expect(pollDelay(6 * 24 * 60 * 60_000)).toBe(30_000)
   })
 })

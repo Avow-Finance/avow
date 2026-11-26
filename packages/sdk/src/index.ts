@@ -54,6 +54,7 @@ export * from './sandbox/business.js'
 export * from './sandbox/business-check.js'
 export {
   approvalLink,
+  approvalRequestLink,
   type ConnectEvent,
   type ConnectOptions,
   connectToBusiness,

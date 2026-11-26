@@ -9,6 +9,7 @@ import {
   parseOpenAgentRequestStatus,
   type RequestKey,
   SANDBOX_PATHS,
+  signingHash,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
@@ -41,6 +42,19 @@ export const SANDBOX_CONSOLE_URL = 'https://testnet.avow.finance'
  */
 export const approvalLink = (agentKey: Address): string =>
   `${SANDBOX_CONSOLE_URL}/${approvalHash(agentKey)}`
+
+/**
+ * The console link that opens one approval request on its signing page. Like the agent's link, it
+ * names the request and grants nothing: the administrator signs in and signs what the page shows.
+ */
+export const approvalRequestLink = (requestId: string): string =>
+  `${SANDBOX_CONSOLE_URL}/${signingHash(requestId)}`
+
+/**
+ * How long to wait before asking again: every five seconds for the first ten minutes, while the
+ * person is likely at the link, then every half minute for the week a request can wait.
+ */
+export const pollDelay = (waitedMs: number): number => (waitedMs < 10 * 60_000 ? 5000 : 30_000)
 
 /** What happens while an agent waits for its business to answer. */
 export type ConnectEvent =
@@ -162,6 +176,7 @@ async function waitToBeBound(o: {
     retryFor: 60n,
     fetch: o.send,
   })
+  const started = Date.now()
   for (;;) {
     const status = await ask({
       domain: { chainId: o.deployment.chainId, verifyingContract: o.deployment.factory },
@@ -174,7 +189,7 @@ async function waitToBeBound(o: {
     })
     if (status.state === 'bound') return status.businessId
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
-    await pause(o.pollEvery ?? 5000, o.signal)
+    await pause(o.pollEvery ?? pollDelay(Date.now() - started), o.signal)
   }
 }
 
@@ -287,9 +302,10 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   if (!held) throw new Error(unknown)
   const { lock, factory } = held.at
   let status = held.status
+  const started = Date.now()
   while (status.state !== 'approved') {
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
-    await pause(o.pollEvery ?? 5000, o.signal)
+    await pause(o.pollEvery ?? pollDelay(Date.now() - started), o.signal)
     status = await askAt(lock).catch((error: unknown) => {
       if (!notHeld(error)) throw error
       throw new Error(
