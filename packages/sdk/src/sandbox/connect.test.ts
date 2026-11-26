@@ -30,9 +30,7 @@ vi.mock('../moderato.js', async (original) => ({
   }),
 }))
 
-const { approvalLink, approvalRequestLink, connectToBusiness, pollDelay } = await import(
-  './connect.js'
-)
+const { approvalLink, approvalRequestLink, connectToBusiness } = await import('./connect.js')
 
 // The business's account, whose address its sandbox id is made from.
 const root = Account.fromSecp256k1(generatePrivateKey())
@@ -321,6 +319,30 @@ describe('connecting an agent to a business', () => {
     expect(await loadAgentItem(store)).toBeNull()
   })
 
+  it('stops waiting once the business declines, instead of asking forever', async () => {
+    const store = memoryStore()
+    const world = sandbox(store, 1_000)
+    let asked = 0
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const answer = await world.fetch(input, init)
+      if (new URL(String(input)).pathname !== SANDBOX_PATHS.agentRequests) return answer
+      asked++
+      if (asked < 3) return answer
+      // Avow answers a declined key as lapsed.
+      return json({ ...((await answer.json()) as object), state: 'expired' })
+    }) as typeof globalThis.fetch
+    await expect(
+      connectToBusiness({
+        businessId: BUSINESS,
+        label: 'Research agent',
+        store,
+        fetch,
+        pollEvery: 1,
+      }),
+    ).rejects.toThrow(/declined this agent's request/)
+    expect(await loadAgentItem(store)).toBeNull()
+  })
+
   it('refuses to run in a folder that already has an agent', async () => {
     const store = memoryStore()
     const world = sandbox(store)
@@ -417,14 +439,5 @@ describe('the approval link', () => {
     const id = 'ab'.repeat(16)
     expect(approvalRequestLink(id)).toBe(`https://testnet.avow.finance/#sign-${id}`)
     expect(() => approvalRequestLink('../agents')).toThrow(RangeError)
-  })
-})
-
-describe('waiting for an answer', () => {
-  it('asks often while the person is likely at the link, then every half minute', () => {
-    expect(pollDelay(0)).toBe(5000)
-    expect(pollDelay(9 * 60_000)).toBe(5000)
-    expect(pollDelay(10 * 60_000)).toBe(30_000)
-    expect(pollDelay(6 * 24 * 60 * 60_000)).toBe(30_000)
   })
 })

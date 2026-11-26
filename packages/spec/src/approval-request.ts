@@ -42,8 +42,9 @@ const DAY = 86_400n
 
 /**
  * How long each kind waits for a decision, in seconds, before it lapses. A change to authority
- * waits a day. Agent authority waits a week, as an agent's request does. Opening a request's link
- * never moves its expiry.
+ * waits a day. Agent authority keeps the hour an agent's request has always waited, since anyone can
+ * ask, and a request holds one of the business's few waiting places. Opening a request's link never
+ * moves its expiry.
  */
 export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   agent_authority: AGENT_REQUEST_LIFETIME,
@@ -246,8 +247,8 @@ export function signingHash(id: string): string {
 
 /** The request a console link's hash names for signing, or null when it names none. */
 export function signingIdOf(hash: string): string | null {
-  const match = /^#sign-([0-9a-f]{32})$/.exec(hash)
-  return match ? (match[1] as string) : null
+  const id = hash.startsWith('#sign-') ? hash.slice('#sign-'.length) : ''
+  return isApprovalRequestId(id) ? id : null
 }
 
 const recordBase = {

@@ -50,12 +50,6 @@ export const approvalLink = (agentKey: Address): string =>
 export const approvalRequestLink = (requestId: string): string =>
   `${SANDBOX_CONSOLE_URL}/${signingHash(requestId)}`
 
-/**
- * How long to wait before asking again: every five seconds for the first ten minutes, while the
- * person is likely at the link, then every half minute for the week a request can wait.
- */
-export const pollDelay = (waitedMs: number): number => (waitedMs < 10 * 60_000 ? 5000 : 30_000)
-
 /** What happens while an agent waits for its business to answer. */
 export type ConnectEvent =
   /** The agent asked, naming its business, or null when it asked before knowing it. */
@@ -176,7 +170,6 @@ async function waitToBeBound(o: {
     retryFor: 60n,
     fetch: o.send,
   })
-  const started = Date.now()
   for (;;) {
     const status = await ask({
       domain: { chainId: o.deployment.chainId, verifyingContract: o.deployment.factory },
@@ -189,7 +182,7 @@ async function waitToBeBound(o: {
     })
     if (status.state === 'bound') return status.businessId
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
-    await pause(o.pollEvery ?? pollDelay(Date.now() - started), o.signal)
+    await pause(o.pollEvery ?? 5000, o.signal)
   }
 }
 
@@ -302,10 +295,16 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   if (!held) throw new Error(unknown)
   const { lock, factory } = held.at
   let status = held.status
-  const started = Date.now()
   while (status.state !== 'approved') {
+    // Asking again after a lapse starts afresh, so a request that still reads as lapsed is one the
+    // business declined, and asking again won't change that for a while.
+    if (status.state === 'expired') {
+      throw new Error(
+        `${businessId} declined this agent's request, or it lapsed. Ask the business's administrator before connecting again.`,
+      )
+    }
     o.onEvent?.({ type: 'waiting', expiresAt: BigInt(status.expiresAt) })
-    await pause(o.pollEvery ?? pollDelay(Date.now() - started), o.signal)
+    await pause(o.pollEvery ?? 5000, o.signal)
     status = await askAt(lock).catch((error: unknown) => {
       if (!notHeld(error)) throw error
       throw new Error(
