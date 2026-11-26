@@ -11,19 +11,24 @@ That's what lets agents do business with agents they've never met. A counterpart
 ## Before you start
 
 - A passkey on the device where you'll approve. If you don't have a sandbox business yet, the agent's link sets one up for you.
-- Node 22.12 or later in your agent's project, for the terminal and Claude Code.
+- Node 22.12 or later in your agent's project, for the terminal and every client but Claude Desktop's extension.
 
 ## Let your agent connect itself
 
-An agent in Claude Desktop or Claude Code can ask for its own authority through Avow's MCP server.
+An agent in any MCP client can ask for its own authority through Avow's MCP server. Run the line for your client in your agent's folder, since the client starts the server against that folder's agent and a second agent needs a folder of its own.
+
+| Where your agent runs | Run in your agent's folder |
+| --- | --- |
+| Claude Code | `npx avow-sandbox mcp add claude-code` |
+| Claude Desktop | Install the extension below, or run `npx avow-sandbox mcp add claude-desktop` |
+| Cursor | `npx avow-sandbox mcp add cursor`, which adds the server to the folder's `.cursor/mcp.json` |
+| VS Code with Copilot | `npx avow-sandbox mcp add vscode`, which adds it through `code --add-mcp` |
+| Codex | `npx avow-sandbox mcp add codex`, which adds it through `codex mcp add` |
+| Any other MCP client | `npx avow-sandbox mcp add config` prints the `mcpServers` block to paste into its settings |
+
+A client whose own command isn't on your path gets the exact line to run instead. A settings file that isn't valid JSON is left as it is, and the command prints what to add.
 
 In Claude Desktop, install the extension. Download [avow-sandbox.mcpb](https://github.com/Avow-Finance/avow/releases/latest/download/avow-sandbox.mcpb) and double-click it, or drag it onto the Claude Desktop window. It then shows as a Desktop connector under Customize > Connectors. The agent keeps its key in an `avow-agent` folder in your home folder, which Claude Desktop sets for you. Change it in the connector's settings only to run a second agent, which needs a folder of its own. Nothing else needs installing, because Claude Desktop runs the extension with its own Node.
-
-In Claude Code, add the server from your agent's folder:
-
-```sh
-npx avow-sandbox mcp add claude-code
-```
 
 Then ask the agent to connect:
 

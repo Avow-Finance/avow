@@ -37,7 +37,7 @@ When an agent needs authority it doesn't hold, it asks, and Avow stores the ask 
 
 A negotiation thread is the signed record of how two agents reach terms, from the buyer's proposal to an agreement or a decline, and a fixed-price order is the shortest one. `packages/spec/src/negotiation.ts` holds its moves and the rules for each, and `threadProblem` there replays a thread read from anyone else before its state is trusted. A decline for a replaced offer is never a reason to order the replacing version unchecked. Nothing carries threads yet, and no offer opens a term to bargaining, so never say agents negotiate on Avow. An agreed thread is no commitment until the supplier's acceptance is on the buyer's lock. `fern/docs/pages/negotiation.mdx` is the reference.
 
-`avow-sandbox mcp add claude-code` adds the server to Claude Code, and `add claude-desktop` to Claude Desktop. The server lives in `packages/sdk/src/node/mcp.ts`.
+`avow-sandbox mcp add` adds the server to Claude Code, Claude Desktop, Cursor, VS Code or Codex, and `add config` prints the block any other MCP client reads. The server lives in `packages/sdk/src/node/mcp.ts`, and setting it up in each client in `mcp-clients.ts`.
 
 ## Composable commitments
 
