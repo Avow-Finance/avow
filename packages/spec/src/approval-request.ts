@@ -5,6 +5,7 @@ import { canonicalJson } from './canonical.js'
 import { type AvowDomain, domain } from './eip712.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
 import { reasonCodeJson } from './session-fields.js'
+import type { Mandate, ReplacementMandate } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
 import type { Parsed } from './wire.js'
 
@@ -423,4 +424,23 @@ export function parseApprovalDecision(json: unknown): Parsed<ApprovalDecision> {
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
+}
+
+/**
+ * The one mandate that carries out an approved raise: the agent's current mandate with only the
+ * limit asked for raised to the value asked for, the next nonce, and the mandate the request was
+ * asked against named as the one it replaces. The console signs it, and Avow takes nothing else
+ * for the request, since anything else changes more than the administrator approved.
+ */
+export function raisedMandate(
+  current: Mandate,
+  request: ApprovalRequest & { kind: 'raise_limit' },
+): ReplacementMandate {
+  const { limit, to } = request.terms
+  return {
+    ...current,
+    ...(limit === 'per_commitment' ? { capPerCommitment: to } : { capOpenReserves: to }),
+    nonce: current.nonce + 1n,
+    replaces: request.basis.mandate,
+  }
 }

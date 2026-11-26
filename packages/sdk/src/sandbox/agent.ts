@@ -17,6 +17,7 @@ import {
   type MandateChain,
   type MandateProof,
   type RailState,
+  type RaisableLimit,
   type ReasonCode,
   type RefusalAmounts,
   type RefusalLayer,
@@ -54,6 +55,7 @@ import { SupplierDeclined } from '../supplier.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
 import { heldMandates } from './mandates.js'
+import { type AskedChange, askForChange, raiseAsk, readOwnRequest } from './requests.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
 import {
   addCommitment,
@@ -290,6 +292,12 @@ export interface SandboxAgent {
    * reserve those terms set. It checks, refuses and funds as `book` does.
    */
   bookTerms(booking: { supplier: string; terms: GpuReservationTerms }): Promise<SandboxCommitment>
+  /**
+   * Asks the business's administrator to raise one of the agent's limits, to `to` dollars, from
+   * what its current mandate holds. It only asks: the administrator decides with their passkey on
+   * the page the link opens, and the agent can use the new limit once the request is active.
+   */
+  askToRaise(raise: { limit: RaisableLimit; to: number }): Promise<AskedChange>
 }
 
 const DAY = 86_400n
@@ -513,6 +521,7 @@ function booker(m: {
   const { lock, account } = m.business
   const domain: AvowDomain = { chainId: deployment.chainId, verifyingContract: lock }
   const token = moderatoUsdToken(deployment.token)
+  const asking = { apiUrl: deployment.apiUrl, agentKey: m.agentKey, domain, send }
 
   // The mandate the agent acts under, which the administrator can replace without touching its
   // key, and the hashes of those it replaced, whose open reserves count against its limit too.
@@ -695,6 +704,14 @@ function booker(m: {
       return held.hash
     },
     left: async () => toDollars(await leftNow()),
+    async askToRaise(raise) {
+      const ask = raiseAsk(
+        (await current()).mandate.message,
+        raise.limit,
+        micros(raise.to, 'limit'),
+      )
+      return askForChange(asking, ask)
+    },
     dailyLeft: async () => {
       const left = await dailyLeftUnder(await current())
       return left === null ? null : toDollars(left)
@@ -1121,4 +1138,16 @@ export async function agentTopUp(
     domain,
     fetch: send,
   })
+}
+
+/**
+ * Where one of the agent's own requests stands, by its id, signed with the agent's own key. It
+ * reads and changes nothing, so it needs only the agent's folder.
+ */
+export async function agentRequest(
+  id: string,
+  options: Pick<SandboxAgentOptions, 'fetch' | 'store' | 'screenUrl' | 'deployment'> = {},
+): Promise<AskedChange> {
+  const { send, deployment, agentKey, domain } = await agentContext(options)
+  return readOwnRequest({ apiUrl: deployment.apiUrl, agentKey, domain, send }, id)
 }

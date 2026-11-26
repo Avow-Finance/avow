@@ -13,7 +13,9 @@ import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import {
+  describeReason,
   formatUsd,
+  isApprovalRequestId,
   isSessionId,
   offerVersionId,
   publishedOffer,
@@ -27,6 +29,7 @@ import {
 } from '@avow-finance/spec'
 import { setRequestClient } from '../http.js'
 import {
+  agentRequest,
   agentTopUp,
   PREFLIGHT_UNCHECKED,
   Refusal,
@@ -34,6 +37,7 @@ import {
   SERVICE_PREFLIGHT_UNCHECKED,
   sandboxAgent,
 } from '../sandbox/agent.js'
+import type { AskedChange } from '../sandbox/requests.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -101,6 +105,13 @@ type ServiceTool = (typeof SERVICE_TOOLS)[number]
  */
 const FUNDS_TOOLS = ['top_up'] as const
 type FundsTool = (typeof FUNDS_TOOLS)[number]
+
+/**
+ * The tools that ask the business for a change to the agent's authority, and read where it stands.
+ * They ask and read: only the business's administrator decides, with their passkey.
+ */
+const REQUEST_TOOLS = ['request_change', 'request_status'] as const
+type RequestTool = (typeof REQUEST_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -283,6 +294,55 @@ export const MCP_TOOLS = [
     inputSchema: noInput,
   },
   {
+    name: 'request_change',
+    title: 'Ask for a higher limit',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Asks your business's administrator to raise one of your agent's limits, when a booking needs more than it allows. It only asks. It answers with a link for your person to open, where the administrator approves or declines with their passkey, and nothing changes until then. The request lapses after a day unanswered. Keep within your current limits until request_status says the request is active, and asking again while it waits answers with the same request.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'string',
+          enum: ['per_commitment', 'open_reserves'],
+          description:
+            'per_commitment for the most one booking can reserve, or open_reserves for the most held in bookings at once',
+        },
+        to: {
+          type: 'number',
+          description: 'The new limit in dollars, above what it is now',
+        },
+      },
+      required: ['limit', 'to'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'request_status',
+    title: 'Where a request stands',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Where one of your agent's requests stands: waiting for the administrator, approved and landing, active so your agent can use the change, or ended as declined, lapsed, out of date or failed.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The request id request_change answered with' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'publish_offer',
     title: 'Publish an offer',
     annotations: {
@@ -426,7 +486,7 @@ export const MCP_TOOLS = [
     },
   },
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool | ServiceTool | FundsTool
+  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -853,6 +913,80 @@ export function mcpAgent(
     }
   }
 
+  const LIMIT_WORDS = {
+    per_commitment: 'the most one booking can reserve',
+    open_reserves: 'the most it holds in bookings at once',
+  } as const
+
+  /** Where a request stands, in the words an agent acts on. */
+  function requestSentence(asked: AskedChange): string {
+    const { request, link } = asked
+    const s = request.status
+    switch (s.state) {
+      case 'waiting':
+        return `It waits for your business's administrator until ${new Date(Number(request.expiresAt) * 1000).toISOString()}. Send your person this link to decide it with their passkey: ${link}. Keep within your current limits until it's active.`
+      case 'approved':
+      case 'executing':
+        return "It's approved and the change is landing. Keep within your current limits until it's active."
+      case 'active':
+        return 'It is active, so your agent can use the change now.'
+      case 'declined':
+        return 'Your business declined it, so nothing changed.'
+      case 'expired':
+        return 'It lapsed before the change landed, so nothing changed.'
+      case 'stale':
+        return "Your agent's limits changed since it asked, so it can never apply. Check authority and ask again if you still need to."
+      case 'failed':
+        return `The change didn't land, so nothing changed. ${describeReason(s.reason)}.`
+    }
+  }
+
+  function requestFacts(asked: AskedChange) {
+    const { request, link } = asked
+    return {
+      id: request.id,
+      kind: request.kind,
+      state: request.status.state,
+      expiresAt: Number(request.expiresAt),
+      link,
+      ...(request.kind === 'raise_limit'
+        ? {
+            limit: request.terms.limit,
+            from: toDollars(request.terms.from),
+            to: toDollars(request.terms.to),
+          }
+        : {}),
+    }
+  }
+
+  async function requestChange(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const limit = args.limit
+    if (limit !== 'per_commitment' && limit !== 'open_reserves') {
+      throw new RangeError('limit is per_commitment or open_reserves')
+    }
+    if (typeof args.to !== 'number') throw new RangeError('to is the new limit in dollars')
+    // Asking reads the authority the agent holds now, which is where a raise starts from.
+    const agent = await open('authority')
+    const asked = await agent.askToRaise({ limit, to: args.to })
+    const facts = requestFacts(asked)
+    return {
+      text: `Asked your business to raise ${LIMIT_WORDS[limit]} from ${usd(facts.from ?? null)} to ${usd(facts.to ?? null)}, request ${asked.request.id}. ${requestSentence(asked)}`,
+      structured: facts,
+      isError: false,
+    }
+  }
+
+  async function requestStatus(args: Record<string, unknown>): Promise<ToolAnswer> {
+    if (typeof args.id !== 'string' || !isApprovalRequestId(args.id)) {
+      throw new RangeError('id is the request id request_change answered with')
+    }
+    const asked = await agentRequest(args.id, {
+      store,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    })
+    return { text: requestSentence(asked), structured: requestFacts(asked), isError: false }
+  }
+
   async function commitments(): Promise<ToolAnswer> {
     const agent = await open('commitments')
     const list = await agent.commitments()
@@ -1128,6 +1262,8 @@ export function mcpAgent(
 
   const isFundsTool = (name: string): name is FundsTool =>
     (FUNDS_TOOLS as readonly string[]).includes(name)
+  const isRequestTool = (name: string): name is RequestTool =>
+    (REQUEST_TOOLS as readonly string[]).includes(name)
   const isServiceTool = (name: string): name is ServiceTool =>
     (SERVICE_TOOLS as readonly string[]).includes(name)
 
@@ -1140,13 +1276,16 @@ export function mcpAgent(
         if (
           !SANDBOX_TOOLS.includes(name as SandboxTool) &&
           !isServiceTool(name) &&
-          !isFundsTool(name)
+          !isFundsTool(name) &&
+          !isRequestTool(name)
         ) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
         if (name === 'top_up') return await topUp()
+        if (name === 'request_change') return await requestChange(args)
+        if (name === 'request_status') return await requestStatus(args)
         if (name === 'publish_offer') return await publishOffer(args)
         if (name === 'offers') return await offers()
         if (name === 'order') return await order(args)

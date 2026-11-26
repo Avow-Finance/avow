@@ -17,6 +17,7 @@ import {
   parseApprovalDecision,
   parseApprovalPolicy,
   parseApprovalRequest,
+  raisedMandate,
   signingHash,
   signingIdOf,
 } from './approval-request.js'
@@ -238,5 +239,27 @@ describe("a request's paths", () => {
       `/v1/sandbox/approval-requests/${raise.id}`,
     )
     expect(() => SANDBOX_PATHS.approvalDecision('../agents')).toThrow(RangeError)
+    expect(SANDBOX_PATHS.approvalExecution(raise.id)).toBe(
+      `/v1/sandbox/approval-requests/${raise.id}/execution`,
+    )
+    expect(() => SANDBOX_PATHS.approvalExecution('../agents')).toThrow(RangeError)
+  })
+})
+
+describe("an approved raise's mandate", () => {
+  it('changes only the limit asked for, takes the next nonce, and replaces the mandate asked against', () => {
+    const current = {
+      capPerCommitment: 250_000_000n,
+      capOpenReserves: 1_000_000_000n,
+      nonce: 4n,
+      suppliers: ['sandbox-ab12'],
+    } as unknown as Parameters<typeof raisedMandate>[0]
+    expect(raisedMandate(current, raise as ApprovalRequest & { kind: 'raise_limit' })).toEqual({
+      capPerCommitment: 400_000_000n,
+      capOpenReserves: 1_000_000_000n,
+      nonce: 5n,
+      suppliers: ['sandbox-ab12'],
+      replaces: MANDATE,
+    })
   })
 })

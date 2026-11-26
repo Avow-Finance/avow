@@ -16,6 +16,12 @@ When an agent needs authority it doesn't hold, it asks, and a person decides. Av
 
 An agent asks for agent authority through `connect`, as it always has. Avow takes the other kinds as each ships, and refuses one it doesn't take yet with `approval_request.kind_unavailable`. None of them approves a single payment.
 
+## Raising a limit
+
+An agent at its limit asks with `askToRaise` on its `SandboxAgent`, or the MCP server's `request_change` tool, naming `per_commitment` or `open_reserves` and the new limit. The SDK starts the ask from the mandate the agent holds now, since Avow takes an ask only when its starting value matches. Avow refuses, with `approval_request.beyond_limits`, a raise the agent couldn't use, such as a limit per commitment above what it may hold at once or above its key's daily limit.
+
+The administrator approves on the signing page, and the same page signs the mandate that replaces the agent's current one with only that limit raised. The console sends it to `POST /v1/sandbox/approval-requests/{requestId}/execution`. Avow records it and marks the request `active` in one step, under a lock on the agent, once the mandate names the agent's current mandate as the one it replaces and changes nothing but the limit asked for. Anything else is refused with `approval_request.change_mismatch`. The agent picks up the new mandate the next time it reads its mandates, within half a minute, and `agentRequest` or `request_status` says when the request is active.
+
 The reason is a code from the list above, and Avow shows its own words for it. An agent writes no text into a request, so a request can't carry instructions to whoever reads it.
 
 ## The record
