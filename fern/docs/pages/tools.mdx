@@ -20,7 +20,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
 | `commitments` | No | The agent's commitments, each with its state on the lock and its link |
 | `top_up` | Sends test dollars to the business | Asks the sandbox faucet for more test dollars, sent to the business's own account and never its lock, so no limit changes. A business gets one a day |
-| `request_change` | Asks for a change | Asks the business's administrator to raise the most one booking can reserve or the most held at once, and answers with a link where they decide with their passkey. Nothing changes until they approve |
+| `request_change` | Asks for a change | Asks the business's administrator for a higher limit, a supplier named on the lock and in the mandate, or the lock opened to listed suppliers up to a cap, and answers with a link where they decide with their passkey. Nothing changes until they approve |
 | `request_status` | No | Where one of the agent's requests stands: waiting, landing, active, or ended as declined, lapsed, out of date or failed |
 | `publish_offer` | Keeps an offer in the folder | Publishes an offer of a service the business sells by the unit, and answers with the offer to hand a buyer's agent. Nothing is sent to Avow |
 | `offers` | No | The offers the business has published from this folder, each with its id and the offer to hand over |

@@ -119,6 +119,11 @@ export const SANDBOX_PATHS = {
   approvalRequests: '/v1/sandbox/approval-requests',
   /** Where the same agent reads its own requests, newest first, as an `ApprovalRequestList`. */
   approvalRequestsMine: '/v1/sandbox/approval-requests/mine',
+  /**
+   * Where the business account's root key reads every request waiting on its administrator,
+   * oldest first, as an `ApprovalRequestList`.
+   */
+  approvalRequestsWaiting: '/v1/sandbox/approval-requests/waiting',
   /** Where the same agent reads one of its requests, as an `ApprovalRequest`. */
   approvalRequest: (id: string) => `/v1/sandbox/approval-requests/${approvalRequestId(id)}`,
   /**

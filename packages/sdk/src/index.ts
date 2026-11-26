@@ -90,9 +90,14 @@ export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
 export {
   type AskedChange,
+  type ChangeRow,
+  type ChangeWords,
+  changeWords,
   hasSettled,
   isUsable,
+  openModeAsk,
   raiseAsk,
+  supplierAsk,
 } from './sandbox/requests.js'
 export {
   type SandboxServices,
@@ -121,6 +126,10 @@ export {
 export * from './sandbox/terms.js'
 export * from './sandbox/top-up.js'
 export { lockReadersFor } from './sandbox/trusted-readers.js'
+export {
+  sandboxWaitingRequests,
+  type WaitingRequestsConfig,
+} from './sandbox/waiting-requests.js'
 export * from './send.js'
 export * from './service/quote.js'
 export * from './sign.js'

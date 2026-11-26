@@ -42,6 +42,80 @@ export function raiseAsk(current: Mandate, limit: RaisableLimit, to: bigint): Ap
   }
 }
 
+/** The ask to name a supplier, by its Avow business id, on the lock and in the agent's mandate. */
+export function supplierAsk(supplier: string): ApprovalAsk {
+  return { kind: 'name_supplier', terms: { supplier }, reason: 'new_supplier' }
+}
+
+/**
+ * The ask to open the business's lock to suppliers listed in the testnet's registry, up to `cap`
+ * held with them at once. It reaches every agent of the business whose limits allow a listed
+ * supplier, not only the one asking.
+ */
+export function openModeAsk(cap: bigint): ApprovalAsk {
+  if (cap <= 0n) throw new RangeError('Open mode is a cap above zero')
+  return { kind: 'open_mode', terms: { cap }, reason: 'listed_suppliers' }
+}
+
+/** One value a request changes, as it stands now beside what the request asks for. */
+export interface ChangeRow {
+  label: string
+  before: string
+  after: string
+}
+
+/** What a request asks for, in words any card or page can show the same way. */
+export interface ChangeWords {
+  title: string
+  rows: ChangeRow[]
+}
+
+const dollars = (micros: bigint) =>
+  `$${(Number(micros) / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+
+const LIMIT_LABELS = {
+  per_commitment: 'Most per commitment',
+  open_reserves: 'Most reserved at once',
+} as const
+
+/**
+ * What a request changes, with each value as it stands now beside the value asked for. A request
+ * for agent authority has no rows, since the administrator sets its limits when approving.
+ */
+export function changeWords(request: ApprovalRequest): ChangeWords {
+  switch (request.kind) {
+    case 'agent_authority':
+      return { title: `Connect ${request.terms.label}`, rows: [] }
+    case 'raise_limit':
+      return {
+        title: 'Raise a limit',
+        rows: [
+          {
+            label: LIMIT_LABELS[request.terms.limit],
+            before: dollars(request.terms.from),
+            after: dollars(request.terms.to),
+          },
+        ],
+      }
+    case 'name_supplier':
+      return {
+        title: 'Name a supplier',
+        rows: [{ label: 'Supplier', before: 'Not named', after: request.terms.supplier }],
+      }
+    case 'open_mode':
+      return {
+        title: 'Open the lock to listed suppliers',
+        rows: [
+          {
+            label: 'Most held with listed suppliers at once',
+            before: request.basis.openCap === 0n ? 'Closed' : dollars(request.basis.openCap),
+            after: dollars(request.terms.cap),
+          },
+        ],
+      }
+  }
+}
+
 const readRequest = (json: unknown) => parseApprovalRequest(json)
 
 /**

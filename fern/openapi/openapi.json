@@ -1124,6 +1124,69 @@
         }
       }
     },
+    "/v1/sandbox/approval-requests/waiting": {
+      "post": {
+        "operationId": "readWaitingRequests",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Read the requests waiting on the administrator",
+        "description": "The business account's root key reads every request its agents made that is waiting on its administrator, oldest first, so a business's own code or inbox can show them and link each to its signing page. Agent authority requests that named no business aren't in it, since only approving one binds it to a business. The request carries an empty object, and reading changes no request and moves no expiry.\n\nSigned by the business account's root key, under the business lock's domain.",
+        "security": [
+          {
+            "AvowSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The waiting requests, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadMyRequestsAnswer"
+                },
+                "example": {
+                  "requests": [
+                    {
+                      "id": "7c1f0a9d3e5b48c2a6f1d0e9b8c7a654",
+                      "kind": "raise_limit",
+                      "businessId": "sandbox-9df2eec2a472a1819d20fba1f8a6f70a232f6447",
+                      "agentKey": "0x4b0897b0513fdc7c541b6d9d7e929c4e5364d2db",
+                      "terms": {
+                        "limit": "per_commitment",
+                        "from": "250000000",
+                        "to": "400000000"
+                      },
+                      "reason": "over_commitment_limit",
+                      "basis": {
+                        "mandate": "0x8e2a4c6f1b3d5e7a9c0b2d4f6e8a1c3b5d7f9e0a2c4b6d8f1e3a5c7b9d0f2e4a"
+                      },
+                      "requestedAt": "1763420400",
+                      "expiresAt": "1763506800",
+                      "status": {
+                        "state": "waiting"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Refusal400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Refusal401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refusal409"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refusal503"
+          }
+        }
+      }
+    },
     "/v1/sandbox/approval-requests/{requestId}/decision": {
       "post": {
         "operationId": "decideRequest",
@@ -4351,6 +4414,7 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
@@ -4608,6 +4672,7 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
@@ -4934,6 +4999,7 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
@@ -5820,6 +5886,7 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
@@ -6287,6 +6354,7 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
@@ -6748,6 +6816,7 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
@@ -6834,10 +6903,20 @@
                   "mandate": {
                     "type": "string",
                     "pattern": "^0x[0-9a-fA-F]{64}$"
+                  },
+                  "supplier": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
+                  "supplierChanges": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
                   }
                 },
                 "required": [
-                  "mandate"
+                  "mandate",
+                  "supplier",
+                  "supplierChanges"
                 ],
                 "additionalProperties": false
               }
@@ -7195,6 +7274,7 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
@@ -7281,10 +7361,15 @@
                   "openCap": {
                     "type": "string",
                     "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "openCapChanges": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
                   }
                 },
                 "required": [
-                  "openCap"
+                  "openCap",
+                  "openCapChanges"
                 ],
                 "additionalProperties": false
               }
@@ -7673,6 +7758,7 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",

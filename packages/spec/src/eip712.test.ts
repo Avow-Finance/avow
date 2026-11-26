@@ -252,7 +252,7 @@ const decided: ApprovalRequest = {
   agentKey: `0x${'11'.repeat(20)}`,
   terms: { cap: 500_000_000n },
   reason: 'listed_suppliers',
-  basis: { openCap: 0n },
+  basis: { openCap: 0n, openCapChanges: 0n },
   requestedAt: 1_800_000_000n,
   expiresAt: 1_800_086_400n,
   status: { state: 'waiting' },

@@ -24,6 +24,17 @@ The administrator approves on the signing page, and the same page signs the mand
 
 The reason is a code from the list above, and Avow shows its own words for it. An agent writes no text into a request, so a request can't carry instructions to whoever reads it.
 
+## Naming a supplier and opening the lock
+
+An agent asks for a supplier with `askToNameSupplier`, or for open mode with `askToOpen`, or with the MCP server's `request_change` tool. Both change state on the business's lock, so the request records the state it was made against, and the lock itself refuses the change if that state moved.
+
+- **A supplier.** The request records the supplier's account and how many times its place on the lock has changed. On approval the signing page sends `approveSupplierIf`, which names that count and the request's window, and the mandate that adds the supplier to the agent's own list. The lock reverts with `StaleChange` if the business named or removed the supplier since, so a removal is never undone by an older approval. Naming a supplier on the lock lets every agent of the business whose mandate allows it commit with it, and the signing page says so.
+- **Open mode.** The request records the cap and how many times it has changed. On approval the signing page sends `setOpenSupplierCapIf`, which names both, the new cap and the request's window. Every change to the cap raises the count, so a change in between is caught even when the cap went back to where it was.
+
+Avow marks the request active once the transaction it was carried out with has landed and set exactly what was approved. A transaction the lock refused with `StaleChange` makes the request stale, once Avow reads that the lock moved. Running out of gas, a dropped transaction or a network error leaves the request approved, so the administrator can send it again within the hour.
+
+Avow reads what a business's lock can do from the lock itself. A lock made before these guarded changes takes no open mode request, which Avow refuses with `approval_request.lock_unsupported`. Its supplier requests are carried out through the lock's signed supplier change, which names the same count. Opening the lock directly from the console's settings works on every lock.
+
 ## The record
 
 Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise or a supplier that's the hash of the agent's current mandate. For open mode it's the cap the lock held.
@@ -68,5 +79,7 @@ A request is never a way to wear an administrator down, so Avow limits how agent
 - The business decides which changes its agents may ask for with `POST /v1/sandbox/approval-policy`, signed by its root key, and reads it back at `POST /v1/sandbox/approval-policy/current`. A business that never set one lets its agents ask for every change, and asking for agent authority is always open.
 
 ## Reading requests
+
+The business account's root key reads every request waiting on its administrator, oldest first, with `sandboxWaitingRequests` in `@avow-finance/sdk`, or `POST /v1/sandbox/approval-requests/waiting`. The console's waiting list reads the same requests.
 
 An agent reads its own requests at its business, signed by its key under the business's lock, at `POST /v1/sandbox/approval-requests/mine`, newest first, or one at `POST /v1/sandbox/approval-requests/{requestId}`.
