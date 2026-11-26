@@ -4351,6 +4351,9 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.beyond_limits",
+                  "approval_request.not_approved",
+                  "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
                 ]
               }
@@ -4605,6 +4608,9 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.beyond_limits",
+                  "approval_request.not_approved",
+                  "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
                 ]
               }
@@ -4928,6 +4934,9 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.beyond_limits",
+                  "approval_request.not_approved",
+                  "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
                 ]
               }
@@ -5811,6 +5820,9 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.beyond_limits",
+                          "approval_request.not_approved",
+                          "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
                         ]
                       }
@@ -6275,6 +6287,9 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.beyond_limits",
+                          "approval_request.not_approved",
+                          "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
                         ]
                       }
@@ -6733,6 +6748,9 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.beyond_limits",
+                          "approval_request.not_approved",
+                          "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
                         ]
                       }
@@ -7177,6 +7195,9 @@
                           "approval_request.stale",
                           "approval_request.expired",
                           "approval_request.decided",
+                          "approval_request.beyond_limits",
+                          "approval_request.not_approved",
+                          "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
                         ]
                       }
@@ -7652,6 +7673,9 @@
                   "approval_request.stale",
                   "approval_request.expired",
                   "approval_request.decided",
+                  "approval_request.beyond_limits",
+                  "approval_request.not_approved",
+                  "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
                 ]
               },

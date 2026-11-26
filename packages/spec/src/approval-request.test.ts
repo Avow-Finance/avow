@@ -12,15 +12,20 @@ import {
   approvalDecisionTypedData,
   approvalTermsHash,
   canApprovalMove,
+  dailyLimitOf,
   isApprovalFinal,
   parseApprovalAsk,
   parseApprovalDecision,
   parseApprovalPolicy,
   parseApprovalRequest,
+  raisedMandate,
   signingHash,
   signingIdOf,
 } from './approval-request.js'
+import { mandateHash } from './eip712.js'
 import { SANDBOX_PATHS } from './sandbox.js'
+import { demoMandate, newKey, TOKEN } from './test-helpers.js'
+import type { Mandate } from './types.js'
 import { toWire } from './wire.js'
 
 const DOMAIN = { chainId: 42431, verifyingContract: `0x${'22'.repeat(20)}` } as const
@@ -238,5 +243,44 @@ describe("a request's paths", () => {
       `/v1/sandbox/approval-requests/${raise.id}`,
     )
     expect(() => SANDBOX_PATHS.approvalDecision('../agents')).toThrow(RangeError)
+    expect(SANDBOX_PATHS.approvalExecution(raise.id)).toBe(
+      `/v1/sandbox/approval-requests/${raise.id}/execution`,
+    )
+    expect(() => SANDBOX_PATHS.approvalExecution('../agents')).toThrow(RangeError)
   })
 })
+
+describe("an approved raise's mandate", () => {
+  const current = sandboxLike()
+  const asked = {
+    ...raise,
+    basis: { mandate: mandateHash(current, DOMAIN) },
+  } as ApprovalRequest & {
+    kind: 'raise_limit'
+  }
+
+  it('changes only the limit asked for, takes the next nonce, and replaces the mandate asked against', () => {
+    expect(raisedMandate(current, asked, DOMAIN)).toEqual({
+      ...current,
+      capPerCommitment: asked.terms.to,
+      nonce: current.nonce + 1n,
+      replaces: asked.basis.mandate,
+    })
+  })
+
+  it('refuses a mandate other than the one the request was asked against', () => {
+    const moved = { ...current, capOpenReserves: current.capOpenReserves + 1n }
+    expect(() => raisedMandate(moved, asked, DOMAIN)).toThrow(RangeError)
+  })
+
+  it("reads the daily limit for the lock's token, and none for another", () => {
+    expect(dailyLimitOf(current, TOKEN.token)).toBe(
+      current.paymentLimits.find((l) => l.period === 86_400n)?.amount ?? null,
+    )
+    expect(dailyLimitOf(current, `0x${'99'.repeat(20)}`)).toBe(null)
+  })
+})
+
+function sandboxLike(): Mandate {
+  return demoMandate(newKey().address, newKey().address)
+}

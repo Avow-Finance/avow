@@ -305,6 +305,12 @@ export const REASON_CODES = {
     'What the request would change has changed since it was asked, so it will never apply. Ask again from the authority the agent holds now',
   'approval_request.expired': 'The request lapsed before anyone decided it, so it will never apply',
   'approval_request.decided': 'The request was already decided, so this decision changes nothing',
+  'approval_request.beyond_limits':
+    "The raise asks for more than the agent's other limits let it use, such as a commitment above its most reserved at once or its key's daily limit, so nothing was asked",
+  'approval_request.not_approved':
+    "The request hasn't been approved, so there's no change to carry out",
+  'approval_request.change_mismatch':
+    'What was sent changes something other than what the request asked for, so nothing changed',
   'approval_request.signature_invalid':
     "The decision isn't signed by the business account's root key over this request, its terms and its expiry",
 } as const

@@ -2,9 +2,10 @@ import { type Hex, hashTypedData, keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
 import { AGENT_REQUEST_LIFETIME } from './agent-connect.js'
 import { canonicalJson } from './canonical.js'
-import { type AvowDomain, domain } from './eip712.js'
+import { type AvowDomain, domain, mandateHash } from './eip712.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
 import { reasonCodeJson } from './session-fields.js'
+import type { Mandate, ReplacementMandate } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
 import type { Parsed } from './wire.js'
 
@@ -423,4 +424,40 @@ export function parseApprovalDecision(json: unknown): Parsed<ApprovalDecision> {
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, reason: 'message.invalid' }
+}
+
+/**
+ * The daily limit the root key set on an agent's key for a token, in its base units, as the
+ * mandate records it, or null when the mandate sets none for that token.
+ */
+export const dailyLimitOf = (mandate: Mandate, token: Hex): bigint | null =>
+  mandate.paymentLimits.find(
+    (l) => l.token.toLowerCase() === token.toLowerCase() && l.period === DAY_SECONDS,
+  )?.amount ?? null
+
+const DAY_SECONDS = 86_400n
+
+/**
+ * The one mandate that carries out an approved raise: the agent's current mandate with only the
+ * limit asked for raised to the value asked for, the next nonce, and the mandate the request was
+ * asked against named as the one it replaces. The console signs it, and Avow takes nothing else
+ * for the request, since anything else changes more than the administrator approved. It refuses a
+ * current mandate other than the one the request was asked against, since that raise no longer
+ * applies and signing it would sign something nobody approved.
+ */
+export function raisedMandate(
+  current: Mandate,
+  request: ApprovalRequest & { kind: 'raise_limit' },
+  domain: AvowDomain,
+): ReplacementMandate {
+  if (mandateHash(current, domain).toLowerCase() !== request.basis.mandate.toLowerCase()) {
+    throw new RangeError("The agent's mandate changed since it asked, so this raise can't apply")
+  }
+  const { limit, to } = request.terms
+  return {
+    ...current,
+    ...(limit === 'per_commitment' ? { capPerCommitment: to } : { capOpenReserves: to }),
+    nonce: current.nonce + 1n,
+    replaces: request.basis.mandate,
+  }
 }

@@ -42,6 +42,8 @@ describe('avow-sandbox-mcp', () => {
       'verify',
       'commitments',
       'top_up',
+      'request_change',
+      'request_status',
       'publish_offer',
       'offers',
       'order',
@@ -67,9 +69,15 @@ describe('avow-sandbox-mcp', () => {
       'connect',
       'book',
       'top_up',
+      'request_change',
       'publish_offer',
       'order',
       'sell',
+    ])
+    // A raise names the limit and the new value, and nothing an agent writes in its own words.
+    expect(tools.find((t) => t.name === 'request_change')?.inputSchema.required).toEqual([
+      'limit',
+      'to',
     ])
     // An offer names both charges, since they set what a booking reserves.
     expect(tools.find((t) => t.name === 'publish_offer')?.inputSchema.required).toEqual([
@@ -118,6 +126,8 @@ describe('avow-sandbox-mcp', () => {
       'commitments',
       'check',
       'top_up',
+      'request_change',
+      'request_status',
       'offers',
       'orders',
       'order',

@@ -34,6 +34,7 @@ export {
   isAccountLock,
 } from './sandbox/account-lock.js'
 export {
+  agentRequest,
   dailyLimitOf,
   fundingRefusal,
   keyLeftToday,
@@ -87,6 +88,12 @@ export {
 } from './sandbox/mailbox.js'
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
+export {
+  type AskedChange,
+  hasSettled,
+  isUsable,
+  raiseAsk,
+} from './sandbox/requests.js'
 export {
   type SandboxServices,
   SERVICE_ORDER_SECONDS,

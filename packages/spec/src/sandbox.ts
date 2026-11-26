@@ -128,6 +128,13 @@ export const SANDBOX_PATHS = {
   approvalDecision: (id: string) =>
     `/v1/sandbox/approval-requests/${approvalRequestId(id)}/decision`,
   /**
+   * Where the console carries out an approved request, with what the change needs the root key to
+   * sign, such as the mandate that raises a limit. Avow records it and marks the request active in
+   * one step, once it checks the change is exactly the one approved.
+   */
+  approvalExecution: (id: string) =>
+    `/v1/sandbox/approval-requests/${approvalRequestId(id)}/execution`,
+  /**
    * Where a business sets which changes its agents may ask for, signed by its account's root key
    * under its lock, with an `ApprovalPolicy`. Avow answers with the policy it holds.
    */
