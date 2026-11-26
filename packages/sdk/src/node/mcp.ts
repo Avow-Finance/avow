@@ -926,10 +926,11 @@ export function mcpAgent(
       case 'waiting':
         return `It waits for your business's administrator until ${new Date(Number(request.expiresAt) * 1000).toISOString()}. Send your person this link to decide it with their passkey: ${link}. Keep within your current limits until it's active.`
       case 'approved':
+        return "It's approved, and the administrator's passkey still has to sign the new limit within an hour of approving. Keep within your current limits until it's active."
       case 'executing':
         return "It's approved and the change is landing. Keep within your current limits until it's active."
       case 'active':
-        return 'It is active, so your agent can use the change now.'
+        return 'It is active. Your agent picks up the new limit the next time it reads its mandates, within half a minute.'
       case 'declined':
         return 'Your business declined it, so nothing changed.'
       case 'expired':

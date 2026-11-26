@@ -10,6 +10,7 @@ import {
   type CommitmentReference,
   checkEnvelope,
   checkMandate,
+  dailyLimitOf,
   type GpuReservationTerms,
   isSessionId,
   lockTerms,
@@ -350,9 +351,7 @@ export function checkSession(session: SandboxSession | null): SandboxSession | n
 }
 
 /** The daily limit the root key set on the agent's key for the lock's token, in micros. */
-export const dailyLimitOf = (mandate: Mandate, token: Address): bigint | null =>
-  mandate.paymentLimits.find((l) => isAddressEqual(l.token, token) && l.period === DAY)?.amount ??
-  null
+export { dailyLimitOf }
 
 /** What the agent's key can still move today, in micros, as the account's keychain counts it. */
 export async function keyLeftToday(
@@ -535,8 +534,8 @@ function booker(m: {
   }
   let problem = m.started.problem
   let readAt = Date.now()
-  async function current(): Promise<Held> {
-    if (Date.now() - readAt < 30_000) return held
+  async function current(fresh = false): Promise<Held> {
+    if (!fresh && Date.now() - readAt < 30_000) return held
     readAt = Date.now()
     const before = problem
     try {
@@ -705,11 +704,9 @@ function booker(m: {
     },
     left: async () => toDollars(await leftNow()),
     async askToRaise(raise) {
-      const ask = raiseAsk(
-        (await current()).mandate.message,
-        raise.limit,
-        micros(raise.to, 'limit'),
-      )
+      // Read afresh, since Avow takes an ask only from the limit the agent holds now.
+      const now = await current(true)
+      const ask = raiseAsk(now.mandate.message, raise.limit, micros(raise.to, 'limit'))
       return askForChange(asking, ask)
     },
     dailyLeft: async () => {
