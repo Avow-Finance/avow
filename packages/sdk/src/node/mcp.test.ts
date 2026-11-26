@@ -74,11 +74,8 @@ describe('avow-sandbox-mcp', () => {
       'order',
       'sell',
     ])
-    // A raise names the limit and the new value, and nothing an agent writes in its own words.
-    expect(tools.find((t) => t.name === 'request_change')?.inputSchema.required).toEqual([
-      'limit',
-      'to',
-    ])
+    // A change names its kind and values, and nothing an agent writes in its own words.
+    expect(tools.find((t) => t.name === 'request_change')?.inputSchema.required).toEqual(['kind'])
     // An offer names both charges, since they set what a booking reserves.
     expect(tools.find((t) => t.name === 'publish_offer')?.inputSchema.required).toEqual([
       'name',
@@ -90,12 +87,13 @@ describe('avow-sandbox-mcp', () => {
     ])
   }, 30_000)
 
-  it('offers the approval card with connect, for a client that renders MCP Apps, and only then', async () => {
+  it('offers the approval card with connect and request_change, for a client that renders MCP Apps, and only then', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
     const { tools } = await c.listTools()
-    // Only connect names the card, so no other answer turns into one.
+    // Only the tools that ask name the card, so no other answer turns into one.
     expect(tools.filter((t) => t._meta?.ui).map((t) => [t.name, t._meta?.ui])).toEqual([
       ['connect', { resourceUri: 'ui://avow-sandbox/approval' }],
+      ['request_change', { resourceUri: 'ui://avow-sandbox/approval' }],
     ])
     const { resources } = await c.listResources()
     expect(resources).toEqual([

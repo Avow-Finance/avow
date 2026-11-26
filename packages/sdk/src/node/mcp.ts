@@ -37,7 +37,7 @@ import {
   SERVICE_PREFLIGHT_UNCHECKED,
   sandboxAgent,
 } from '../sandbox/agent.js'
-import type { AskedChange } from '../sandbox/requests.js'
+import { type AskedChange, changeWords } from '../sandbox/requests.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -295,7 +295,7 @@ export const MCP_TOOLS = [
   },
   {
     name: 'request_change',
-    title: 'Ask for a higher limit',
+    title: 'Ask for a change to authority',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -303,24 +303,42 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Asks your business's administrator to raise one of your agent's limits, when a booking needs more than it allows. It only asks. It answers with a link for your person to open, where the administrator approves or declines with their passkey, and nothing changes until then. The request lapses after a day unanswered. Keep within your current limits until request_status says the request is active, and asking again while it waits answers with the same request.",
+      "Asks your business's administrator for a change to what your agent may commit, when a booking needs it: a higher limit, a supplier named on the lock and in your mandate, or the lock opened to suppliers listed in the testnet's registry up to a cap. It only asks. It answers with a link for your person to open, where the administrator approves or declines with their passkey, and nothing changes until then. The request lapses after a day unanswered. Keep within your current authority until request_status says the request is active, and asking again while it waits answers with the same request.",
     inputSchema: {
       type: 'object',
       properties: {
+        kind: {
+          type: 'string',
+          enum: ['raise_limit', 'name_supplier', 'open_mode'],
+          description:
+            'raise_limit for a higher limit, name_supplier for one supplier, or open_mode for every supplier the testnet registry lists, up to a cap',
+        },
         limit: {
           type: 'string',
           enum: ['per_commitment', 'open_reserves'],
           description:
-            'per_commitment for the most one booking can reserve, or open_reserves for the most held in bookings at once',
+            'For raise_limit: per_commitment for the most one booking can reserve, or open_reserves for the most held in bookings at once',
         },
         to: {
           type: 'number',
-          description: 'The new limit in dollars, above what it is now',
+          description: 'For raise_limit: the new limit in dollars, above what it is now',
+        },
+        supplier: {
+          type: 'string',
+          description: "For name_supplier: the supplier's Avow business id",
+        },
+        cap: {
+          type: 'number',
+          description:
+            'For open_mode: the most in dollars the lock may hold with listed suppliers at once, for every agent of the business',
         },
       },
-      required: ['limit', 'to'],
+      required: ['kind'],
       additionalProperties: false,
     },
+    // A client that renders MCP Apps shows the request card with the answer, which waits on the
+    // request. The text answer carries the same link, for every client that doesn't.
+    _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
   },
   {
     name: 'request_status',
@@ -913,11 +931,6 @@ export function mcpAgent(
     }
   }
 
-  const LIMIT_WORDS = {
-    per_commitment: 'the most one booking can reserve',
-    open_reserves: 'the most it holds in bookings at once',
-  } as const
-
   /** Where a request stands, in the words an agent acts on. */
   function requestSentence(asked: AskedChange): string {
     const { request, link } = asked
@@ -950,28 +963,42 @@ export function mcpAgent(
       state: request.status.state,
       expiresAt: Number(request.expiresAt),
       link,
-      ...(request.kind === 'raise_limit'
-        ? {
-            limit: request.terms.limit,
-            from: toDollars(request.terms.from),
-            to: toDollars(request.terms.to),
-          }
-        : {}),
+      change: changeWords(request),
+      sentence: requestSentence(asked),
+    }
+  }
+
+  /** The change the model asked for, from the tool's arguments, refused when they don't fit. */
+  async function asked(agent: SandboxAgent, args: Record<string, unknown>): Promise<AskedChange> {
+    switch (args.kind) {
+      case 'raise_limit': {
+        const limit = args.limit
+        if (limit !== 'per_commitment' && limit !== 'open_reserves') {
+          throw new RangeError('limit is per_commitment or open_reserves')
+        }
+        if (typeof args.to !== 'number') throw new RangeError('to is the new limit in dollars')
+        return agent.askToRaise({ limit, to: args.to })
+      }
+      case 'name_supplier':
+        if (typeof args.supplier !== 'string' || args.supplier.trim() === '') {
+          throw new RangeError("supplier is the supplier's Avow business id")
+        }
+        return agent.askToNameSupplier(args.supplier.trim())
+      case 'open_mode':
+        if (typeof args.cap !== 'number') throw new RangeError('cap is the most in dollars')
+        return agent.askToOpen(args.cap)
+      default:
+        throw new RangeError('kind is raise_limit, name_supplier or open_mode')
     }
   }
 
   async function requestChange(args: Record<string, unknown>): Promise<ToolAnswer> {
-    const limit = args.limit
-    if (limit !== 'per_commitment' && limit !== 'open_reserves') {
-      throw new RangeError('limit is per_commitment or open_reserves')
-    }
-    if (typeof args.to !== 'number') throw new RangeError('to is the new limit in dollars')
     // Asking reads the authority the agent holds now, which is where a raise starts from.
-    const agent = await open('authority')
-    const asked = await agent.askToRaise({ limit, to: args.to })
-    const facts = requestFacts(asked)
+    const made = await asked(await open('authority'), args)
+    const facts = requestFacts(made)
+    const rows = facts.change.rows.map((r) => `${r.label} from ${r.before} to ${r.after}`)
     return {
-      text: `Asked your business to raise ${LIMIT_WORDS[limit]} from ${usd(facts.from ?? null)} to ${usd(facts.to ?? null)}, request ${asked.request.id}. ${requestSentence(asked)}`,
+      text: `Asked your business to ${facts.change.title.toLowerCase()}${rows.length ? `: ${rows.join(', ')}` : ''}, request ${made.request.id}. ${facts.sentence}`,
       structured: facts,
       isError: false,
     }

@@ -144,13 +144,22 @@ const KIND_FIELDS = {
   },
   name_supplier: {
     terms: z.strictObject({ supplier: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }),
-    basis: z.strictObject({ mandate: bytes32 }),
+    /**
+     * The hash of the mandate the supplier would be added to, the account the lock would name, and
+     * how many times that account's place on the lock had changed. The lock names the supplier
+     * only while that count stands, so a removal after the approval is never undone by it.
+     */
+    basis: z.strictObject({ mandate: bytes32, supplier: address, supplierChanges: u256 }),
   },
   open_mode: {
     /** The cap on what the lock holds with listed suppliers at once. */
     terms: z.strictObject({ cap: u256 }).refine((t) => t.cap > 0n, 'open mode is a cap above zero'),
-    /** The cap the lock held when the request arrived, zero being closed. */
-    basis: z.strictObject({ openCap: u256 }),
+    /**
+     * The cap the lock held when the request arrived, zero being closed, and how many times it had
+     * changed. The lock sets the new cap only while both stand, so a change in between, even one
+     * that put the cap back, makes the request stale.
+     */
+    basis: z.strictObject({ openCap: u256, openCapChanges: u256 }),
   },
 } as const
 
@@ -438,25 +447,31 @@ export const dailyLimitOf = (mandate: Mandate, token: Hex): bigint | null =>
 const DAY_SECONDS = 86_400n
 
 /**
- * The one mandate that carries out an approved raise: the agent's current mandate with only the
- * limit asked for raised to the value asked for, the next nonce, and the mandate the request was
- * asked against named as the one it replaces. The console signs it, and Avow takes nothing else
- * for the request, since anything else changes more than the administrator approved. It refuses a
- * current mandate other than the one the request was asked against, since that raise no longer
+ * The one mandate that carries out an approved change to an agent's mandate: its current mandate
+ * with only what was asked for changed, the next nonce, and the mandate the request was asked
+ * against named as the one it replaces. A raise raises the one limit asked for, and naming a
+ * supplier adds it to the mandate's suppliers. The console signs it, and Avow takes nothing else
+ * for the request, since anything else changes more than the administrator approved. It refuses
+ * a current mandate other than the one the request was asked against, since that change no longer
  * applies and signing it would sign something nobody approved.
  */
-export function raisedMandate(
+export function changedMandate(
   current: Mandate,
-  request: ApprovalRequest & { kind: 'raise_limit' },
+  request: ApprovalRequest & { kind: 'raise_limit' | 'name_supplier' },
   domain: AvowDomain,
 ): ReplacementMandate {
   if (mandateHash(current, domain).toLowerCase() !== request.basis.mandate.toLowerCase()) {
-    throw new RangeError("The agent's mandate changed since it asked, so this raise can't apply")
+    throw new RangeError("The agent's mandate changed since it asked, so this change can't apply")
   }
-  const { limit, to } = request.terms
+  const changed =
+    request.kind === 'raise_limit'
+      ? request.terms.limit === 'per_commitment'
+        ? { capPerCommitment: request.terms.to }
+        : { capOpenReserves: request.terms.to }
+      : { suppliers: [...current.suppliers, request.terms.supplier] }
   return {
     ...current,
-    ...(limit === 'per_commitment' ? { capPerCommitment: to } : { capOpenReserves: to }),
+    ...changed,
     nonce: current.nonce + 1n,
     replaces: request.basis.mandate,
   }

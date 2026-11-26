@@ -56,7 +56,14 @@ import { SupplierDeclined } from '../supplier.js'
 import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
 import { heldMandates } from './mandates.js'
-import { type AskedChange, askForChange, raiseAsk, readOwnRequest } from './requests.js'
+import {
+  type AskedChange,
+  askForChange,
+  openModeAsk,
+  raiseAsk,
+  readOwnRequest,
+  supplierAsk,
+} from './requests.js'
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
 import {
   addCommitment,
@@ -299,6 +306,17 @@ export interface SandboxAgent {
    * the page the link opens, and the agent can use the new limit once the request is active.
    */
   askToRaise(raise: { limit: RaisableLimit; to: number }): Promise<AskedChange>
+  /**
+   * Asks the business's administrator to name a supplier, by its Avow business id, on the lock and
+   * in the agent's mandate. Naming it on the lock lets every agent whose mandate allows it commit
+   * with it, which the signing page says.
+   */
+  askToNameSupplier(supplier: string): Promise<AskedChange>
+  /**
+   * Asks the business's administrator to open the lock to suppliers listed in the testnet's
+   * registry, up to `cap` dollars held with them at once, for every agent whose limits allow one.
+   */
+  askToOpen(cap: number): Promise<AskedChange>
 }
 
 const DAY = 86_400n
@@ -709,6 +727,8 @@ function booker(m: {
       const ask = raiseAsk(now.mandate.message, raise.limit, micros(raise.to, 'limit'))
       return askForChange(asking, ask)
     },
+    askToNameSupplier: (supplier) => askForChange(asking, supplierAsk(supplier)),
+    askToOpen: (cap) => askForChange(asking, openModeAsk(micros(cap, 'cap'))),
     dailyLeft: async () => {
       const left = await dailyLeftUnder(await current())
       return left === null ? null : toDollars(left)

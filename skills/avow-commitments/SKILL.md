@@ -35,7 +35,7 @@ Send the link to the business on the other side, so it can check the reserve its
 
 When Avow, the lock or the keychain refuses, tell your person the reason code and what the answer says would change it. Never work around a limit, split a booking to fit under one, or retry until something passes. A limit changes only when your person approves a new one.
 
-- `request_change` asks your business to raise a limit, when a booking needs more than it allows. It answers with a link for your person, where the administrator approves or declines with their passkey. Ask once, for what the booking needs, and send the link.
+- `request_change` asks your business for a change when a booking needs it: a higher limit, a supplier named on the lock and in your mandate, or the lock opened to suppliers the testnet registry lists up to a cap. It answers with a link for your person, where the administrator approves or declines with their passkey. Ask once, for what the booking needs, and send the link.
 - `request_status` says where that request stands. Keep within your current limits until it says the request is active, since approved isn't usable until the change lands.
 
 ## Selling and buying a service

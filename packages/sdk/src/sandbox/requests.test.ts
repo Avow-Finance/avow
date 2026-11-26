@@ -2,7 +2,16 @@ import { API_AUTH_SCHEME, type Mandate, SANDBOX_PATHS, toWire } from '@avow-fina
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
-import { askForChange, hasSettled, isUsable, raiseAsk, readOwnRequest } from './requests.js'
+import {
+  askForChange,
+  changeWords,
+  hasSettled,
+  isUsable,
+  openModeAsk,
+  raiseAsk,
+  readOwnRequest,
+  supplierAsk,
+} from './requests.js'
 
 const current = { capPerCommitment: 250_000_000n, capOpenReserves: 1_000_000_000n } as Mandate
 const ID = 'ab'.repeat(16)
@@ -64,5 +73,67 @@ describe('asking to raise a limit', () => {
     expect(seen[1]?.path).toBe(SANDBOX_PATHS.approvalRequest(ID))
     expect(isUsable(read.request)).toBe(false)
     expect(hasSettled(read.request)).toBe(false)
+  })
+})
+
+describe('asking for a supplier or open mode', () => {
+  it('carries the fixed reason for each, and refuses open mode at no cap', () => {
+    expect(supplierAsk('sandbox-cd34')).toEqual({
+      kind: 'name_supplier',
+      terms: { supplier: 'sandbox-cd34' },
+      reason: 'new_supplier',
+    })
+    expect(openModeAsk(500_000_000n).reason).toBe('listed_suppliers')
+    expect(() => openModeAsk(0n)).toThrow(RangeError)
+  })
+})
+
+describe("a request's words", () => {
+  const base = {
+    id: ID,
+    businessId: 'sandbox-test',
+    agentKey: `0x${'11'.repeat(20)}`,
+    requestedAt: 1_800_000_000n,
+    expiresAt: 1_800_086_400n,
+    status: { state: 'waiting' },
+  } as const
+
+  it('puts each value now beside the value asked for, for every kind', () => {
+    expect(
+      changeWords({
+        ...base,
+        kind: 'raise_limit',
+        terms: { limit: 'per_commitment', from: 250_000_000n, to: 400_000_000n },
+        reason: 'over_commitment_limit',
+        basis: { mandate: `0x${'33'.repeat(32)}` },
+      }),
+    ).toEqual({
+      title: 'Raise a limit',
+      rows: [{ label: 'Most per commitment', before: '$250', after: '$400' }],
+    })
+    expect(
+      changeWords({
+        ...base,
+        kind: 'open_mode',
+        terms: { cap: 500_000_000n },
+        reason: 'listed_suppliers',
+        basis: { openCap: 0n, openCapChanges: 0n },
+      }).rows,
+    ).toEqual([
+      { label: 'Most held with listed suppliers at once', before: 'Closed', after: '$500' },
+    ])
+    expect(
+      changeWords({
+        ...base,
+        kind: 'name_supplier',
+        terms: { supplier: 'sandbox-cd34' },
+        reason: 'new_supplier',
+        basis: {
+          mandate: `0x${'33'.repeat(32)}`,
+          supplier: `0x${'77'.repeat(20)}`,
+          supplierChanges: 0n,
+        },
+      }).rows,
+    ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
 })

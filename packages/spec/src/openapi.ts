@@ -532,6 +532,23 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
   },
   {
     method: 'post',
+    path: SANDBOX_PATHS.approvalRequestsWaiting,
+    operationId: 'readWaitingRequests',
+    tag: 'Agents',
+    summary: 'Read the requests waiting on the administrator',
+    description:
+      "The business account's root key reads every request its agents made that is waiting on its administrator, oldest first, so a business's own code or inbox can show them and link each to its signing page. Agent authority requests that named no business aren't in it, since only approving one binds it to a business. The request carries an empty object, and reading changes no request and moves no expiry.",
+    signedBy: "The business account's root key",
+    domain: 'lock',
+    answer: {
+      status: 200,
+      description: 'The waiting requests, oldest first',
+      schema: approvalRequestListJson,
+      example: { requests: [RAISE_EXAMPLE] },
+    },
+  },
+  {
+    method: 'post',
     path: onRequest(SANDBOX_PATHS.approvalDecision),
     operationId: 'decideRequest',
     tag: 'Agents',

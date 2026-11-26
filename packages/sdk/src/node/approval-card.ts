@@ -1,9 +1,11 @@
 /**
- * The card a client that renders MCP Apps shows when the model calls `connect`. It shows where the
- * request stands: the agent's name, its pairing code and a button that opens the approval link in
- * the person's browser, where only the administrator's passkey approves. While the request waits,
- * it asks `status` every few seconds and changes to approved on its own. The card signs nothing
- * and holds no key, and a client that renders no card still gets the same text and link.
+ * The card a client that renders MCP Apps shows when the model calls `connect` or
+ * `request_change`. For a connection it shows the agent's name, its pairing code and a button
+ * that opens the approval link. For a change it shows each value as it stands now beside the
+ * value asked for, and a button that opens the request's signing page. Only the administrator's
+ * passkey approves either, on Avow's page. While a request is open the card asks `status` or
+ * `request_status` every few seconds and changes on its own. The card signs nothing and holds no
+ * key, and a client that renders no card still gets the same text and link.
  */
 
 /** The address the `connect` tool names for its card. */
@@ -110,7 +112,48 @@ function resize() {
 // nothing on the card.
 const FORWARD = ['waiting', 'enrolling', 'connected', 'failed'];
 
+// A change request moves on its own until it settles. These are the states it can still leave.
+const REQUEST_OPEN = ['waiting', 'approved', 'executing'];
+const REQUEST_STATES = {
+  approved: ['waiting', 'Approved, waiting for the change to land'],
+  executing: ['waiting', 'Landing'],
+  active: ['done', 'Active, so your agent can use it'],
+  declined: ['failed', 'Declined, so nothing changed'],
+  expired: ['failed', 'Lapsed, so nothing changed'],
+  stale: ['failed', 'Out of date, so it can never apply'],
+  failed: ['failed', "Didn't land, so nothing changed"],
+};
+
+function renderRequest(c) {
+  root.append(el('p', 'title', c.change.title));
+  for (const row of c.change.rows) {
+    root.append(el('p', 'text', row.label + ': ' + row.before + ' now, ' + row.after + ' if approved'));
+  }
+  if (c.state === 'waiting') {
+    root.append(el('p', 'text', 'Only your administrator's passkey approves, on Avow. The link grants nothing by itself.'));
+    const actions = el('div', 'actions');
+    const open = el('button', '', 'Review on Avow');
+    open.type = 'button';
+    open.addEventListener('click', () => send('ui/open-link', { url: c.link }).catch(() => {}));
+    actions.append(open, stateLine('waiting', 'Waiting for your administrator until ' + day(c.expiresAt)));
+    root.append(actions);
+  } else {
+    const shown = REQUEST_STATES[c.state] || ['waiting', c.state];
+    root.append(stateLine(shown[0], shown[1]));
+  }
+}
+
 function render(c) {
+  if (c && c.id && c.change) {
+    // A card shows one request, and a reading of another changes nothing on it.
+    if (state && state.id && state.id !== c.id) return;
+    state = c;
+    root.replaceChildren();
+    renderRequest(c);
+    resize();
+    watch();
+    return;
+  }
   if (state && state.at === 'waiting' && c && !FORWARD.includes(c.at)) return;
   state = c;
   root.replaceChildren();
@@ -145,11 +188,16 @@ function render(c) {
 }
 
 function watch() {
-  const live = state && (state.at === 'waiting' || state.at === 'enrolling');
+  const live = state && (state.id
+    ? REQUEST_OPEN.includes(state.state)
+    : state.at === 'waiting' || state.at === 'enrolling');
   if (live && !timer) {
     timer = setInterval(async () => {
       try {
-        const result = await send('tools/call', { name: 'status', arguments: {} });
+        const call = state.id
+          ? { name: 'request_status', arguments: { id: state.id } }
+          : { name: 'status', arguments: {} };
+        const result = await send('tools/call', call);
         if (result && result.structuredContent) render(result.structuredContent);
       } catch {}
     }, REFRESH_MS);

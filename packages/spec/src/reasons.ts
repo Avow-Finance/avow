@@ -305,8 +305,12 @@ export const REASON_CODES = {
     'What the request would change has changed since it was asked, so it will never apply. Ask again from the authority the agent holds now',
   'approval_request.expired': 'The request lapsed before anyone decided it, so it will never apply',
   'approval_request.decided': 'The request was already decided, so this decision changes nothing',
+  'approval_request.lock_unsupported':
+    "The business's lock was made before this change could be guarded on it, so Avow won't take a request for it. A business on a newer lock can ask",
   'approval_request.beyond_limits':
     "The raise asks for more than the agent's other limits let it use, such as a commitment above its most reserved at once or its key's daily limit, so nothing was asked",
+  'approval_request.not_landed':
+    "The change hasn't landed on the chain, and the lock hasn't moved, so the request stays approved and can be sent again before its hour runs out",
   'approval_request.not_approved':
     "The request hasn't been approved, so there's no change to carry out",
   'approval_request.change_mismatch':

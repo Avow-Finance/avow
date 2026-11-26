@@ -12,13 +12,13 @@ import {
   approvalDecisionTypedData,
   approvalTermsHash,
   canApprovalMove,
+  changedMandate,
   dailyLimitOf,
   isApprovalFinal,
   parseApprovalAsk,
   parseApprovalDecision,
   parseApprovalPolicy,
   parseApprovalRequest,
-  raisedMandate,
   signingHash,
   signingIdOf,
 } from './approval-request.js'
@@ -67,10 +67,14 @@ describe('an approval request', () => {
       kind: 'open_mode',
       terms: { cap: '500' },
       reason: 'listed_suppliers',
-      basis: { openCap: '500' },
+      basis: { openCap: '500', openCapChanges: '3' },
     }
     expect(parseApprovalRequest(open).ok).toBe(false)
-    expect(parseApprovalRequest({ ...open, basis: { openCap: '0' } }).ok).toBe(true)
+    expect(parseApprovalRequest({ ...open, basis: { openCap: '0', openCapChanges: '3' } }).ok).toBe(
+      true,
+    )
+    // Open mode records how many times the cap changed, so a change that put it back still shows.
+    expect(parseApprovalRequest({ ...open, basis: { openCap: '0' } }).ok).toBe(false)
   })
 
   it('names a business, except agent authority asked before the agent knew one', () => {
@@ -250,27 +254,40 @@ describe("a request's paths", () => {
   })
 })
 
-describe("an approved raise's mandate", () => {
+describe("an approved change's mandate", () => {
   const current = sandboxLike()
-  const asked = {
+  const basis = mandateHash(current, DOMAIN)
+  const asked = { ...raise, basis: { mandate: basis } } as ApprovalRequest & { kind: 'raise_limit' }
+  const naming = {
     ...raise,
-    basis: { mandate: mandateHash(current, DOMAIN) },
-  } as ApprovalRequest & {
-    kind: 'raise_limit'
-  }
+    kind: 'name_supplier',
+    terms: { supplier: 'sandbox-cd34' },
+    reason: 'new_supplier',
+    basis: { mandate: basis, supplier: `0x${'77'.repeat(20)}`, supplierChanges: 2n },
+  } as ApprovalRequest & { kind: 'name_supplier' }
 
-  it('changes only the limit asked for, takes the next nonce, and replaces the mandate asked against', () => {
-    expect(raisedMandate(current, asked, DOMAIN)).toEqual({
+  it('raises only the limit asked for, takes the next nonce, and replaces the mandate asked against', () => {
+    expect(changedMandate(current, asked, DOMAIN)).toEqual({
       ...current,
       capPerCommitment: asked.terms.to,
       nonce: current.nonce + 1n,
-      replaces: asked.basis.mandate,
+      replaces: basis,
+    })
+  })
+
+  it('adds a named supplier to the suppliers the mandate already names, and changes nothing else', () => {
+    expect(changedMandate(current, naming, DOMAIN)).toEqual({
+      ...current,
+      suppliers: [...current.suppliers, 'sandbox-cd34'],
+      nonce: current.nonce + 1n,
+      replaces: basis,
     })
   })
 
   it('refuses a mandate other than the one the request was asked against', () => {
     const moved = { ...current, capOpenReserves: current.capOpenReserves + 1n }
-    expect(() => raisedMandate(moved, asked, DOMAIN)).toThrow(RangeError)
+    expect(() => changedMandate(moved, asked, DOMAIN)).toThrow(RangeError)
+    expect(() => changedMandate(moved, naming, DOMAIN)).toThrow(RangeError)
   })
 
   it("reads the daily limit for the lock's token, and none for another", () => {
