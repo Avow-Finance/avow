@@ -1,15 +1,6 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process'
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import {
@@ -47,6 +38,7 @@ import { sessionUrl, verifyUrl } from '../sandbox/session.js'
 import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
 import { toDollars } from '../sandbox/terms.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
+import { addToClient, isMcpClient, MCP_CLIENTS, mcpServersJson } from './mcp-clients.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 import {
@@ -70,6 +62,10 @@ import {
  *   avow-sandbox-mcp [--dir <folder>]          serves MCP over stdio for the agent in <folder>
  *   avow-sandbox-mcp add claude-code           adds the server to Claude Code for this folder
  *   avow-sandbox-mcp add claude-desktop        adds the server to Claude Desktop
+ *   avow-sandbox-mcp add cursor                adds it to this folder's .cursor/mcp.json
+ *   avow-sandbox-mcp add vscode                adds it to VS Code through code --add-mcp
+ *   avow-sandbox-mcp add codex                 adds it to Codex through codex mcp add
+ *   avow-sandbox-mcp add config                prints the mcpServers block any other client reads
  */
 
 const SERVER = { name: 'avow-sandbox', version: '0.0.0' }
@@ -1429,65 +1425,29 @@ export function serve(dir: string, io = { input: process.stdin, output: process.
   })
 }
 
-/** Where Claude Desktop keeps its MCP servers on this platform. */
-export function claudeDesktopConfig(): string {
-  if (process.platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
-  }
-  if (process.platform === 'win32') {
-    return join(
-      process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'),
-      'Claude',
-      'claude_desktop_config.json',
-    )
-  }
-  return join(homedir(), '.config', 'Claude', 'claude_desktop_config.json')
-}
-
-/** Adds the server to Claude Code for this folder, or to Claude Desktop, against this folder's agent. */
+/**
+ * Adds the server to one MCP client, or prints the block any other client reads, against this
+ * folder's agent.
+ */
 function add(client: string | undefined, dir: string): number {
   const server = realpathSync(fileURLToPath(import.meta.url))
-  const args = [server, '--dir', dir]
-  const ask = existsSync(join(dir, SANDBOX_DIR, 'agent.json'))
+  const launch = { name: SERVER.name, command: process.execPath, args: [server, '--dir', dir] }
+  if (client === 'config') {
+    process.stdout.write(mcpServersJson(launch))
+    return 0
+  }
+  if (!isMcpClient(client)) {
+    console.error(
+      `Use avow-sandbox mcp add with one of ${MCP_CLIENTS.join(', ')}, or avow-sandbox mcp add config for the block any other MCP client reads.`,
+    )
+    return 1
+  }
+  const next = existsSync(join(dir, SANDBOX_DIR, 'agent.json'))
     ? 'ask it to book $200 of GPU compute'
     : 'ask it to connect to your Avow business'
-  if (client === 'claude-code') {
-    const shell = process.platform === 'win32'
-    // An entry an earlier version added for this folder would stop the new one, so it goes first.
-    // Removing one that isn't there fails quietly.
-    spawnSync('claude', ['mcp', 'remove', SERVER.name], { stdio: 'ignore', shell })
-    const line = ['claude', 'mcp', 'add', SERVER.name, '--', process.execPath, ...args]
-    const result = spawnSync(line[0] as string, line.slice(1), {
-      stdio: 'inherit',
-      shell,
-    })
-    if (result.error || result.status !== 0) {
-      console.log(
-        `\nClaude Code didn't take it. Run this in this folder yourself:\n\n  ${line.map((a) => JSON.stringify(a)).join(' ')}\n`,
-      )
-      return 1
-    }
-    console.log(`\nAdded. Run claude in this folder and ${ask}.`)
-    return 0
-  }
-  if (client === 'claude-desktop') {
-    const file = claudeDesktopConfig()
-    let config: { mcpServers?: Record<string, unknown> } = {}
-    if (existsSync(file)) {
-      config = JSON.parse(readFileSync(file, 'utf8')) as typeof config
-      copyFileSync(file, `${file}.bak`)
-    }
-    config.mcpServers = {
-      ...(config.mcpServers ?? {}),
-      [SERVER.name]: { command: process.execPath, args },
-    }
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
-    console.log(`Added to ${file}. Restart Claude Desktop and ${ask}.`)
-    return 0
-  }
-  console.error('Use avow-sandbox-mcp add claude-code, or avow-sandbox-mcp add claude-desktop.')
-  return 1
+  const added = addToClient(client, launch, { dir, next })
+  console.log(`\n${added.message}`)
+  return added.ok ? 0 : 1
 }
 
 /** Runs only as the command, so a test can import the server. */
@@ -1499,7 +1459,7 @@ const isMain = (() => {
   }
 })()
 /**
- * `avow-sandbox-mcp [add <client> | --dir <folder>]`, which `avow-sandbox mcp` runs too, so npx
+ * `avow-sandbox-mcp [add <client> | add config | --dir <folder>]`, which `avow-sandbox mcp` runs too, so npx
  * finds it with nothing installed first.
  */
 export function mcpCommand(argv: readonly string[]): void {

@@ -84,8 +84,9 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            --payee <address> to check it pays you. It needs no agent or business
   top-up   asks the sandbox faucet for more test dollars for the business of the agent in this
            folder, sent to its account and never its lock, once a day
-  mcp      add claude-code or add claude-desktop gives a model in Claude this folder's agent,
-           with tools to connect it to a business and commit within the limits approved
+  mcp      add claude-code, claude-desktop, cursor, vscode or codex gives a model there this
+           folder's agent, with tools to connect it to a business and commit within the limits
+           approved. add config prints the block any other MCP client reads
   fresh    moves your business aside, keys and all, and sets up a fresh one
 
   --provider local       a model Ollama runs on this machine, at no charge
