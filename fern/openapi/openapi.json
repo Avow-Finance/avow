@@ -4416,6 +4416,7 @@
                   "approval_request.decided",
                   "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
+                  "approval_request.not_landed",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
@@ -4674,6 +4675,7 @@
                   "approval_request.decided",
                   "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
+                  "approval_request.not_landed",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
@@ -5001,6 +5003,7 @@
                   "approval_request.decided",
                   "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
+                  "approval_request.not_landed",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
@@ -5888,6 +5891,7 @@
                           "approval_request.decided",
                           "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
+                          "approval_request.not_landed",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
@@ -6356,6 +6360,7 @@
                           "approval_request.decided",
                           "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
+                          "approval_request.not_landed",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
@@ -6818,6 +6823,7 @@
                           "approval_request.decided",
                           "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
+                          "approval_request.not_landed",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
@@ -7276,6 +7282,7 @@
                           "approval_request.decided",
                           "approval_request.lock_unsupported",
                           "approval_request.beyond_limits",
+                          "approval_request.not_landed",
                           "approval_request.not_approved",
                           "approval_request.change_mismatch",
                           "approval_request.signature_invalid"
@@ -7760,6 +7767,7 @@
                   "approval_request.decided",
                   "approval_request.lock_unsupported",
                   "approval_request.beyond_limits",
+                  "approval_request.not_landed",
                   "approval_request.not_approved",
                   "approval_request.change_mismatch",
                   "approval_request.signature_invalid"
