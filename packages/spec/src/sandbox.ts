@@ -110,29 +110,30 @@ export const SANDBOX_PATHS = {
    * Where a business's console is to send a seller's mandate for one selling agent's signing key,
    * as a `SellerMandatePost`. Avow doesn't take this route yet. Anyone may post one, unsigned,
    * since the business account's signature on the mandate is the only authority, and Avow is to
-   * check it before it records anything. The key needn't be one the business has registered yet,
-   * since the mandate binds it and the account signs that, while the read at `sellerMandates`
-   * takes only a registered key's signature. Avow is to answer with a `SellerMandateReceipt`.
-   * Posting the same mandate again answers the same `mandateHash`, `replaces` and `recordedAt`,
-   * and only `current` may differ, since it says whether the mandate is the key's current one
-   * when Avow answers.
+   * check it before it records anything. The key has to be the signing key the business has
+   * registered, as it has to be for the read at `sellerMandates`. Avow is to answer with a
+   * `SellerMandateReceipt`. Posting the same mandate again before it expires answers the same
+   * `mandateHash`, `replaces` and `recordedAt`, and only `current` may differ, since it says
+   * whether the mandate is the key's current one when Avow answers.
    *
    * It is to refuse a signing key in the path that isn't an address as `request.invalid`, a body
    * that doesn't parse as `message.invalid`, a mandate of a type or version it doesn't read as
    * `message.schema_unknown`, and a mandate that isn't well formed as `seller_mandate.invalid`. A
    * mandate signed for another chain is `message.wrong_chain`, one that names a business Avow has
    * no record of is `business.unknown`, and one signed under another lock than that business's is
-   * `message.wrong_contract`. A mandate that binds another signing key than the path's is
-   * `seller_mandate.key_mismatch`.
+   * `message.wrong_contract`. A mandate that binds another signing key than the path's, or a key
+   * the business hasn't registered, is `seller_mandate.key_mismatch`.
    *
    * Then, before it reads whether the mandate was posted before or how it fits the key's chain,
    * Avow is to refuse a mandate for a key whose revocation it holds as `seller_mandate.revoked`,
    * so a mandate posted again after the key was revoked is refused too. A mandate that names
    * another account than the business's, or whose `replaces` doesn't name the mandate the key
-   * holds now, or names any when the key holds none, is `seller_mandate.chain_mismatch`. One past
-   * its expiry is `seller_mandate.expired`, and one the business account didn't sign is
-   * `seller_mandate.signature_invalid`. When Avow can't read its records or the chain it is to
-   * answer `service.unavailable` and record nothing.
+   * holds now, or names any when the key holds none, is `seller_mandate.chain_mismatch`. A key
+   * whose chain already holds `MAX_MANDATE_CHAIN` mandates takes no more, as
+   * `seller_mandate.invalid`. One past its expiry is `seller_mandate.expired`, posted again or
+   * not, and one the business account didn't sign is `seller_mandate.signature_invalid`. When
+   * Avow can't read its records or the chain it is to answer `service.unavailable` and record
+   * nothing.
    */
   sellerMandate: (signingKey: Address) =>
     `/v1/sandbox/sellers/${signingKeyInPath(signingKey)}/mandate`,
