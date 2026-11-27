@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import { type Address, type Hex, zeroHash } from 'viem'
 import { z } from 'zod'
 import {
   COMMITMENT_STATES,
@@ -18,6 +18,7 @@ import {
   type MessageType,
   type Signed,
   type SignedAgreement,
+  termsAgreementVersion,
 } from './eip712.js'
 import type { ElidedTerms } from './elided-terms.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
@@ -322,6 +323,8 @@ export const termsAgreementJson = z.strictObject({
   mandateHash: bytes32,
   nonce: u256,
   expiry: u64,
+  /** The seller's mandate the supplier's agent agreed under, which is never the zero hash. */
+  sellerMandate: bytes32.refine((h) => h !== zeroHash, "a seller's mandate hash").exactOptional(),
 })
 
 const chargeJson = z.strictObject({
@@ -804,6 +807,11 @@ export function parseSignedAgreement(
     })
     .safeParse(json)
   if (!full.success) return { ok: false, reason: 'message.invalid' }
+  // The envelope's version is the one the message signs at, so a reader that checks the version
+  // first reads the same fields the signers signed.
+  if (full.data.schemaVersion !== termsAgreementVersion(full.data.message)) {
+    return { ok: false, reason: 'message.invalid' }
+  }
   return { ok: true, value: full.data }
 }
 

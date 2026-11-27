@@ -97,7 +97,7 @@ Any number of records can cite one payment as evidence, but its value counts at 
 | Layer | Version | Changes when |
 | --- | --- | --- |
 | Messages a lock checks | `LOCK_MESSAGE_VERSION`, 1 | The lock's code changes, which means a new lock |
-| Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1 | That message changes |
+| Each message a lock never sees | Its own entry in `MESSAGE_VERSIONS`, each 1. A mandate that replaces another and an agreement that names a seller's mandate sign at 2, and leave version 1 as it was | That message changes |
 | Terms | `version` inside the terms hash, 2 for a plain booking and 3 for one that relies on other bookings | The header, a section's schema, canonical JSON or the hashing changes |
 | Template | In its id, such as `gpu-reservation/1` | What the template means changes |
 | Commitment record | `COMMITMENT_RECORD_VERSION`, 3 | The record's own fields change. Version 2 added the references a record cites. Version 3 gave a reserve that went back at its release date its own kind of outcome, `reached_release_date`, which versions 1 and 2 recorded as `kept`, as they did the supplier's consent. A version 1 or 2 record reads as version 3, citing nothing when it's version 1. One that ended as `kept` stays version 2, so writing it back keeps its meaning |

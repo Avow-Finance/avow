@@ -35,6 +35,7 @@ import {
   type TermsAgreement,
   type TermsProfile,
   termsAgreementTypedData,
+  termsAgreementVersion,
   termsHash,
   termsShapeProblem,
 } from '@avow-finance/spec'
@@ -601,14 +602,20 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     disclosed?: readonly unknown[]
   }): Promise<QuoteResult> {
     const { supplier, terms, salt, agreement } = a
-    const digest = digestOf(termsAgreementTypedData(agreement, d))
+    let digest: Hex
+    try {
+      digest = digestOf(termsAgreementTypedData(agreement, d))
+    } catch {
+      // An agreement that names a hash no seller's mandate has can't be signed, so it's refused.
+      return { ok: false, reason: 'message.invalid', layer: 'sdk' }
+    }
     if (!isKeySignature(digest, a.supplierSignature, supplier.signingKey)) {
       return { ok: false, reason: 'message.signature_invalid', layer: 'sdk' }
     }
     const buyerSignature = await key.sign({ hash: digest, raw: true })
     const signed: SignedAgreement = {
       type: 'TermsAgreement',
-      schemaVersion: MESSAGE_VERSIONS.TermsAgreement,
+      schemaVersion: termsAgreementVersion(agreement),
       chainId: d.chainId,
       lock: d.verifyingContract,
       message: agreement,

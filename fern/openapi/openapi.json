@@ -3006,6 +3006,10 @@
               "expiry": {
                 "type": "string",
                 "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "sellerMandate": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{64}$"
               }
             },
             "required": [
