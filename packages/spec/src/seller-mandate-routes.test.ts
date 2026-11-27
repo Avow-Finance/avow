@@ -10,13 +10,13 @@ import {
   parseSellerMandates,
   type SellerMandates,
   sellerMandateChainProblem,
+  sellerMandatesJson,
 } from './seller-mandate-chain.js'
 import {
   parseSellerMandatePost,
   parseSellerMandateReceipt,
   parseSellerMandatesRequest,
   type SellerMandateReceipt,
-  sellerMandatesJson,
 } from './seller-mandate-routes.js'
 import {
   CHAIN_ID,
@@ -175,18 +175,34 @@ describe("the receipt for a posted seller's mandate", () => {
     recordedAt: 1_800_000_000n,
     current: true,
   }
+  // The first mandate as Avow answered when it recorded it, and again once the second replaced it.
   const firstReceipt: SellerMandateReceipt = {
     mandateHash: sellerMandateHash(first, DOMAIN),
     replaces: null,
     recordedAt: 1_799_999_000n,
-    current: false,
+    current: true,
   }
+  const firstReposted: SellerMandateReceipt = { ...firstReceipt, current: false }
+  // The second posted again once the key was revoked would be refused, so it is never current again.
+  const afterRevocation: SellerMandateReceipt = { ...receipt, current: false }
 
   it('reads back as written, with its time as a decimal string', () => {
-    for (const r of [receipt, firstReceipt]) {
+    for (const r of [receipt, firstReceipt, firstReposted, afterRevocation]) {
       expect(parseSellerMandateReceipt(overJson(r))).toEqual({ ok: true, value: r })
     }
     expect(overJson(receipt).recordedAt).toBe('1800000000')
+  })
+
+  it('differs between two answers for one mandate only in whether it is current', () => {
+    for (const [before, after] of [
+      [firstReceipt, firstReposted],
+      [receipt, afterRevocation],
+    ] as const) {
+      const { current: was, ...stable } = before
+      const { current: is, ...still } = after
+      expect(still).toEqual(stable)
+      expect([was, is]).toEqual([true, false])
+    }
   })
 
   it("holds none of the mandate's terms", () => {
@@ -237,16 +253,21 @@ describe("the receipt for a posted seller's mandate", () => {
     }
   })
 
-  it('refuses a hash in upper or mixed case, so one receipt is written one way', () => {
+  it('reads a hash in upper or mixed case and gives it back in lower case', () => {
     const json = overJson(receipt)
     const mixed = (hex: string) => hex.replace(/[a-f]/, (c) => c.toUpperCase())
-    for (const change of [upper, mixed, (hex: string) => hex.replace('0x', '0X')]) {
+    for (const change of [upper, mixed]) {
       expect(change(json.mandateHash)).not.toBe(json.mandateHash)
-      expect(parseSellerMandateReceipt({ ...json, mandateHash: change(json.mandateHash) }).ok).toBe(
-        false,
-      )
-      expect(parseSellerMandateReceipt({ ...json, replaces: change(json.replaces) }).ok).toBe(false)
+      const changed = {
+        ...json,
+        mandateHash: change(json.mandateHash),
+        replaces: change(json.replaces),
+      }
+      expect(parseSellerMandateReceipt(changed)).toEqual({ ok: true, value: receipt })
     }
+    // A prefix of `0X` is no hex a reader takes.
+    const prefix = { ...json, mandateHash: json.mandateHash.replace('0x', '0X') }
+    expect(parseSellerMandateReceipt(prefix).ok).toBe(false)
   })
 
   it('never throws, whatever it is given', () => {
@@ -309,7 +330,17 @@ describe("the seller's mandates served to an agent", () => {
     const mandates = await served(true)
     const json = overJson(mandates)
     expect(sellerMandatesJson.safeParse(json).success).toBe(true)
-    expect(parseSellerMandates(json, where)).toEqual({ ok: true, value: mandates })
+    const parsed = parseSellerMandates(json, where)
+    expect(parsed).toEqual({ ok: true, value: mandates })
+    if (!parsed.ok) throw new Error(parsed.reason)
+    expect(
+      await sellerMandateChainProblem(parsed.value, {
+        domain: DOMAIN,
+        businessId: first.businessId,
+        account: ACCOUNT,
+        signingKey: KEY,
+      }),
+    ).toEqual({ ok: false, reason: 'seller_mandate.revoked' })
   })
 
   it('has an outer shape that refuses what the chain reader refuses', async () => {

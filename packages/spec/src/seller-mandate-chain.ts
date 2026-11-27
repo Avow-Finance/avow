@@ -1,6 +1,8 @@
 import { type Address, type Hex, isAddressEqual } from 'viem'
+import { z } from 'zod'
 import { type AvowDomain, isSignedBy, type SignatureCheck, type Signed } from './eip712.js'
 import { holdsOnly } from './fields.js'
+import { signedJson } from './json-fields.js'
 import { MAX_MANDATE_CHAIN } from './mandate-chain.js'
 import type { ReasonCode } from './reasons.js'
 import {
@@ -45,29 +47,40 @@ export interface SellerMandateChain {
   readonly [read]: true
 }
 
-const SERVED_KEYS = ['current', 'earlier', 'revocation']
+/**
+ * The outer shape of the `SellerMandates` served for one signing key, which `parseSellerMandates`
+ * checks first and the API reference describes. A chain holds at most `MAX_MANDATE_CHAIN` mandates,
+ * the current one among them. The signed messages inside are checked as their descriptions say.
+ */
+export const sellerMandatesJson = z.strictObject({
+  current: signedJson("The seller's mandate the agent sells under now, as a signed SellerMandate"),
+  earlier: z
+    .array(signedJson("A seller's mandate a later one replaced, as a signed SellerMandate"))
+    .max(MAX_MANDATE_CHAIN - 1),
+  revocation: signedJson(
+    "The administrator's revocation of the signing key, as a signed SellerKeyRevocation",
+  ).nullable(),
+})
+
+const SERVED_KEYS = Object.keys(sellerMandatesJson.shape)
 
 /**
- * Parses the seller's mandates served for one signing key. Each has to parse as a seller's mandate
- * for the lock, and the revocation as one when there is one. It checks neither that they link nor
- * who signed them, which `sellerMandateChainProblem` does.
+ * Parses the seller's mandates served for one signing key. The outer shape has to pass
+ * `sellerMandatesJson`, each mandate has to parse as a seller's mandate for the lock, and the
+ * revocation as one when there is one. It checks neither that they link nor who signed them, which
+ * `sellerMandateChainProblem` does.
  */
 export function parseSellerMandates(
   json: unknown,
   expected: { chainId: number; lock: Address },
 ): Parsed<SellerMandates> {
-  if (typeof json !== 'object' || json === null || !holdsOnly(json, SERVED_KEYS)) {
-    return { ok: false, reason: 'message.invalid' }
-  }
-  const { current, earlier, revocation } = json as Record<string, unknown>
-  if (!Array.isArray(earlier) || earlier.length >= MAX_MANDATE_CHAIN) {
-    return { ok: false, reason: 'message.invalid' }
-  }
+  const outer = sellerMandatesJson.safeParse(json)
+  if (!outer.success) return { ok: false, reason: 'message.invalid' }
+  const { current, earlier, revocation } = outer.data
   const head = parseSellerMandate(current, expected)
   if (!head.ok) return head
   const rest: Signed<SellerMandate>[] = []
-  // `Array.from` turns a hole into undefined, which parses as no mandate.
-  for (const e of Array.from(earlier)) {
+  for (const e of earlier) {
     const read = parseSellerMandate(e, expected)
     if (!read.ok) return read
     rest.push(read.value)

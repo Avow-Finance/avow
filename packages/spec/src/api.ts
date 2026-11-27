@@ -13,7 +13,7 @@ import {
   type SupplierAuthorization,
   type Timestamp,
 } from './eip712.js'
-import { address, bytes32, hexBytes, u64 } from './json-fields.js'
+import { address, bytes32, hexBytes, objectJson, signedJson, u64 } from './json-fields.js'
 import { isSignedMandate, type MandateProof, parseMandateProof } from './mandate-proof.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
 import type { ReserveRequest } from './types.js'
@@ -246,14 +246,6 @@ const sponsorshipRefusalJson = z.discriminatedUnion('reason', [
 
 const reasonCode = z.enum(Object.keys(REASON_CODES) as [ReasonCode, ...ReasonCode[]])
 const decisionId = z.string().min(1).max(128)
-const objectJson = z.record(z.string(), z.unknown())
-
-/**
- * A signed message inside a body, which the parser checks against its own schema and domain after
- * the outer shape passes. The description names it, for the API reference.
- */
-const signedJson = (description: string) => objectJson.describe(description)
-
 /*
  * The outer shape of each body, which its parser checks first and the API reference describes.
  * The signed messages inside are checked by the parser as their descriptions say.

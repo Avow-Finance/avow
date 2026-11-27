@@ -1,9 +1,7 @@
 import { type Address, type Hex, zeroHash } from 'viem'
 import { z } from 'zod'
 import type { Signed } from './eip712.js'
-import { LOWER_BYTES32 } from './fields.js'
-import { u64 } from './json-fields.js'
-import { MAX_MANDATE_CHAIN } from './mandate-chain.js'
+import { bytes32, signedJson, u64 } from './json-fields.js'
 import { parseSellerMandate, type SellerMandate } from './seller-mandate.js'
 import type { Parsed } from './wire.js'
 
@@ -25,34 +23,25 @@ export interface SellerMandatePost {
  * The answer to a posted seller's mandate, once it is recorded. It holds nothing of the mandate's
  * terms, since whoever posts one isn't authenticated and a seller's limits are its own. A caller
  * that holds the mandate works out `mandateHash` itself with `sellerMandateHash` and compares.
+ * Posting the same mandate again answers the same `mandateHash`, `replaces` and `recordedAt`, and
+ * only `current` may differ.
  */
 export interface SellerMandateReceipt {
-  /** The hash of the mandate recorded, in lower case. */
+  /** The hash of the mandate recorded. */
   mandateHash: Hex
-  /** The hash of the mandate it replaces, in lower case, or null when it replaces none. */
+  /** The hash of the mandate it replaces, or null when it replaces none. */
   replaces: Hex | null
   /** When the mandate was first recorded, in unix seconds by the clock of whoever records it. */
   recordedAt: bigint
-  /** Whether the mandate is the signing key's current one once it is recorded. */
+  /**
+   * Whether the mandate is the signing key's current one when the answer is given. It is false
+   * once a later mandate replaces it, and once the key is revoked.
+   */
   current: boolean
 }
 
 /** The body of a selling agent's read of its own mandates, which is an empty object. */
 export type SellerMandatesRequest = Record<string, never>
-
-const objectJson = z.record(z.string(), z.unknown())
-
-/**
- * A signed message inside a body, which its parser checks against its own schema and domain after
- * the outer shape passes.
- */
-const signedJson = (description: string) => objectJson.describe(description)
-
-/** A 32-byte hash written one way, in lower case, so two receipts for one mandate are equal text. */
-const lowerHash = z
-  .string()
-  .regex(LOWER_BYTES32)
-  .transform((s) => s as Hex)
 
 export const sellerMandatePostJson = z.strictObject({
   mandate: signedJson(
@@ -61,28 +50,14 @@ export const sellerMandatePostJson = z.strictObject({
 })
 
 export const sellerMandateReceiptJson = z.strictObject({
-  mandateHash: lowerHash,
+  mandateHash: bytes32,
   // A mandate that replaces none says null, so a zero hash would say the same thing a second way.
-  replaces: lowerHash.refine((h) => h !== zeroHash, "a seller's mandate hash").nullable(),
+  replaces: bytes32.refine((h) => h !== zeroHash, "a seller's mandate hash").nullable(),
   recordedAt: u64,
   current: z.boolean(),
 })
 
 export const sellerMandatesRequestJson = z.strictObject({})
-
-/**
- * The outer shape of the `SellerMandates` served to a selling agent, which `parseSellerMandates`
- * reads whole. A chain holds at most `MAX_MANDATE_CHAIN` mandates, the current one among them.
- */
-export const sellerMandatesJson = z.strictObject({
-  current: signedJson("The seller's mandate the agent sells under now, as a signed SellerMandate"),
-  earlier: z
-    .array(signedJson("A seller's mandate a later one replaced, as a signed SellerMandate"))
-    .max(MAX_MANDATE_CHAIN - 1),
-  revocation: signedJson(
-    "The administrator's revocation of the signing key, as a signed SellerKeyRevocation",
-  ).nullable(),
-})
 
 const invalid = { ok: false, reason: 'message.invalid' } as const
 
@@ -98,7 +73,9 @@ function reading<T>(read: () => Parsed<T>): Parsed<T> {
 /**
  * Parses the body that posts a seller's mandate. The mandate has to parse as `parseSellerMandate`
  * reads one, for this chain and, when given, the selling business's lock, and a refusal keeps that
- * reason. The route is unsigned, so the lock comes from the business the mandate names, and the
+ * reason. The route is unsigned, so the lock comes from the business the mandate names. A caller
+ * that reads the body before it knows that business leaves `lock` out, and then has to compare
+ * `mandate.lock` with the named business's lock before it does anything else with the mandate. The
  * signature is the caller's to check against that business's account. It never throws.
  */
 export function parseSellerMandatePost(
@@ -115,8 +92,8 @@ export function parseSellerMandatePost(
 }
 
 /**
- * Parses the receipt for a posted seller's mandate. Its hashes are in lower case and its time is a
- * decimal string, and it holds no other field. It never throws.
+ * Parses the receipt for a posted seller's mandate. Its hashes read in either case and come back in
+ * lower case, its time is a decimal string, and it holds no other field. It never throws.
  */
 export function parseSellerMandateReceipt(json: unknown): Parsed<SellerMandateReceipt> {
   return reading(() => {
