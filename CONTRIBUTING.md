@@ -16,7 +16,7 @@ pnpm check
 ## Making a change
 
 - Open a pull request against `main`. Every change needs passing CI and a review before it merges.
-- A change that touches settlement or dispute rules, signing, keys, mandates, authority checks, permissions, deployment, or what this repo publishes also needs a maintainer's approval.
+- A change also needs a maintainer's approval when it touches keys or code that signs with them, the workflows, what this repo publishes to npm, or these rules, and when it turns enforcement of a rule on or loosens a check the SDK or the verifier already enforces. Any other change to settlement or dispute rules, mandates, authority checks or permissions needs an independent review, with every finding fixed, before it merges.
 - Add or update tests with every change in behavior.
 - Keep each pull request to one change.
 - Never commit a key, token or `.env` file.

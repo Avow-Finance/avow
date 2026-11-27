@@ -79,7 +79,7 @@ Terms never change after the agreement, and a change is a new commitment that na
 ## Rules
 
 - Every change goes through a pull request, with tests for any change in behavior. It needs passing CI and a review before it merges.
-- A change that touches settlement or dispute rules, signing, keys, mandates, authority checks, permissions, deployment, or what this repo publishes also needs a maintainer's approval.
+- A change also needs a maintainer's approval when it touches keys or code that signs with them, the workflows, what this repo publishes to npm, or these rules, and when it turns enforcement of a rule on or loosens a check the SDK or the verifier already enforces. Any other change to settlement or dispute rules, mandates, authority checks or permissions needs an independent review, with every finding fixed, before it merges.
 - Testnet only. Nothing here moves real money.
 - Never commit keys, tokens or `.env` files. Tests make their keys at run time.
 - A package stays `"private": true` until it's ready for its first release. Public packages share one version and reach npm only through the Release workflow, which a maintainer runs.
