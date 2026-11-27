@@ -35,6 +35,7 @@ import {
   sandboxAgent,
 } from '../sandbox/agent.js'
 import { type AskedChange, changeWords } from '../sandbox/requests.js'
+import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -1088,10 +1089,11 @@ export function mcpAgent(
   async function publishOffer(args: Record<string, unknown>): Promise<ToolAnswer> {
     const draft = readOfferInput(args as OfferInput)
     if ('error' in draft) throw new RangeError(draft.error)
-    const { version, id } = await (await services()).publish(draft)
+    const { version, id, standing } = await (await services()).publish(draft)
     return {
       text: [
-        `Published offer ${id}, kept in this folder. Nothing was sent to Avow, and no directory lists it.`,
+        `Published offer ${id}, kept in this folder. The offer wasn't sent to Avow, and no directory lists it.`,
+        ...(standing ? [standing.notice] : []),
         ...offerSentences(version),
         "Hand the buyer's agent the offer below, whole, and it orders from it with its order tool. Call orders to see what comes, and sell to quote and accept.",
         JSON.stringify(toWire(version)),
@@ -1308,14 +1310,27 @@ export function mcpAgent(
       }
     }
     let acceptedIn: string | null = null
-    await mine.sell(waiting, (step) => {
-      if (step.step === 'accepted') acceptedIn = step.acceptedIn
-    })
+    let notice = ''
+    try {
+      await mine.sell(waiting, (step) => {
+        notice = step.standing.notice
+        if (step.step === 'accepted') acceptedIn = step.acceptedIn
+      })
+    } catch (error) {
+      if (!(error instanceof SellerMandateRefusal)) throw error
+      return {
+        text: `${error.message}, so nothing was sent and the order is left to lapse. Avow doesn't enforce seller limits yet, and this agent holds itself to its mandate.`,
+        structured: { ...orderFacts(waiting), step: null, acceptedIn: null, refused: error.reason },
+        isError: true,
+      }
+    }
     const quoted = waiting.status === 'requested'
     return {
-      text: quoted
-        ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
-        : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`,
+      text: `${
+        quoted
+          ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
+          : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`
+      } ${notice}`.trim(),
       structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
       isError: false,
     }

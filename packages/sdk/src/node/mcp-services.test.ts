@@ -9,6 +9,7 @@ import {
   serviceQuoteProblem,
 } from '@avow-finance/spec'
 import { describe, expect, it, vi } from 'vitest'
+import { NO_SELLER_MANDATE } from '../sandbox/seller-mandate.js'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
@@ -99,7 +100,9 @@ describe("the MCP server's tools for services", () => {
     expect(none.text).toMatch(/published no offers/)
     const published = await seller.call('publish_offer', asked)
     expect(published.isError).toBe(false)
-    expect(published.text).toMatch(/Nothing was sent to Avow/)
+    expect(published.text).toMatch(/The offer wasn't sent to Avow/)
+    // Avow serves no seller's mandate here, which the answer says plainly.
+    expect(published.text).toContain(NO_SELLER_MANDATE)
     const offer = readSharedOffer(published.structured.offer)
     if (!offer) throw new Error('the answer carried no offer')
     expect(offer.supplier).toBe(SELLER)
@@ -117,8 +120,8 @@ describe("the MCP server's tools for services", () => {
     })
     expect(free.isError).toBe(true)
     expect((await seller.call('offers', {})).structured.offers).toHaveLength(1)
-    // Publishing reaches Avow for nothing but the deployment.
-    expect(new Set(paths)).toEqual(new Set(['/config.json']))
+    // Publishing reaches Avow for nothing but the deployment and the agent's seller's mandates.
+    expect(new Set(paths)).toEqual(new Set(['/config.json', SANDBOX_PATHS.sellerMandates]))
   })
 
   it('check an order from the offer without sending it, with the price beside what is reserved', async () => {
