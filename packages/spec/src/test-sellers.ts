@@ -50,31 +50,61 @@ export const TEST_SELLER_REFUSED_WORDS = [
   'approved',
   'checked',
   'trusted',
+  'guarant',
+  'licensed',
+  'insured',
+  'endorsed',
+  'validated',
 ] as const
 
 /**
- * Text as the word check reads it: lower case, with the digits and marks that stand in for
- * letters read as those letters, and everything that isn't a letter left out, so a word split by
- * spaces, dots or hyphens reads whole.
+ * The words of text as the word check reads them. Each is lower case, with five stand-ins read as
+ * the letters they pass for, 0 as o, 1, l and | as i, and 3 as e, and with everything in it that
+ * isn't a letter left out, so "Ve-rified" and "K.Y.B." read whole. Words are what spaces part, and
+ * a run of single letters reads as one word, so "V e r i f i e d" reads whole too.
  */
-const squashed = (text: string): string =>
-  text
-    .toLowerCase()
-    .replace(/0/g, 'o')
-    .replace(/[1l|]/g, 'i')
-    .replace(/3/g, 'e')
-    .replace(/[^a-z]/g, '')
+function wordsOf(text: string): string[] {
+  const words: string[] = []
+  let run = ''
+  for (const part of text.toLowerCase().split(' ')) {
+    const word = part
+      .replace(/0/g, 'o')
+      .replace(/[1l|]/g, 'i')
+      .replace(/3/g, 'e')
+      .replace(/[^a-z]/g, '')
+    if (word.length === 1) {
+      run += word
+      continue
+    }
+    if (run !== '') words.push(run)
+    run = ''
+    if (word !== '') words.push(word)
+  }
+  if (run !== '') words.push(run)
+  return words
+}
+
+/**
+ * Whether one word, as `wordsOf` reads it, holds a refused word. A refused word of three letters or
+ * fewer, such as kyb, counts only as the whole word, so "Risky" and "Sky" pass. A longer one counts
+ * anywhere in the word, so "Vetted" and "approved-by" are refused. A refused word is read with any
+ * l in it as an i, since the check reads every l as one.
+ */
+const holdsRefused = (word: string): boolean =>
+  TEST_SELLER_REFUSED_WORDS.some((refused) => {
+    const read = refused.replace(/l/g, 'i')
+    return refused.length <= 3 ? word === read : word.includes(read)
+  })
 
 /**
  * Whether text may show for a test seller. It's plain printable ASCII on one line, of up to `max`
- * characters with no space at either end, and it holds none of the refused words, read as
- * `squashed` reads them. Each refused word is also read with any l in it as an i, since the check
- * reads every l as one.
+ * characters with no space at either end, and none of its words, as `wordsOf` reads them, holds a
+ * refused word. Avow writes the list itself, so the word check is a backstop, and it refuses those
+ * words and nothing more.
  */
 export function isTestSellerText(text: string, max: number): boolean {
   if (!/^[\x20-\x7e]+$/.test(text) || !isPlainText(text, max)) return false
-  const read = squashed(text)
-  return !TEST_SELLER_REFUSED_WORDS.some((word) => read.includes(word.replace(/l/g, 'i')))
+  return !wordsOf(text).some(holdsRefused)
 }
 
 /** One test seller, with the sandbox business it sells for, its name and its offers, whole. */

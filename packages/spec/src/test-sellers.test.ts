@@ -129,6 +129,23 @@ describe("the deployment's list of test sellers", () => {
     expect(parseTestSellers([entry])).toEqual({ ok: false, reason: 'message.invalid' })
   })
 
+  it.each([
+    'Risky Business (test business)',
+    'Sky Blue Paint (test business)',
+    'Licensing Lab (test business)',
+  ])('takes %j, whose words hold no refused word', (name) => {
+    expect(parseTestSellers([{ ...seller, name }]).ok).toBe(true)
+  })
+
+  it.each(['guaranteed', 'licensed', 'insured', 'endorsed', 'validated'])(
+    'refuses a summary that says %s',
+    (word) => {
+      const summary = `A ${word} ping`
+      const said = { ...seller, offers: [toWire({ ...ping, item: { ...ping.item, summary } })] }
+      expect(parseTestSellers([said]).ok).toBe(false)
+    },
+  )
+
   it('refuses a list that names one business twice', () => {
     expect(parseTestSellers([seller, seller]).ok).toBe(false)
   })
