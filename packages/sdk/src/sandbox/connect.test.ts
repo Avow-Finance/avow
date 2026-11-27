@@ -353,7 +353,7 @@ describe('connecting an agent to a business', () => {
       }) as typeof globalThis.fetch
       await expect(
         connectToBusiness({ businessId: BUSINESS, label, store, fetch }),
-      ).rejects.toThrow(/^The name can't be used, since it holds U\+[0-9A-F]{4} at character \d+/)
+      ).rejects.toThrow(/^The name can't be used, since it holds U\+[0-9A-F]{4} at code point \d+/)
       expect(sent).toEqual([])
       expect(await store.read('request')).toBeNull()
     }
@@ -377,6 +377,22 @@ describe('connecting an agent to a business', () => {
     })
     expect(item.business.businessId).toBe(BUSINESS)
     expect(world.asks[0]?.body).toMatchObject({ label: old })
+
+    // A saved name even the rule it was first asked under refuses is checked as a new one.
+    const broken = memoryStore()
+    await write(broken, 'request', {
+      agentKey: generatePrivateKey(),
+      businessId: BUSINESS,
+      label: 'bad\u0007name',
+    })
+    await expect(
+      connectToBusiness({
+        businessId: BUSINESS,
+        label: 'bad\u0007name',
+        store: broken,
+        fetch: sandbox(broken).fetch,
+      }),
+    ).rejects.toThrow(/name can't be used, since it holds U\+0007/)
 
     // Asking without naming that business is another request, with a new key, so the rule holds.
     const other = memoryStore()

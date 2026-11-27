@@ -115,24 +115,41 @@ describe('an agent request', () => {
     const coder = '\u{1f469}\u200d\u{1f4bb} Coder'
     expect(agentLabelOf(coder)).toBeNull()
     expect(agentLabelProblem(coder)).toMatch(
-      /^it holds U\+200D at character 2, a zero-width joiner/,
+      /^it holds U\+200D at code point 2, a zero-width joiner/,
     )
     expect(agentLabelProblem(coder)).toMatch(/Write each emoji on its own/)
     expect(agentLabelOf('\u{1f469}\u{1f4bb} Coder')).not.toBeNull()
+    // A skin tone or the emoji presentation selector before the joiner still leaves it between emoji.
+    for (const [emoji, at] of [
+      ['\u{1f469}\u{1f3fd}\u200d\u{1f4bb}', 3],
+      ['\u2764\ufe0f\u200d\u{1f525}', 3],
+      ['\u{1f3f3}\ufe0f\u200d\u{1f308}', 3],
+    ] as const) {
+      expect(agentLabelOf(`${emoji} agent`), emoji).toBeNull()
+      expect(agentLabelProblem(`${emoji} agent`), emoji).toMatch(
+        new RegExp(
+          `^it holds U\\+200D at code point ${at}, a zero-width joiner that joins two emoji`,
+        ),
+      )
+    }
+    // A joiner between letters is no emoji, so it's named as hidden.
+    expect(agentLabelProblem('a\u200db')).toMatch(/which shows nothing/)
   })
 
   it('names the first character that fails and where it stands', () => {
     expect(agentLabelProblem('Research agent')).toBeNull()
     expect(agentLabelProblem('Agent \u202etcennoc')).toBe(
-      'it holds U+202E at character 7, which shows nothing or changes how the text around it reads',
+      'it holds U+202E at code point 7, which shows nothing or changes how the text around it reads',
     )
-    expect(agentLabelProblem('🤖 \u200bx')).toMatch(/^it holds U\+200B at character 3,/)
+    expect(agentLabelProblem('🤖 \u200bx')).toMatch(/^it holds U\+200B at code point 3,/)
     expect(agentLabelProblem('Agent "x"')).toBe(
-      'it holds U+0022 at character 7, which reads as a double quote',
+      'it holds U+0022 at code point 7, which reads as a double quote',
     )
-    expect(agentLabelProblem("Agent ''x''")).toMatch(/two apostrophes side by side at character 7/)
-    expect(agentLabelProblem('Agent ``x``')).toMatch(/two backticks side by side at character 7/)
-    expect(agentLabelProblem('Agent \ud800')).toMatch(/U\+D800 at character 7, half of a character/)
+    expect(agentLabelProblem("Agent ''x''")).toMatch(/two apostrophes side by side at code point 7/)
+    expect(agentLabelProblem('Agent ``x``')).toMatch(/two backticks side by side at code point 7/)
+    expect(agentLabelProblem('Agent \ud800')).toMatch(
+      /U\+D800 at code point 7, half of a character/,
+    )
     expect(agentLabelProblem('   ')).toBe("it's empty")
     expect(agentLabelProblem('x'.repeat(61))).toBe("it's 61 UTF-16 code units long")
   })

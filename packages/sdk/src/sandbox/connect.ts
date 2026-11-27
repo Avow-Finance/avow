@@ -6,6 +6,7 @@ import {
   agentLabelProblem,
   approvalHash,
   type Enrollment,
+  heldAgentLabelJson,
   pairingCode,
   parseAgentRequestStatus,
   parseEnrollmentRequest,
@@ -221,8 +222,10 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   const same = waiting?.businessId === asked ? waiting : null
   // A request saved with a name from before the rule for new names keeps it, since Avow already
   // holds the request under that name for this key, and asking again changes nothing it shows.
+  // It still has to be one Avow reads back, under the rule it was first asked under.
   const resumed = same?.label !== undefined && same.label.trim() === o.label.trim()
-  const label = resumed ? o.label.trim() : agentLabelOf(o.label)
+  const savedLabel = resumed ? heldAgentLabelJson.safeParse(o.label) : null
+  const label = savedLabel?.success ? savedLabel.data : agentLabelOf(o.label)
   if (label === null) {
     throw new RangeError(
       `The name can't be used, since ${agentLabelProblem(o.label) ?? "it isn't plain text"}. ${AGENT_LABEL_RULE}.`,
