@@ -70,6 +70,13 @@ describe('checking a commitment for the supplier', () => {
     })
   })
 
+  it('names the business that booked, which the webhook leaves out', async () => {
+    const booking = agreedBooking()
+    store.put(booking)
+    const check = await checkCommitment(await deps(null), COMMITMENT)
+    expect(check?.buyerBusinessId).toBe(booking.agreement.buyerBusinessId)
+  })
+
   it('says the lock holds nothing yet before the reserve arrives', async () => {
     store.put(agreedBooking())
     expect(await checkCommitment(await deps(null), COMMITMENT)).toMatchObject({

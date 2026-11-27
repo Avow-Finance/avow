@@ -106,7 +106,7 @@ async function serve() {
         return []
       }
     })
-    const added = reconcile(outbox, readable, new Date())
+    const added = reconcile(outbox, readable, new Date(), log)
     if (added > 0) log(`webhook: added ${added} events the outbox was missing`)
   }
   const { account, signingKey } = keysOf(store)
@@ -288,8 +288,14 @@ function redeliver() {
     log(`${stateDir} has no webhook outbox, so there is nothing to send again`)
     return
   }
-  const count = new Outbox(stateDir, Date.now()).redeliverFailed(Date.now())
+  const outbox = new Outbox(stateDir, Date.now())
+  const count = outbox.redeliverFailed(Date.now())
   log(`${count} events will go out again once serve runs`)
+  if (outbox.replaced.size > 0) {
+    log(
+      `${outbox.replaced.size} bookings had events an earlier adapter left in its own format. serve sends each one's current status again`,
+    )
+  }
 }
 
 /** Each command, with what it takes as the usage line shows it. The usage line is built from this. */

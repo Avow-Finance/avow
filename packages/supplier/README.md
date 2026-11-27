@@ -8,7 +8,7 @@ Your system does two things. It receives the webhook's events, which say when to
 
 ### The webhook
 
-Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each time a booking reaches a status your system acts on.
+Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each time a booking reaches a status your system acts on. Each event is a [commitment event](../../fern/docs/pages/commitment-events.mdx), the shape `@avow-finance/spec` holds for every change in a commitment's life, stated by the supplier.
 
 | Event | When | What your system does |
 | --- | --- | --- |
@@ -17,32 +17,29 @@ Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each tim
 | `reserve.accepted` | The lock took the adapter's acceptance | Grant the capacity |
 | `booking.lapsed` | The acceptance deadline passed before the lock took the acceptance | Free the capacity |
 
-Each post is JSON like this, with money in dollars and times in UTC.
+Each post is JSON like this. The reserve is in micros of the terms' currency, so 500000000 is $500, and times are unix seconds.
 
 ```json
 {
-  "id": "msg_4f1c…_accepted",
-  "type": "reserve.accepted",
-  "createdAt": "2027-01-04T09:00:12.000Z",
-  "data": {
-    "commitmentId": "0x4f1c…",
-    "chainId": 42431,
-    "lock": "0x…",
-    "buyerBusinessId": "biz_…",
-    "supplierBusinessId": "biz_…",
-    "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-11T09:00:00.000Z",
-    "acceptanceTransaction": "0x…",
-    "terms": { "…": "the terms both sides signed" }
-  }
+  "schemaVersion": "1",
+  "code": "reserve.accepted",
+  "source": "supplier",
+  "commitment": { "chainId": 42431, "lock": "0x…", "commitmentId": "0x4f1c…" },
+  "at": "1799053212",
+  "termsHash": "0x…",
+  "reserve": "500000000",
+  "agreementExpiry": "1799658000",
+  "acceptedIn": "0x…"
 }
 ```
 
-`agreementExpiresAt` is when the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy`.
+`agreementExpiry` is when the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy`. `acceptedIn` is on `reserve.accepted` only. It is the acceptance's transaction, or null when the adapter found the acceptance on the lock without sending it. An event names the terms by their hash and names no business, so read the terms, who booked and the booking's status from `GET /commitments/<id>`. `parseCommitmentEvent` in `@avow-finance/spec` reads a post and refuses one that isn't well formed.
+
+This shape is new in this release, and it breaks a receiver written for the adapter's earlier events, which had a `type`, a `createdAt` and a `data` section with business ids, dollars and the terms. Look for `schemaVersion` to tell the two apart. When an upgraded adapter starts, it moves any event the earlier adapter left waiting or gave up on to `outbox/older` in the state directory and sends that booking's current status again in the new shape.
 
 Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) specification, so check each one with that project's library for your language before you act on it. The `webhook-id`, `webhook-timestamp` and `webhook-signature` headers carry what the library needs, and it refuses a post older than five minutes. `avow-supplier secret` makes a secret, which goes in `WEBHOOK_SECRET` here and in your receiver, and nowhere else.
 
-Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones whose agreement expires after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
+Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `webhook-id` once. It is the same for every delivery of one booking's status. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones whose agreement expires after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
 
 ### The check
 
@@ -65,11 +62,12 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
     "freeCancellationEndsAt": "2027-01-05T09:00:00.000Z",
     "releaseDate": "2027-01-06T09:00:00.000Z"
   },
+  "buyerBusinessId": "…",
   "terms": { "…": "the terms both sides signed" }
 }
 ```
 
-`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it, and it refuses a request that names any other host, so a web page can't reach it through a name it controls. Another address in `LOCAL_HOST` lets other machines read your bookings' terms and buyers, so the adapter warns when you set one, and the port belongs behind your firewall.
+`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. `buyerBusinessId` is the business that booked, which the webhook's events leave out. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it, and it refuses a request that names any other host, so a web page can't reach it through a name it controls. Another address in `LOCAL_HOST` lets other machines read your bookings' terms and buyers, so the adapter warns when you set one, and the port belongs behind your firewall.
 
 ## What the adapter does
 
@@ -82,7 +80,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 - Every few seconds it asks Avow to authorize each booking it signed, with a request its signing key signs. Once the agent has funded the reserve, Avow answers with its authorization, its approval and the buyer's mandate.
 - The verifier checks the authorization and the mandate against the supplier's own terms and the lock before the supplier holds capacity. It checks the approval against the same terms before it builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
 - It grants the capacity only once the acceptance's receipt shows the lock took it, as the verifier's README asks. Until then the reserve can still go back to the business, so a booking stays `held` and nothing is granted.
-- A booking lapses when its acceptance deadline passes before the lock takes the acceptance, and Avow returns any reserve then.
+- A booking lapses when its acceptance deadline passes before the lock takes the acceptance, whether or not a reserve came. A reserve that came goes back to the business.
 
 Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between. The adapter reads an accepted or lapsed booking once, then leaves it alone. It logs a booking file it can't read once, and reads that file again once it changes.
 

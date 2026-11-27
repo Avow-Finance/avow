@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { toWire } from '@avow-finance/spec'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { checkCommitment, localHostnames } from './local.js'
 import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
@@ -157,17 +158,21 @@ describe('the supplier adapter reference', () => {
       status: 'accepted',
       sent: { hash: `0x${'ab'.repeat(32)}`, validBefore: null },
     }
-    const event = bookingEvent(accepted, new Date())
+    const delivery = bookingEvent(accepted, new Date())
+    if (!delivery) throw new Error('an accepted booking has an event')
+    const event = JSON.parse(JSON.stringify(toWire(delivery.event)))
     const sample = [...PAGE.matchAll(/```json\n([\s\S]*?)```/g)]
       .map((m) => JSON.parse(m[1] as string))
-      .find((json) => json.type === WEBHOOK_EVENTS.accepted)
-    expect(Object.keys(sample).sort()).toEqual(Object.keys(event ?? {}).sort())
-    expect(Object.keys(sample.data).sort()).toEqual(Object.keys(event?.data ?? {}).sort())
+      .find((json) => json.code === WEBHOOK_EVENTS.accepted)
+    expect(Object.keys(sample).sort()).toEqual(Object.keys(event).sort())
+    expect(Object.keys(sample.commitment).sort()).toEqual(Object.keys(event.commitment).sort())
+    expect(sample.schemaVersion).toBe(event.schemaVersion)
+    expect(sample.source).toBe(event.source)
     const fields = firstCells(section('### The payload'), /^[a-zA-Z.]+$/)
     expect(new Set(fields)).toEqual(
       new Set([
-        ...Object.keys(event ?? {}).filter((k) => k !== 'data'),
-        ...Object.keys(event?.data ?? {}).map((k) => `data.${k}`),
+        ...Object.keys(event).filter((k) => k !== 'commitment'),
+        ...Object.keys(event.commitment).map((k) => `commitment.${k}`),
       ]),
     )
   })

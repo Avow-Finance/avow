@@ -187,7 +187,8 @@ export type ObservedBy<S extends CommitmentEventSource = CommitmentEventSource> 
 const terms = { termsHash: hash } as const
 /**
  * What a party to the agreement states about it: the terms, the reserve, which is the most the
- * supplier can charge, and when the agreement both sides signed lapses.
+ * supplier can charge, and when the signed agreement offer stops being valid. A booking lapses at
+ * a separate time, its terms' acceptance deadline.
  */
 const agreement = { ...terms, reserve: positive, agreementExpiry: time } as const
 
