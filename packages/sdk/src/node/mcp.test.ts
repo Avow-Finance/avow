@@ -166,7 +166,9 @@ describe('avow-sandbox-mcp', () => {
       arguments: { name: 'Agent \u202etcennoc ot sksa' },
     })
     expect(answer.isError).toBe(true)
-    expect(JSON.stringify(answer.content)).toMatch(/name can't be used/)
+    expect(JSON.stringify(answer.content)).toMatch(
+      /name can't be used, since it holds U\+202E at character 7/,
+    )
     // Nothing was asked, so the folder holds no key and no request.
     expect(existsSync(join(dir, '.avow'))).toBe(false)
   }, 30_000)

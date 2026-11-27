@@ -2,7 +2,7 @@ import type { Address, Hex } from 'viem'
 import { keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
 import { address, bytes32, hexBytes, u64 } from './json-fields.js'
-import { isPlainText } from './text.js'
+import { isPlainText, unplainMarks } from './text.js'
 
 /**
  * An agent asking a business for authority, from wherever its developer runs it. The agent makes
@@ -38,29 +38,91 @@ export interface AgentRequest {
   signingKey?: Address
 }
 
-/** The most characters an agent's label holds. */
+/**
+ * The most an agent's label holds, counted in UTF-16 code units as JavaScript counts a string's
+ * length, so a character outside the Basic Multilingual Plane, such as most emoji, counts as two.
+ * A label that passes is one `heldAgentLabelJson` reads back, which counts the same way.
+ */
 export const AGENT_LABEL_MAX = 60
 
-/** What a new label may hold, in the words an agent hears when its label can't be used. */
-export const AGENT_LABEL_RULE = `A label is 1 to ${AGENT_LABEL_MAX} characters on one line, with no double quote and no hidden character or mark that changes which way text reads`
+/** What a new label may hold, in the words an agent hears when its name can't be used. */
+export const AGENT_LABEL_RULE = `A name holds 1 to ${AGENT_LABEL_MAX} UTF-16 code units on one line, so most emoji count as two, with no double quote, no two apostrophes or two backticks side by side, no emoji joined by a zero-width joiner, and no hidden character or mark that changes which way text reads`
+
+/** The wide space a Japanese, Chinese or Korean input method types, which a label reads as a space. */
+const WIDE_SPACE = /\u3000/g
 
 /**
- * The label a new request carries, trimmed. An agent chooses it, and the administrator reads it on
- * the card they approve, so it's held to `isPlainText` and can't pose as a line the card wrote or
- * reorder the words after it.
+ * The label a new request carries, with each wide space made a plain one and then trimmed. An agent
+ * chooses it, and the administrator reads it on the card they approve, so it's held to
+ * `isPlainText` and can't pose as a line the card wrote or reorder the words after it.
  */
 export const agentLabelJson = z
   .string()
+  .overwrite((v) => v.replace(WIDE_SPACE, ' '))
   .trim()
   .min(1)
   .max(AGENT_LABEL_MAX)
   .refine((v) => isPlainText(v, AGENT_LABEL_MAX), AGENT_LABEL_RULE)
   .describe(AGENT_LABEL_RULE)
 
-/** The label an agent would ask under, trimmed, or null when a new request can't carry it. */
+/** The label an agent would ask under, as a new request carries it, or null when it can't. */
 export function agentLabelOf(raw: string): string | null {
   const parsed = agentLabelJson.safeParse(raw)
   return parsed.success ? parsed.data : null
+}
+
+const codePointName = (c: number) => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`
+
+/** Whether a character is a pictograph, which a zero-width joiner joins into one emoji. */
+const isPictograph = (ch: string | undefined) =>
+  ch !== undefined && /\p{Extended_Pictographic}/u.test(ch)
+
+/**
+ * Why a new request can't carry a label, as a clause that follows "since", naming the first
+ * character that fails and where it stands, or null when it can carry it. `agentLabelJson`
+ * decides, so the reason never disagrees with the verdict.
+ */
+export function agentLabelProblem(raw: string): string | null {
+  if (agentLabelJson.safeParse(raw).success) return null
+  const v = raw.replace(WIDE_SPACE, ' ').trim()
+  if (v.length === 0) return "it's empty"
+  if (v.length > AGENT_LABEL_MAX) return `it's ${v.length} UTF-16 code units long`
+  const first = unplainMarks(v)[0]
+  if (!first) return "it isn't plain text"
+  const where = `${codePointName(first.codePoint)} at character ${first.at}`
+  switch (first.kind) {
+    case 'half':
+      return `it holds ${where}, half of a character`
+    case 'quote':
+      return `it holds ${where}, which reads as a double quote`
+    case 'pair':
+      return `it holds two ${first.codePoint === 0x27 ? 'apostrophes' : 'backticks'} side by side at character ${first.at}, which read as a double quote`
+    case 'unseen': {
+      const chars = Array.from(v) as string[]
+      if (
+        first.codePoint === 0x200d &&
+        isPictograph(chars[first.at - 2]) &&
+        isPictograph(chars[first.at])
+      ) {
+        return `it holds ${where}, a zero-width joiner that joins two emoji into one. The joiner shows nothing and can hide anywhere, so it's refused even between emoji. Write each emoji on its own`
+      }
+      return `it holds ${where}, which shows nothing or changes how the text around it reads`
+    }
+  }
+}
+
+/**
+ * A label as a card shows it, between double quotes. A label Avow held from before the rule for
+ * new labels can fail it, and then each character that fails shows as its code point in brackets,
+ * so it can neither hide nor reorder what follows.
+ */
+export function quotedLabel(label: string): string {
+  if (isPlainText(label, AGENT_LABEL_MAX)) return `"${label}"`
+  const marked = new Set(unplainMarks(label).map((m) => m.at))
+  const shown = (Array.from(label) as string[])
+    .map((ch, i) => (marked.has(i + 1) ? `[${codePointName(ch.codePointAt(0) as number)}]` : ch))
+    .join('')
+  return `"${shown}"`
 }
 
 /**

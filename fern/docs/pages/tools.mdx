@@ -30,7 +30,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 ### Inputs
 
-`connect` takes `name`, what the administrator sees, such as `"Research agent"`. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs and service orders for the business too, with a signing key of its own. No limit the administrator sets applies to what that key sells.
+`connect` takes `name`, what the administrator sees, such as `"Research agent"`, and refuses a name that breaks [the rule for names](/docs/get-started/connect-your-agent#connect-from-the-terminal), naming the character and where it stands. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs and service orders for the business too, with a signing key of its own. No limit the administrator sets applies to what that key sells.
 
 `check` and `book` take the same inputs, so a booking that passes `check` is the one `book` makes. `check` also takes the `offer` and `quantity` that `order` takes. It prices the offer, asks Avow whether it knows the seller, and runs the mandate check on the terms the offer builds, under the mandate the agent holds now. The mandate's limits count the reserve. The price is paid outside the lock and no limit counts it, so the answer gives the price for the agent to weigh. It can't know whether the seller still publishes that version or has capacity left, since only the seller knows.
 

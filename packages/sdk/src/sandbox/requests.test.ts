@@ -142,6 +142,21 @@ describe("a request's words", () => {
     ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
 
+  it("quotes an agent's name, and shows each hidden mark in a name held from before as its code point", () => {
+    const authority = (label: string) =>
+      changeWords({
+        ...base,
+        kind: 'agent_authority',
+        businessId: 'sandbox-ab12',
+        terms: { label, signingKey: null },
+        reason: 'new_agent',
+        basis: { mandate: null },
+      }).title
+    expect(authority('Research agent')).toBe('Connect "Research agent"')
+    expect(authority('Agent \u202etcennoc')).toBe('Connect "Agent [U+202E]tcennoc"')
+    expect(authority('Agent "approved"')).toBe('Connect "Agent [U+0022]approved[U+0022]"')
+  })
+
   it('shows one sale a person is asked to approve, whole, and says it changes no limit', () => {
     const sale = {
       ...base,

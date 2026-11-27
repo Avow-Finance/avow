@@ -8,12 +8,14 @@ import {
   AGENT_LABEL_RULE,
   type ApprovalRequest,
   agentLabelOf,
+  agentLabelProblem,
   describeReason,
   formatUsd,
   isApprovalRequestId,
   isSessionId,
   offerVersionId,
   publishedOffer,
+  quotedLabel,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
@@ -563,9 +565,11 @@ const when = (seconds: number) => new Date(seconds * 1000).toISOString()
  * so a folder already connected elsewhere says so.
  */
 function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
+  // A card shows the name as `quotedLabel` gives it, so a name Avow held from before the rule for
+  // new names can't hide or reorder what the card says.
   const answer = (text: string | string[], isError = false): ToolAnswer => ({
     text: Array.isArray(text) ? text.join(' ') : text,
-    structured: { ...c },
+    structured: c.at === 'waiting' ? { ...c, shownLabel: quotedLabel(c.label) } : { ...c },
     isError,
   })
   switch (c.at) {
@@ -582,8 +586,8 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
     case 'waiting':
       return answer([
         c.businessId
-          ? `Asked ${c.businessId} for authority, as "${c.label}", with pairing code ${c.pairingCode}.`
-          : `Asked for authority, as "${c.label}", with pairing code ${c.pairingCode}, from whichever business approves it.`,
+          ? `Asked ${c.businessId} for authority, as ${quotedLabel(c.label)}, with pairing code ${c.pairingCode}.`
+          : `Asked for authority, as ${quotedLabel(c.label)}, with pairing code ${c.pairingCode}, from whichever business approves it.`,
         c.businessId
           ? `Send your person this link to review the request, on their phone or anywhere else: ${c.link}`
           : `Send your person this link, on their phone or anywhere else. They sign in, or set up their business, and approve there: ${c.link}`,
@@ -633,7 +637,9 @@ export function mcpAgent(
     const named = typeof args.name === 'string' && args.name.trim() !== '' ? args.name : null
     const label = named === null ? null : agentLabelOf(named)
     if (named !== null && label === null) {
-      throw new RangeError(`That name can't be used. ${AGENT_LABEL_RULE}.`)
+      throw new RangeError(
+        `The name can't be used, since ${agentLabelProblem(named) ?? "it isn't plain text"}. ${AGENT_LABEL_RULE}.`,
+      )
     }
     const c = await connection.start({ businessId: business, label, sell: args.sell === true })
     return connectionAnswer(c, business ?? undefined)

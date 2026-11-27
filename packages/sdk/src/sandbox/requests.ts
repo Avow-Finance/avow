@@ -6,6 +6,7 @@ import {
   isApprovalFinal,
   type Mandate,
   parseApprovalRequest,
+  quotedLabel,
   type RaisableLimit,
   SANDBOX_PATHS,
 } from '@avow-finance/spec'
@@ -90,7 +91,7 @@ const LIMIT_LABELS = {
 export function changeWords(request: ApprovalRequest): ChangeWords {
   switch (request.kind) {
     case 'agent_authority':
-      return { title: `Connect ${request.terms.label}`, rows: [] }
+      return { title: `Connect ${quotedLabel(request.terms.label)}`, rows: [] }
     case 'raise_limit':
       return {
         title: 'Raise a limit',

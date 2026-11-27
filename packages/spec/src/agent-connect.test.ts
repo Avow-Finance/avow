@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_LABEL_MAX,
   agentLabelOf,
+  agentLabelProblem,
   approvalHash,
   approvalKeyOf,
   pairingCode,
@@ -10,6 +11,7 @@ import {
   parseAgentRequestStatus,
   parseOpenAgentRequest,
   parseOpenAgentRequestStatus,
+  quotedLabel,
 } from './agent-connect.js'
 import { API_PATH_PATTERN } from './api-request.js'
 import { SANDBOX_PATHS } from './sandbox.js'
@@ -62,7 +64,6 @@ describe('an agent request', () => {
       'a line separator': 'Agent\u2028name',
       'a line feed': 'Agent\nname',
       'a C1 control': 'Agent\u0085name',
-      'a wide blank': 'Agent\u3000name',
       'a Hangul filler': 'Agent\u3164name',
       'a blank Braille cell': 'Agent\u2800name',
       'a double quote': 'Agent "approved"',
@@ -90,14 +91,56 @@ describe('an agent request', () => {
       'Агент закупок',
       '🤖 Research agent',
       "O'Brien's agent",
+      'Research  agent',
       'x'.repeat(AGENT_LABEL_MAX),
     ]) {
       expect(agentLabelOf(label), label).toBe(label)
       expect(parseOpenAgentRequest({ label })?.label, label).toBe(label)
     }
     expect(agentLabelOf('  Research agent ')).toBe('Research agent')
+    // A Japanese input method types a wide space between words, which a label reads as a space.
+    expect(agentLabelOf('リサーチ\u3000エージェント')).toBe('リサーチ エージェント')
+    expect(agentLabelOf('山田\u3000太郎\u3000')).toBe('山田 太郎')
+    expect(parseOpenAgentRequest({ label: 'リサーチ\u3000エージェント' })?.label).toBe(
+      'リサーチ エージェント',
+    )
+    // The most is counted in UTF-16 code units, so an emoji outside the first plane counts as two.
+    expect(agentLabelOf('🤖'.repeat(AGENT_LABEL_MAX / 2))).not.toBeNull()
+    expect(agentLabelOf(`${'🤖'.repeat(AGENT_LABEL_MAX / 2)}x`)).toBeNull()
     expect(agentLabelOf('x'.repeat(AGENT_LABEL_MAX + 1))).toBeNull()
     expect(agentLabelOf('   ')).toBeNull()
+  })
+
+  it('refuses emoji joined by a zero-width joiner, as it does in the name of an item, and says why', () => {
+    const coder = '\u{1f469}\u200d\u{1f4bb} Coder'
+    expect(agentLabelOf(coder)).toBeNull()
+    expect(agentLabelProblem(coder)).toMatch(
+      /^it holds U\+200D at character 2, a zero-width joiner/,
+    )
+    expect(agentLabelProblem(coder)).toMatch(/Write each emoji on its own/)
+    expect(agentLabelOf('\u{1f469}\u{1f4bb} Coder')).not.toBeNull()
+  })
+
+  it('names the first character that fails and where it stands', () => {
+    expect(agentLabelProblem('Research agent')).toBeNull()
+    expect(agentLabelProblem('Agent \u202etcennoc')).toBe(
+      'it holds U+202E at character 7, which shows nothing or changes how the text around it reads',
+    )
+    expect(agentLabelProblem('🤖 \u200bx')).toMatch(/^it holds U\+200B at character 3,/)
+    expect(agentLabelProblem('Agent "x"')).toBe(
+      'it holds U+0022 at character 7, which reads as a double quote',
+    )
+    expect(agentLabelProblem("Agent ''x''")).toMatch(/two apostrophes side by side at character 7/)
+    expect(agentLabelProblem('Agent ``x``')).toMatch(/two backticks side by side at character 7/)
+    expect(agentLabelProblem('Agent \ud800')).toMatch(/U\+D800 at character 7, half of a character/)
+    expect(agentLabelProblem('   ')).toBe("it's empty")
+    expect(agentLabelProblem('x'.repeat(61))).toBe("it's 61 UTF-16 code units long")
+  })
+
+  it('quotes a label for a card, and shows each mark in one held from before as its code point', () => {
+    expect(quotedLabel('Research agent')).toBe('"Research agent"')
+    expect(quotedLabel('Agent \u202etcennoc')).toBe('"Agent [U+202E]tcennoc"')
+    expect(quotedLabel("a''b")).toBe('"a[U+0027][U+0027]b"')
   })
 
   it('reads back a request Avow already holds under the label it was asked under', () => {
