@@ -9,16 +9,16 @@ import {
 import type { APPROVAL_DECISION_TYPES, approvalDecisionTypedData } from './approval-request.js'
 import type { ReasonCode } from './reasons.js'
 import type {
+  SELLER_KEY_REVOCATION_TYPES,
+  SellerKeyRevocation,
+  sellerKeyRevocationTypedData,
+} from './seller-key-revocation.js'
+import type {
   SELLER_MANDATE_TYPES,
   SellerMandate,
   SellingLimit,
   sellerMandateTypedData,
 } from './seller-mandate.js'
-import type {
-  SELLER_MANDATE_REVOCATION_TYPES,
-  SellerMandateRevocation,
-  sellerMandateRevocationTypedData,
-} from './seller-mandate-revocation.js'
 import type {
   ApprovalRule,
   Mandate,
@@ -1019,7 +1019,7 @@ export type AvowTypedData =
   | ReturnType<typeof supplierActionTypedData>
   | ReturnType<typeof approvalDecisionTypedData>
   | ReturnType<typeof sellerMandateTypedData>
-  | ReturnType<typeof sellerMandateRevocationTypedData>
+  | ReturnType<typeof sellerKeyRevocationTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -1071,9 +1071,9 @@ interface InterfacesMatchTables {
     FieldNames<typeof SELLER_MANDATE_TYPES.SellerMandate>
   >
   SellingLimit: SameFields<keyof SellingLimit, FieldNames<typeof SELLER_MANDATE_TYPES.SellingLimit>>
-  SellerMandateRevocation: SameFields<
-    keyof SellerMandateRevocation,
-    FieldNames<typeof SELLER_MANDATE_REVOCATION_TYPES.SellerMandateRevocation>
+  SellerKeyRevocation: SameFields<
+    keyof SellerKeyRevocation,
+    FieldNames<typeof SELLER_KEY_REVOCATION_TYPES.SellerKeyRevocation>
   >
   TermsAgreement: SameFields<
     keyof TermsAgreement,
@@ -1119,7 +1119,7 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   PaymentLimit: true,
   SellerMandate: true,
   SellingLimit: true,
-  SellerMandateRevocation: true,
+  SellerKeyRevocation: true,
   TermsAgreement: true,
   Approval: true,
   Charge: true,
@@ -1180,7 +1180,7 @@ export function digestOf(td: AvowTypedData): Hex {
       return hashTypedData(td)
     case 'SellerMandate':
       return hashTypedData(td)
-    case 'SellerMandateRevocation':
+    case 'SellerKeyRevocation':
       return hashTypedData(td)
   }
 }

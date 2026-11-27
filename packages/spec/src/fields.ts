@@ -28,3 +28,7 @@ export const COUNTRY_CODE = /^[A-Z]{2}$/
 
 /** A business's id as Avow writes one, which is 1 to 100 letters, digits, hyphens and underscores. */
 export const BUSINESS_ID = /^[A-Za-z0-9_-]{1,100}$/
+
+/** Whether an object holds exactly these keys, so nothing unsigned rides along with a message. */
+export const holdsOnly = (value: object, keys: readonly string[]): boolean =>
+  Object.keys(value).length === keys.length && keys.every((k) => Object.hasOwn(value, k))

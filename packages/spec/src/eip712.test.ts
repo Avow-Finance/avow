@@ -45,11 +45,8 @@ import {
   termsAgreementVersion,
   timestampTypedData,
 } from './eip712.js'
-import { sellerMandateHash, sellerMandateTypedData } from './seller-mandate.js'
-import {
-  type SellerMandateRevocation,
-  sellerMandateRevocationTypedData,
-} from './seller-mandate-revocation.js'
+import { type SellerKeyRevocation, sellerKeyRevocationTypedData } from './seller-key-revocation.js'
+import { sellerMandateTypedData } from './seller-mandate.js'
 import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
@@ -73,11 +70,10 @@ const admin = newKey()
 const agent = newKey()
 const mandate = demoMandate(admin.address, agent.address)
 const sellerMandate = demoSellerMandate(admin.address, agent.address)
-const revocation: SellerMandateRevocation = {
+const revocation: SellerKeyRevocation = {
   businessId: sellerMandate.businessId,
   account: sellerMandate.account,
   signingKey: sellerMandate.signingKey,
-  mandate: sellerMandateHash(sellerMandate, DOMAIN),
 }
 const terms = testnetDemoTerms(START, ARBITER)
 const lock = lockTerms(terms, TOKEN.decimals)
@@ -278,7 +274,7 @@ const builders = {
     approvalDecisionTypedData(decided, { businessId: 'sandbox-test', decision: 'approve' }, d),
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
   sellerMandate: (d = DOMAIN) => sellerMandateTypedData(sellerMandate, d),
-  revocation: (d = DOMAIN) => sellerMandateRevocationTypedData(revocation, d),
+  revocation: (d = DOMAIN) => sellerKeyRevocationTypedData(revocation, d),
   agreement: (d = DOMAIN) => termsAgreementTypedData(agreement, d),
   approval: (d = DOMAIN) => approvalTypedData(approval, d),
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
@@ -338,7 +334,7 @@ describe('signed messages', () => {
       ApprovalDecision: { typedData: builders.decision(), from: builders.decision().message },
       Mandate: { typedData: builders.mandate(), from: mandate },
       SellerMandate: { typedData: builders.sellerMandate(), from: sellerMandate },
-      SellerMandateRevocation: { typedData: builders.revocation(), from: revocation },
+      SellerKeyRevocation: { typedData: builders.revocation(), from: revocation },
       TermsAgreement: { typedData: builders.agreement(), from: agreement },
       Approval: { typedData: builders.approval(), from: approval },
       SupplierAuthorization: { typedData: builders.authorization(), from: authorization },

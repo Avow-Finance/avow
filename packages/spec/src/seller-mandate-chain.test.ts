@@ -1,18 +1,14 @@
-import type { Address, Hex } from 'viem'
+import { type Address, getAddress, type Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { digestOf, type Signed } from './eip712.js'
 import { MAX_MANDATE_CHAIN } from './mandate-chain.js'
+import { type SellerKeyRevocation, sellerKeyRevocationTypedData } from './seller-key-revocation.js'
 import { type SellerMandate, sellerMandateHash, sellerMandateTypedData } from './seller-mandate.js'
 import {
   parseSellerMandates,
   type SellerMandates,
   sellerMandateChainProblem,
-  sellerMandatesSignatureProblem,
 } from './seller-mandate-chain.js'
-import {
-  type SellerMandateRevocation,
-  sellerMandateRevocationTypedData,
-} from './seller-mandate-revocation.js'
 import {
   CHAIN_ID,
   DOMAIN,
@@ -41,11 +37,11 @@ const envelope = <T>(type: Signed<T>['type'], message: T, signature: Hex): Signe
 })
 const signMandate = async (m: SellerMandate, by = admin) =>
   envelope('SellerMandate', m, await by.sign({ hash: digestOf(sellerMandateTypedData(m, DOMAIN)) }))
-const signRevocation = async (r: SellerMandateRevocation, by = admin) =>
+const signRevocation = async (r: SellerKeyRevocation, by = admin) =>
   envelope(
-    'SellerMandateRevocation',
+    'SellerKeyRevocation',
     r,
-    await by.sign({ hash: digestOf(sellerMandateRevocationTypedData(r, DOMAIN)) }),
+    await by.sign({ hash: digestOf(sellerKeyRevocationTypedData(r, DOMAIN)) }),
   )
 const hashOf = (m: SellerMandate) => sellerMandateHash(m, DOMAIN)
 
@@ -53,30 +49,27 @@ const hashOf = (m: SellerMandate) => sellerMandateHash(m, DOMAIN)
 const first = demoSellerMandate(ACCOUNT, KEY)
 const second: SellerMandate = { ...first, mandateId: id('second'), replaces: hashOf(first) }
 const third: SellerMandate = { ...second, mandateId: id('third'), replaces: hashOf(second) }
-const revoking = (m: SellerMandate): SellerMandateRevocation => ({
-  businessId: m.businessId,
-  account: m.account,
-  signingKey: m.signingKey,
-  mandate: hashOf(m),
-})
+const revocation: SellerKeyRevocation = {
+  businessId: 'biz_supplier',
+  account: ACCOUNT,
+  signingKey: KEY,
+}
 
-const chainOf = async (
-  mandates: SellerMandate[],
-  revoked: SellerMandate | null = null,
-): Promise<SellerMandates> => {
+const chainOf = async (mandates: SellerMandate[], revoked = false): Promise<SellerMandates> => {
   const [current, ...earlier] = await Promise.all(mandates.map((m) => signMandate(m)))
   if (!current) throw new Error('a chain holds at least one mandate')
-  return { current, earlier, revocation: revoked ? await signRevocation(revoking(revoked)) : null }
+  return { current, earlier, revocation: revoked ? await signRevocation(revocation) : null }
 }
-const reason = (mandates: SellerMandates, want = expected) => {
-  const read = sellerMandateChainProblem(mandates, want)
+const reason = async (mandates: SellerMandates, want = expected) => {
+  const read = await sellerMandateChainProblem(mandates, want)
   return read.ok ? null : read.reason
 }
+const mismatch = 'seller_mandate.chain_mismatch'
 
 describe("a chain of seller's mandates", () => {
   it('links from the newest back to the one that replaces none, and gives each hash', async () => {
     const mandates = await chainOf([third, second, first])
-    expect(sellerMandateChainProblem(mandates, expected)).toEqual({
+    expect(await sellerMandateChainProblem(mandates, expected)).toEqual({
       ok: true,
       value: {
         current: { signed: mandates.current, hash: hashOf(third) },
@@ -84,34 +77,38 @@ describe("a chain of seller's mandates", () => {
       },
     })
     const alone = await chainOf([first])
-    expect(sellerMandateChainProblem(alone, expected)).toEqual({
+    expect(await sellerMandateChainProblem(alone, expected)).toEqual({
       ok: true,
       value: { current: { signed: alone.current, hash: hashOf(first) }, earlier: [] },
     })
   })
 
+  it('reads the expected addresses in either case', async () => {
+    const mixed = { ...expected, account: admin.address, signingKey: getAddress(KEY) }
+    expect(await reason(await chainOf([second, first]), mixed)).toBeNull()
+  })
+
   it('refuses a chain with a mandate left out, slipped in, out of order or repeated', async () => {
-    const mismatch = 'seller_mandate.chain_mismatch'
     // The middle left out, and the oldest left out, which leaves a mandate replacing one not there.
-    expect(reason(await chainOf([third, first]))).toBe(mismatch)
-    expect(reason(await chainOf([third, second]))).toBe(mismatch)
-    expect(reason(await chainOf([second]))).toBe(mismatch)
-    expect(reason(await chainOf([first, second, third]))).toBe(mismatch)
-    expect(reason(await chainOf([third, second, second, first]))).toBe(mismatch)
+    expect(await reason(await chainOf([third, first]))).toBe(mismatch)
+    expect(await reason(await chainOf([third, second]))).toBe(mismatch)
+    expect(await reason(await chainOf([second]))).toBe(mismatch)
+    expect(await reason(await chainOf([first, second, third]))).toBe(mismatch)
+    expect(await reason(await chainOf([third, second, second, first]))).toBe(mismatch)
     // A second first mandate can't ride along behind the chain's own.
     const another: SellerMandate = { ...first, mandateId: id('another first') }
-    expect(reason(await chainOf([third, second, first, another]))).toBe(mismatch)
+    expect(await reason(await chainOf([third, second, first, another]))).toBe(mismatch)
     // A mandate that names a hash no mandate in the chain has.
     const astray: SellerMandate = { ...second, replaces: id('some other mandate') }
-    expect(reason(await chainOf([astray, first]))).toBe(mismatch)
+    expect(await reason(await chainOf([astray, first]))).toBe(mismatch)
   })
 
   it('refuses a chain for another key, business or account, whoever signed it', async () => {
-    expect(
-      reason(await chainOf([third, second, first]), { ...expected, signingKey: OTHER_KEY }),
-    ).toBe('seller_mandate.key_mismatch')
-    const mismatch = 'seller_mandate.chain_mismatch'
-    expect(reason(await chainOf([first]), { ...expected, businessId: 'biz_other' })).toBe(mismatch)
+    const whole = await chainOf([third, second, first])
+    expect(await reason(whole, { ...expected, signingKey: OTHER_KEY })).toBe(
+      'seller_mandate.key_mismatch',
+    )
+    expect(await reason(whole, { ...expected, businessId: 'biz_other' })).toBe(mismatch)
     // A stranger's account signs a sound mandate for this agent's key.
     const theirs = demoSellerMandate(stranger.address.toLowerCase() as Address, KEY)
     const forged: SellerMandates = {
@@ -119,28 +116,33 @@ describe("a chain of seller's mandates", () => {
       earlier: [],
       revocation: null,
     }
-    expect(reason(forged)).toBe(mismatch)
+    expect(await reason(forged)).toBe(mismatch)
     // One link of an honest chain swapped for the stranger's.
     const swapped = await chainOf([second, first])
-    const link: SellerMandate = { ...theirs, replaces: null }
-    expect(reason({ ...swapped, earlier: [await signMandate(link, stranger)] })).toBe(mismatch)
+    expect(await reason({ ...swapped, earlier: [await signMandate(theirs, stranger)] })).toBe(
+      mismatch,
+    )
   })
 
   it("refuses a mandate that isn't well formed or sits in another envelope", async () => {
     const mandates = await chainOf([second, first])
-    const bad = { ...mandates.current, message: { ...second, maxOrderValue: 0n } }
-    expect(reason({ ...mandates, current: bad })).toBe('seller_mandate.invalid')
-    expect(reason({ ...mandates, current: { ...mandates.current, lock: OTHER_LOCK } })).toBe(
-      'message.invalid',
-    )
     const [older] = mandates.earlier
     if (!older) throw new Error('the chain holds two mandates')
-    expect(reason({ ...mandates, earlier: [{ ...older, chainId: CHAIN_ID + 1 }] })).toBe(
-      'message.invalid',
+    const withCurrent = (change: object) => ({
+      ...mandates,
+      current: { ...mandates.current, ...change },
+    })
+    const bad = { message: { ...second, maxOrderValue: 0n } }
+    expect(await reason(withCurrent(bad))).toBe('seller_mandate.invalid')
+    expect(await reason(withCurrent({ lock: OTHER_LOCK }))).toBe('message.wrong_contract')
+    expect(await reason(withCurrent({ type: 'Mandate' }))).toBe('message.schema_unknown')
+    expect(await reason(withCurrent({ schemaVersion: '99' }))).toBe('message.schema_unknown')
+    expect(await reason(withCurrent({ signature: 7 }))).toBe('message.invalid')
+    expect(await reason({ ...mandates, earlier: [{ ...older, chainId: CHAIN_ID + 1 }] })).toBe(
+      'message.wrong_chain',
     )
-    expect(
-      reason(mandates, { ...expected, domain: { ...DOMAIN, verifyingContract: OTHER_LOCK } }),
-    ).toBe('message.invalid')
+    const otherLock = { ...expected, domain: { ...DOMAIN, verifyingContract: OTHER_LOCK } }
+    expect(await reason(mandates, otherLock)).toBe('message.wrong_contract')
   })
 
   it('never throws, whatever it is handed', async () => {
@@ -149,102 +151,90 @@ describe("a chain of seller's mandates", () => {
       null,
       undefined,
       7,
-      'a chain',
+      'chain',
       [],
       {},
       { current: null, earlier: [], revocation: null },
     ]
-    for (const value of junk) expect(reason(value as never)).toBe('message.invalid')
-    expect(reason({ ...mandates, earlier: 'none' as never })).toBe('message.invalid')
-    expect(reason({ ...mandates, earlier: [null as never] })).toBe('message.invalid')
-    expect(reason({ ...mandates, revocation: 'revoked' as never })).toBe('message.invalid')
-    expect(reason({ ...mandates, revocation: undefined as never })).toBe('message.invalid')
+    for (const value of junk) expect(await reason(value as never)).toBe('message.invalid')
+    expect(await reason({ ...mandates, earlier: 'none' as never })).toBe('message.invalid')
+    expect(await reason({ ...mandates, earlier: [null as never] })).toBe('message.invalid')
+    expect(
+      await reason({ ...mandates, current: { ...mandates.current, message: null as never } }),
+    ).toBe('seller_mandate.invalid')
+    expect(await reason({ ...mandates, revocation: 'revoked' as never })).toBe('message.invalid')
+    expect(await reason({ ...mandates, revocation: undefined as never })).toBe('message.invalid')
     const sparse = [mandates.current, mandates.current]
     delete sparse[0]
-    expect(reason({ ...mandates, earlier: sparse })).toBe('message.invalid')
+    expect(await reason({ ...mandates, earlier: sparse })).toBe('message.invalid')
     const thrower = new Proxy(mandates, {
       get() {
         throw new Error('read')
       },
     })
-    expect(reason(thrower)).toBe('message.invalid')
+    expect(await reason(thrower)).toBe('message.invalid')
   })
 
-  it("holds no more mandates than a buyer's chain", async () => {
-    const signed = await signMandate(first)
-    const long = {
-      current: signed,
-      earlier: Array(MAX_MANDATE_CHAIN).fill(signed),
+  it('hands back the mandate it checked, whatever the value it was handed does next', async () => {
+    const honest = await signMandate(first)
+    const raised = await signMandate({ ...first, maxOrderValue: first.maxOutstanding })
+    let reads = 0
+    const shifting = {
+      get current() {
+        reads += 1
+        return reads === 1 ? honest : raised
+      },
+      earlier: [],
       revocation: null,
     }
-    expect(reason(long)).toBe('message.invalid')
+    const read = await sellerMandateChainProblem(shifting, expected)
+    if (!read.ok) throw new Error(read.reason)
+    expect(read.value.current.signed).toEqual(honest)
+    expect(read.value.current.hash).toBe(hashOf(first))
   })
-})
 
-describe('a revocation served with a chain', () => {
-  it('ends the whole chain, whichever mandate in it the revocation names', async () => {
-    for (const revoked of [third, second, first]) {
-      expect(reason(await chainOf([third, second, first], revoked))).toBe('seller_mandate.revoked')
+  it("holds as many mandates as a buyer's chain, and no more", async () => {
+    const line: SellerMandate[] = [first]
+    while (line.length < MAX_MANDATE_CHAIN + 1) {
+      const before = line[line.length - 1] as SellerMandate
+      line.push({ ...first, mandateId: id(`mandate ${line.length}`), replaces: hashOf(before) })
     }
-    expect(reason(await chainOf([first], first))).toBe('seller_mandate.revoked')
-  })
-
-  it('ends the chain whoever signed the revocation, since a forged one only stops a sale', async () => {
-    const mandates = await chainOf([second, first])
-    const forged = await signRevocation(revoking(second), stranger)
-    expect(reason({ ...mandates, revocation: forged })).toBe('seller_mandate.revoked')
-  })
-
-  it('refuses a revocation that names no mandate in the chain, or another agent', async () => {
-    const mandates = await chainOf([second, first])
-    const refused = async (r: SellerMandateRevocation) =>
-      reason({ ...mandates, revocation: await signRevocation(r) })
-    // A mandate that replaces the chain's newest isn't in the chain it was served with.
-    expect(await refused(revoking(third))).toBe('message.invalid')
-    expect(await refused({ ...revoking(second), signingKey: OTHER_KEY })).toBe('message.invalid')
-    expect(await refused({ ...revoking(second), businessId: 'biz_other' })).toBe('message.invalid')
-    expect(await refused({ ...revoking(second), account: OTHER_KEY })).toBe('message.invalid')
-    const sound = await signRevocation(revoking(second))
-    const malformed = { ...sound, message: { ...sound.message, mandate: '0x12' as const } }
-    expect(reason({ ...mandates, revocation: malformed })).toBe('message.invalid')
-    expect(reason({ ...mandates, revocation: { ...sound, lock: OTHER_LOCK } })).toBe(
-      'message.invalid',
-    )
-  })
-
-  it('reports a broken chain before a revocation', async () => {
-    const mandates = await chainOf([third, first], first)
-    expect(reason(mandates)).toBe('seller_mandate.chain_mismatch')
+    const newestFirst = line.reverse()
+    expect(await reason(await chainOf(newestFirst.slice(1)))).toBeNull()
+    expect(await reason(await chainOf(newestFirst))).toBe('message.invalid')
   })
 })
 
-describe("the signatures on a chain of seller's mandates", () => {
-  it('pass when the account signed every mandate', async () => {
-    const mandates = await chainOf([third, second, first])
-    expect(await sellerMandatesSignatureProblem(mandates, expected)).toBeNull()
-  })
+describe("who signed a chain of seller's mandates", () => {
+  const invalid = 'seller_mandate.signature_invalid'
 
-  it('fail when anyone else signed one, the replaced ones included', async () => {
+  it('has to be the business account, for every mandate, the replaced ones too', async () => {
     const mandates = await chainOf([third, second, first])
-    const invalid = 'seller_mandate.signature_invalid'
-    const forged = await signMandate(third, stranger)
-    expect(await sellerMandatesSignatureProblem({ ...mandates, current: forged }, expected)).toBe(
-      invalid,
-    )
     const [newer] = mandates.earlier
     if (!newer) throw new Error('the chain holds three mandates')
+    expect(await reason({ ...mandates, current: await signMandate(third, stranger) })).toBe(invalid)
     const oldForged = await signMandate(first, stranger)
+    expect(await reason({ ...mandates, earlier: [newer, oldForged] })).toBe(invalid)
+    // A signature over one mandate doesn't sign another, and no signature signs none.
     expect(
-      await sellerMandatesSignatureProblem({ ...mandates, earlier: [newer, oldForged] }, expected),
+      await reason({ ...mandates, current: { ...mandates.current, signature: newer.signature } }),
     ).toBe(invalid)
-    // A signature over one mandate doesn't sign another.
-    const moved = { ...mandates.current, signature: newer.signature }
-    expect(await sellerMandatesSignatureProblem({ ...mandates, current: moved }, expected)).toBe(
+    expect(await reason({ ...mandates, current: { ...mandates.current, signature: '0x' } })).toBe(
       invalid,
     )
-    expect(
-      await sellerMandatesSignatureProblem(mandates, { ...expected, account: stranger.address }),
-    ).toBe(invalid)
+  })
+
+  it('refuses a sound chain an agent wrote for itself with limits nobody signed', async () => {
+    const raised: SellerMandate = { ...third, maxOutstanding: third.maxOutstanding * 100n }
+    const agent = newKey()
+    const mandates = await chainOf([second, first])
+    const forged = {
+      ...mandates,
+      current: await signMandate({ ...raised, replaces: hashOf(second) }, agent),
+    }
+    expect(await reason({ ...forged, earlier: [mandates.current, ...mandates.earlier] })).toBe(
+      invalid,
+    )
   })
 
   it("takes the caller's own check, for an account whose root key is a passkey", async () => {
@@ -254,8 +244,83 @@ describe("the signatures on a chain of seller's mandates", () => {
       seen.push(signer)
       return true
     }
-    expect(await sellerMandatesSignatureProblem(mandates, expected, check)).toBeNull()
+    expect((await sellerMandateChainProblem(mandates, expected, check)).ok).toBe(true)
     expect(seen).toEqual([ACCOUNT, ACCOUNT])
+    const refuse = async () => false
+    expect(await sellerMandateChainProblem(mandates, expected, refuse)).toEqual({
+      ok: false,
+      reason: invalid,
+    })
+  })
+
+  it("lets the caller's check fail loudly, so an outage isn't read as a forgery", async () => {
+    const down = async () => {
+      throw new Error('the chain is unreachable')
+    }
+    await expect(sellerMandateChainProblem(await chainOf([first]), expected, down)).rejects.toThrow(
+      'the chain is unreachable',
+    )
+  })
+})
+
+describe("a revocation served with a key's mandates", () => {
+  it('ends the chain, however many mandates it holds', async () => {
+    expect(await reason(await chainOf([third, second, first], true))).toBe('seller_mandate.revoked')
+    expect(await reason(await chainOf([first], true))).toBe('seller_mandate.revoked')
+  })
+
+  it('ends a new first mandate for the key too, since it names the key and no mandate', async () => {
+    const again: SellerMandate = { ...first, mandateId: id('starting again') }
+    expect(await reason(await chainOf([again], true))).toBe('seller_mandate.revoked')
+    const sibling: SellerMandate = { ...second, mandateId: id('a second replacement') }
+    expect(await reason(await chainOf([sibling, first], true))).toBe('seller_mandate.revoked')
+  })
+
+  it('ends the chain whoever signed the revocation, since a forged one only stops a sale', async () => {
+    const mandates = await chainOf([second, first])
+    const forged = await signRevocation(revocation, stranger)
+    expect(await reason({ ...mandates, revocation: forged })).toBe('seller_mandate.revoked')
+    expect(await reason({ ...mandates, revocation: { ...forged, signature: '0x' } })).toBe(
+      'seller_mandate.revoked',
+    )
+  })
+
+  it('refuses a revocation for another agent, or in another envelope', async () => {
+    const mandates = await chainOf([second, first])
+    const refused = async (r: SellerKeyRevocation) =>
+      reason({ ...mandates, revocation: await signRevocation(r) })
+    expect(await refused({ ...revocation, signingKey: OTHER_KEY })).toBe('message.invalid')
+    expect(await refused({ ...revocation, businessId: 'biz_other' })).toBe('message.invalid')
+    expect(await refused({ ...revocation, account: OTHER_KEY })).toBe('message.invalid')
+    const sound = await signRevocation(revocation)
+    const served = (change: object) => reason({ ...mandates, revocation: { ...sound, ...change } })
+    expect(await served({ lock: OTHER_LOCK })).toBe('message.wrong_contract')
+    expect(await served({ type: 'SellerMandate' })).toBe('message.schema_unknown')
+    expect(await served({ message: { ...revocation, mandate: hashOf(second) } })).toBe(
+      'message.invalid',
+    )
+  })
+
+  it('reports a broken chain before a revocation', async () => {
+    expect(await reason(await chainOf([third, first], true))).toBe(mismatch)
+  })
+})
+
+describe('what a reader of one chain cannot see', () => {
+  // Each of these passes, and whoever stores mandates has to refuse it or serve the revocation.
+  it('a newer mandate or a revocation its server left out', async () => {
+    expect(await reason(await chainOf([first]))).toBeNull()
+    expect(await reason(await chainOf([second, first]))).toBeNull()
+  })
+
+  it('a second mandate signed to replace the same one', async () => {
+    const sibling: SellerMandate = { ...second, mandateId: id('a second replacement') }
+    expect(await reason(await chainOf([sibling, first]))).toBeNull()
+  })
+
+  it('a second first mandate for the key', async () => {
+    const again: SellerMandate = { ...first, mandateId: id('starting again') }
+    expect(await reason(await chainOf([again]))).toBeNull()
   })
 })
 
@@ -270,7 +335,7 @@ describe("reading a key's seller's mandates from JSON", () => {
   it('reads back as written, with a revocation and without', async () => {
     const plain = await chainOf([third, second, first])
     expect(parseSellerMandates(wire(plain), where)).toEqual({ ok: true, value: plain })
-    const revoked = await chainOf([second, first], first)
+    const revoked = await chainOf([second, first], true)
     expect(parseSellerMandates(wire(revoked), where)).toEqual({ ok: true, value: revoked })
   })
 
@@ -288,7 +353,7 @@ describe("reading a key's seller's mandates from JSON", () => {
   })
 
   it("refuses a mandate or a revocation that doesn't parse, with its own reason", async () => {
-    const json = wire(await chainOf([second, first], second))
+    const json = wire(await chainOf([second, first], true))
     expect(read({ ...json, current: { ...json.current, lock: OTHER_LOCK } })).toBe(
       'message.wrong_contract',
     )
