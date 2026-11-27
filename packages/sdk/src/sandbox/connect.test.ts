@@ -521,6 +521,10 @@ describe('the approval link', () => {
     expect(approvalLink(key, 'http://127.0.0.1:5174')).toBe(
       `http://127.0.0.1:5174/#approve-${key.toLowerCase()}`,
     )
+    // A trailing slash or a path is left out, so the link never doubles its slash.
+    for (const url of ['http://127.0.0.1:5174/', 'http://127.0.0.1:5174/console']) {
+      expect(approvalLink(key, url)).toBe(`http://127.0.0.1:5174/#approve-${key.toLowerCase()}`)
+    }
   })
 
   it('opens a request on its signing page, named by its id and nothing else', () => {

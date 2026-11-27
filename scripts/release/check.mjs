@@ -1,7 +1,8 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { publicPackages, tarballOf } from './packages.mjs'
 
 // Installs the packed packages into an empty project, the way a developer gets them from npm, and
@@ -54,6 +55,39 @@ run('node', [
   ].join(';'),
 ])
 console.log('Every entry point loads')
+
+// Node loads the SDK through its node export, which adds what only Node can run.
+run('node', [
+  '--input-type=module',
+  '-e',
+  "if (typeof (await import('@avow-finance/sdk')).fileStore !== 'function') throw new Error('The node export has no fileStore')",
+])
+console.log("The SDK's node export gives fileStore")
+
+// A TypeScript project on Node reads the SDK's types through the same export, so it sees fileStore
+// too. The workspace's own compiler checks one line against the installed packs.
+const tsc = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'node_modules', '.bin', 'tsc')
+writeFileSync(
+  join(project, 'consumer.ts'),
+  "import { fileStore, type SandboxStore } from '@avow-finance/sdk'\nexport const store: SandboxStore = fileStore('.avow')\n",
+)
+writeFileSync(
+  join(project, 'tsconfig.json'),
+  `${JSON.stringify({
+    compilerOptions: {
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2023',
+      strict: true,
+      skipLibCheck: true,
+      noEmit: true,
+      types: [],
+    },
+    files: ['consumer.ts'],
+  })}\n`,
+)
+run(tsc, ['-p', 'tsconfig.json'])
+console.log('A NodeNext project sees fileStore in the types')
 
 // The MCP server waits on its input, so it gets none and a few seconds to show it can load.
 const mcp = spawnSync(join(project, 'node_modules', '.bin', 'avow-sandbox-mcp'), [], {
