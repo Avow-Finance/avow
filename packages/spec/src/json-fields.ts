@@ -32,5 +32,14 @@ export const hexBytes = z
   .transform((s) => s.toLowerCase() as Hex)
 export const side = z.enum(['buyer', 'supplier'])
 
+/** Any JSON object, whose fields a parser reads on its own afterwards. */
+export const objectJson = z.record(z.string(), z.unknown())
+
+/**
+ * A signed message inside a body, which the body's parser checks against the message's own schema
+ * and domain after the outer shape passes. The description names it, for the API reference.
+ */
+export const signedJson = (description: string) => objectJson.describe(description)
+
 /** Whether two hex strings hold the same bytes, whatever case each is written in. */
 export const sameHex = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()

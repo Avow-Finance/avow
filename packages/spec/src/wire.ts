@@ -23,7 +23,7 @@ import {
 import type { ElidedTerms } from './elided-terms.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
 import { JOB, JOB_KIND_MAX, JOB_SUMMARY_MAX } from './job.js'
-import { address, bytes32, hexBytes, side, u64, u256 } from './json-fields.js'
+import { address, bytes32, hexBytes, objectJson, side, u64, u256 } from './json-fields.js'
 import { RAIL_STATES } from './rail.js'
 import type { ReasonCode } from './reasons.js'
 import { type Attribution, commitmentReferenceJson, type Reference } from './references.js'
@@ -524,8 +524,6 @@ export const attributionJson = z.strictObject({
 
 /** A parse result: the value, or the reason code a reader refuses it with. */
 export type Parsed<T> = { ok: true; value: T } | { ok: false; reason: ReasonCode }
-
-const objectJson = z.record(z.string(), z.unknown())
 
 /**
  * Parses terms of one version with that version's schema. It reads the version, the template and

@@ -1,6 +1,7 @@
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import type { AvowDomain, TermsAgreement } from './eip712.js'
+import { objectJson } from './json-fields.js'
 import { isKeySignatureForm } from './keychain.js'
 import type { SupplierProfile, Terms } from './types.js'
 import { type Parsed, parseTerms, termsAgreementJson } from './wire.js'
@@ -53,7 +54,6 @@ const bytes32 = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/)
   .transform((s) => s.toLowerCase() as Hex)
-const objectJson = z.record(z.string(), z.unknown())
 
 /** A supplier's profile as JSON, as Avow registered the supplier. */
 export const supplierProfileJson = z.object({
