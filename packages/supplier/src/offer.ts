@@ -20,7 +20,7 @@ export interface OfferRules {
 /**
  * Why the supplier won't sign an agreement, or null when it will. It signs only GPU reservation
  * terms that meet the profile, whose salted hash is the agreement's, that name this supplier on
- * this chain, reserve no more than its limit and leave it time to accept.
+ * this chain and no seller's mandate, reserve no more than its limit and leave it time to accept.
  */
 export function agreementProblem(
   offer: AgreementOffer,
@@ -32,6 +32,11 @@ export function agreementProblem(
   if (agreement.supplierBusinessId !== rules.businessId)
     return 'the agreement names another supplier'
   if (agreement.expiry <= now) return 'the agreement has expired'
+  // The buyer writes the agreement this supplier signs, so a mandate named in it would be the
+  // buyer's word for whose authority the supplier acted on. This supplier agrees under none.
+  if (agreement.sellerMandate !== undefined) {
+    return "the agreement names a seller's mandate, and this supplier agrees under none"
+  }
   if (terms.template !== GPU_RESERVATION) return `this supplier doesn't sell ${terms.template}`
   const invalid = validateTerms(terms, rules.profile)
   if (invalid) return `the terms don't meet the ${rules.profile.name} profile (${invalid})`

@@ -604,6 +604,27 @@ describe("a terms agreement that names a seller's mandate", () => {
     expect(digestOf(termsAgreementTypedData(without, DOMAIN))).toBe(plain)
   })
 
+  it('keeps both digests where they are, so no later change moves what a key already signed', () => {
+    const fixed = {
+      commitmentId: `0x${'11'.repeat(32)}`,
+      termsHash: `0x${'22'.repeat(32)}`,
+      category: 'gpu',
+      buyerBusinessId: 'biz_buyer',
+      supplierBusinessId: 'biz_supplier',
+      mandateHash: `0x${'33'.repeat(32)}`,
+      nonce: 7n,
+      expiry: 1_900_000_000n,
+    } as const
+    const under = { chainId: 42431, verifyingContract: `0x${'ab'.repeat(20)}` } as const
+    // Version 1, as agreements signed before a seller's mandate could be named.
+    expect(digestOf(termsAgreementTypedData(fixed, under))).toBe(
+      '0x5b57f9a077331003f35c4512c92da311f9326f6193680671de6c9a044fbeffe6',
+    )
+    expect(digestOf(termsAgreementTypedData({ ...fixed, sellerMandate }, under))).toBe(
+      '0xdac78e5529c163f89c60661b2cc1dd8de25ce0dceb1887cd0d418988e31a38ab',
+    )
+  })
+
   it("refuses a hash no seller's mandate has, so nothing signs as a mandate nobody holds", () => {
     for (const hash of [`0x${'00'.repeat(32)}`, `0x${'5A'.repeat(32)}`, '0x5a', 'biz_supplier']) {
       expect(() =>

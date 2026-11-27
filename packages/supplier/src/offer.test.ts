@@ -22,6 +22,13 @@ describe('what the supplier signs', () => {
       [{ domain: { ...DOMAIN, chainId: 1 } }, {}, NOW, 'chain 1'],
       [{ agreement: { ...agreement, supplierBusinessId: 'biz_other' } }, {}, NOW, 'another'],
       [{}, {}, agreement.expiry, 'expired'],
+      // A buyer can't have this supplier sign that it acted under a mandate the buyer chose.
+      [
+        { agreement: { ...agreement, sellerMandate: `0x${'de'.repeat(32)}` } },
+        {},
+        NOW,
+        "seller's mandate",
+      ],
       [{ salt: `0x${'66'.repeat(32)}` }, {}, NOW, 'terms hash'],
       [{}, { maxReserve: 1n }, NOW, 'over what'],
       [{}, { minTimeToAccept: 100_000n }, NOW, 'too little time'],
