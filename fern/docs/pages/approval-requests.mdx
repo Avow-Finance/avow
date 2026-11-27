@@ -14,6 +14,7 @@ When an agent needs authority it doesn't hold, it asks, and a person decides. Av
 | `name_supplier` | Names a supplier on the lock and adds it to the agent's mandate | `new_supplier` |
 | `open_mode` | Sets the lock's cap on reserves held with suppliers listed in the testnet's supplier registry | `listed_suppliers` |
 | `seller_mandate` | Not taken yet. Signs a seller's mandate for the signing key asked for, with exactly the limits asked for | `new_seller`, `seller_limits` |
+| `sale` | Not taken yet. Lets a selling agent make one sale its mandate hands to a person, once within a day | `sale_needs_person` |
 
 An agent asks for agent authority through `connect`, as it always has. Avow takes the other kinds as each ships, and refuses one it doesn't take yet with `approval_request.kind_unavailable`. None of them approves a single payment.
 
@@ -50,9 +51,21 @@ This is the one kind where an agent writes words a person reads, which are the n
 
 Nothing stores or enforces a seller's mandate yet, so a selling agent's signing key is still its only limit, and a card that shows these terms before Avow enforces them has to say so.
 
+## Asking a person to approve one sale
+
+A seller's mandate can hand a sale to a person, every sale or each one above an amount. The spec holds a `sale` kind for the selling agent to ask for that one sale, and Avow doesn't take it yet. This section says how it is to work.
+
+The terms are the sale's content, which is the buyer's business id, the item, the id of the offer version for a service, the units, the price and the currency. `saleContentOf` in `@avow-finance/spec` reads them from a sale's terms. They name no deadline and no terms hash. A sale's supplier has 15 minutes to accept, and an approval over one set of terms would have to land inside them. An approval of the content waits for the buyer's next order instead.
+
+The basis is the hash of the seller's mandate the sale would be made under. A mandate that replaces it, or its revocation, makes the request stale, so an approval never outlives the limits the administrator read it against.
+
+An approved sale can be made once, within `SALE_APPROVAL_LASTS`, a day from the approval, and `approvalExecutionWindow` gives that length for this kind. `checkSellerMandate` takes the approved sale and passes a sale a person has to decide only when its content is exactly the one approved, checked with `coversSale`. Every limit of the mandate holds the sale first, so an approval lifts none. `carriesOutSaleRequest` says whether a sale is the one a request covers, and whoever records the sale marks the approval used in the same step.
+
+The item's name is the agent's own words, held to plain text as in a seller's mandate. `changeWords` shows it in quotes after words the card wrote.
+
 ## The record
 
-Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed. For a seller's mandate it is to be the hash of the mandate the signing key holds, or null when it holds none.
+Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed. For a seller's mandate it is to be the hash of the mandate the signing key holds, or null when it holds none. For a sale it is to be the hash of the mandate the sale would be made under.
 
 The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
 

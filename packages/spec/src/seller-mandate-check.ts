@@ -5,6 +5,7 @@ import { JOB, JOB_CATEGORY } from './job.js'
 import type { MandateCheck } from './mandate.js'
 import type { TermsProfile } from './profiles.js'
 import type { ReasonCode } from './reasons.js'
+import { coversSale, type SaleContent } from './sale-approval.js'
 import {
   type SellerCategory,
   type SellerMandate,
@@ -14,6 +15,7 @@ import {
 } from './seller-mandate.js'
 import {
   BUSINESS_ID_MAX,
+  offerVersionId,
   SERVICE,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_CATEGORY,
@@ -196,6 +198,13 @@ export interface SellerMandateCheckInput extends Standing {
   offer: ServiceOfferVersion | null
   buyer: SaleCounterparty
   ledger: SellerLedger
+  /**
+   * The one sale the administrator approved for this buyer under this mandate, which the caller
+   * holds unused and within `SALE_APPROVAL_LASTS` of its approval, or null when it holds none. A
+   * sale a person has to decide passes only when it is exactly this one. The caller marks the
+   * approval used in the same step that records the sale, so it's made once.
+   */
+  approvedSale: SaleContent | null
   /** The profile the terms have to be sound under, as for a buyer's mandate check. */
   profile: TermsProfile
 }
@@ -330,9 +339,49 @@ function readSale(input: SellerMandateCheckInput): MandateCheck {
 
   const rule = m.approvalRule
   if (rule.kind === 'always' || (rule.kind === 'above' && sale.price > rule.amount)) {
+    // A person decides this sale, and it passes only as the exact sale a person approved. Every
+    // limit above held it first, so an approval never lifts one.
+    const content = contentOf(sale, terms.currency, buyer.businessId, offer)
+    if (coversSale(input.approvedSale ?? null, content)) {
+      return { result: 'approved', reason: 'approved' }
+    }
     return { result: 'needs_human', reason: 'approval.human_required' }
   }
   return { result: 'approved', reason: 'approved' }
+}
+
+const contentOf = (
+  sale: SaleFacts,
+  currency: SaleContent['currency'],
+  buyer: string,
+  offer: ServiceOfferVersion | null,
+): SaleContent => ({
+  buyer,
+  category: sale.category,
+  item: sale.item,
+  offer: offer === null ? null : offerVersionId(offer),
+  units: sale.units,
+  price: sale.price,
+  currency,
+})
+
+/**
+ * The content of a sale, as a person would approve it, or null for terms no seller's mandate
+ * reads or an offer that isn't well formed. A selling agent asks for approval of exactly this, and
+ * the check passes a sale a person has to decide only when its content is the one approved.
+ */
+export function saleContentOf(
+  terms: Terms | ChainedTerms,
+  offer: ServiceOfferVersion | null,
+  buyer: string,
+): SaleContent | null {
+  try {
+    const sale = saleFacts(terms)
+    if (!sale || (sale.category === 'service') !== (offer !== null)) return null
+    return contentOf(sale, terms.currency, buyer, offer)
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -405,9 +454,9 @@ export function saleApprovalProblem(
 
 /**
  * The answers of the seller's mandate check a buyer hears as they are. A buyer acts on hearing
- * that its seller won't deal with it. `approval.human_required` isn't here, since nothing yet lets
- * a person approve one sale, so a buyer told to wait would wait for nothing. It joins this list
- * with that approval.
+ * that its seller won't deal with it. `approval.human_required` isn't here, since Avow takes no
+ * request to approve one sale yet, so a buyer told to wait would wait for nothing. It joins this
+ * list once Avow takes that request.
  */
 export const BUYER_HEARS = [
   'approved',

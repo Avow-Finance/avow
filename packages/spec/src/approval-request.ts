@@ -6,6 +6,12 @@ import { type AvowDomain, domain, mandateHash } from './eip712.js'
 import { BUSINESS_ID } from './fields.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
 import {
+  coversSale,
+  SALE_APPROVAL_LASTS,
+  type SaleContent,
+  saleContentJson,
+} from './sale-approval.js'
+import {
   carriesSellerMandateTerms,
   type SellerMandate,
   sellerMandateTermsJson,
@@ -40,6 +46,7 @@ export const APPROVAL_KINDS = [
   'name_supplier',
   'open_mode',
   'seller_mandate',
+  'sale',
 ] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
@@ -52,6 +59,7 @@ export const APPROVAL_CHANGE_KINDS = [
   'name_supplier',
   'open_mode',
   'seller_mandate',
+  'sale',
 ] as const
 export type ApprovalChangeKind = (typeof APPROVAL_CHANGE_KINDS)[number]
 
@@ -69,6 +77,7 @@ export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   name_supplier: DAY,
   open_mode: DAY,
   seller_mandate: DAY,
+  sale: DAY,
 }
 
 /** The window an agent's asks are counted over, in seconds. */
@@ -88,6 +97,14 @@ export const APPROVAL_ASKS_PER_DAY = 10
 export const APPROVAL_EXECUTION_WINDOW = 60n * 60n
 
 /**
+ * How long an approved request of a kind has before it lapses, in seconds from its approval. A
+ * change has `APPROVAL_EXECUTION_WINDOW` to start. An approved sale has `SALE_APPROVAL_LASTS` to be
+ * made, since it waits on the buyer's next order.
+ */
+export const approvalExecutionWindow = (kind: ApprovalKind): bigint =>
+  kind === 'sale' ? SALE_APPROVAL_LASTS : APPROVAL_EXECUTION_WINDOW
+
+/**
  * How long after a decline an agent waits before it can ask the same again, in seconds. The same
  * means the same kind, and for a supplier, the same supplier.
  */
@@ -96,8 +113,9 @@ export const APPROVAL_DECLINE_COOLDOWN = DAY
 /**
  * Why an agent asked, from a fixed list, each with the words Avow shows for it. An agent gives no
  * text of its own, so a request can't carry instructions to whoever reads it. The one thing an
- * agent names is what it would sell, in an ask for a seller's mandate. Those names read on one line
- * with no hidden mark in them, and a card shows each in quotes under a label of its own.
+ * agent names is what it would sell, in an ask for a seller's mandate or for one sale. Those names
+ * read on one line with no hidden mark in them, and a card shows each in quotes under a label of
+ * its own.
  */
 export const APPROVAL_REASONS = {
   new_agent: {
@@ -123,6 +141,10 @@ export const APPROVAL_REASONS = {
   new_seller: {
     kind: 'seller_mandate',
     text: 'The agent holds no authority to sell yet',
+  },
+  sale_needs_person: {
+    kind: 'sale',
+    text: "The sale is one a person decides under the seller's mandate",
   },
   seller_limits: {
     kind: 'seller_mandate',
@@ -188,6 +210,22 @@ const KIND_FIELDS = {
      */
     basis: z.strictObject({ openCap: u256, openCapChanges: u256 }),
   },
+  sale: {
+    /**
+     * The content of the one sale the agent asks a person to approve: the buyer, the item, the
+     * offer version, the units, the price and the currency. Approving it lets the agent make that
+     * sale once within `SALE_APPROVAL_LASTS`, and widens nothing.
+     */
+    terms: saleContentJson,
+    /**
+     * The hash of the seller's mandate the sale would be made under. A mandate that replaces it,
+     * or its revocation, makes the request stale, so an approval never outlives the limits the
+     * administrator read it against.
+     */
+    basis: z.strictObject({
+      sellerMandate: bytes32.refine((h) => !/^0x0{64}$/.test(h), 'a mandate hash'),
+    }),
+  },
   seller_mandate: {
     /**
      * The exact terms of the seller's mandate the agent asks for, with the signing key the mandate
@@ -234,6 +272,11 @@ export const approvalAskJson = z.discriminatedUnion('kind', [
     kind: z.literal('seller_mandate'),
     terms: KIND_FIELDS.seller_mandate.terms,
     reason: z.enum(reasonsFor('seller_mandate')),
+  }),
+  z.strictObject({
+    kind: z.literal('sale'),
+    terms: KIND_FIELDS.sale.terms,
+    reason: z.enum(reasonsFor('sale')),
   }),
 ])
 export type ApprovalAsk = z.infer<typeof approvalAskJson>
@@ -378,6 +421,14 @@ export const approvalRequestJson = z.discriminatedUnion('kind', [
       (r) => (r.reason === 'new_seller') === (r.basis.sellerMandate === null),
       "a first seller's mandate replaces none, and a change of limits replaces one",
     ),
+  z.strictObject({
+    ...recordBase,
+    kind: z.literal('sale'),
+    businessId: z.string().min(1).max(200),
+    terms: KIND_FIELDS.sale.terms,
+    reason: z.enum(reasonsFor('sale')),
+    basis: KIND_FIELDS.sale.basis,
+  }),
 ])
 export type ApprovalRequest = z.infer<typeof approvalRequestJson>
 
@@ -557,4 +608,21 @@ export function carriesOutSellerRequest(request: ApprovalRequest, mandate: Selle
   return (
     mandate.businessId === request.businessId && mandate.replaces === request.basis.sellerMandate
   )
+}
+
+/**
+ * Whether a sale is the one an approved request for a sale covers. The request was asked against
+ * the seller's mandate the sale is made under, and the sale's content is exactly the content
+ * approved. Whoever records the sale also checks that the request is approved, unused and within
+ * `SALE_APPROVAL_LASTS` of its approval, and marks it used in the same step.
+ */
+export function carriesOutSaleRequest(
+  request: ApprovalRequest,
+  sale: SaleContent,
+  sellerMandate: Hex,
+): boolean {
+  if (request.kind !== 'sale') return false
+  if (typeof sellerMandate !== 'string') return false
+  if (request.basis.sellerMandate !== sellerMandate.toLowerCase()) return false
+  return coversSale(request.terms, sale)
 }

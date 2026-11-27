@@ -12,6 +12,7 @@ import {
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests } from '../http.js'
 import { approvalRequestLink } from './connect.js'
+import { saleWords } from './sale-words.js'
 import { sellerMandateWords } from './seller-mandate-words.js'
 
 /** Where the agent's requests go, and the key it signs them with. */
@@ -114,6 +115,16 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
             after: formatUsd(request.terms.cap),
           },
         ],
+      }
+    case 'sale':
+      // One sale, good once. It changes no limit, and every limit of the mandate still holds it.
+      return {
+        title: 'Approve one sale',
+        rows: saleWords(request.terms).map(({ label, value }) => ({
+          label,
+          before: 'Waits for you',
+          after: value,
+        })),
       }
     case 'seller_mandate': {
       const first = request.basis.sellerMandate === null

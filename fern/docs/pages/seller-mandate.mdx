@@ -63,7 +63,7 @@ A mandate's `mandateId` is 32 random bytes. A sale's record is to show a buyer t
 
 ## The check
 
-`checkSellerMandate` is pure and never throws. A seller's agent is to run it before it signs an agreement, and Avow is to run the same code on the same inputs when a seller agrees to terms and again before it approves the buyer's reserve. It takes the mandate, the key that signed, the sale's terms, the offer a service's terms book, what Avow's records say of the buyer, and what the capacity ledger already holds.
+`checkSellerMandate` is pure and never throws. A seller's agent is to run it before it signs an agreement, and Avow is to run the same code on the same inputs when a seller agrees to terms and again before it approves the buyer's reserve. It takes the mandate, the key that signed, the sale's terms, the offer a service's terms book, what Avow's records say of the buyer, what the capacity ledger already holds, and the one sale a person approved, if any.
 
 It refuses in this order.
 
@@ -90,7 +90,7 @@ It refuses in this order.
 | `seller_mandate.over_daily_units` | The order would take the day's units past the line's limit |
 | `seller_mandate.over_outstanding` | The order would take what's promised and undelivered past the limit |
 
-A sale inside every limit and above the approval rule's amount comes back as `needs_human` with `approval.human_required`. The caller holds it until the administrator approves that one sale. Nothing lets a person approve one sale yet.
+A sale inside every limit and above the approval rule's amount comes back as `needs_human` with `approval.human_required`, unless it is exactly the sale the check was told a person approved. The spec holds a [request for that approval](/docs/reference/approval-requests), which names the buyer, the item, the offer version, the units and the price, and is good once within a day. Avow doesn't take that request yet, so nothing lets a person approve one sale today. An approval lifts no limit, since every limit is checked first.
 
 The arbiter and the day-90 share in a sale's terms are Avow's to hold to its own when it approves the reserve, as for any commitment.
 

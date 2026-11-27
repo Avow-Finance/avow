@@ -1,6 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
 import {
+  APPROVAL_EXECUTION_WINDOW,
   APPROVAL_KINDS,
   APPROVAL_LIFETIMES,
   APPROVAL_MOVES,
@@ -10,8 +11,10 @@ import {
   approvalBasisHash,
   approvalDecisionDigest,
   approvalDecisionTypedData,
+  approvalExecutionWindow,
   approvalTermsHash,
   canApprovalMove,
+  carriesOutSaleRequest,
   carriesOutSellerRequest,
   changedMandate,
   dailyLimitOf,
@@ -24,6 +27,7 @@ import {
   signingIdOf,
 } from './approval-request.js'
 import { mandateHash } from './eip712.js'
+import { SALE_APPROVAL_LASTS } from './sale-approval.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 import { sellerMandateTermsOf } from './seller-mandate.js'
 import { demoMandate, demoSellerMandate, newKey, TOKEN } from './test-helpers.js'
@@ -411,5 +415,71 @@ describe("a request for a seller's mandate", () => {
     expect(approvalBasisHash(asked)).not.toBe(
       approvalBasisHash({ basis: { sellerMandate: MANDATE } }),
     )
+  })
+})
+
+describe('a request to approve one sale', () => {
+  const content = {
+    buyer: 'biz_buyer',
+    category: 'service',
+    item: 'Fine-tuning run',
+    offer: `0x${'0f'.repeat(32)}`,
+    units: 4,
+    price: 400_000_000n,
+    currency: 'USD',
+  } as const
+  const asked: ApprovalRequest = {
+    id: 'ef'.repeat(16),
+    kind: 'sale',
+    businessId: 'biz_supplier',
+    agentKey: `0x${'a9'.repeat(20)}`,
+    terms: content,
+    reason: 'sale_needs_person',
+    basis: { sellerMandate: MANDATE },
+    requestedAt: 1_800_000_000n,
+    expiresAt: 1_800_086_400n,
+    status: { state: 'waiting' },
+  }
+  const wire = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
+
+  it('names the sale and the mandate it would be made under, and reads back as written', () => {
+    expect(parseApprovalRequest(wire(asked))).toEqual({ ok: true, value: asked })
+    const ask = { kind: asked.kind, terms: content, reason: asked.reason }
+    expect(parseApprovalAsk(wire(ask))).toEqual({ ok: true, value: ask })
+    const reads = (change: object) => parseApprovalRequest(wire({ ...asked, ...change })).ok
+    // A sale is made under a mandate, so it's never asked against none.
+    expect(reads({ basis: { sellerMandate: null } })).toBe(false)
+    expect(reads({ basis: { sellerMandate: `0x${'00'.repeat(32)}` } })).toBe(false)
+    expect(reads({ reason: 'new_seller' })).toBe(false)
+    expect(reads({ terms: { ...content, units: 0 } })).toBe(false)
+    expect(reads({ terms: { ...content, item: 'Run\nTotal: $1' } })).toBe(false)
+    expect(reads({ terms: { ...content, acceptBy: 1n } })).toBe(false)
+  })
+
+  it('waits a day for a decision, and once approved can be made for a day', () => {
+    expect(APPROVAL_LIFETIMES.sale).toBe(86_400n)
+    expect(approvalExecutionWindow('sale')).toBe(SALE_APPROVAL_LASTS)
+    expect(approvalExecutionWindow('raise_limit')).toBe(APPROVAL_EXECUTION_WINDOW)
+  })
+
+  it('binds a decision to the buyer, the item, the offer version, the units and the price', () => {
+    const hash = approvalTermsHash(asked)
+    for (const change of [
+      { buyer: 'biz_other' },
+      { item: 'Bulk eval' },
+      { offer: `0x${'1f'.repeat(32)}` as const },
+      { units: 3 },
+      { price: content.price + 1n },
+    ]) {
+      expect(approvalTermsHash({ ...asked, terms: { ...content, ...change } })).not.toBe(hash)
+    }
+  })
+
+  it('is carried out only by that sale, under the mandate it was asked against', () => {
+    expect(carriesOutSaleRequest(asked, { ...content }, MANDATE)).toBe(true)
+    expect(carriesOutSaleRequest(asked, { ...content, units: 3 }, MANDATE)).toBe(false)
+    // A mandate that replaced the one the administrator read the sale against carries out nothing.
+    expect(carriesOutSaleRequest(asked, { ...content }, `0x${'44'.repeat(32)}`)).toBe(false)
+    expect(carriesOutSaleRequest(raise, { ...content }, MANDATE)).toBe(false)
   })
 })

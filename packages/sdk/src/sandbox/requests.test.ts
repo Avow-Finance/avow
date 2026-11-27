@@ -137,6 +137,44 @@ describe("a request's words", () => {
     ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
 
+  it('shows one sale a person is asked to approve, with the item in quotes', () => {
+    const sale = {
+      ...base,
+      kind: 'sale',
+      terms: {
+        buyer: 'sandbox-ab12',
+        category: 'service',
+        item: 'Total',
+        offer: `0x${'0f'.repeat(32)}`,
+        units: 4,
+        price: 400_000_000n,
+        currency: 'USD',
+      },
+      reason: 'sale_needs_person',
+      basis: { sellerMandate: `0x${'33'.repeat(32)}` },
+    } as const
+    const words = changeWords(sale)
+    expect(words.title).toBe('Approve one sale')
+    expect(words.rows.map((r) => [r.label, r.after])).toEqual([
+      ['Buyer', 'sandbox-ab12'],
+      // A service named as a row of the card still reads as a service's name.
+      ['Sells', '4 of the service "Total"'],
+      ['Offer version', `0x${'0f'.repeat(32)}`],
+      ['Total', '$400'],
+      ['Paid in', 'USD'],
+    ])
+    const job = changeWords({
+      ...sale,
+      terms: { ...sale.terms, category: 'compute-job', item: 'fine-tuning', offer: null, units: 1 },
+    })
+    expect(job.rows.map((r) => [r.label, r.after])).toEqual([
+      ['Buyer', 'sandbox-ab12'],
+      ['Sells', 'The job "fine-tuning"'],
+      ['Total', '$400'],
+      ['Paid in', 'USD'],
+    ])
+  })
+
   it("shows every limit a seller's mandate would set, and what on testnet is self-declared or simulated", () => {
     const terms = {
       signingKey: `0x${'5e'.repeat(20)}`,
