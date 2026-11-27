@@ -31,14 +31,31 @@ const isUnseen = (c: number) =>
   (c >= 0x2060 && c <= 0x206f) ||
   c === 0xfeff ||
   (c >= 0xfff9 && c <= 0xfffb) ||
-  (c >= 0xe0000 && c <= 0xe007f)
+  (c >= 0xe0000 && c <= 0xe007f) ||
+  // Blanks that take up room and show nothing: the wide space, the Hangul fillers and blank Braille.
+  c === 0x3000 ||
+  c === 0x115f ||
+  c === 0x1160 ||
+  c === 0x3164 ||
+  c === 0xffa0 ||
+  c === 0x2800
+
+/**
+ * Marks that read as a double quote: the plain one, the curly and angled ones, and the lookalikes
+ * from other scripts and widths. Two apostrophes or two backticks side by side read as one too.
+ */
+const QUOTE =
+  /["\u00ab\u00bb\u02ba\u02dd\u02ee\u05f4\u201c-\u201f\u2033\u2036\u275d\u275e\u2e42\u3003\u301d-\u301f\uff02]|''|``/
 
 /**
  * Whether a value is sound text that reads as it's written, on one line, with no space at either
- * end. A name one party writes and another reads on a signing card has to be, or it could pose as
- * a line the card wrote.
+ * end and nothing that reads as a double quote. A name one party writes and another reads on a
+ * signing card has to be, or it could pose as a line the card wrote. A card shows such text in
+ * double quotes, so a quote inside it would end the quoting early. The quotes keep an agent's words
+ * apart from the card's, and a person still reads what the words say.
  */
 export const isPlainText = (v: unknown, max: number): v is string =>
   isSoundText(v, max) &&
   v === v.trim() &&
+  !QUOTE.test(v) &&
   !Array.from(v).some((ch) => isUnseen(ch.codePointAt(0) as number))

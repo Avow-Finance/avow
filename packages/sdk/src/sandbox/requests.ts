@@ -12,6 +12,7 @@ import {
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests } from '../http.js'
 import { approvalRequestLink } from './connect.js'
+import { saleWords } from './sale-words.js'
 import { sellerMandateWords } from './seller-mandate-words.js'
 
 /** Where the agent's requests go, and the key it signs them with. */
@@ -60,11 +61,13 @@ export function openModeAsk(cap: bigint): ApprovalAsk {
 }
 
 /** One value a request changes, as it stands now beside what the request asks for. */
-export interface ChangeRow {
-  label: string
-  before: string
-  after: string
-}
+/**
+ * One row a request's card shows. A change sets a value that stands now beside the one asked for.
+ * A request that changes nothing that stood before, such as one sale, states each fact once.
+ */
+export type ChangeRow =
+  | { label: string; before: string; after: string }
+  | { label: string; value: string }
 
 /** What a request asks for, in words any card or page can show the same way. */
 export interface ChangeWords {
@@ -114,6 +117,12 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
             after: formatUsd(request.terms.cap),
           },
         ],
+      }
+    case 'sale':
+      // One sale, good once. It changes no limit, and every limit of the mandate still holds it.
+      return {
+        title: 'Approve one sale',
+        rows: saleWords(request.terms),
       }
     case 'seller_mandate': {
       const first = request.basis.sellerMandate === null
@@ -170,10 +179,12 @@ export async function readOwnRequest(c: RequestContext, id: string): Promise<Ask
 }
 
 /**
- * Whether the agent can act on what it asked for. Approved isn't enough, since the change still
- * has to land: only an active request is.
+ * Whether the agent can act on what it asked for. For a change, approved isn't enough, since the
+ * change still has to land, and only an active request is. One sale has no change to land, so it
+ * can be made while its request is approved, and an active one was made already.
  */
-export const isUsable = (request: ApprovalRequest): boolean => request.status.state === 'active'
+export const isUsable = (request: ApprovalRequest): boolean =>
+  request.status.state === (request.kind === 'sale' ? 'approved' : 'active')
 
 /** Whether a request has stopped moving, so reading it again won't change it. */
 export const hasSettled = (request: ApprovalRequest): boolean =>

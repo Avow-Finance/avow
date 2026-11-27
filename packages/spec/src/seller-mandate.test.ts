@@ -362,13 +362,15 @@ describe("a seller's mandate's terms", () => {
     const named = (item: string) =>
       sellerMandateTermsProblem({ ...terms, limits: [jobLine, anyService, { ...bulkEval, item }] })
     expect(named('Bulk eval, large')).toBeNull()
-    // A line break, a mark that turns the text around, a hidden space and a space at an end.
+    // A line break, a mark that turns the text around, a hidden space, a space at an end, and a
+    // quote that would end the card's own quoting early.
     for (const item of [
       'Bulk\nMost for one order',
       'Bulk\u202e',
       'Bulk\u200b',
       ' Bulk',
       'Bulk\t',
+      'Bulk" at no charge, and "more',
     ]) {
       expect(named(item)).toBe(invalid)
     }

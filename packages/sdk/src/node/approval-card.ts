@@ -124,10 +124,21 @@ const REQUEST_STATES = {
   failed: ['failed', "Didn't land, so nothing changed"],
 };
 
+// One sale changes no limit. It can be made while approved, once, and is active once made.
+const SALE_STATES = {
+  approved: ['done', 'Approved, so this one sale can be made'],
+  active: ['done', 'Made, so the approval is used up'],
+  declined: ['failed', 'Declined'],
+  expired: ['failed', 'Lapsed, so it needs asking for again'],
+  stale: ['failed', 'Out of date, so it can never be used'],
+};
+
 function renderRequest(c) {
   root.append(el('p', 'title', c.change.title));
   for (const row of c.change.rows) {
-    root.append(el('p', 'text', row.label + ': ' + row.before + ' now, ' + row.after + ' if approved'));
+    // A request that changes nothing that stood before states each fact once.
+    const words = 'value' in row ? row.value : row.before + ' now, ' + row.after + ' if approved';
+    root.append(el('p', 'text', row.label + ': ' + words));
   }
   if (c.state === 'waiting') {
     root.append(el('p', 'text', 'Only your administrator's passkey approves, on Avow. The link grants nothing by itself.'));
@@ -138,7 +149,7 @@ function renderRequest(c) {
     actions.append(open, stateLine('waiting', 'Waiting for your administrator until ' + day(c.expiresAt)));
     root.append(actions);
   } else {
-    const shown = REQUEST_STATES[c.state] || ['waiting', c.state];
+    const shown = (c.kind === 'sale' ? SALE_STATES : REQUEST_STATES)[c.state] || ['waiting', c.state];
     root.append(stateLine(shown[0], shown[1]));
   }
 }

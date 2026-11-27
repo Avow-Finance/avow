@@ -13,6 +13,7 @@ import {
   type SaleCounterparty,
   type SellerMandateCheckInput,
   saleApprovalProblem,
+  saleContentOf,
   saleFacts,
   sellerOfferProblem,
 } from './seller-mandate-check.js'
@@ -83,6 +84,7 @@ const check = (change: Partial<SellerMandateCheckInput> = {}) =>
     offer,
     buyer,
     ledger: { unitsToday: 0, outstanding: 0n },
+    approvedSale: null,
     revoked: false,
     now: NOW,
     profile: TESTNET_DEMO_PROFILE,
@@ -154,6 +156,96 @@ describe("the seller's mandate check", () => {
     expect(check({ mandate: withMandate({ approvalRule: { kind: 'always' } }) })).toEqual(human)
     const never = withMandate({ approvalRule: { kind: 'never' } })
     expect(sell(dear, 4, { mandate: never })).toEqual(approved)
+  })
+
+  it('passes a sale a person has to decide only as the exact sale a person approved', () => {
+    const human = { result: 'needs_human', reason: 'approval.human_required' }
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    expect(content).toEqual({ signingKey: KEY, buyer: 'biz_buyer', offer: dear, units: 4 })
+    if (!content) throw new Error('four runs from the offer are a sale')
+    expect(sell(dear, 4, { approvedSale: content })).toEqual(approved)
+    // Another price, another quantity, another buyer, another key or another wording of the offer
+    // is another sale.
+    const dearer = withOffer({ unitPrice: dollars(110) })
+    expect(sell(dearer, 4, { approvedSale: content })).toEqual(human)
+    const reworded = withOffer({ unitPrice: dollars(100) }, { evidence: 'Weights by email' })
+    expect(sell(reworded, 4, { approvedSale: content })).toEqual(human)
+    for (const change of [{ units: 3 }, { buyer: 'biz_other' }, { signingKey: OTHER_KEY }]) {
+      expect(sell(dear, 4, { approvedSale: { ...content, ...change } })).toEqual(human)
+    }
+  })
+
+  it('lets an approval lift no limit and undo no refusal', () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    const with_ = (change: Partial<SellerMandateCheckInput>) =>
+      sell(dear, 4, { approvedSale: content, ...change })
+    const always = { approvalRule: { kind: 'always' } } as const
+    expect(with_({ mandate: withMandate({ ...always, maxOrderValue: dollars(350) }) })).toEqual(
+      denied('seller_mandate.over_order_value'),
+    )
+    expect(with_({ mandate: withMandate({ ...always, excludedBuyers: ['biz_buyer'] }) })).toEqual(
+      denied('counterparty.not_eligible'),
+    )
+    expect(with_({ mandate: withMandate({ expiry: NOW }) })).toEqual(
+      denied('seller_mandate.expired'),
+    )
+    expect(with_({ revoked: true })).toEqual(denied('seller_mandate.revoked'))
+    expect(with_({ signingKey: OTHER_KEY })).toEqual(denied('seller_mandate.key_mismatch'))
+    expect(with_({ ledger: { unitsToday: 8, outstanding: 0n } })).toEqual(
+      denied('seller_mandate.over_daily_units'),
+    )
+    expect(with_({ ledger: { unitsToday: 0, outstanding: dollars(1_700) } })).toEqual(
+      denied('seller_mandate.over_outstanding'),
+    )
+    const floor = withMandate({
+      limits: [jobLine, { ...anyService, minUnitPrice: dollars(101) }, bulkEval],
+    })
+    expect(with_({ mandate: floor })).toEqual(denied('seller_mandate.under_price_floor'))
+  })
+
+  it('refuses an approval that is no well-formed sale, whether or not a person has to decide', () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    if (!content) throw new Error('four runs from the offer are a sale')
+    for (const approvedSale of [
+      undefined,
+      'approved',
+      7,
+      { ...content, units: '4' },
+      { ...content, offer: null },
+    ]) {
+      expect(sell(dear, 4, { approvedSale: approvedSale as never })).toEqual(
+        denied('message.invalid'),
+      )
+      expect(check({ approvedSale: approvedSale as never })).toEqual(denied('message.invalid'))
+    }
+  })
+
+  it('leaves a job a person has to decide with the person, since no job is approved this way yet', () => {
+    const human = { result: 'needs_human', reason: 'approval.human_required' }
+    const always = withMandate({ approvalRule: { kind: 'always' } })
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    expect(sellJob({}, { mandate: always })).toEqual(human)
+    expect(sellJob({}, { mandate: always, approvedSale: content })).toEqual(human)
+  })
+
+  it("reads a sale's content only from a service's terms and the offer version that builds them", () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const who = { signingKey: KEY, buyer: buyer.businessId }
+    expect(saleContentOf(job(), dear, who)).toBeNull()
+    // Another version of the offer doesn't build these terms.
+    expect(saleContentOf(sale(dear, 4), offer, who)).toBeNull()
+    expect(saleContentOf(sale(dear, 4), dear, { ...who, buyer: 'not a buyer\nid' })).toBeNull()
+    // An offer whose words aren't plain lists and sells, and can't be put to a person this way.
+    const quoted = withOffer({ unitPrice: dollars(100), ...named('Run "fast"') })
+    expect(
+      sellerOfferProblem({ mandate, signingKey: KEY, revoked: false, now: NOW, version: quoted }),
+    ).toBeNull()
+    expect(saleContentOf(sale(quoted, 4), quoted, who)).toBeNull()
+    expect(saleContentOf(null as never, dear, who)).toBeNull()
   })
 
   it('refuses a sale past a limit and never hands it to a person', () => {
