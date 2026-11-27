@@ -28,12 +28,12 @@ Each post is JSON like this. The reserve is in micros of the terms' currency, so
   "at": "1799053212",
   "termsHash": "0x…",
   "reserve": "500000000",
-  "agreementExpiry": "1799053500",
+  "agreementExpiry": "1799658000",
   "acceptedIn": "0x…"
 }
 ```
 
-`agreementExpiry` is when the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy`. `acceptedIn` is on `reserve.accepted` only. It is the acceptance's transaction, or null when the adapter found the acceptance on the lock without sending it. An event names the terms by their hash and names no business, so read the terms and the booking's status from `GET /commitments/<id>`. `parseCommitmentEvent` in `@avow-finance/spec` reads a post and refuses one that isn't well formed.
+`agreementExpiry` is when the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy`. `acceptedIn` is on `reserve.accepted` only. It is the acceptance's transaction, or null when the adapter found the acceptance on the lock without sending it. An event names the terms by their hash and names no business, so read the terms, who booked and the booking's status from `GET /commitments/<id>`. `parseCommitmentEvent` in `@avow-finance/spec` reads a post and refuses one that isn't well formed.
 
 This shape is new in this release, and it breaks a receiver written for the adapter's earlier events, which had a `type`, a `createdAt` and a `data` section with business ids, dollars and the terms. Look for `schemaVersion` to tell the two apart. When an upgraded adapter starts, it moves any event the earlier adapter left waiting or gave up on to `outbox/older` in the state directory and sends that booking's current status again in the new shape.
 
@@ -62,11 +62,12 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
     "freeCancellationEndsAt": "2027-01-05T09:00:00.000Z",
     "releaseDate": "2027-01-06T09:00:00.000Z"
   },
+  "buyerBusinessId": "…",
   "terms": { "…": "the terms both sides signed" }
 }
 ```
 
-`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it, and it refuses a request that names any other host, so a web page can't reach it through a name it controls. Another address in `LOCAL_HOST` lets other machines read your bookings' terms and buyers, so the adapter warns when you set one, and the port belongs behind your firewall.
+`grant` is true only when the adapter accepted the booking, the lock holds that acceptance and the commitment pays your payout address. `onChain` is null until a reserve reaches the lock. `buyerBusinessId` is the business that booked, which the webhook's events leave out. A commitment the adapter never signed answers 404. The local port listens on `127.0.0.1` unless you set `LOCAL_HOST`, so only your own machine reaches it, and it refuses a request that names any other host, so a web page can't reach it through a name it controls. Another address in `LOCAL_HOST` lets other machines read your bookings' terms and buyers, so the adapter warns when you set one, and the port belongs behind your firewall.
 
 ## What the adapter does
 

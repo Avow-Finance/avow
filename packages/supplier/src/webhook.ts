@@ -11,7 +11,7 @@ import type { Address, Hex } from 'viem'
 import { z } from 'zod'
 import { writeAtomically } from './files.js'
 import { signWebhook } from './signature.js'
-import { type Booking, type BookingStatus, isOpen } from './store.js'
+import { BOOKING_STATUSES, type Booking, type BookingStatus, isOpen } from './store.js'
 
 /**
  * What the webhook tells the supplier's own system, one event for each status a booking reaches
@@ -54,14 +54,15 @@ const webhookEventJson: z.ZodType<WebhookEvent, unknown> = z
     ctx.addIssue({ code: 'custom', message: read.ok ? 'not an adapter event' : read.reason })
     return z.NEVER
   })
-const EVENT_ID = /^msg_([0-9a-f]{64})_[a-z]+$/
+const EVENT_ID = /^msg_([0-9a-f]{64})_([a-z]+)$/
 
 /**
  * The event a booking's status calls for, or null for a status that calls for none. Its id comes
  * from the commitment and the status alone, so recording the same transition twice, after a
  * restart for one, gives one delivery. The event names the commitment, the terms by their hash,
- * the reserve in micros of the terms' currency and when the agreement lapses, and no business, so
- * the supplier's system reads the terms and who booked from `GET /commitments/<id>`.
+ * the reserve in micros of the terms' currency and when the signed agreement offer stops being
+ * valid, and no business, so the supplier's system reads the terms and who booked from
+ * `GET /commitments/<id>`.
  */
 export function bookingEvent(booking: Booking, now: Date): WebhookDelivery | null {
   const code = (WEBHOOK_EVENTS as Partial<Record<BookingStatus, WebhookEventCode>>)[booking.status]
@@ -142,16 +143,17 @@ export class Outbox {
     const since = sinceJson.safeParse(JSON.parse(readFileSync(sinceFile, 'utf8')))
     if (!since.success) throw new Error(`${sinceFile} doesn't say when the webhook was turned on`)
     this.#since = BigInt(since.data.since)
-    this.#setAsideOlderFormat(root)
+    this.#setAsideOlderFormat(join(root, 'older'))
   }
 
   /**
    * Moves each pending or given-up file an older adapter wrote, which held an event of its own
-   * format, to `outbox/older` and remembers its commitment, so `reconcile` adds that booking's
-   * current event again as a commitment event and nothing waits on a file it can't read.
+   * format, to `outbox/older`, then reads every commitment `outbox/older` holds, so `reconcile`
+   * adds that booking's current event again as a commitment event and nothing waits on a file it
+   * can't read. It reads the folder at every start, so a run that set files aside and stopped,
+   * such as `redeliver`, leaves them for the next `serve`.
    */
-  #setAsideOlderFormat(root: string) {
-    const older = join(root, 'older')
+  #setAsideOlderFormat(older: string) {
     for (const dir of [this.#pending, this.#failed]) {
       for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
         let record: unknown
@@ -164,8 +166,12 @@ export class Outbox {
         if (!commitment) continue
         mkdirSync(older, { recursive: true, mode: 0o700 })
         renameSync(join(dir, name), join(older, name))
-        this.#replaced.add(commitment)
       }
+    }
+    if (!existsSync(older)) return
+    for (const name of readdirSync(older)) {
+      const commitment = EVENT_ID.exec(name.slice(0, -'.json'.length))?.[1]
+      if (name.endsWith('.json') && commitment) this.#replaced.add(`0x${commitment}`)
     }
   }
 
@@ -226,10 +232,7 @@ export class Outbox {
         log(`webhook: ${path} doesn't hold a pending event, so its booking waits until it's mended`)
       }
     }
-    events.sort((a, b) =>
-      a.event.at !== b.event.at ? (a.event.at < b.event.at ? -1 : 1) : a.id.localeCompare(b.id),
-    )
-    return { events, unreadable }
+    return { events: inBookingOrder(events), unreadable }
   }
 
   delivered(p: Pending, nowMs: number) {
@@ -277,6 +280,28 @@ export class Outbox {
   }
 }
 
+/** Where a delivery's status comes in a booking's life, from the status its id ends with. */
+const rankOf = (p: Pending) =>
+  BOOKING_STATUSES.indexOf((EVENT_ID.exec(p.id)?.[2] ?? '') as BookingStatus)
+
+/**
+ * Pending events oldest first by when the adapter made them, and each booking's own events in the
+ * order its statuses come. An event's time is in whole seconds, so one booking can reach two
+ * statuses in the same second, and the time alone can't say which came first.
+ */
+function inBookingOrder(events: Pending[]): Pending[] {
+  const byTime = [...events].sort((a, b) =>
+    a.event.at !== b.event.at ? (a.event.at < b.event.at ? -1 : 1) : a.id.localeCompare(b.id),
+  )
+  const commitmentOf = (p: Pending) => p.event.commitment.commitmentId
+  const byBooking = new Map<string, Pending[]>()
+  for (const p of byTime)
+    byBooking.set(commitmentOf(p), [...(byBooking.get(commitmentOf(p)) ?? []), p])
+  for (const list of byBooking.values()) list.sort((a, b) => rankOf(a) - rankOf(b))
+  // Each booking keeps the places its events took in time order, now filled in status order.
+  return byTime.map((p) => byBooking.get(commitmentOf(p))?.shift() as Pending)
+}
+
 /**
  * The commitment of a pending file an older adapter wrote, whose event was the adapter's own
  * format with a `type` and a `data` section, or null for any other record.
@@ -301,13 +326,23 @@ function olderFormatCommitment(record: unknown): Hex | null {
  * webhook was first turned on, so turning the webhook on for an adapter with a history doesn't
  * replay bookings that ended long ago.
  */
-export function reconcile(outbox: Outbox, bookings: Iterable<Booking>, now: Date): number {
+export function reconcile(
+  outbox: Outbox,
+  bookings: Iterable<Booking>,
+  now: Date,
+  log: (line: string) => void = () => {},
+): number {
   let added = 0
   for (const b of bookings) {
-    const replaced = outbox.replaced.has(b.commitmentId.toLowerCase() as Hex)
-    if (!isOpen(b.status) && !replaced && b.agreement.expiry <= outbox.since) continue
-    const event = bookingEvent(b, now)
-    if (event && outbox.add(event, now.getTime())) added++
+    // One booking the outbox can't take is logged and skipped, so it never stops the rest.
+    try {
+      const replaced = outbox.replaced.has(b.commitmentId.toLowerCase() as Hex)
+      if (!isOpen(b.status) && !replaced && b.agreement.expiry <= outbox.since) continue
+      const event = bookingEvent(b, now)
+      if (event && outbox.add(event, now.getTime())) added++
+    } catch (e) {
+      log(`webhook: couldn't add the event for ${b.commitmentId} (${message(e)})`)
+    }
   }
   return added
 }

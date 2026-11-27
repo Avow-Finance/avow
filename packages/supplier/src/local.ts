@@ -52,6 +52,8 @@ export interface CommitmentCheck {
   grant: boolean
   /** What the lock holds, or null when it holds nothing for this commitment yet. */
   onChain: OnChain | null
+  /** The business that booked, as the agreement both sides signed names it. */
+  buyerBusinessId: string
   terms: unknown
 }
 
@@ -88,6 +90,7 @@ export async function checkCommitment(
     status: booking.status,
     grant: booking.status === 'accepted' && onChain?.state === 'accepted' && onChain.paysYou,
     onChain,
+    buyerBusinessId: booking.agreement.buyerBusinessId,
     terms: toWire(booking.terms),
   }
 }

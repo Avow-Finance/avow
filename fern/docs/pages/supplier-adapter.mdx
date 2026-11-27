@@ -263,6 +263,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
     "freeCancellationEndsAt": "2027-01-05T09:00:00.000Z",
     "releaseDate": "2027-01-06T09:00:00.000Z"
   },
+  "buyerBusinessId": "…",
   "terms": { "…": "the terms both sides signed" }
 }
 ```
@@ -279,6 +280,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 | `onChain.paysYou` | Whether a charge on this commitment pays your account |
 | `onChain.freeCancellationEndsAt` | When the business can no longer cancel at no charge |
 | `onChain.releaseDate` | When the lock gives back what it still holds |
+| `buyerBusinessId` | The business that booked, as the agreement both sides signed names it. The webhook's events name no business, so this is where your system learns who booked |
 | `terms` | The terms both sides signed, as the spec writes them |
 
 The local port also answers `GET /health`. A commitment the adapter never signed answers 404. It listens on `127.0.0.1` unless you set `LOCAL_HOST`, and it refuses with 403 any request whose `Host` header names another host, so a web page can't reach it through a name it controls. The answer shows your bookings' terms and buyers, so another address in `LOCAL_HOST` makes the adapter warn you, and that port belongs behind your firewall. `0.0.0.0` or `::` listens on every address but still answers only requests made to `localhost`, `127.0.0.1` or `[::1]`, so a request to the machine's own address gets a 403. When other machines need the check, set `LOCAL_HOST` to that one address and call the check at it.

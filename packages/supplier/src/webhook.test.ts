@@ -299,7 +299,38 @@ describe('the webhook outbox', () => {
   })
 })
 
+describe("the order a booking's events go out in", () => {
+  it("sends one booking's statuses in order when two fall in the same second", async () => {
+    const outbox = new Outbox(store.dir, T0)
+    // Added in the wrong order, within one second, so only the statuses can order them.
+    outbox.add(at(accepted(), T0 + 900), T0 + 900)
+    outbox.add(at(withStatus('held'), T0 + 100), T0 + 100)
+    outbox.add(at(withStatus('agreed'), T0 + 500), T0 + 500)
+    outbox.add(at(withStatus('agreed', OTHER), T0 + 200), T0 + 200)
+    const r = receiver([])
+    const { send } = sender(outbox, r.post, { now: T0 + 1000 })
+    for (let i = 0; i < 4; i++) await send()
+    const mine = r.ids().filter((id) => id.includes(COMMITMENT.slice(2)))
+    expect(mine).toEqual(
+      ['agreed', 'held', 'accepted'].map((s) => `msg_${COMMITMENT.slice(2)}_${s}`),
+    )
+    expect(r.ids()).toHaveLength(4)
+  })
+})
+
 describe('reconciling the outbox with the bookings', () => {
+  it("logs a booking it can't add and carries on with the rest", () => {
+    const outbox = new Outbox(store.dir, T0)
+    const broken = { ...withStatus('held'), terms: null } as unknown as Booking
+    const lines: string[] = []
+    const added = reconcile(outbox, [broken, withStatus('agreed', OTHER)], new Date(T0), (l) =>
+      lines.push(l),
+    )
+    expect(added).toBe(1)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(`couldn't add the event for ${COMMITMENT}`)
+  })
+
   it('adds every open booking, and a finished one only when it was agreed after the webhook was turned on', () => {
     const expiry = withStatus('agreed').agreement.expiry
     const finished = [accepted(), withStatus('lapsed', OTHER)]
@@ -359,6 +390,29 @@ describe('an outbox an older adapter left', () => {
       'booking.lapsed',
     ])
     expect(outbox.redeliverFailed(T0)).toBe(0)
+  })
+
+  it('remembers what it set aside at every start, so redeliver before serve loses nothing', async () => {
+    const root = join(store.dir, 'outbox')
+    mkdirSync(join(root, 'failed'), { recursive: true })
+    writeFileSync(
+      join(root, 'failed', `msg_${OTHER.slice(2)}_lapsed.json`),
+      JSON.stringify(older(OTHER, 'lapsed')),
+    )
+    const after = Number(withStatus('agreed').agreement.expiry + 60n) * 1000
+    // redeliver opens the outbox first, which sets the file aside, and finds nothing it gave up on.
+    const first = new Outbox(store.dir, after)
+    expect(first.redeliverFailed(after)).toBe(0)
+    // serve opens it again later, and still sends the finished booking's status.
+    const serve = new Outbox(store.dir, after)
+    expect([...serve.replaced]).toEqual([OTHER.toLowerCase()])
+    expect(reconcile(serve, [withStatus('lapsed', OTHER)], new Date(T0))).toBe(1)
+    const r = receiver([200])
+    await sender(serve, r.post, { now: T0 }).send()
+    expect(r.ids()).toEqual([`msg_${OTHER.slice(2)}_lapsed`])
+    // Once delivered, a later start adds it no more.
+    const again = new Outbox(store.dir, after)
+    expect(reconcile(again, [withStatus('lapsed', OTHER)], new Date(T0))).toBe(0)
   })
 
   it("leaves a file it can't read where it is, so its booking waits until it is mended", () => {
