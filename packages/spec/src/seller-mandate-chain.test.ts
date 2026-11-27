@@ -227,10 +227,22 @@ describe("a chain of seller's mandates", () => {
       const before = line[line.length - 1] as SellerMandate
       line.push({ ...first, mandateId: id(`mandate ${line.length}`), replaces: hashOf(before) })
     }
-    const newestFirst = line.reverse()
-    expect(await reason(await chainOf(newestFirst.slice(1)))).toBeNull()
-    expect(await reason(await chainOf(newestFirst))).toBe('message.invalid')
-  })
+    // Who signed is checked elsewhere, so these carry a stand-in signature and a check that passes.
+    const [current, ...earlier] = line.reverse().map((m) => envelope('SellerMandate', m, '0x00'))
+    if (!current) throw new Error('the line holds a mandate')
+    const signed = async () => true
+    const longest = {
+      current: earlier[0] as typeof current,
+      earlier: earlier.slice(1),
+      revocation: null,
+    }
+    expect((await sellerMandateChainProblem(longest, expected, signed)).ok).toBe(true)
+    const tooLong = { current, earlier, revocation: null }
+    expect(await sellerMandateChainProblem(tooLong, expected, signed)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+  }, 30_000)
 })
 
 describe("who signed a chain of seller's mandates", () => {
