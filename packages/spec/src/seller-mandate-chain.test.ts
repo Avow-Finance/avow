@@ -145,6 +145,34 @@ describe("a chain of seller's mandates", () => {
     expect(await reason(mandates, otherLock)).toBe('message.wrong_contract')
   })
 
+  it('refuses a field nothing signed, beside the mandates or in an envelope', async () => {
+    const mandates = await chainOf([second, first])
+    expect(await reason({ ...mandates, note: 'trust me' } as never)).toBe('message.invalid')
+    const padded = { ...mandates.current, approvedBy: 'the administrator' }
+    expect(await reason({ ...mandates, current: padded })).toBe('message.invalid')
+    const sound = await signRevocation(revocation)
+    expect(await reason({ ...mandates, revocation: { ...sound, revokedAt: 1 } as never })).toBe(
+      'message.invalid',
+    )
+  })
+
+  it('refuses to read for a lock or a chain the caller never named', async () => {
+    const mandates = await chainOf([first])
+    const yes = async () => true
+    for (const verifyingContract of [undefined, '', '0x12', null]) {
+      const nowhere = {
+        ...expected,
+        domain: { ...DOMAIN, verifyingContract: verifyingContract as never },
+      }
+      expect(await sellerMandateChainProblem(mandates, nowhere, yes)).toEqual({
+        ok: false,
+        reason: 'message.invalid',
+      })
+    }
+    const noChain = { ...expected, domain: { ...DOMAIN, chainId: undefined as never } }
+    expect((await sellerMandateChainProblem(mandates, noChain, yes)).ok).toBe(false)
+  })
+
   it('never throws, whatever it is handed', async () => {
     const mandates = await chainOf([first])
     const junk = [
@@ -253,6 +281,30 @@ describe("who signed a chain of seller's mandates", () => {
     })
   })
 
+  it('passes only when the check answers a plain true', async () => {
+    const mandates = await chainOf([first])
+    for (const answer of ['no', 1, {}, undefined, null]) {
+      const check = (async () => answer) as never
+      expect(await sellerMandateChainProblem(mandates, expected, check)).toEqual({
+        ok: false,
+        reason: invalid,
+      })
+    }
+  })
+
+  it('refuses a signature that is no hex, before any check reads it', async () => {
+    const mandates = await chainOf([first])
+    const anything = {
+      ...mandates,
+      current: { ...mandates.current, signature: 'anything' as never },
+    }
+    const yes = async () => true
+    expect(await sellerMandateChainProblem(anything, expected, yes)).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
+  })
+
   it("lets the caller's check fail loudly, so an outage isn't read as a forgery", async () => {
     const down = async () => {
       throw new Error('the chain is unreachable')
@@ -350,6 +402,19 @@ describe("reading a key's seller's mandates from JSON", () => {
       'message.invalid',
     )
     expect(read({ ...json, earlier: Array(MAX_MANDATE_CHAIN - 1).fill(json.current) })).toBeNull()
+  })
+
+  it('reads on into one chain, with hex in either case on the wire', async () => {
+    const mandates = await chainOf([third, second, first])
+    const json = wire(mandates)
+    json.current.message.replaces = json.current.message.replaces
+      .replace('0x', '0X')
+      .toUpperCase()
+      .replace('0X', '0x')
+    const parsed = parseSellerMandates(json, where)
+    if (!parsed.ok) throw new Error(parsed.reason)
+    const chain = await sellerMandateChainProblem(parsed.value, expected)
+    expect(chain.ok && chain.value.current.hash).toBe(hashOf(third))
   })
 
   it("refuses a mandate or a revocation that doesn't parse, with its own reason", async () => {

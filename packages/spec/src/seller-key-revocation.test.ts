@@ -147,6 +147,22 @@ describe("a revocation's signature", () => {
     expect(await problem({ ...sound, signature: elsewhere }, expected)).toBe(invalid)
   })
 
+  it("takes the caller's check, and only a plain true from it", async () => {
+    const sound = await signed()
+    expect(await problem(sound, expected, async () => true)).toBeNull()
+    expect(await problem(sound, expected, (async () => 'yes') as never)).toBe(
+      'message.signature_invalid',
+    )
+    // With no signature, or for a lock the caller never named, no check is asked.
+    const { signature: _, ...unsigned } = sound
+    expect(await problem(unsigned as never, expected, async () => true)).toBe('message.invalid')
+    const nowhere = { ...expected, domain: { ...DOMAIN, verifyingContract: undefined as never } }
+    expect(await problem(sound, nowhere, async () => true)).toBe('message.invalid')
+    expect(await problem({ ...sound, extra: 1 } as never, expected, async () => true)).toBe(
+      'message.invalid',
+    )
+  })
+
   it('refuses one for another agent, another kind of message, or no revocation at all', async () => {
     // The stranger revokes under its own account's name.
     const theirs = withRevocation({ account: stranger.address.toLowerCase() as Address })

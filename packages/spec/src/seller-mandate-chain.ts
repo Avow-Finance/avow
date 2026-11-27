@@ -1,11 +1,5 @@
 import { type Address, type Hex, isAddressEqual } from 'viem'
-import {
-  type AvowDomain,
-  checkEnvelope,
-  isSignedBy,
-  type SignatureCheck,
-  type Signed,
-} from './eip712.js'
+import { type AvowDomain, isSignedBy, type SignatureCheck, type Signed } from './eip712.js'
 import { holdsOnly } from './fields.js'
 import { MAX_MANDATE_CHAIN } from './mandate-chain.js'
 import type { ReasonCode } from './reasons.js'
@@ -22,7 +16,7 @@ import {
   sellerMandateProblem,
   sellerMandateTypedData,
 } from './seller-mandate.js'
-import type { Parsed } from './wire.js'
+import { heldEnvelopeProblem, type Parsed } from './wire.js'
 
 /**
  * Every seller's mandate one signing key has held, as whoever stores them serves them: the one the
@@ -37,14 +31,18 @@ export interface SellerMandates {
   revocation: Signed<SellerKeyRevocation> | null
 }
 
+declare const read: unique symbol
+
 /**
  * A signing key's seller's mandates read as one chain: they link, the business account signed
- * every one, and no revocation of the key came with them.
+ * every one, and no revocation of the key came with them. Only `sellerMandateChainProblem` makes
+ * one, and the mark below keeps a value written by hand from passing as one it read.
  */
 export interface SellerMandateChain {
   current: { signed: Signed<SellerMandate>; hash: Hex }
   /** The hashes of the mandates the current one replaced, newest first. */
   earlier: Hex[]
+  readonly [read]: true
 }
 
 const SERVED_KEYS = ['current', 'earlier', 'revocation']
@@ -89,6 +87,8 @@ type Expected = { domain: AvowDomain } & SellingAgent
  * Reads a signing key's seller's mandates as one chain, and returns each hash, or the reason they
  * aren't one. It is the one way to a `SellerMandateChain`, so a chain nobody checked the signatures
  * of never looks like one somebody did. It throws only what the caller's signature check throws.
+ * What it's handed holds exactly a current mandate, the earlier ones and a revocation or null, and
+ * each signed message holds exactly an envelope's fields, as one read from JSON does.
  *
  * Every mandate sits in a seller's mandate's envelope for the expected lock, is well formed, and
  * names the expected business, account and signing key. A buyer's chain ends at the mandate its
@@ -140,7 +140,7 @@ export async function sellerMandateChainProblem(
     value: {
       current: { signed: linked.all[0] as Signed<SellerMandate>, hash: current as Hex },
       earlier,
-    },
+    } as SellerMandateChain,
   }
 }
 
@@ -151,15 +151,17 @@ function linkedMandates(
 ): { all: Signed<SellerMandate>[]; hashes: Hex[] } | { reason: ReasonCode } {
   const no = (reason: ReasonCode) => ({ reason })
   // Everything is read once, into copies, so what's checked is what's hashed and handed back.
-  const { current, earlier, revocation } = structuredClone(mandates)
+  const served = structuredClone(mandates)
+  if (typeof served !== 'object' || served === null || !holdsOnly(served, SERVED_KEYS)) {
+    return no('message.invalid')
+  }
+  const { current, earlier, revocation } = served
   if (!Array.isArray(earlier) || earlier.length >= MAX_MANDATE_CHAIN) return no('message.invalid')
   const where = { chainId: expected.domain.chainId, lock: expected.domain.verifyingContract }
   const all = [current, ...earlier]
   for (const signed of all) {
-    if (typeof signed !== 'object' || signed === null) return no('message.invalid')
-    const envelope = checkEnvelope(signed, { type: 'SellerMandate', ...where })
+    const envelope = heldEnvelopeProblem(signed, { type: 'SellerMandate', ...where })
     if (envelope) return no(envelope)
-    if (typeof signed.signature !== 'string') return no('message.invalid')
     const m = signed.message
     const problem = sellerMandateProblem(m)
     if (problem) return no(problem)
@@ -176,8 +178,7 @@ function linkedMandates(
     }
   }
   if (revocation !== null) {
-    if (typeof revocation !== 'object') return no('message.invalid')
-    const envelope = checkEnvelope(revocation, { type: 'SellerKeyRevocation', ...where })
+    const envelope = heldEnvelopeProblem(revocation, { type: 'SellerKeyRevocation', ...where })
     if (envelope) return no(envelope)
     if (!revokesSellerKey(revocation.message, expected)) return no('message.invalid')
     return no('seller_mandate.revoked')

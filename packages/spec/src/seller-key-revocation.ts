@@ -1,30 +1,24 @@
 import { type Address, type Hex, hashTypedData, isAddressEqual } from 'viem'
 import { z } from 'zod'
-import {
-  type AvowDomain,
-  checkEnvelope,
-  domain,
-  isSignedBy,
-  type SignatureCheck,
-  type Signed,
-} from './eip712.js'
+import { type AvowDomain, domain, isSignedBy, type SignatureCheck, type Signed } from './eip712.js'
 import { holdsOnly, LOWER_ADDRESS } from './fields.js'
 import { address } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import { BUSINESS_ID_MAX } from './service.js'
 import { isSoundText } from './text.js'
 import { MESSAGE_VERSIONS } from './version.js'
-import { type Parsed, parseSigned } from './wire.js'
+import { heldEnvelopeProblem, type Parsed, parseSigned } from './wire.js'
 
 /**
  * A revocation is the administrator's word that one selling agent's authority has ended, for good.
  * The business account's root key signs it under the business's own lock, as it signs a seller's
- * mandate. It names the agent's signing key and no mandate, and it ends every seller's mandate the
- * account signed for that key under that lock, whenever each was signed. A signature carries no
- * time, so nothing could say whether a mandate came before a revocation or after it, and a rule
- * that needs no order is the only one a reader can hold. A revoked key is never given a seller's
- * mandate again, as a buyer's revoked agent key can never be authorized again. An agent sells
- * again under a new key.
+ * mandate. It names the business, the account and the agent's signing key, and no mandate, and it
+ * ends every seller's mandate for that business, account and key under that lock, whenever each
+ * was signed. A signature carries no time, so nothing could say whether a mandate came before a
+ * revocation or after it, and a rule that needs no order is the only one a reader can hold. So a
+ * revoked key is to be given no seller's mandate again, and its agent sells again under a new key.
+ * A buyer's revoked agent key has Tempo's keychain to refuse it. A seller's has no chain behind
+ * it, so whoever stores mandates has to refuse.
  *
  * It carries no time and never expires. Whoever records one notes when it arrived. It ends the
  * authority to make new promises. It takes no key off a lock, and a commitment already made stays
@@ -150,7 +144,7 @@ export async function sellerKeyRevocationSignatureProblem(
   let message: SellerKeyRevocation
   let signature: Hex
   try {
-    const envelope = checkEnvelope(revocation, {
+    const envelope = heldEnvelopeProblem(revocation, {
       type: 'SellerKeyRevocation',
       chainId: expected.domain.chainId,
       lock: expected.domain.verifyingContract,

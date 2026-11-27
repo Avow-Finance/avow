@@ -1209,7 +1209,8 @@ export async function isSignedBy(
     // A value EIP-712 can't encode, such as a time above uint64, signs nothing.
     return false
   }
-  if (check) return check({ signer, digest, signature })
+  // Only a plain true passes, so a check that answers with anything else signs nothing.
+  if (check) return (await check({ signer, digest, signature })) === true
   try {
     const recovered = await recoverAddress({ hash: digest, signature })
     return isAddressEqual(recovered, signer)
