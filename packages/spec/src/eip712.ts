@@ -9,6 +9,11 @@ import {
 import type { APPROVAL_DECISION_TYPES, approvalDecisionTypedData } from './approval-request.js'
 import type { ReasonCode } from './reasons.js'
 import type {
+  SELLER_KEY_REVOCATION_TYPES,
+  SellerKeyRevocation,
+  sellerKeyRevocationTypedData,
+} from './seller-key-revocation.js'
+import type {
   SELLER_MANDATE_TYPES,
   SellerMandate,
   SellingLimit,
@@ -1014,6 +1019,7 @@ export type AvowTypedData =
   | ReturnType<typeof supplierActionTypedData>
   | ReturnType<typeof approvalDecisionTypedData>
   | ReturnType<typeof sellerMandateTypedData>
+  | ReturnType<typeof sellerKeyRevocationTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -1065,6 +1071,10 @@ interface InterfacesMatchTables {
     FieldNames<typeof SELLER_MANDATE_TYPES.SellerMandate>
   >
   SellingLimit: SameFields<keyof SellingLimit, FieldNames<typeof SELLER_MANDATE_TYPES.SellingLimit>>
+  SellerKeyRevocation: SameFields<
+    keyof SellerKeyRevocation,
+    FieldNames<typeof SELLER_KEY_REVOCATION_TYPES.SellerKeyRevocation>
+  >
   TermsAgreement: SameFields<
     keyof TermsAgreement,
     FieldNames<typeof TERMS_AGREEMENT_SELLER_TYPES.TermsAgreement>
@@ -1109,6 +1119,7 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   PaymentLimit: true,
   SellerMandate: true,
   SellingLimit: true,
+  SellerKeyRevocation: true,
   TermsAgreement: true,
   Approval: true,
   Charge: true,
@@ -1169,6 +1180,8 @@ export function digestOf(td: AvowTypedData): Hex {
       return hashTypedData(td)
     case 'SellerMandate':
       return hashTypedData(td)
+    case 'SellerKeyRevocation':
+      return hashTypedData(td)
   }
 }
 
@@ -1196,7 +1209,8 @@ export async function isSignedBy(
     // A value EIP-712 can't encode, such as a time above uint64, signs nothing.
     return false
   }
-  if (check) return check({ signer, digest, signature })
+  // Only a plain true passes, so a check that answers with anything else signs nothing.
+  if (check) return (await check({ signer, digest, signature })) === true
   try {
     const recovered = await recoverAddress({ hash: digest, signature })
     return isAddressEqual(recovered, signer)

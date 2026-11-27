@@ -1,4 +1,4 @@
-import { type Address, type Hex, zeroHash } from 'viem'
+import { type Address, type Hex, isAddress, zeroHash } from 'viem'
 import { z } from 'zod'
 import {
   COMMITMENT_STATES,
@@ -737,6 +737,32 @@ const envelopeHeader = z.object({
   chainId: z.number().int().positive(),
   lock: address,
 })
+
+const heldEnvelope = z.strictObject({
+  type: z.string(),
+  schemaVersion: z.string(),
+  chainId: z.number().int().positive(),
+  lock: address,
+  message: z.unknown(),
+  signature: hexBytes,
+})
+
+/**
+ * Checks the envelope of a signed message a caller holds as a value, by the rules `parseSigned`
+ * holds one read from JSON to. It holds exactly an envelope's fields, its signature is hex, and it
+ * is of the expected type, at a version this code reads, for the expected chain and lock. The
+ * caller has to name a lock, since a reader that names none would take a message signed for any.
+ * The message itself is the caller's to check. It may throw for a value that throws when read.
+ */
+export function heldEnvelopeProblem(
+  signed: unknown,
+  expected: { type: MessageType; chainId: number; lock: Address },
+): ReasonCode | null {
+  if (!isAddress(expected.lock, { strict: false })) return 'message.invalid'
+  const read = heldEnvelope.safeParse(signed)
+  if (!read.success) return 'message.invalid'
+  return checkEnvelope({ ...read.data, type: read.data.type as MessageType }, expected)
+}
 
 /**
  * Parses a signed message and checks its envelope. The version is read before the message

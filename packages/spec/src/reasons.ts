@@ -43,8 +43,12 @@ export const REASON_CODES = {
   'seller_mandate.signature_invalid':
     "The seller's mandate isn't signed by the business account's root key, so it was changed or forged",
   'seller_mandate.expired': "The seller's mandate has expired",
-  'seller_mandate.revoked': "The seller's mandate is revoked",
-  'seller_mandate.key_mismatch': "The sale wasn't signed by the seller's mandate's signing key",
+  'seller_mandate.revoked':
+    "The selling agent's signing key is revoked, which ends every seller's mandate for it. A reader of a key's mandates answers this when a revocation came with them, before anyone checks who signed it",
+  'seller_mandate.chain_mismatch':
+    "The seller's mandates aren't one chain for the expected business and account. One of them names another, or doesn't name the one before it as the one it replaces",
+  'seller_mandate.key_mismatch':
+    "The seller's mandate binds another signing key than the one that signed the sale, or the one its reader expects",
   'seller_mandate.template_not_covered':
     "A seller's mandate covers the terms of a service or a job, and these are neither's",
   'seller_mandate.currency_not_allowed': "The terms' currency isn't the seller's mandate's",

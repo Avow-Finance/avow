@@ -5,6 +5,7 @@ import { APPROVAL_RULE_CODES, type AvowDomain, domain, type Signed } from './eip
 import {
   BUSINESS_ID,
   COUNTRY_CODE,
+  holdsOnly,
   isCount,
   isShare,
   LOWER_ADDRESS,
@@ -32,8 +33,9 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
  * whom, and until when. The business account's root key signs it under the business's own lock.
  *
  * This module holds the message, what makes one well formed, its signed form and its JSON.
- * `checkSellerMandate` reads a sale against one. Nothing in this package stores a mandate, revokes
- * one or follows one that replaces another, and a caller that does those brings the result to the
+ * `checkSellerMandate` reads a sale against one, `sellerMandateChainProblem` follows the mandates
+ * that replace one another, and a `SellerKeyRevocation` ends every mandate for a key. Nothing in
+ * this package stores a mandate or a revocation, and a caller that does brings the result to the
  * check.
  *
  * Version 1 covers sales of `service/1` and `job/1`. A mandate binds one signing key and hands no
@@ -229,10 +231,6 @@ const uint = (v: unknown, bits: number, least = 0n): v is bigint =>
 const isCategory = (v: unknown): v is SellerCategory =>
   (SELLER_CATEGORIES as readonly unknown[]).includes(v)
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
-
-/** Whether an object holds exactly these keys, so nothing unsigned rides along with a mandate. */
-const holdsOnly = (value: object, keys: readonly string[]) =>
-  Object.keys(value).length === keys.length && keys.every((k) => Object.hasOwn(value, k))
 
 /**
  * Whether a value is a list of at most `max` strings that each pass, in strictly ascending order
