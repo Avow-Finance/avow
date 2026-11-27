@@ -11,7 +11,7 @@ A seller's mandate is the authority a business's administrator signs for one sel
 
 A `SellerMandate` is EIP-712 typed data for the business account's root key to sign, under the business's own lock. It binds one signing key, the key the business registered for its agent to quote and accept with, and hands no authority on to another agent. Its `replaces` field names the hash of the mandate it takes the place of, or null.
 
-The spec holds the messages and the checks, and nothing around them yet. Nothing stores a mandate or a revocation, and the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
+The spec holds the messages and the checks. Where a deployment turns seller's mandates on, Avow's sandbox stores each one the business account signed, sealed under a key only Avow's API holds, so a mandate's terms never sit in its database in the clear, and it opens one only to answer the business and its selling agent. Avow's testnet has them off until it turns them on. Nothing stores a revocation yet, so the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
 
 Version 1 covers sales of `service/1` and `job/1`. Terms under any other template are refused with `seller_mandate.template_not_covered`.
 
@@ -65,7 +65,7 @@ A mandate's `mandateId` is 32 random bytes. A sale's record is to show a buyer t
 
 A `TermsAgreement` is what both sides sign to agree a sale. It can name the seller's mandate the supplier's agent agreed under, in `sellerMandate`, so the record of a sale says whose authority it was made on. The hash is the one `sellerMandateHash` gives, which is under the selling business's own lock, while the agreement itself signs under the buyer's. An agreement that names one signs at version 2, with the hash as its last field. One that names none signs at version 1, exactly as before, so every sale made under no seller's mandate reads as it always has. `termsAgreementVersion` gives the version, and `parseSignedAgreement` refuses an envelope whose version isn't the one its message signs at.
 
-Naming a mandate is a statement both sides signed, and no proof that anyone checked the mandate. Nothing stores a seller's mandate yet, so no reader can look one up, and no SDK call puts one in an agreement. Whoever writes an agreement decides what it names, so a seller's agent signs one that names a mandate only when the mandate is its own. The supplier adapter in `@avow-finance/supplier` is sent its agreements by the buyer and acts under no seller's mandate, so it refuses one that names any. A buyer that sees a hash here learns which mandate the agreement names, and nothing about what that mandate allows.
+Naming a mandate is a statement both sides signed, and no proof that anyone checked the mandate. Where Avow stores a seller's mandate, it serves it only to its business and its selling agent, so no buyer can look one up, and no SDK call puts one in an agreement. Whoever writes an agreement decides what it names, so a seller's agent signs one that names a mandate only when the mandate is its own. The supplier adapter in `@avow-finance/supplier` is sent its agreements by the buyer and acts under no seller's mandate, so it refuses one that names any. A buyer that sees a hash here learns which mandate the agreement names, and nothing about what that mandate allows.
 
 ## The check
 
@@ -159,9 +159,9 @@ A revocation ends every seller's mandate for that business, account and key unde
 
 Revoking is to stop every new promise and leave every commitment already made in force. It takes no key off a lock, so a reserve Avow approved before the revocation can still be accepted until its acceptance deadline, which the 15-minute rule above is there to bound.
 
-The check reads only what it's handed, so four things fall to whoever stores mandates, and nothing does yet.
+The check reads only what it's handed, so four things fall to whoever stores mandates, which is Avow on a deployment that stores them.
 
-- Nothing stores a mandate or a revocation, and no SDK call or tool builds, signs or serves one. Only the account's root key signs either.
+- Avow stores mandates sealed only where a deployment turns them on, and nothing stores a revocation yet. No SDK call or tool builds or signs a mandate or a revocation. Only the account's root key signs one.
 - A reader can't see a newer mandate or a revocation its server left out. Avow is to cover that, by approving a reserve only for a sale under the newest mandate of a key nobody revoked, and by serving a revoked key's revocation with every chain for it.
 - A reader can't see a second mandate signed to replace the same one, or a second first mandate for a key. Whoever stores mandates is to refuse both, so a key has one chain.
 - A revocation holds under the lock it was signed for. A business that moves to a new lock is to carry its revocations over before it takes a mandate there.
