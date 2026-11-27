@@ -1,7 +1,6 @@
 import {
   type CommitmentReference,
   offerVersionId,
-  parseApprovalRequest,
   parseServiceInbox,
   parseServiceOfferVersion,
   parseServiceOrder,
@@ -24,11 +23,11 @@ import {
   tempoKeychainCheck,
   toWire,
 } from '@avow-finance/spec'
-import { type Hex, toHex } from 'viem'
+import { type Hex, isAddressEqual, toHex } from 'viem'
 import { AvowApiError, signingRequestKey } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { quoteService } from '../service/quote.js'
-import { approvalRequestLink, pause } from './connect.js'
+import { pause } from './connect.js'
 import {
   awaitAccepted,
   listenFor,
@@ -36,7 +35,15 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
-import { type AskedChange, hasSettled, isUsable, sellerMandateAsk } from './requests.js'
+import {
+  type AskedChange,
+  askForChange,
+  hasSettled,
+  isUsable,
+  type RequestContext,
+  readOwnRequest,
+  sellerMandateAsk,
+} from './requests.js'
 import {
   type CountedSale,
   DAY,
@@ -405,20 +412,26 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   // Asking for a seller's mandate.
 
-  const readRequest = (json: unknown) => parseApprovalRequest(json)
+  const asking: RequestContext = {
+    apiUrl: deployment.apiUrl,
+    agentKey: context.agentKey,
+    domain,
+    send: context.send,
+  }
 
   async function askToSell(terms: SellerMandateTerms): Promise<SellAskOutcome> {
+    // A mandate binds one signing key, and this agent sells with its own.
+    const { signing } = context.needSupplier()
+    if (!isAddressEqual(terms.signingKey, signing.address)) {
+      throw new RangeError(
+        'The terms name another signing key than the one this agent sells with, so nothing was asked.',
+      )
+    }
     // The reason says whether the key holds a mandate now, which the ask would replace.
     const standing = await sellerStanding()
     const ask = sellerMandateAsk(terms, standing.inForce)
     try {
-      const request = await asAgent({
-        domain,
-        path: SANDBOX_PATHS.approvalRequests,
-        body: ask,
-        read: readRequest,
-      })
-      return { ok: true, asked: { request, link: approvalRequestLink(request.id) } }
+      return { ok: true, asked: await askForChange(asking, ask) }
     } catch (error) {
       if (error instanceof AvowApiError && error.reason === 'approval_request.kind_unavailable') {
         return { ok: false, reason: error.reason, notice: SELLER_MANDATE_ASKS_UNTAKEN }
@@ -432,14 +445,9 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     o: Parameters<SandboxServices['awaitSellRequest']>[1] = {},
   ): Promise<AskedChange> {
     for (;;) {
-      const request = await asAgent({
-        domain,
-        path: SANDBOX_PATHS.approvalRequest(id),
-        body: {},
-        read: readRequest,
-      })
-      const asked = { request, link: approvalRequestLink(request.id) }
+      const asked = await readOwnRequest(asking, id)
       o.onRead?.(asked)
+      const { request } = asked
       if (hasSettled(request) || isUsable(request) || o.signal?.aborted) return asked
       await pause(o.every ?? 5000, o.signal).catch(() => {})
       if (o.signal?.aborted) return asked

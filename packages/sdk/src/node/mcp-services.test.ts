@@ -418,7 +418,11 @@ describe("the MCP server's ask for a seller's mandate", () => {
     const answer = await seller.call('request_seller_mandate', { terms: await termsIn(dir) })
     expect(answer.isError).toBe(false)
     expect(answer.text).toBe(SELLER_MANDATE_ASKS_UNTAKEN)
-    expect(answer.structured).toEqual({ asked: false, reason: 'approval_request.kind_unavailable' })
+    expect(answer.structured).toEqual({
+      asked: false,
+      reason: 'approval_request.kind_unavailable',
+      notice: SELLER_MANDATE_ASKS_UNTAKEN,
+    })
     expect(asks).toHaveLength(1)
     expect(asks[0]).toMatchObject({ kind: 'seller_mandate', reason: 'new_seller' })
   })

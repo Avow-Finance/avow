@@ -1,8 +1,9 @@
 /**
- * The card a client that renders MCP Apps shows when the model calls `connect` or
- * `request_change`. For a connection it shows the agent's name, its pairing code and a button
- * that opens the approval link. For a change it shows each value as it stands now beside the
- * value asked for, and a button that opens the request's signing page. Only the administrator's
+ * The card a client that renders MCP Apps shows when the model calls `connect`, `request_change`
+ * or `request_seller_mandate`. For a connection it shows the agent's name, its pairing code and a
+ * button that opens the approval link. For a change it shows each value as it stands now beside
+ * the value asked for, and a button that opens the request's signing page. When Avow takes no ask
+ * of that kind yet, it shows Avow's notice and that nothing was asked. Only the administrator's
  * passkey approves either, on Avow's page. While a request is open the card asks `status` or
  * `request_status` every few seconds and changes on its own. The card signs nothing and holds no
  * key, and a client that renders no card still gets the same text and link.
@@ -155,6 +156,13 @@ function renderRequest(c) {
 }
 
 function render(c) {
+  if (c && c.asked === false) {
+    // Nothing was asked, so there's no request to show or to watch.
+    state = c;
+    root.replaceChildren(el('p', 'title', 'Not asked'), el('p', 'text', c.notice));
+    resize();
+    return;
+  }
   if (c && c.id && c.change) {
     // A card shows one request, and a reading of another changes nothing on it.
     if (state && state.id && state.id !== c.id) return;

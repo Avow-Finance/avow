@@ -7,6 +7,7 @@ import {
   type PaymentRoute,
   parseServiceOfferVersion,
   SERVICE_QUANTITY_MAX,
+  type SellerMandateTerms,
   type ServiceOfferVersion,
   type ServiceOrder,
   sellerMandateTermsJson,
@@ -14,6 +15,7 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
+import { SELLER_LIMITS_UNENFORCED } from '../sandbox/seller-mandate.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -379,6 +381,45 @@ export async function orderServiceCommand(args: readonly string[]): Promise<void
   if (!outcome.ok) fail(outcomeSentence(outcome))
 }
 
+/** The terms file `ask-to-sell` names, or what's wrong with its arguments. */
+export function readAskToSellArgs(args: readonly string[]): { file: string } | { error: string } {
+  const at = args.indexOf('--terms')
+  const file = at >= 0 ? args[at + 1] : undefined
+  const unknown = args.filter((a, i) => i !== at && i !== at + 1)
+  if (!file || file.startsWith('--') || unknown.length > 0) {
+    return { error: 'ask-to-sell takes --terms <file>' }
+  }
+  return { file }
+}
+
+/** A seller's mandate's terms from the text of a file, or what's wrong with it. */
+export function readTermsText(
+  file: string,
+  text: string,
+): { terms: SellerMandateTerms } | { error: string } {
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    return { error: `${file} doesn't hold JSON` }
+  }
+  const terms = sellerMandateTermsJson.safeParse(json)
+  return terms.success
+    ? { terms: terms.data }
+    : {
+        error: `${file} doesn't hold a seller's mandate's terms as the spec writes them, with amounts and times as decimal strings`,
+      }
+}
+
+/** What `ask-to-sell` uses beyond its arguments, which a test replaces. */
+export interface AskToSellDeps {
+  services: () => Promise<Pick<SandboxServices, 'askToSell' | 'awaitSellRequest'>>
+  readFile: (file: string) => string
+  log: (line: string) => void
+  fail: (message: string) => void
+  signal: AbortSignal
+}
+
 /**
  * `avow-sandbox ask-to-sell --terms <file>`. Asks the business's administrator for a seller's
  * mandate with the terms in the file, as the spec writes them, signed with the agent's own key.
@@ -386,46 +427,53 @@ export async function orderServiceCommand(args: readonly string[]): Promise<void
  * seconds and says when it moves, until it settles or is active, or until Ctrl+C stops it. It
  * only asks: nothing here approves it. Avow doesn't take these requests yet, and then it says so.
  */
-export async function askToSellCommand(args: readonly string[]): Promise<void> {
-  const at = args.indexOf('--terms')
-  const file = at >= 0 ? args[at + 1] : undefined
-  const unknown = args.filter((a, i) => a.startsWith('--') && a !== '--terms' && i !== at + 1)
-  if (!file || unknown.length > 0) return fail('ask-to-sell takes --terms <file>')
-  let json: unknown
+export async function askToSellCommand(
+  args: readonly string[],
+  deps: AskToSellDeps = defaultAskDeps(),
+): Promise<void> {
+  const read = readAskToSellArgs(args)
+  if ('error' in read) return deps.fail(read.error)
+  let text: string
   try {
-    json = JSON.parse(readFileSync(file, 'utf8'))
+    text = deps.readFile(read.file)
   } catch {
-    return fail(`${file} doesn't hold JSON`)
+    return deps.fail(`${read.file} can't be read`)
   }
-  const terms = sellerMandateTermsJson.safeParse(json)
-  if (!terms.success) {
-    return fail(
-      `${file} doesn't hold a seller's mandate's terms as the spec writes them, with amounts and times as decimal strings`,
-    )
-  }
-  const services = await sandboxServices({ store: fileStore() })
-  const outcome = await services.askToSell(terms.data)
+  const terms = readTermsText(read.file, text)
+  if ('error' in terms) return deps.fail(terms.error)
+  const services = await deps.services()
+  const outcome = await services.askToSell(terms.terms)
   if (!outcome.ok) {
-    console.log(outcome.notice)
+    deps.log(outcome.notice)
     return
   }
   const { request, link } = outcome.asked
-  console.log(`Asked for a seller's mandate, request ${request.id}.`)
-  console.log(`Send your person this link to decide it with their passkey: ${link}`)
-  console.log('Waiting for the decision. Stop with Ctrl+C, and the request keeps waiting.')
-  const stop = new AbortController()
-  process.once('SIGINT', () => stop.abort())
+  deps.log(`Asked for a seller's mandate, request ${request.id}.`)
+  deps.log(`Send your person this link to decide it with their passkey: ${link}`)
+  deps.log('Waiting for the decision. Stop with Ctrl+C, and the request keeps waiting.')
   let last = ''
   const settled = await services.awaitSellRequest(request.id, {
-    signal: stop.signal,
+    signal: deps.signal,
     onRead: ({ request: r }) => {
-      if (r.status.state !== last) console.log(`The request is ${r.status.state}.`)
+      if (r.status.state !== last) deps.log(`The request is ${r.status.state}.`)
       last = r.status.state
     },
   })
   if (settled.request.status.state === 'active') {
-    console.log(
-      "The seller's mandate is in force. This agent holds itself to it before it publishes, quotes or accepts. Avow doesn't enforce seller limits yet.",
+    deps.log(
+      `The seller's mandate is in force. This agent holds itself to it before it publishes, quotes or accepts. ${SELLER_LIMITS_UNENFORCED}`,
     )
+  }
+}
+
+function defaultAskDeps(): AskToSellDeps {
+  const stop = new AbortController()
+  process.once('SIGINT', () => stop.abort())
+  return {
+    services: () => sandboxServices({ store: fileStore() }),
+    readFile: (file) => readFileSync(file, 'utf8'),
+    log: (line) => console.log(line),
+    fail,
+    signal: stop.signal,
   }
 }

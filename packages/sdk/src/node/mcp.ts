@@ -1081,7 +1081,7 @@ export function mcpAgent(
     if (!outcome.ok) {
       return {
         text: outcome.notice,
-        structured: { asked: false, reason: outcome.reason },
+        structured: { asked: false, reason: outcome.reason, notice: outcome.notice },
         isError: false,
       }
     }

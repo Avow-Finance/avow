@@ -1,6 +1,8 @@
 import {
   digestOf,
   dollars,
+  encodeApiBody,
+  parseApprovalAsk,
   parseServiceQuote,
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
@@ -132,12 +134,13 @@ function avow(
   respond?: (init?: RequestInit) => Promise<Response>,
   others?: (path: string, body: Record<string, unknown>) => Response | null,
 ) {
-  const posted: { path: string; body: Record<string, unknown> }[] = []
+  const posted: { path: string; body: Record<string, unknown>; raw: string }[] = []
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
     if (path === '/config.json') return json(JSON.parse(JSON.stringify(toWire(deployment))))
-    const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
-    posted.push({ path, body })
+    const raw = init?.body ? new TextDecoder().decode(init.body as Uint8Array) : ''
+    const body = raw ? JSON.parse(raw) : {}
+    posted.push({ path, body, raw })
     if (path === SANDBOX_PATHS.sellerMandates) {
       if (respond) return respond(init)
       return mandates
@@ -547,20 +550,22 @@ describe('asking for a seller’s mandate', () => {
       return null
     })
     const services = await sandboxServices({ store: s.store, fetch: api.fetch })
-    return { ...s, mandate, services, asks, reads, posted: api.posted }
+    const raw = () =>
+      api.posted.filter((p) => p.path === SANDBOX_PATHS.approvalRequests).map((p) => p.raw)
+    return { ...s, mandate, services, asks, reads, raw, posted: api.posted }
   }
 
   it('asks with the exact terms and the reason for a first mandate, and answers with the link', async () => {
-    const { services, asks, mandate } = await asking({})
+    const { services, asks, raw, mandate } = await asking({})
     const outcome = await services.askToSell(termsOf(mandate))
     if (!outcome.ok) throw new Error('the ask was taken')
-    expect(asks).toEqual([
-      JSON.parse(
-        JSON.stringify(
-          toWire({ kind: 'seller_mandate', terms: termsOf(mandate), reason: 'new_seller' }),
-        ),
-      ),
-    ])
+    const sent = { kind: 'seller_mandate', terms: termsOf(mandate), reason: 'new_seller' } as const
+    // What went is exactly the ask, byte for byte as a signed body carries it, and one Avow's own
+    // parser reads back.
+    expect(raw()).toEqual([new TextDecoder().decode(encodeApiBody(sent))])
+    const read = parseApprovalAsk(asks[0])
+    expect(read.ok).toBe(true)
+    if (read.ok) expect(read.value).toEqual(sent)
     expect(outcome.asked.request).toMatchObject({ id: ID, kind: 'seller_mandate' })
     expect(outcome.asked.link).toContain(ID)
   })
@@ -592,6 +597,13 @@ describe('asking for a seller’s mandate', () => {
     })
     expect(SELLER_MANDATE_ASKS_UNTAKEN).toMatch(/doesn't take seller's mandate requests yet/)
     expect(SELLER_MANDATE_ASKS_UNTAKEN).toMatch(/nothing was asked/)
+  })
+
+  it('refuses terms for another signing key than its own before it asks', async () => {
+    const { services, asks, mandate } = await asking({})
+    const other = { ...termsOf(mandate), signingKey: `0x${'5e'.repeat(20)}` as Address }
+    await expect(services.askToSell(other)).rejects.toThrow(/another signing key/)
+    expect(asks).toEqual([])
   })
 
   it('refuses terms that aren’t well formed before it asks', async () => {

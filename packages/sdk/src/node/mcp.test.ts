@@ -43,6 +43,7 @@ describe('avow-sandbox-mcp', () => {
       'commitments',
       'top_up',
       'request_change',
+      'request_seller_mandate',
       'request_status',
       'publish_offer',
       'offers',
@@ -70,6 +71,7 @@ describe('avow-sandbox-mcp', () => {
       'book',
       'top_up',
       'request_change',
+      'request_seller_mandate',
       'publish_offer',
       'order',
       'sell',
@@ -87,13 +89,14 @@ describe('avow-sandbox-mcp', () => {
     ])
   }, 30_000)
 
-  it('offers the approval card with connect and request_change, for a client that renders MCP Apps, and only then', async () => {
+  it('offers the approval card with connect and the two asks for a change, for a client that renders MCP Apps, and only then', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'avow-mcp-')))
     const { tools } = await c.listTools()
     // Only the tools that ask name the card, so no other answer turns into one.
     expect(tools.filter((t) => t._meta?.ui).map((t) => [t.name, t._meta?.ui])).toEqual([
       ['connect', { resourceUri: 'ui://avow-sandbox/approval' }],
       ['request_change', { resourceUri: 'ui://avow-sandbox/approval' }],
+      ['request_seller_mandate', { resourceUri: 'ui://avow-sandbox/approval' }],
     ])
     const { resources } = await c.listResources()
     expect(resources).toEqual([
@@ -107,6 +110,9 @@ describe('avow-sandbox-mcp', () => {
     expect(card.mimeType).toBe('text/html;profile=mcp-app')
     // One file that loads nothing from anywhere, and asks for nowhere to connect to.
     expect(card.text).not.toMatch(/<script[^>]+src=|<link[^>]+href=|https?:\/\//)
+    // An ask Avow takes no request of yet shows Avow's notice, and nothing to watch.
+    expect(card.text).toContain('c.asked === false')
+    expect(card.text).toContain("'Not asked'")
     expect(card._meta).toEqual({
       ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
     })
@@ -125,6 +131,7 @@ describe('avow-sandbox-mcp', () => {
       'check',
       'top_up',
       'request_change',
+      'request_seller_mandate',
       'request_status',
       'offers',
       'orders',
