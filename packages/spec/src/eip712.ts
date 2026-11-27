@@ -15,6 +15,11 @@ import type {
   sellerMandateTypedData,
 } from './seller-mandate.js'
 import type {
+  SELLER_MANDATE_REVOCATION_TYPES,
+  SellerMandateRevocation,
+  sellerMandateRevocationTypedData,
+} from './seller-mandate-revocation.js'
+import type {
   ApprovalRule,
   Mandate,
   MandateFields,
@@ -1014,6 +1019,7 @@ export type AvowTypedData =
   | ReturnType<typeof supplierActionTypedData>
   | ReturnType<typeof approvalDecisionTypedData>
   | ReturnType<typeof sellerMandateTypedData>
+  | ReturnType<typeof sellerMandateRevocationTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -1065,6 +1071,10 @@ interface InterfacesMatchTables {
     FieldNames<typeof SELLER_MANDATE_TYPES.SellerMandate>
   >
   SellingLimit: SameFields<keyof SellingLimit, FieldNames<typeof SELLER_MANDATE_TYPES.SellingLimit>>
+  SellerMandateRevocation: SameFields<
+    keyof SellerMandateRevocation,
+    FieldNames<typeof SELLER_MANDATE_REVOCATION_TYPES.SellerMandateRevocation>
+  >
   TermsAgreement: SameFields<
     keyof TermsAgreement,
     FieldNames<typeof TERMS_AGREEMENT_SELLER_TYPES.TermsAgreement>
@@ -1109,6 +1119,7 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   PaymentLimit: true,
   SellerMandate: true,
   SellingLimit: true,
+  SellerMandateRevocation: true,
   TermsAgreement: true,
   Approval: true,
   Charge: true,
@@ -1168,6 +1179,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'ApprovalDecision':
       return hashTypedData(td)
     case 'SellerMandate':
+      return hashTypedData(td)
+    case 'SellerMandateRevocation':
       return hashTypedData(td)
   }
 }

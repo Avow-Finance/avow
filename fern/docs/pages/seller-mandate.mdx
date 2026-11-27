@@ -11,7 +11,7 @@ A seller's mandate is the authority a business's administrator signs for one sel
 
 A `SellerMandate` is EIP-712 typed data for the business account's root key to sign, under the business's own lock. It binds one signing key, the key the business registered for its agent to quote and accept with, and hands no authority on to another agent. Its `replaces` field names the hash of the mandate it takes the place of, or null.
 
-The spec holds the message and nothing around it yet. Nothing stores a mandate, revokes one or follows one that replaces another, and the check takes whether a mandate was revoked from whoever calls it.
+The spec holds the messages and the checks, and nothing around them yet. Nothing stores a mandate or a revocation, and the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
 
 Version 1 covers sales of `service/1` and `job/1`. Terms under any other template are refused with `seller_mandate.template_not_covered`.
 
@@ -134,6 +134,35 @@ The day's units and what's outstanding come from a ledger the caller keeps, coun
 `saleApprovalProblem` holds one rule for Avow's reserve approval. Avow is to approve a buyer's reserve for a sale only once the supplier's acceptance deadline is 15 minutes away or less by Avow's clock, exactly. Before that it answers `approval.acceptance_too_far`, and the buyer asks again closer to the deadline. A job can still run for days after its supplier accepts.
 
 The rule bounds how long a reserve can still be accepted after its seller's mandate ends or is revoked.
+
+## Replacing and revoking
+
+An administrator changes a selling agent's limits by signing a new mandate for the same signing key, whose `replaces` names the hash of the one before it. The mandates a key has held travel together, newest first, with the revocation of any of them or null, and `parseSellerMandates` reads them.
+
+`sellerMandateChainProblem` checks they link. Every mandate is well formed and names the business, the account and the signing key the caller expects. Each names the one before it, and the oldest names none. The check works out each hash itself, so a mandate can't be left out of the middle or slipped in. A buyer's mandates end at the one its key carries on Tempo's keychain. A seller's have no such anchor, so the caller says whose mandates it expects, and ones another account signed for the same key are refused. `sellerMandatesSignatureProblem` then checks the account signed every one of them.
+
+| Reason | When |
+| --- | --- |
+| `seller_mandate.invalid` | A mandate isn't well formed |
+| `seller_mandate.key_mismatch` | A mandate binds another signing key |
+| `seller_mandate.chain_mismatch` | A mandate names another business or account, or doesn't name the one before it |
+| `seller_mandate.revoked` | A revocation names one of the mandates |
+| `seller_mandate.signature_invalid` | The account didn't sign one of the mandates |
+| `message.invalid` | Anything else is malformed, such as a revocation that names none of the mandates it came with |
+
+A `SellerMandateRevocation` is the administrator's word that a selling agent's authority has ended. The business account's root key signs it under the business's own lock. It names one mandate by hash, with the business, the account and the signing key that mandate names. It repeats those three so that someone shown the revocation alone learns whose agent lost its authority, since a mandate's limits stay with the seller. It carries no time and never expires.
+
+A revocation ends the mandate it names and every mandate that replaces it. A signature carries no time, so a mandate revoked and then replaced can't be told from one replaced and then revoked. A revoked mandate is therefore never replaced, and a revocation that names any of the mandates it travels with ends all of them.
+
+`sellerMandateChainProblem` doesn't read a revocation's signature. A forged revocation can only stop an agent selling, which whoever serves the mandates can do by serving none. Whoever records a revocation checks its signature first, with `sellerMandateRevocationSignatureProblem`, and `revokesSellerMandate` says whether it names a given mandate.
+
+Revoking stops every new promise and leaves every commitment already made in force. A reserve Avow approved before the revocation can still be accepted until its acceptance deadline, which the 15-minute rule above bounds.
+
+Three things stay open.
+
+- Nothing stores a mandate or a revocation yet, and no SDK call or tool builds, signs or serves one. Only the account's root key signs either.
+- A reader can't see a newer mandate or a revocation its server left out. Avow is to cover that, by approving a reserve only for a sale under the newest mandate of a key nobody revoked.
+- The check reads one line of mandates at a time, so it can't refuse a new first mandate signed for a key whose earlier mandates were revoked. Whoever stores mandates decides whether to take one.
 
 ## What a buyer hears
 
