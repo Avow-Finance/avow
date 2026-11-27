@@ -28,6 +28,8 @@ The reason is a code from the list above, and Avow shows its own words for it. A
 
 ## Naming a supplier and opening the lock
 
+A selling agent asks for a seller's mandate with `askToSell` on `sandboxServices`, `avow-sandbox ask-to-sell` or the MCP server's `request_seller_mandate` tool, as [Seller's mandates](/docs/reference/seller-mandate) describes. Avow refuses that kind with `approval_request.kind_unavailable` for now, and the SDK says so.
+
 An agent asks for a supplier with `askToNameSupplier`, or for open mode with `askToOpen`, or with the MCP server's `request_change` tool. Both change state on the business's lock, so the request records the state it was made against, and the lock itself refuses the change if that state moved.
 
 - **A supplier.** The request records the supplier's account and how many times its place on the lock has changed. On approval the signing page sends `approveSupplierIf`, which names that count and the request's window, where the lock doesn't name the supplier yet, and then the mandate that adds the supplier to the agent's own list. The lock reverts with `StaleChange` if the business named or removed the supplier since, so a removal is never undone by an older approval. Naming a supplier on the lock lets every agent of the business whose mandate allows it commit with it, and the signing page says so.

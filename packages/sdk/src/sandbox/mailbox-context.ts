@@ -52,6 +52,8 @@ type Requests = ReturnType<typeof avowRequests>
 export interface MailboxContext {
   send: typeof fetch
   store: SandboxStore
+  /** The agent's own enrolled key, which signs its requests to Avow. */
+  agentKey: AgentKey
   item: AgentItem
   deployment: SandboxDeployment
   domain: { chainId: number; verifyingContract: Address }
@@ -227,6 +229,7 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
 
   return {
     send,
+    agentKey,
     store,
     item,
     deployment,

@@ -97,6 +97,7 @@ export {
   isUsable,
   openModeAsk,
   raiseAsk,
+  sellerMandateAsk,
   supplierAsk,
 } from './sandbox/requests.js'
 export {
@@ -107,7 +108,9 @@ export {
 } from './sandbox/seller-mandate.js'
 export {
   type SandboxServices,
+  SELLER_MANDATE_ASKS_UNTAKEN,
   SERVICE_ORDER_SECONDS,
+  type SellAskOutcome,
   type ServiceBuyOutcome,
   type ServiceBuyStep,
   type ServiceOfferDraft,

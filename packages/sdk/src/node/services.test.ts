@@ -1,12 +1,17 @@
 import { dollars, offerVersionId, toWire } from '@avow-finance/spec'
 import { describe, expect, it } from 'vitest'
+import type { SellAskOutcome } from '../sandbox/services.js'
 import {
+  type AskToSellDeps,
+  askToSellCommand,
   bookingSentence,
   offerSentences,
+  readAskToSellArgs,
   readOfferInput,
   readPublishArgs,
   readServiceOrderArgs,
   readSharedOffer,
+  readTermsText,
 } from './services.js'
 
 const asked = {
@@ -117,5 +122,138 @@ describe('order --offer', () => {
     expect(readServiceOrderArgs(['--offer', 'a.json', '--quantity', '1.5'])).toHaveProperty('error')
     expect(readServiceOrderArgs(['--offer', 'a.json', '--supplier', 'x'])).toHaveProperty('error')
     expect(readServiceOrderArgs(['--quantity', '2'])).toHaveProperty('error')
+  })
+})
+
+describe('avow-sandbox ask-to-sell', () => {
+  const TERMS = {
+    signingKey: `0x${'5e'.repeat(20)}`,
+    currency: 'USD',
+    limits: [
+      {
+        category: 'service',
+        item: null,
+        minUnitPrice: '40000000',
+        maxUnitsPerOrder: 4,
+        maxUnitsPerDay: 10,
+      },
+    ],
+    maxOrderValue: '500000000',
+    maxOutstanding: '2000000000',
+    maxDeliveryHorizon: '604800',
+    minLateCancellationBps: 2000,
+    minNoShowBps: 5000,
+    maxFreeCancelWindow: '86400',
+    buyers: [],
+    excludedBuyers: [],
+    excludedCountries: [],
+    requiresBusinessCheck: false,
+    negotiable: [],
+    approvalRule: { kind: 'never' },
+    expiry: '1900000000',
+  }
+  const request = (state: string) => ({
+    id: 'ab'.repeat(16),
+    status: state === 'active' ? { state, at: 1n, transaction: null } : { state },
+  })
+
+  /** Runs the command with what it reads and asks replaced, and answers with what it said. */
+  async function run(
+    args: string[],
+    o: {
+      file?: string | null | undefined
+      outcome?: SellAskOutcome
+      states?: string[]
+    } = {},
+  ) {
+    const said: string[] = []
+    const failed: string[] = []
+    let asked = 0
+    const states = [...(o.states ?? ['waiting', 'active'])]
+    const deps: AskToSellDeps = {
+      readFile: () => {
+        if (o.file === null) throw new Error('no such file')
+        return o.file ?? JSON.stringify(TERMS)
+      },
+      log: (line) => said.push(line),
+      fail: (message) => {
+        failed.push(message)
+      },
+      signal: new AbortController().signal,
+      services: async () => ({
+        askToSell: async () => {
+          asked++
+          return (o.outcome ?? {
+            ok: true,
+            asked: { request: request('waiting'), link: 'https://avow.example/a/ab' },
+          }) as never
+        },
+        awaitSellRequest: async (_id, w) => {
+          let last = request('waiting')
+          for (const state of states) {
+            last = request(state)
+            w?.onRead?.({ request: last, link: '' } as never)
+          }
+          return { request: last, link: '' } as never
+        },
+      }),
+    }
+    await askToSellCommand(args, deps)
+    return { said, failed, asked }
+  }
+
+  it('reads one --terms file and nothing else', () => {
+    expect(readAskToSellArgs(['--terms', 'terms.json'])).toEqual({ file: 'terms.json' })
+    expect(readAskToSellArgs([])).toHaveProperty('error')
+    expect(readAskToSellArgs(['--terms'])).toHaveProperty('error')
+    expect(readAskToSellArgs(['--terms', '--wait'])).toHaveProperty('error')
+    expect(readAskToSellArgs(['--terms', 'terms.json', '--wait'])).toHaveProperty('error')
+    expect(readAskToSellArgs(['terms.json'])).toHaveProperty('error')
+  })
+
+  it('reads the terms as the spec writes them, and says which way a file is wrong', () => {
+    expect(readTermsText('t.json', JSON.stringify(TERMS))).toHaveProperty('terms')
+    expect(readTermsText('t.json', '{ not json')).toEqual({ error: "t.json doesn't hold JSON" })
+    expect(readTermsText('t.json', JSON.stringify({ ...TERMS, maxOrderValue: 500 }))).toEqual({
+      error: expect.stringMatching(/doesn't hold a seller's mandate's terms/),
+    })
+  })
+
+  it('asks for nothing when its arguments or its file are wrong', async () => {
+    for (const [args, file, said] of [
+      [[], undefined, /takes --terms/],
+      [['--terms', 't.json', '--now'], undefined, /takes --terms/],
+      [['--terms', 't.json'], null, /can't be read/],
+      [['--terms', 't.json'], '{ not json', /doesn't hold JSON/],
+      [['--terms', 't.json'], '{}', /doesn't hold a seller's mandate's terms/],
+    ] as const) {
+      const r = await run([...args], { file })
+      expect(r.failed, JSON.stringify(args)).toEqual([expect.stringMatching(said)])
+      expect(r.asked).toBe(0)
+    }
+  })
+
+  it("says plainly that Avow doesn't take the ask yet, and waits for nothing", async () => {
+    const notice = "Avow doesn't take seller's mandate requests yet, so nothing was asked."
+    const r = await run(['--terms', 't.json'], {
+      outcome: { ok: false, reason: 'approval_request.kind_unavailable', notice },
+    })
+    expect(r.said).toEqual([notice])
+    expect(r.failed).toEqual([])
+  })
+
+  it('prints the link, then each state the request moves to, until it is in force', async () => {
+    const r = await run(['--terms', 't.json'], {
+      states: ['waiting', 'waiting', 'approved', 'active'],
+    })
+    expect(r.said[0]).toMatch(/request ab/)
+    expect(r.said[1]).toContain('https://avow.example/a/ab')
+    expect(r.said.filter((l) => l.startsWith('The request is'))).toEqual([
+      'The request is waiting.',
+      'The request is approved.',
+      'The request is active.',
+    ])
+    expect(r.said.at(-1)).toMatch(/in force/)
+    expect(r.said.at(-1)).toMatch(/Avow doesn't enforce seller limits yet/)
   })
 })

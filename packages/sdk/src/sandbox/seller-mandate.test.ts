@@ -1,6 +1,8 @@
 import {
   digestOf,
   dollars,
+  encodeApiBody,
+  parseApprovalAsk,
   parseServiceQuote,
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
@@ -9,6 +11,7 @@ import {
   type Signed,
   sellerKeyRevocationTypedData,
   sellerMandateHash,
+  sellerMandateTermsOf,
   sellerMandateTypedData,
   toWire,
 } from '@avow-finance/spec'
@@ -35,6 +38,7 @@ vi.mock('../moderato.js', async (original) => ({
 const { sandboxServices } = await import('./services.js')
 const { NO_SELLER_MANDATE, SellerMandateRefusal } = await import('./seller-mandate.js')
 const { readSellerStanding, SELLER_STANDING_RETRY_FOR } = await import('./seller-mandate-read.js')
+const { SELLER_MANDATE_ASKS_UNTAKEN } = await import('./services.js')
 
 /** A 32-byte id made from a word. */
 const id = (word: string): Hex => keccak256(stringToHex(word))
@@ -128,20 +132,25 @@ const signed = async (m: SellerMandate, by: Root) =>
 function avow(
   mandates: (() => Promise<unknown>) | null,
   respond?: (init?: RequestInit) => Promise<Response>,
+  others?: (path: string, body: Record<string, unknown>) => Response | null,
 ) {
-  const posted: { path: string; body: Record<string, unknown> }[] = []
+  const posted: { path: string; body: Record<string, unknown>; raw: string }[] = []
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
     if (path === '/config.json') return json(JSON.parse(JSON.stringify(toWire(deployment))))
-    const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
-    posted.push({ path, body })
+    const raw = init?.body ? new TextDecoder().decode(init.body as Uint8Array) : ''
+    const body = raw ? JSON.parse(raw) : {}
+    posted.push({ path, body, raw })
     if (path === SANDBOX_PATHS.sellerMandates) {
       if (respond) return respond(init)
       return mandates
         ? json(await mandates())
         : json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
     }
-    return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+    return (
+      others?.(path, body) ??
+      json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+    )
   }) as typeof globalThis.fetch
   return { fetch, posted }
 }
@@ -496,5 +505,126 @@ describe('reading the seller’s mandates when Avow can’t answer', () => {
         init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
       })
     await expect(readWith(never)).rejects.toThrow(/No definite answer/)
+  })
+})
+
+describe('asking for a seller’s mandate', () => {
+  const ID = 'ab'.repeat(16)
+  /** A request for a seller's mandate as Avow answers it, at a state. */
+  const requestAs = (ask: Record<string, unknown>, state: string, sellerMandate: Hex | null) => ({
+    id: ID,
+    businessId: SELLER,
+    agentKey: `0x${'11'.repeat(20)}`,
+    requestedAt: '1800000000',
+    expiresAt: '1800086400',
+    status: state === 'active' ? { state, at: '1800000100', transaction: null } : { state },
+    ...ask,
+    basis: { sellerMandate },
+  })
+  const termsOf = (m: SellerMandate) => sellerMandateTermsOf(m)
+
+  async function asking(o: {
+    holds?: boolean
+    answer?: (body: Record<string, unknown>) => Response
+  }) {
+    const s = await seller()
+    const mandate = mandateFor(s.root.address, s.signingKey)
+    const served = o.holds
+      ? async () =>
+          toWire({ current: await signed(mandate, s.root), earlier: [], revocation: null })
+      : null
+    const asks: Record<string, unknown>[] = []
+    const reads: string[] = []
+    const api = avow(served, undefined, (path, body) => {
+      if (path === SANDBOX_PATHS.approvalRequests) {
+        asks.push(body)
+        return o.answer
+          ? o.answer(body)
+          : json(requestAs(body, 'waiting', o.holds ? sellerMandateHash(mandate, domain) : null))
+      }
+      if (path === SANDBOX_PATHS.approvalRequest(ID)) {
+        reads.push(path)
+        const state = reads.length < 3 ? 'waiting' : 'active'
+        return json(requestAs(asks[0] ?? {}, state, null))
+      }
+      return null
+    })
+    const services = await sandboxServices({ store: s.store, fetch: api.fetch })
+    const raw = () =>
+      api.posted.filter((p) => p.path === SANDBOX_PATHS.approvalRequests).map((p) => p.raw)
+    return { ...s, mandate, services, asks, reads, raw, posted: api.posted }
+  }
+
+  it('asks with the exact terms and the reason for a first mandate, and answers with the link', async () => {
+    const { services, asks, raw, mandate } = await asking({})
+    const outcome = await services.askToSell(termsOf(mandate))
+    if (!outcome.ok) throw new Error('the ask was taken')
+    const sent = { kind: 'seller_mandate', terms: termsOf(mandate), reason: 'new_seller' } as const
+    // What went is exactly the ask, byte for byte as a signed body carries it, and one Avow's own
+    // parser reads back.
+    expect(raw()).toEqual([new TextDecoder().decode(encodeApiBody(sent))])
+    const read = parseApprovalAsk(asks[0])
+    expect(read.ok).toBe(true)
+    if (read.ok) expect(read.value).toEqual(sent)
+    expect(outcome.asked.request).toMatchObject({ id: ID, kind: 'seller_mandate' })
+    expect(outcome.asked.link).toContain(ID)
+  })
+
+  it('gives the reason for other limits when a mandate is in force', async () => {
+    const { services, asks, mandate } = await asking({ holds: true })
+    await services.askToSell({ ...termsOf(mandate), maxOrderValue: dollars(400) })
+    expect(asks[0]?.reason).toBe('seller_limits')
+  })
+
+  it('says plainly that Avow doesn’t take these requests yet, and that nothing was asked', async () => {
+    const { services, mandate } = await asking({
+      answer: () =>
+        json(
+          {
+            error: {
+              reason: 'approval_request.kind_unavailable',
+              message: "Avow doesn't take requests of this kind yet, so nothing was asked",
+            },
+          },
+          409,
+        ),
+    })
+    const outcome = await services.askToSell(termsOf(mandate))
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'approval_request.kind_unavailable',
+      notice: SELLER_MANDATE_ASKS_UNTAKEN,
+    })
+    expect(SELLER_MANDATE_ASKS_UNTAKEN).toMatch(/doesn't take seller's mandate requests yet/)
+    expect(SELLER_MANDATE_ASKS_UNTAKEN).toMatch(/nothing was asked/)
+  })
+
+  it('refuses terms for another signing key than its own before it asks', async () => {
+    const { services, asks, mandate } = await asking({})
+    const other = { ...termsOf(mandate), signingKey: `0x${'5e'.repeat(20)}` as Address }
+    await expect(services.askToSell(other)).rejects.toThrow(/another signing key/)
+    expect(asks).toEqual([])
+  })
+
+  it('refuses terms that aren’t well formed before it asks', async () => {
+    const { services, asks, mandate } = await asking({})
+    await expect(services.askToSell({ ...termsOf(mandate), limits: [] })).rejects.toThrow(
+      RangeError,
+    )
+    expect(asks).toEqual([])
+  })
+
+  it('reads where the request stands until the mandate is in force', async () => {
+    const { services, mandate, reads } = await asking({})
+    const outcome = await services.askToSell(termsOf(mandate))
+    if (!outcome.ok) throw new Error('the ask was taken')
+    const states: string[] = []
+    const settled = await services.awaitSellRequest(ID, {
+      every: 1,
+      onRead: (a) => states.push(a.request.status.state),
+    })
+    expect(settled.request.status.state).toBe('active')
+    expect(states).toEqual(['waiting', 'waiting', 'active'])
+    expect(reads).toHaveLength(3)
   })
 })

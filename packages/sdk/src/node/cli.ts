@@ -39,7 +39,7 @@ import {
   terminalPrompts,
 } from './runner.js'
 import { keepSession, sessionForNextRun } from './runner-session.js'
-import { offerCommand, orderServiceCommand } from './services.js'
+import { askToSellCommand, offerCommand, orderServiceCommand } from './services.js'
 import { terminalInput } from './session-input.js'
 import { topUpCommand } from './top-up.js'
 import { verifyCommand } from './verify.js'
@@ -80,6 +80,9 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it. A
            service order is quoted only for an offer this business published
+  ask-to-sell  asks the business's administrator for a seller's mandate with --terms <file>,
+           prints the link to decide it, and waits for the decision. Avow doesn't take these
+           requests yet, and says so
   verify   checks a commitment someone shared, from its link, against the chain, with
            --payee <address> to check it pays you. It needs no agent or business
   top-up   asks the sandbox faucet for more test dollars for the business of the agent in this
@@ -132,6 +135,7 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === 'order' && args.includes('--offer')) return orderServiceCommand(args.slice(1))
   if (args[0] === 'order') return orderCommand(args.slice(1))
   if (args[0] === 'listen') return listenCommand()
+  if (args[0] === 'ask-to-sell') return askToSellCommand(args.slice(1))
   // The MCP server, so a model in Claude can connect the folder's agent and commit with it.
   if (args[0] === 'mcp') return mcpCommand(args.slice(1))
   // Checking a commitment someone shared, which needs no agent or business.

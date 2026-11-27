@@ -10,6 +10,7 @@ import {
   SANDBOX_PATHS,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_ORDER_ACCEPT_MARGIN,
+  type SellerMandateTerms,
   type ServiceOfferVersion,
   type ServiceOrder,
   type ServiceOrderRequest,
@@ -22,7 +23,7 @@ import {
   tempoKeychainCheck,
   toWire,
 } from '@avow-finance/spec'
-import { type Hex, toHex } from 'viem'
+import { type Hex, isAddressEqual, toHex } from 'viem'
 import { AvowApiError, signingRequestKey } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { quoteService } from '../service/quote.js'
@@ -34,6 +35,15 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
+import {
+  type AskedChange,
+  askForChange,
+  hasSettled,
+  isUsable,
+  type RequestContext,
+  readOwnRequest,
+  sellerMandateAsk,
+} from './requests.js'
 import {
   type CountedSale,
   DAY,
@@ -120,6 +130,15 @@ export type ServiceSellStep =
   | { step: 'quoted'; standing: SellerStanding }
   | { step: 'accepted'; acceptedIn: Hex | null; standing: SellerStanding }
 
+/** What Avow said to an agent's ask for a seller's mandate. */
+export type SellAskOutcome =
+  | { ok: true; asked: AskedChange }
+  | { ok: false; reason: 'approval_request.kind_unavailable'; notice: string }
+
+/** What an agent is told when Avow refuses to take its ask for a seller's mandate. */
+export const SELLER_MANDATE_ASKS_UNTAKEN =
+  "Avow doesn't take seller's mandate requests yet, so nothing was asked. This agent sells as it did before, and no seller's mandate is in force for its signing key."
+
 /** An offer as its supplier writes it, before its business is named for it. */
 export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>
 
@@ -137,6 +156,22 @@ export interface SandboxServices {
   publish(
     draft: ServiceOfferDraft,
   ): Promise<{ version: ServiceOfferVersion; id: Hex; standing: SellerStanding | null }>
+  /**
+   * Asks the business's administrator for a seller's mandate with exactly these terms, signed with
+   * the agent's own enrolled key. It only asks: the administrator decides with their passkey on
+   * the page the link opens, and nothing here can approve it. The reason is a first mandate, or
+   * other limits than the ones in force. Avow doesn't take seller's mandate requests yet, and then
+   * it answers with a plain notice and nothing was asked.
+   */
+  askToSell(terms: SellerMandateTerms): Promise<SellAskOutcome>
+  /**
+   * Reads the agent's request for a seller's mandate every few seconds until it settles or the
+   * mandate is in force, or until the signal stops it, and answers with where it stands then.
+   */
+  awaitSellRequest(
+    id: string,
+    o?: { every?: number; signal?: AbortSignal; onRead?: (asked: AskedChange) => void },
+  ): Promise<AskedChange>
   /**
    * Reads where the agent stands as a seller: the seller's mandate in force for its signing key,
    * read from Avow and checked as one chain the business account signed, or none. With none, it
@@ -373,6 +408,50 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       },
       now,
     )
+  }
+
+  // Asking for a seller's mandate.
+
+  const asking: RequestContext = {
+    apiUrl: deployment.apiUrl,
+    agentKey: context.agentKey,
+    domain,
+    send: context.send,
+  }
+
+  async function askToSell(terms: SellerMandateTerms): Promise<SellAskOutcome> {
+    // A mandate binds one signing key, and this agent sells with its own.
+    const { signing } = context.needSupplier()
+    if (!isAddressEqual(terms.signingKey, signing.address)) {
+      throw new RangeError(
+        'The terms name another signing key than the one this agent sells with, so nothing was asked.',
+      )
+    }
+    // The reason says whether the key holds a mandate now, which the ask would replace.
+    const standing = await sellerStanding()
+    const ask = sellerMandateAsk(terms, standing.inForce)
+    try {
+      return { ok: true, asked: await askForChange(asking, ask) }
+    } catch (error) {
+      if (error instanceof AvowApiError && error.reason === 'approval_request.kind_unavailable') {
+        return { ok: false, reason: error.reason, notice: SELLER_MANDATE_ASKS_UNTAKEN }
+      }
+      throw error
+    }
+  }
+
+  async function awaitSellRequest(
+    id: string,
+    o: Parameters<SandboxServices['awaitSellRequest']>[1] = {},
+  ): Promise<AskedChange> {
+    for (;;) {
+      const asked = await readOwnRequest(asking, id)
+      o.onRead?.(asked)
+      const { request } = asked
+      if (hasSettled(request) || isUsable(request) || o.signal?.aborted) return asked
+      await pause(o.every ?? 5000, o.signal).catch(() => {})
+      if (o.signal?.aborted) return asked
+    }
   }
 
   // The supplier's offers.
@@ -698,6 +777,8 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     sells,
     publish,
     sellerStanding,
+    askToSell,
+    awaitSellRequest,
     published,
     withdraw,
     order,

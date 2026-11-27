@@ -11,6 +11,7 @@ import {
 } from '@avow-finance/spec'
 import { describe, expect, it, vi } from 'vitest'
 import { NO_SELLER_MANDATE } from '../sandbox/seller-mandate.js'
+import { SELLER_MANDATE_ASKS_UNTAKEN } from '../sandbox/services.js'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
 import { testPing, testSellersList } from '../test/test-sellers.js'
@@ -395,5 +396,78 @@ describe("the MCP server's tools for services", () => {
       structured: { sellers: [] },
       isError: false,
     })
+  })
+})
+
+describe("the MCP server's ask for a seller's mandate", () => {
+  /** A seller's mandate's terms on the wire, for the signing key in the folder. */
+  async function termsIn(dir: string) {
+    const supplier = await fileStore(join(dir, SANDBOX_DIR)).read('supplier')
+    const signingKey = (JSON.parse(supplier ?? '{}') as { profile: { signingKey: string } }).profile
+      .signingKey
+    return {
+      signingKey: signingKey.toLowerCase(),
+      currency: 'USD',
+      limits: [
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: '40000000',
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+      ],
+      maxOrderValue: '500000000',
+      maxOutstanding: '2000000000',
+      maxDeliveryHorizon: '604800',
+      minLateCancellationBps: 2000,
+      minNoShowBps: 5000,
+      maxFreeCancelWindow: '86400',
+      buyers: [],
+      excludedBuyers: [],
+      excludedCountries: [],
+      requiresBusinessCheck: false,
+      negotiable: [],
+      approvalRule: { kind: 'never' },
+      expiry: '1900000000',
+    }
+  }
+
+  it("says plainly that Avow doesn't take seller's mandate requests yet", async () => {
+    const dir = await folder(SELLER, true)
+    const asks: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.approvalRequests) return null
+      asks.push(body)
+      return json(
+        {
+          error: {
+            reason: 'approval_request.kind_unavailable',
+            message: "Avow doesn't take requests of this kind yet, so nothing was asked",
+          },
+        },
+        409,
+      )
+    })
+    const seller = mcpAgent(dir, { fetch })
+    const answer = await seller.call('request_seller_mandate', { terms: await termsIn(dir) })
+    expect(answer.isError).toBe(false)
+    expect(answer.text).toBe(SELLER_MANDATE_ASKS_UNTAKEN)
+    expect(answer.structured).toEqual({
+      asked: false,
+      reason: 'approval_request.kind_unavailable',
+      notice: SELLER_MANDATE_ASKS_UNTAKEN,
+    })
+    expect(asks).toHaveLength(1)
+    expect(asks[0]).toMatchObject({ kind: 'seller_mandate', reason: 'new_seller' })
+  })
+
+  it("refuses terms that are not a seller's mandate's, before it asks", async () => {
+    const dir = await folder(SELLER, true)
+    const { fetch, paths } = avow(() => null)
+    const seller = mcpAgent(dir, { fetch })
+    const answer = await seller.call('request_seller_mandate', { terms: { limits: [] } })
+    expect(answer.isError).toBe(true)
+    expect(paths).not.toContain(SANDBOX_PATHS.approvalRequests)
   })
 })
