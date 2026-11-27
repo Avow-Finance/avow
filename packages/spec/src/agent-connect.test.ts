@@ -1,6 +1,9 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_LABEL_MAX,
+  agentLabelOf,
+  agentLabelProblem,
   approvalHash,
   approvalKeyOf,
   pairingCode,
@@ -8,6 +11,7 @@ import {
   parseAgentRequestStatus,
   parseOpenAgentRequest,
   parseOpenAgentRequestStatus,
+  quotedLabel,
 } from './agent-connect.js'
 import { API_PATH_PATTERN } from './api-request.js'
 import { SANDBOX_PATHS } from './sandbox.js'
@@ -40,6 +44,140 @@ describe('an agent request', () => {
     expect(
       parseAgentRequest({ businessId: 'sandbox-ab', label: 'Seller', signingKey: KEY })?.signingKey,
     ).toBe(KEY.toLowerCase())
+  })
+
+  it('refuses a new label with a hidden or direction-changing character, or a double quote', () => {
+    const hidden = {
+      'a right-to-left override': 'Agent \u202etcennoc ot sksa',
+      'a left-to-right override': 'Agent \u202dname',
+      'a bidi isolate': 'Agent \u2067name\u2069',
+      'a pop of direction': 'Agent name\u202c',
+      'a right-to-left mark': 'Agent\u200f name',
+      'an Arabic letter mark': 'Agent\u061c name',
+      'a zero-width space': 'Agent\u200bname',
+      'a zero-width joiner': 'Agent\u200dname',
+      'a word joiner': 'Agent\u2060name',
+      'a soft hyphen': 'Agent\u00adname',
+      'a byte order mark': 'Agent\ufeffname',
+      'an interlinear annotation mark': 'Agent\ufff9name',
+      'a tag character': 'Agent\u{e0041}name',
+      'a line separator': 'Agent\u2028name',
+      'a line feed': 'Agent\nname',
+      'a C1 control': 'Agent\u0085name',
+      'a Hangul filler': 'Agent\u3164name',
+      'a blank Braille cell': 'Agent\u2800name',
+      'a double quote': 'Agent "approved"',
+      'a curly quote': 'Agent \u201capproved\u201d',
+      'a full-width quote': 'Agent \uff02approved',
+      'two apostrophes': "Agent ''approved''",
+      'half a character': 'Agent \ud800',
+    }
+    for (const [what, label] of Object.entries(hidden)) {
+      expect(agentLabelOf(label), what).toBeNull()
+      expect(parseAgentRequest({ businessId: 'sandbox-ab', label }), what).toBeNull()
+      expect(parseOpenAgentRequest({ label }), what).toBeNull()
+    }
+  })
+
+  it('takes an ordinary name in any script, trimmed, up to its most characters', () => {
+    for (const label of [
+      'Research agent',
+      'リサーチエージェント',
+      '研究代理',
+      'وكيل البحث',
+      'סוכן מחקר',
+      'Agent de réservation Zoë',
+      'Größe & Søren (v2)',
+      'Агент закупок',
+      '🤖 Research agent',
+      "O'Brien's agent",
+      'Research  agent',
+      'x'.repeat(AGENT_LABEL_MAX),
+    ]) {
+      expect(agentLabelOf(label), label).toBe(label)
+      expect(parseOpenAgentRequest({ label })?.label, label).toBe(label)
+    }
+    expect(agentLabelOf('  Research agent ')).toBe('Research agent')
+    // A Japanese input method types a wide space between words, which a label reads as a space.
+    expect(agentLabelOf('リサーチ\u3000エージェント')).toBe('リサーチ エージェント')
+    expect(agentLabelOf('山田\u3000太郎\u3000')).toBe('山田 太郎')
+    expect(parseOpenAgentRequest({ label: 'リサーチ\u3000エージェント' })?.label).toBe(
+      'リサーチ エージェント',
+    )
+    // The most is counted in UTF-16 code units, so an emoji outside the first plane counts as two.
+    expect(agentLabelOf('🤖'.repeat(AGENT_LABEL_MAX / 2))).not.toBeNull()
+    expect(agentLabelOf(`${'🤖'.repeat(AGENT_LABEL_MAX / 2)}x`)).toBeNull()
+    expect(agentLabelOf('x'.repeat(AGENT_LABEL_MAX + 1))).toBeNull()
+    expect(agentLabelOf('   ')).toBeNull()
+  })
+
+  it('refuses emoji joined by a zero-width joiner, as it does in the name of an item, and says why', () => {
+    const coder = '\u{1f469}\u200d\u{1f4bb} Coder'
+    expect(agentLabelOf(coder)).toBeNull()
+    expect(agentLabelProblem(coder)).toMatch(
+      /^it holds U\+200D at code point 2, a zero-width joiner/,
+    )
+    expect(agentLabelProblem(coder)).toMatch(/Write each emoji on its own/)
+    expect(agentLabelOf('\u{1f469}\u{1f4bb} Coder')).not.toBeNull()
+    // A skin tone or the emoji presentation selector before the joiner still leaves it between emoji.
+    for (const [emoji, at] of [
+      ['\u{1f469}\u{1f3fd}\u200d\u{1f4bb}', 3],
+      ['\u2764\ufe0f\u200d\u{1f525}', 3],
+      ['\u{1f3f3}\ufe0f\u200d\u{1f308}', 3],
+    ] as const) {
+      expect(agentLabelOf(`${emoji} agent`), emoji).toBeNull()
+      expect(agentLabelProblem(`${emoji} agent`), emoji).toMatch(
+        new RegExp(
+          `^it holds U\\+200D at code point ${at}, a zero-width joiner that joins two emoji`,
+        ),
+      )
+    }
+    // A joiner between letters is no emoji, so it's named as hidden.
+    expect(agentLabelProblem('a\u200db')).toMatch(/which shows nothing/)
+  })
+
+  it('names the first character that fails and where it stands', () => {
+    expect(agentLabelProblem('Research agent')).toBeNull()
+    expect(agentLabelProblem('Agent \u202etcennoc')).toBe(
+      'it holds U+202E at code point 7, which shows nothing or changes how the text around it reads',
+    )
+    expect(agentLabelProblem('🤖 \u200bx')).toMatch(/^it holds U\+200B at code point 3,/)
+    expect(agentLabelProblem('Agent "x"')).toBe(
+      'it holds U+0022 at code point 7, which reads as a double quote',
+    )
+    expect(agentLabelProblem("Agent ''x''")).toMatch(/two apostrophes side by side at code point 7/)
+    expect(agentLabelProblem('Agent ``x``')).toMatch(/two backticks side by side at code point 7/)
+    expect(agentLabelProblem('Agent \ud800')).toMatch(
+      /U\+D800 at code point 7, half of a character/,
+    )
+    expect(agentLabelProblem('   ')).toBe("it's empty")
+    expect(agentLabelProblem('x'.repeat(61))).toBe("it's 61 UTF-16 code units long")
+  })
+
+  it('quotes a label for a card, and shows each mark in one held from before as its code point', () => {
+    expect(quotedLabel('Research agent')).toBe('"Research agent"')
+    expect(quotedLabel('Agent \u202etcennoc')).toBe('"Agent [U+202E]tcennoc"')
+    expect(quotedLabel("a''b")).toBe('"a[U+0027][U+0027]b"')
+  })
+
+  it('reads back a request Avow already holds under the label it was asked under', () => {
+    // A label from before the rule for new labels, which Avow may still hold and answer with.
+    const held = {
+      businessId: 'sandbox-ab',
+      agentKey: KEY,
+      lock: '0x00000000000000000000000000000000000000b2',
+      label: 'Agent \u202etcennoc ot sksa "x"',
+      pairingCode: pairingCode(KEY),
+      requestedAt: '1800000000',
+      expiresAt: '1800003600',
+      signingKey: null,
+    }
+    expect(parseAgentRequestStatus({ ...held, state: 'pending' })?.label).toBe(held.label)
+    const { businessId: _b, lock: _l, ...open } = held
+    expect(parseOpenAgentRequestStatus({ ...open, state: 'open' })?.label).toBe(held.label)
+    expect(
+      parseAgentRequestStatus({ ...held, label: 'bad\u0007name', state: 'pending' }),
+    ).toBeNull()
   })
 
   it('carries an approval only once it is approved', () => {

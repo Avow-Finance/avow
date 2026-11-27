@@ -171,7 +171,7 @@ function render(c) {
   if (!c || !c.at) return;
   if (c.at === 'waiting') {
     root.append(
-      el('p', 'title', c.label + ' asks for authority'),
+      el('p', 'title', c.shownLabel + ' asks for authority'),
       el('p', 'text', (c.businessId ? '' : 'Sign in, or set up your business, then approve. ') + 'Approve only if Avow shows this code. The link grants nothing by itself, and only your administrator\\'s passkey approves.'),
       el('p', 'code', c.pairingCode),
     );

@@ -73,7 +73,7 @@ export function mcpConnection(o: {
   function begin(ask: ConnectAsk): Promise<Connection> {
     return new Promise((resolve, reject) => {
       let answered = false
-      let asked: { pairingCode: string; link: string } | null = null
+      let asked: { pairingCode: string; link: string; label: string } | null = null
       const tell = (c: Connection) => {
         latest = c
         if (!answered) {
@@ -98,12 +98,12 @@ export function mcpConnection(o: {
           ...(o.pollEvery ? { pollEvery: o.pollEvery } : {}),
           onEvent: (e) => {
             if (e.type === 'asked') {
-              asked = { pairingCode: e.pairingCode, link: approvalLink(e.agentKey) }
+              // The name as the request carries it, which connect may have trimmed or respaced.
+              asked = { pairingCode: e.pairingCode, link: approvalLink(e.agentKey), label: e.label }
             } else if (e.type === 'waiting' && asked) {
               tell({
                 at: 'waiting',
                 businessId: business,
-                label,
                 ...asked,
                 expiresAt: Number(e.expiresAt),
               })

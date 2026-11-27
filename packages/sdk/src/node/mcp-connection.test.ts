@@ -27,6 +27,7 @@ function fakeConnect(failure?: Error) {
       businessId: o.businessId ?? null,
       agentKey,
       pairingCode: pairingCode(agentKey),
+      label: o.label,
     })
     if (failure) throw failure
     o.onEvent?.({ type: 'waiting', expiresAt: 1_800_003_600n })

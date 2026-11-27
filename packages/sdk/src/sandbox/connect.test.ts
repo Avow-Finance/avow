@@ -14,7 +14,7 @@ import { MODERATO_FACTORIES } from '../moderato.js'
 import { accountSigner, signMandate } from '../sign.js'
 import { deployment, domain, LOCK, supplier, TOKEN } from '../test/sandbox-business.js'
 import { sandboxMandate } from './mandate.js'
-import { loadAgentItem, memoryStore, saveAgentItem } from './store.js'
+import { loadAgentItem, memoryStore, saveAgentItem, write } from './store.js'
 
 /**
  * The lock each factory makes for the business's account, and all of them are on chain. Every
@@ -341,6 +341,87 @@ describe('connecting an agent to a business', () => {
       }),
     ).rejects.toThrow(/declined this agent's request/)
     expect(await loadAgentItem(store)).toBeNull()
+  })
+
+  it('refuses a name with a hidden or direction-changing character before asking anyone', async () => {
+    for (const label of ['Agent \u202etcennoc ot sksa', 'Agent\u200bname', 'Agent "approved"']) {
+      const store = memoryStore()
+      const sent: string[] = []
+      const fetch = (async (input: string | URL | Request) => {
+        sent.push(String(input))
+        return json({})
+      }) as typeof globalThis.fetch
+      await expect(
+        connectToBusiness({ businessId: BUSINESS, label, store, fetch }),
+      ).rejects.toThrow(/^The name can't be used, since it holds U\+[0-9A-F]{4} at code point \d+/)
+      expect(sent).toEqual([])
+      expect(await store.read('request')).toBeNull()
+    }
+  })
+
+  it('resumes a request an earlier version saved under a name the rule now refuses, and no other', async () => {
+    const store = memoryStore()
+    const world = sandbox(store)
+    const old = 'Agent \u202etcennoc'
+    await write(store, 'request', {
+      agentKey: generatePrivateKey(),
+      businessId: BUSINESS,
+      label: old,
+    })
+    const item = await connectToBusiness({
+      businessId: BUSINESS,
+      label: old,
+      store,
+      fetch: world.fetch,
+      pollEvery: 1,
+    })
+    expect(item.business.businessId).toBe(BUSINESS)
+    expect(world.asks[0]?.body).toMatchObject({ label: old })
+
+    // A saved name even the rule it was first asked under refuses is checked as a new one.
+    const broken = memoryStore()
+    await write(broken, 'request', {
+      agentKey: generatePrivateKey(),
+      businessId: BUSINESS,
+      label: 'bad\u0007name',
+    })
+    await expect(
+      connectToBusiness({
+        businessId: BUSINESS,
+        label: 'bad\u0007name',
+        store: broken,
+        fetch: sandbox(broken).fetch,
+      }),
+    ).rejects.toThrow(/name can't be used, since it holds U\+0007/)
+
+    // Asking without naming that business is another request, with a new key, so the rule holds.
+    const other = memoryStore()
+    await write(other, 'request', {
+      agentKey: generatePrivateKey(),
+      businessId: BUSINESS,
+      label: old,
+    })
+    await expect(
+      connectToBusiness({ label: old, store: other, fetch: sandbox(other).fetch }),
+    ).rejects.toThrow(/name can't be used/)
+  })
+
+  it('asks under the trimmed name with each wide space made plain, and says so', async () => {
+    const store = memoryStore()
+    const world = sandbox(store)
+    const heard: string[] = []
+    await connectToBusiness({
+      businessId: BUSINESS,
+      label: '  リサーチ\u3000エージェント ',
+      store,
+      fetch: world.fetch,
+      pollEvery: 1,
+      onEvent: (e) => {
+        if (e.type === 'asked') heard.push(e.label)
+      },
+    })
+    expect(heard).toEqual(['リサーチ エージェント'])
+    expect(world.asks[0]?.body).toMatchObject({ label: 'リサーチ エージェント' })
   })
 
   it('refuses to run in a folder that already has an agent', async () => {

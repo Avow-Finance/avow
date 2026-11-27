@@ -1,8 +1,12 @@
 import {
+  AGENT_LABEL_RULE,
   type AgentRequestStatus,
   accountOfSandboxId,
+  agentLabelOf,
+  agentLabelProblem,
   approvalHash,
   type Enrollment,
+  heldAgentLabelJson,
   pairingCode,
   parseAgentRequestStatus,
   parseEnrollmentRequest,
@@ -52,8 +56,14 @@ export const approvalRequestLink = (requestId: string): string =>
 
 /** What happens while an agent waits for its business to answer. */
 export type ConnectEvent =
-  /** The agent asked, naming its business, or null when it asked before knowing it. */
-  | { type: 'asked'; businessId: string | null; agentKey: Address; pairingCode: string }
+  /** The agent asked, naming its business, or null when it asked before knowing it, and the name it asked under. */
+  | {
+      type: 'asked'
+      businessId: string | null
+      agentKey: Address
+      pairingCode: string
+      label: string
+    }
   | { type: 'waiting'; expiresAt: bigint }
   /** A request that named no business was approved for this one. */
   | { type: 'bound'; businessId: string }
@@ -67,7 +77,11 @@ export interface ConnectOptions {
    * one, and the person who opens its link signs in or sets up a business there and approves.
    */
   businessId?: string
-  /** The name the administrator sees, such as "Research agent". */
+  /**
+   * The name the administrator sees, such as "Research agent". It's trimmed, and refused before
+   * anything is sent unless it holds to `AGENT_LABEL_RULE`, except when it's the name this folder's
+   * waiting request was saved with, so a request an earlier version made can still be resumed.
+   */
   label: string
   /**
    * Whether the agent sells as well as buys. It then makes a signing key of its own to quote and
@@ -203,11 +217,22 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
   if (await loadAgentItem(store)) {
     throw new Error('This folder already has an agent. Connect a new agent from a fresh folder.')
   }
-  const deployment = await loadSandboxDeployment(o.screenUrl ?? SANDBOX_SCREEN_URL, send)
-
   const waiting = await loadRequestItem(store)
   const asked = o.businessId ?? null
   const same = waiting?.businessId === asked ? waiting : null
+  // A request saved with a name from before the rule for new names keeps it, since Avow already
+  // holds the request under that name for this key, and asking again changes nothing it shows.
+  // It still has to be one Avow reads back, under the rule it was first asked under.
+  const resumed = same?.label !== undefined && same.label.trim() === o.label.trim()
+  const savedLabel = resumed ? heldAgentLabelJson.safeParse(o.label) : null
+  const label = savedLabel?.success ? savedLabel.data : agentLabelOf(o.label)
+  if (label === null) {
+    throw new RangeError(
+      `The name can't be used, since ${agentLabelProblem(o.label) ?? "it isn't plain text"}. ${AGENT_LABEL_RULE}.`,
+    )
+  }
+  const deployment = await loadSandboxDeployment(o.screenUrl ?? SANDBOX_SCREEN_URL, send)
+
   const keyHex = same?.agentKey ?? generatePrivateKey()
   const signingHex = o.sell ? (same?.signingKey ?? generatePrivateKey()) : undefined
   const signing = signingHex ? privateKeyToAccount(signingHex) : null
@@ -215,7 +240,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     write(store, 'request', {
       agentKey: keyHex,
       businessId,
-      label: o.label,
+      label,
       ...(signingHex ? { signingKey: signingHex } : {}),
     } satisfies RequestItem)
   await remember(asked)
@@ -225,6 +250,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     businessId: asked,
     agentKey: keyAddress,
     pairingCode: pairingCode(keyAddress),
+    label,
   })
 
   // With no business named, the agent waits until an administrator's approval binds its request
@@ -234,7 +260,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     (await waitToBeBound({
       deployment,
       keyHex,
-      label: o.label,
+      label,
       signingKey: signing?.address,
       send,
       onEvent: o.onEvent,
@@ -269,7 +295,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
       path: SANDBOX_PATHS.agentRequests,
       body: {
         businessId,
-        label: o.label,
+        label,
         ...(signing ? { signingKey: signing.address } : {}),
       },
       read: (json) => {

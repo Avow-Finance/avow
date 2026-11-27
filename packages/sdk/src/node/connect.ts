@@ -1,3 +1,4 @@
+import { quotedLabel } from '@avow-finance/spec'
 import { renderUnicodeCompact } from 'uqr'
 import { approvalLink, connectToBusiness } from '../sandbox/connect.js'
 import { fileStore } from './platform.js'
@@ -58,8 +59,8 @@ export async function connectCommand(args: readonly string[]): Promise<void> {
         console.log(
           [
             event.businessId
-              ? `Asked ${event.businessId} for authority, as "${read.label}".`
-              : `Asked for authority, as "${read.label}", from whichever business approves it.`,
+              ? `Asked ${event.businessId} for authority, as ${quotedLabel(event.label)}.`
+              : `Asked for authority, as ${quotedLabel(event.label)}, from whichever business approves it.`,
             '',
             `  Pairing code  ${event.pairingCode}`,
             '',

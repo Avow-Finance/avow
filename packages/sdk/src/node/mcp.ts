@@ -4,13 +4,18 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import {
+  AGENT_LABEL_MAX,
+  AGENT_LABEL_RULE,
   type ApprovalRequest,
+  agentLabelOf,
+  agentLabelProblem,
   describeReason,
   formatUsd,
   isApprovalRequestId,
   isSessionId,
   offerVersionId,
   publishedOffer,
+  quotedLabel,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
@@ -133,8 +138,8 @@ export const MCP_TOOLS = [
         },
         name: {
           type: 'string',
-          description:
-            'The name the administrator sees, which says what this agent does, such as "Research agent"',
+          maxLength: AGENT_LABEL_MAX,
+          description: `The name the administrator sees, which says what this agent does, such as "Research agent". ${AGENT_LABEL_RULE}.`,
         },
         sell: {
           type: 'boolean',
@@ -560,9 +565,11 @@ const when = (seconds: number) => new Date(seconds * 1000).toISOString()
  * so a folder already connected elsewhere says so.
  */
 function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
+  // A card shows the name as `quotedLabel` gives it, so a name Avow held from before the rule for
+  // new names can't hide or reorder what the card says.
   const answer = (text: string | string[], isError = false): ToolAnswer => ({
     text: Array.isArray(text) ? text.join(' ') : text,
-    structured: { ...c },
+    structured: c.at === 'waiting' ? { ...c, shownLabel: quotedLabel(c.label) } : { ...c },
     isError,
   })
   switch (c.at) {
@@ -579,8 +586,8 @@ function connectionAnswer(c: Connection, asked?: string): ToolAnswer {
     case 'waiting':
       return answer([
         c.businessId
-          ? `Asked ${c.businessId} for authority, as "${c.label}", with pairing code ${c.pairingCode}.`
-          : `Asked for authority, as "${c.label}", with pairing code ${c.pairingCode}, from whichever business approves it.`,
+          ? `Asked ${c.businessId} for authority, as ${quotedLabel(c.label)}, with pairing code ${c.pairingCode}.`
+          : `Asked for authority, as ${quotedLabel(c.label)}, with pairing code ${c.pairingCode}, from whichever business approves it.`,
         c.businessId
           ? `Send your person this link to review the request, on their phone or anywhere else: ${c.link}`
           : `Send your person this link, on their phone or anywhere else. They sign in, or set up their business, and approve there: ${c.link}`,
@@ -626,11 +633,15 @@ export function mcpAgent(
         'Leave business out to ask whoever approves through the link, or give the business ID from the console.',
       )
     }
-    const c = await connection.start({
-      businessId: business,
-      label: typeof args.name === 'string' && args.name.trim() !== '' ? args.name.trim() : null,
-      sell: args.sell === true,
-    })
+    // Left out or blank, the agent asks under the name it asked before, or the default one.
+    const named = typeof args.name === 'string' && args.name.trim() !== '' ? args.name : null
+    const label = named === null ? null : agentLabelOf(named)
+    if (named !== null && label === null) {
+      throw new RangeError(
+        `The name can't be used, since ${agentLabelProblem(named) ?? "it isn't plain text"}. ${AGENT_LABEL_RULE}.`,
+      )
+    }
+    const c = await connection.start({ businessId: business, label, sell: args.sell === true })
     return connectionAnswer(c, business ?? undefined)
   }
 
