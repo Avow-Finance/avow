@@ -13,8 +13,11 @@
   },
   "exports": {
     ".": {
+      "node": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      },
       "types": "./dist/index.d.ts",
-      "node": "./dist/node.js",
       "default": "./dist/index.js"
     },
     "./agent": {
