@@ -9,6 +9,7 @@ import {
   SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
   type ServiceOrder,
+  sellerMandateTermsJson,
   serviceOfferQuote,
   toWire,
 } from '@avow-finance/spec'
@@ -376,4 +377,55 @@ export async function orderServiceCommand(args: readonly string[]): Promise<void
     },
   })
   if (!outcome.ok) fail(outcomeSentence(outcome))
+}
+
+/**
+ * `avow-sandbox ask-to-sell --terms <file>`. Asks the business's administrator for a seller's
+ * mandate with the terms in the file, as the spec writes them, signed with the agent's own key.
+ * It prints the link for the person who decides, then reads where the request stands every few
+ * seconds and says when it moves, until it settles or is active, or until Ctrl+C stops it. It
+ * only asks: nothing here approves it. Avow doesn't take these requests yet, and then it says so.
+ */
+export async function askToSellCommand(args: readonly string[]): Promise<void> {
+  const at = args.indexOf('--terms')
+  const file = at >= 0 ? args[at + 1] : undefined
+  const unknown = args.filter((a, i) => a.startsWith('--') && a !== '--terms' && i !== at + 1)
+  if (!file || unknown.length > 0) return fail('ask-to-sell takes --terms <file>')
+  let json: unknown
+  try {
+    json = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return fail(`${file} doesn't hold JSON`)
+  }
+  const terms = sellerMandateTermsJson.safeParse(json)
+  if (!terms.success) {
+    return fail(
+      `${file} doesn't hold a seller's mandate's terms as the spec writes them, with amounts and times as decimal strings`,
+    )
+  }
+  const services = await sandboxServices({ store: fileStore() })
+  const outcome = await services.askToSell(terms.data)
+  if (!outcome.ok) {
+    console.log(outcome.notice)
+    return
+  }
+  const { request, link } = outcome.asked
+  console.log(`Asked for a seller's mandate, request ${request.id}.`)
+  console.log(`Send your person this link to decide it with their passkey: ${link}`)
+  console.log('Waiting for the decision. Stop with Ctrl+C, and the request keeps waiting.')
+  const stop = new AbortController()
+  process.once('SIGINT', () => stop.abort())
+  let last = ''
+  const settled = await services.awaitSellRequest(request.id, {
+    signal: stop.signal,
+    onRead: ({ request: r }) => {
+      if (r.status.state !== last) console.log(`The request is ${r.status.state}.`)
+      last = r.status.state
+    },
+  })
+  if (settled.request.status.state === 'active') {
+    console.log(
+      "The seller's mandate is in force. This agent holds itself to it before it publishes, quotes or accepts. Avow doesn't enforce seller limits yet.",
+    )
+  }
 }

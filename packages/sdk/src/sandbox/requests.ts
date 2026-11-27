@@ -9,6 +9,8 @@ import {
   quotedLabel,
   type RaisableLimit,
   SANDBOX_PATHS,
+  type SellerMandateTerms,
+  sellerMandateTermsProblem,
 } from '@avow-finance/spec'
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests } from '../http.js'
@@ -61,7 +63,22 @@ export function openModeAsk(cap: bigint): ApprovalAsk {
   return { kind: 'open_mode', terms: { cap }, reason: 'listed_suppliers' }
 }
 
-/** One value a request changes, as it stands now beside what the request asks for. */
+/**
+ * The ask for a seller's mandate with exactly these terms: the signing key it would bind and every
+ * limit on what the agent sells, without the fields that say which mandate it is and whose. The
+ * reason is the fixed code for a first mandate, or for other limits than the ones the key holds,
+ * so the ask carries no text of the agent's own beyond the names of what it would sell.
+ */
+export function sellerMandateAsk(terms: SellerMandateTerms, holdsOne: boolean): ApprovalAsk {
+  const problem = sellerMandateTermsProblem(terms)
+  if (problem) throw new RangeError(`The terms can't be asked for: ${problem}`)
+  return {
+    kind: 'seller_mandate',
+    terms,
+    reason: holdsOne ? 'seller_limits' : 'new_seller',
+  }
+}
+
 /**
  * One row a request's card shows. A change sets a value that stands now beside the one asked for.
  * A request that changes nothing that stood before, such as one sale, states each fact once.

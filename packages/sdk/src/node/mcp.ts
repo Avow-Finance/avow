@@ -20,6 +20,7 @@ import {
   SANDBOX_TOOLS,
   type SandboxTool,
   type ServiceOrder,
+  sellerMandateTermsJson,
   serviceOfferQuote,
   toWire,
   whenRetryPasses,
@@ -114,7 +115,7 @@ type FundsTool = (typeof FUNDS_TOOLS)[number]
  * The tools that ask the business for a change to the agent's authority, and read where it stands.
  * They ask and read: only the business's administrator decides, with their passkey.
  */
-const REQUEST_TOOLS = ['request_change', 'request_status'] as const
+const REQUEST_TOOLS = ['request_change', 'request_seller_mandate', 'request_status'] as const
 type RequestTool = (typeof REQUEST_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
@@ -345,6 +346,31 @@ export const MCP_TOOLS = [
     _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
   },
   {
+    name: 'request_seller_mandate',
+    title: "Ask for a seller's mandate",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Asks your business's administrator for a seller's mandate: the limits on what your agent may sell, for the signing key it sells with. Ask your person for every limit and never choose them yourself. It only asks. It answers with a link for your person to open, where the administrator approves or declines with their passkey, and nothing changes until then. Avow doesn't take seller's mandate requests yet, and then it says so and nothing is asked. Avow doesn't enforce seller limits yet either. Your agent holds itself to its newest mandate before it publishes, quotes or accepts. Call request_status to see where the request stands.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        terms: {
+          type: 'object',
+          description:
+            'The mandate\'s terms exactly as the spec writes a SellerMandate without mandateId, businessId, account, nonce and replaces: signingKey, currency, limits, maxOrderValue, maxOutstanding, maxDeliveryHorizon, minLateCancellationBps, minNoShowBps, maxFreeCancelWindow, buyers, excludedBuyers, excludedCountries, requiresBusinessCheck, negotiable, approvalRule and expiry. Amounts are decimal strings of micros, so $40 is "40000000", and times are decimal strings of seconds',
+        },
+      },
+      required: ['terms'],
+      additionalProperties: false,
+    },
+    _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
+  },
+  {
     name: 'request_status',
     title: 'Where a request stands',
     annotations: {
@@ -358,7 +384,10 @@ export const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The request id request_change answered with' },
+        id: {
+          type: 'string',
+          description: 'The request id request_change or request_seller_mandate answered with',
+        },
       },
       required: ['id'],
       additionalProperties: false,
@@ -955,7 +984,9 @@ export function mcpAgent(
       case 'executing':
         return "It's approved and the change is landing. Keep within your current limits until it's active."
       case 'active':
-        return 'It is active. Your agent picks up the new limit the next time it reads its mandates, within half a minute.'
+        return request.kind === 'seller_mandate'
+          ? "It is active. Your agent reads its seller's mandate before it next publishes, quotes or accepts, and holds itself to it. Avow doesn't enforce seller limits yet."
+          : 'It is active. Your agent picks up the new limit the next time it reads its mandates, within half a minute.'
       case 'declined':
         return 'Your business declined it, so nothing changed.'
       case 'expired':
@@ -1039,9 +1070,34 @@ export function mcpAgent(
     }
   }
 
+  async function requestSellerMandate(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const read = sellerMandateTermsJson.safeParse(args.terms)
+    if (!read.success) {
+      throw new RangeError(
+        "terms has to be a seller's mandate's terms as the spec writes them, with amounts and times as decimal strings",
+      )
+    }
+    const outcome = await (await services()).askToSell(read.data)
+    if (!outcome.ok) {
+      return {
+        text: outcome.notice,
+        structured: { asked: false, reason: outcome.reason },
+        isError: false,
+      }
+    }
+    const facts = requestFacts(outcome.asked)
+    return {
+      text: `Asked your business to ${facts.change.title.toLowerCase()}, request ${outcome.asked.request.id}. ${facts.sentence}`,
+      structured: { asked: true, ...facts },
+      isError: false,
+    }
+  }
+
   async function requestStatus(args: Record<string, unknown>): Promise<ToolAnswer> {
     if (typeof args.id !== 'string' || !isApprovalRequestId(args.id)) {
-      throw new RangeError('id is the request id request_change answered with')
+      throw new RangeError(
+        'id is the request id request_change or request_seller_mandate answered with',
+      )
     }
     const asked = await agentRequest(args.id, {
       store,
@@ -1365,6 +1421,7 @@ export function mcpAgent(
         if (waiting) return waiting
         if (name === 'top_up') return await topUp()
         if (name === 'request_change') return await requestChange(args)
+        if (name === 'request_seller_mandate') return await requestSellerMandate(args)
         if (name === 'request_status') return await requestStatus(args)
         if (name === 'publish_offer') return await publishOffer(args)
         if (name === 'offers') return await offers()
