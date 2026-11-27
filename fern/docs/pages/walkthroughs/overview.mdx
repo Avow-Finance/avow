@@ -23,7 +23,7 @@ The rest run the buyer and supplier quickstarts on one machine against Avow's ho
 Build the quickstarts as the [welcome page](/welcome) shows. From the repository's root folder, make the three businesses. `AVOW_FACTORY` comes from the testnet's `config.json`, read here with `curl` and `jq`. Any factory in the SDK's `MODERATO_FACTORIES` counts, so a lock made from an earlier one still books.
 
 ```bash
-export AVOW_FACTORY=$(curl -s https://try.testnet.avow.finance/config.json | jq -r .factory)
+export AVOW_FACTORY=$(curl -fsS https://try.testnet.avow.finance/config.json | jq -r .factory)
 (cd examples/buyer && node dist/main.js init)
 (cd examples/buyer && STATE_DIR=.avow-buyer-spare node dist/main.js init)
 (cd packages/supplier && node dist/main.js init)
@@ -44,11 +44,12 @@ The second buyer is a spare, so a booking that has to be made again doesn't wait
 The quickstarts read their settings from the environment, so every terminal needs them. Put them in a file at the repository's root, here called `avow-settings.sh`, and keep it out of version control.
 
 ```bash
-export AVOW_FACTORY=$(curl -s https://try.testnet.avow.finance/config.json | jq -r .factory)
-export AVOW_API_URL=https://api.testnet.avow.finance
-export AVOW_TOKEN=<from Avow>
-export AVOW_ARBITER=<from Avow>
-export AVOW_APPROVAL_KEYS=<from Avow>
+CONFIG=$(curl -fsS https://try.testnet.avow.finance/config.json)
+export AVOW_FACTORY=$(echo "$CONFIG" | jq -r .factory)
+export AVOW_API_URL=$(echo "$CONFIG" | jq -r .apiUrl)
+export AVOW_TOKEN=$(echo "$CONFIG" | jq -r .token)
+export AVOW_ARBITER=$(echo "$CONFIG" | jq -r .arbiter)
+export AVOW_APPROVAL_KEYS=$(echo "$CONFIG" | jq -r .approvalKey)
 export BUYER_BUSINESS_ID=<from Avow>
 export SUPPLIER_BUSINESS_ID=<from Avow>
 export SUPPLIER_URL=http://localhost:8790

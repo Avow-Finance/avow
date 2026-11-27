@@ -24,7 +24,7 @@ That leaves out several things a supplier may want, so plan around them.
 
 You need four things.
 
-1. **Node 22.12 or later and pnpm 10**, to build the adapter from this repository.
+1. **Node 22.12 or later, pnpm 10, `curl` and `jq`**, to build the adapter from this repository and read the testnet's settings.
 2. **Registration with Avow's testnet as a supplier.** `init` makes your keys and prints three addresses, and Avow registers those addresses and sends you your business id. The adapter can't register itself yet, so send the addresses, with your business's name and country, to the person at Avow who invited you to the testnet. Nothing works until Avow has registered you.
 3. **A URL agents can reach**, on the port `serve` listens on.
 4. **A receiver for the webhook**, if you want events. The adapter runs without one, and the local check works either way.
@@ -194,7 +194,7 @@ Each post is a JSON body like this, with money in dollars and times in UTC.
     "buyerBusinessId": "…",
     "supplierBusinessId": "…",
     "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-04T08:59:30.000Z",
+    "agreementExpiresAt": "2027-01-11T09:00:00.000Z",
     "acceptanceTransaction": "0x…",
     "terms": { "…": "the terms both sides signed" }
   }
@@ -319,7 +319,7 @@ From the repository's root, build everything and make the supplier's keys and th
 ```bash
 pnpm install
 pnpm build
-export AVOW_FACTORY=$(curl -s https://try.testnet.avow.finance/config.json | jq -r .factory)
+export AVOW_FACTORY=$(curl -fsS https://try.testnet.avow.finance/config.json | jq -r .factory)
 (cd packages/supplier && node dist/main.js init)
 (cd examples/buyer && node dist/main.js init)
 ```
@@ -331,7 +331,7 @@ Send the supplier's three addresses and the buyer's account and lock to the pers
 Put the settings in `avow-settings.sh` at the repository's root, and keep it out of version control.
 
 ```bash
-CONFIG=$(curl -s https://try.testnet.avow.finance/config.json)
+CONFIG=$(curl -fsS https://try.testnet.avow.finance/config.json)
 export AVOW_FACTORY=$(echo "$CONFIG" | jq -r .factory)
 export AVOW_API_URL=$(echo "$CONFIG" | jq -r .apiUrl)
 export AVOW_TOKEN=$(echo "$CONFIG" | jq -r .token)

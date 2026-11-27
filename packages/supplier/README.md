@@ -31,7 +31,7 @@ Each post is JSON like this, with money in dollars and times in UTC.
     "buyerBusinessId": "biz_…",
     "supplierBusinessId": "biz_…",
     "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-04T08:59:30.000Z",
+    "agreementExpiresAt": "2027-01-11T09:00:00.000Z",
     "acceptanceTransaction": "0x…",
     "terms": { "…": "the terms both sides signed" }
   }
@@ -42,7 +42,7 @@ Each post is JSON like this, with money in dollars and times in UTC.
 
 Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) specification, so check each one with that project's library for your language before you act on it. The `webhook-id`, `webhook-timestamp` and `webhook-signature` headers carry what the library needs, and it refuses a post older than five minutes. `avow-supplier secret` makes a secret, which goes in `WEBHOOK_SECRET` here and in your receiver, and nowhere else.
 
-Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones agreed after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
+Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones whose agreement expires after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
 
 ### The check
 
