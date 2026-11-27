@@ -103,6 +103,8 @@ export const REASON_CODES = {
   'terms.charges_invalid':
     "The terms' charges repeat a kind, come out of order, have no amount or name a kind a lock can't hold",
   'message.schema_unknown': "The message's schema version or type isn't one this code reads",
+  'event.code_unknown':
+    "The commitment event's code isn't one this code knows, so a reader sets that event aside and reads on",
   'message.invalid':
     "The message doesn't parse as its schema version, or its fields don't fit together",
   'message.validity_too_long': 'The message stays valid longer than this reader allows',

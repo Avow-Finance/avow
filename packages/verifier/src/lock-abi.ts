@@ -451,6 +451,6 @@ export const LOCK_PAUSED_EVENT_ABI = [
 
 /**
  * What paused a charge, by the code the lock stores as a commitment's `pausedBy` and logs as the
- * `Paused` event's `cause`. A referral logs its own event instead.
+ * `Paused` event's `cause`. The spec holds the table, beside the lock's other numbers.
  */
-export const PAUSE_CAUSES = { referral: 1, timeout: 2, contest: 3, avowPause: 4 } as const
+export { PAUSE_CAUSES } from '@avow-finance/spec'
