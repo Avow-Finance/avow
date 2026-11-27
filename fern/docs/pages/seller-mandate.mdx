@@ -19,6 +19,8 @@ Version 1 covers sales of `service/1` and `job/1`. Terms under any other templat
 
 | Field | What it limits |
 | --- | --- |
+| `signingKey` | The one key that may sell under the mandate |
+| `currency` | The currency every amount is in, and the only one the agent may sell in |
 | `limits` | What the agent may sell. Each line names a category, `service` or `compute-job`, and an item, with the lowest price for a unit and the most units in one order and in one UTC day. A line whose item is null covers every other item in its category |
 | `maxOrderValue` | The most one order may come to |
 | `maxOutstanding` | The most the agent may have promised and not yet delivered, as the agreed price of every sale from agreement to delivery |
@@ -31,7 +33,7 @@ Version 1 covers sales of `service/1` and `job/1`. Terms under any other templat
 | `requiresBusinessCheck` | Whether a buyer has to have passed Avow's business check |
 | `negotiable` | The terms the agent may move when it bargains. Version 1 takes none, so every sale is on its offer's own terms |
 | `approvalRule` | Whether a person decides a sale: never, always, or above an order value under `maxOrderValue` |
-| `expiry` | When the agent's authority to sell ends |
+| `expiry` | When the agent's authority to sell ends, by the end of the year 9999 at the latest |
 
 Amounts are in micros of the mandate's currency, and times are in seconds.
 
@@ -49,7 +51,15 @@ A floor of zero puts no floor on the price. The templates still require a price 
 
 ### One way to write a mandate
 
-A mandate that passes `sellerMandateProblem` hashes in one way only. Lines come in order by category, then the line for every other item, then by item. Each list of businesses and countries is in ascending order with nothing repeated. The mandate holds exactly the fields the signed form names, text is well-formed Unicode, addresses and hashes are in lower case, and every amount fits the signed form. A mandate whose limits conflict is refused too, such as one order's most above what may be outstanding, or a floor above one order's most.
+A mandate that passes `sellerMandateProblem` hashes in one way only. Lines come in order by category, then the line for every other item, then by item. Each list of businesses and countries is in ascending order with nothing repeated, and a business is named by its id. An item's name reads on one line, with no control character, no mark that turns text around or hides it, and no space at either end, since an agent writes it and a person reads it on the card they sign. The mandate holds exactly the fields the signed form names, text is well-formed Unicode, addresses and hashes are in lower case, and every amount fits the signed form. A mandate whose limits conflict is refused too, such as one order's most above what may be outstanding, or a floor above one order's most.
+
+## Asking for one
+
+A selling agent is to ask for a seller's mandate through an [approval request](/docs/reference/approval-requests) of the `seller_mandate` kind, which Avow doesn't take yet. The ask holds the terms the agent wants, which are every field above. The fields that say which mandate this is and whose stay out of it, and those are `mandateId`, `businessId`, `account`, `nonce` and `replaces`. `sellerMandateTermsOf` reads a mandate's terms, and `carriesSellerMandateTerms` says whether a well-formed mandate carries exactly the terms an agent asked for.
+
+An agent can ask and can't sign. Only the business account's root key signs a seller's mandate, and it signs one that carries the approved terms with nothing moved.
+
+A mandate's `mandateId` is 32 random bytes. A sale's record is to show a buyer the mandate's hash, and the random bytes keep anyone from finding the limits behind that hash by guessing them.
 
 ## The check
 

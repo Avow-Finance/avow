@@ -2,6 +2,7 @@ import {
   type ApprovalAsk,
   type ApprovalRequest,
   type AvowDomain,
+  formatUsd,
   isApprovalFinal,
   type Mandate,
   parseApprovalRequest,
@@ -11,6 +12,7 @@ import {
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests } from '../http.js'
 import { approvalRequestLink } from './connect.js'
+import { sellerMandateWords } from './seller-mandate-words.js'
 
 /** Where the agent's requests go, and the key it signs them with. */
 export interface RequestContext {
@@ -70,9 +72,6 @@ export interface ChangeWords {
   rows: ChangeRow[]
 }
 
-const dollars = (micros: bigint) =>
-  `$${(Number(micros) / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
-
 const LIMIT_LABELS = {
   per_commitment: 'Most per commitment',
   open_reserves: 'Most reserved at once',
@@ -80,7 +79,10 @@ const LIMIT_LABELS = {
 
 /**
  * What a request changes, with each value as it stands now beside the value asked for. A request
- * for agent authority has no rows, since the administrator sets its limits when approving.
+ * for agent authority has no rows, since the administrator sets its limits when approving. A
+ * request for a seller's mandate has a row for every limit it would set, and says only whether
+ * each replaces one signed before, since the request carries the earlier mandate's hash alone.
+ * Nothing enforces a seller's mandate yet, and a card that shows these before Avow does says so.
  */
 export function changeWords(request: ApprovalRequest): ChangeWords {
   switch (request.kind) {
@@ -92,8 +94,8 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
         rows: [
           {
             label: LIMIT_LABELS[request.terms.limit],
-            before: dollars(request.terms.from),
-            after: dollars(request.terms.to),
+            before: formatUsd(request.terms.from),
+            after: formatUsd(request.terms.to),
           },
         ],
       }
@@ -108,11 +110,23 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
         rows: [
           {
             label: 'Most held with listed suppliers at once',
-            before: request.basis.openCap === 0n ? 'Closed' : dollars(request.basis.openCap),
-            after: dollars(request.terms.cap),
+            before: request.basis.openCap === 0n ? 'Closed' : formatUsd(request.basis.openCap),
+            after: formatUsd(request.terms.cap),
           },
         ],
       }
+    case 'seller_mandate': {
+      const first = request.basis.sellerMandate === null
+      const before = first ? 'Not set' : 'Set by the mandate this replaces'
+      return {
+        title: first ? 'Let the agent sell' : 'Change what the agent may sell',
+        rows: sellerMandateWords(request.terms).map(({ label, value }) => ({
+          label,
+          before,
+          after: value,
+        })),
+      }
+    }
   }
 }
 

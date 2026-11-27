@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import type { Signed } from './eip712.js'
 import {
+  carriesSellerMandateTerms,
   parseSellerMandate,
+  SELLER_EXPIRY_MAX,
   SELLER_MANDATE_TYPES,
   type SellerMandate,
   type SellingLimit,
   sellerMandateHash,
   sellerMandateProblem,
+  sellerMandateTermsOf,
+  sellerMandateTermsProblem,
   sellingLimitFor,
 } from './seller-mandate.js'
 import {
@@ -306,5 +310,120 @@ describe("the signed form of a seller's mandate", () => {
     expect(reason(message({ excludedBuyers: ['biz_b', 'biz_a'] }))).toBe(invalid)
     expect(reason(message({ limits: [] }))).toBe(invalid)
     expect(reason(message({ businessId: '' }))).toBe(invalid)
+  })
+})
+
+describe("a seller's mandate's terms", () => {
+  const terms = sellerMandateTermsOf(mandate)
+
+  it('are everything but which mandate it is and whose, with the signing key among them', () => {
+    const identity = ['mandateId', 'businessId', 'account', 'nonce', 'replaces']
+    expect(terms.signingKey).toBe(mandate.signingKey)
+    expect(Object.keys(terms).sort()).toEqual(
+      Object.keys(mandate)
+        .filter((k) => !identity.includes(k))
+        .sort(),
+    )
+    expect(sellerMandateTermsProblem(terms)).toBeNull()
+  })
+
+  it('are held to the rules a mandate is, and hold nothing else', () => {
+    expect(sellerMandateTermsProblem({ ...terms, limits: [] })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, negotiable: ['unitPrice'] })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, expiry: 2n ** 64n })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, signingKey: '0xnope' as never })).toBe(invalid)
+    expect(sellerMandateTermsProblem(mandate)).toBe(invalid)
+    const { expiry: _, ...missing } = terms
+    expect(sellerMandateTermsProblem(missing as never)).toBe(invalid)
+    expect(sellerMandateTermsProblem(null as never)).toBe(invalid)
+  })
+
+  it('agree with the mandate on every term, so an ask and a mandate never drift apart', () => {
+    const changes: Partial<SellerMandate>[] = [
+      { currency: 'EUR' as never },
+      { maxOrderValue: 0n },
+      { maxOutstanding: mandate.maxOrderValue - 1n },
+      { maxDeliveryHorizon: 0n },
+      { minNoShowBps: 10_001 },
+      { buyers: ['biz_a'], excludedBuyers: ['biz_b'] },
+      { excludedCountries: ['ir'] },
+      { approvalRule: { kind: 'above', amount: mandate.maxOrderValue } },
+      { expiry: 0n },
+      { expiry: SELLER_EXPIRY_MAX + 1n },
+    ]
+    for (const change of changes) {
+      expect(sellerMandateProblem(withMandate(change))).toBe(invalid)
+      expect(sellerMandateTermsProblem({ ...terms, ...change })).toBe(invalid)
+    }
+    expect(sellerMandateTermsProblem({ ...terms, expiry: SELLER_EXPIRY_MAX })).toBeNull()
+  })
+
+  it('name what is sold and to whom in text that reads as written, since a person signs on it', () => {
+    const named = (item: string) =>
+      sellerMandateTermsProblem({ ...terms, limits: [jobLine, anyService, { ...bulkEval, item }] })
+    expect(named('Bulk eval, large')).toBeNull()
+    // A line break, a mark that turns the text around, a hidden space and a space at an end.
+    for (const item of [
+      'Bulk\nMost for one order',
+      'Bulk\u202e',
+      'Bulk\u200b',
+      ' Bulk',
+      'Bulk\t',
+    ]) {
+      expect(named(item)).toBe(invalid)
+    }
+    const selling = (buyers: string[]) =>
+      sellerMandateTermsProblem({ ...terms, buyers, excludedBuyers: [] })
+    expect(selling(['biz_a', 'sandbox-12ab'])).toBeNull()
+    // A business is named by its id, so no list can read as a rule the terms don't hold.
+    expect(selling(['acme, with a self-declared country other than IR'])).toBe(invalid)
+    expect(selling(['biz a'])).toBe(invalid)
+  })
+
+  it('never throw, whatever they are given', () => {
+    const trap = new Proxy(
+      { ...terms },
+      {
+        get: () => {
+          throw new Error('read')
+        },
+      },
+    )
+    expect(sellerMandateTermsProblem(trap)).toBe(invalid)
+    expect(sellerMandateProblem(trap as never)).toBe(invalid)
+    expect(carriesSellerMandateTerms(trap as never, terms)).toBe(false)
+  })
+
+  it('are carried by a mandate only exactly, whichever mandate it is', () => {
+    expect(carriesSellerMandateTerms(mandate, terms)).toBe(true)
+    const another = withMandate({
+      mandateId: id('seller-mandate-2'),
+      nonce: 2n,
+      replaces: id('the mandate before'),
+    })
+    expect(carriesSellerMandateTerms(another, terms)).toBe(true)
+    const moved: Partial<SellerMandate>[] = [
+      { signingKey: OTHER_KEY },
+      { maxOrderValue: mandate.maxOrderValue + 1n },
+      { limits: [jobLine, anyService] },
+      { limits: [jobLine, anyService, { ...bulkEval, minUnitPrice: 0n }] },
+      { excludedBuyers: [] },
+      { approvalRule: { kind: 'never' } },
+      { expiry: mandate.expiry + 1n },
+    ]
+    for (const change of moved) {
+      expect(carriesSellerMandateTerms(withMandate(change), terms)).toBe(false)
+    }
+    expect(carriesSellerMandateTerms(mandate, { ...terms, weeklyBudget: 1n } as never)).toBe(false)
+  })
+
+  it('are never carried by a malformed mandate, even one that would write the same', () => {
+    // An amount as a string writes as the bigint does, and neither is a mandate's.
+    const written = { ...mandate, maxOrderValue: String(mandate.maxOrderValue) }
+    expect(carriesSellerMandateTerms(written as never, terms)).toBe(false)
+    expect(
+      carriesSellerMandateTerms(mandate, { ...terms, maxOrderValue: '500000000' } as never),
+    ).toBe(false)
+    expect(carriesSellerMandateTerms(null as never, {} as never)).toBe(false)
   })
 })

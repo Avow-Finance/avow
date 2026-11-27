@@ -136,4 +136,120 @@ describe("a request's words", () => {
       }).rows,
     ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
+
+  it("shows every limit a seller's mandate would set, and what on testnet is self-declared or simulated", () => {
+    const terms = {
+      signingKey: `0x${'5e'.repeat(20)}`,
+      currency: 'USD',
+      limits: [
+        {
+          category: 'compute-job',
+          item: 'fine-tuning',
+          minUnitPrice: 100_000_000n,
+          maxUnitsPerOrder: 1,
+          maxUnitsPerDay: 3,
+        },
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: 40_000_000n,
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+        {
+          category: 'service',
+          item: 'Bulk eval',
+          minUnitPrice: 0n,
+          maxUnitsPerOrder: 8,
+          maxUnitsPerDay: 20,
+        },
+      ],
+      maxOrderValue: 500_000_000n,
+      maxOutstanding: 2_000_000_000n,
+      maxDeliveryHorizon: 604_800n,
+      minLateCancellationBps: 2000,
+      minNoShowBps: 5000,
+      maxFreeCancelWindow: 5_400n,
+      buyers: [],
+      excludedBuyers: ['sandbox-blocked'],
+      excludedCountries: ['IR', 'KP'],
+      requiresBusinessCheck: true,
+      negotiable: [],
+      approvalRule: { kind: 'above', amount: 300_000_000n },
+      expiry: 1_802_592_000n,
+    } as const
+    const asked = {
+      ...base,
+      kind: 'seller_mandate',
+      terms,
+      reason: 'new_seller',
+      basis: { sellerMandate: null },
+    } as const
+    const words = changeWords(asked)
+    expect(words.title).toBe('Let the agent sell')
+    expect(words.rows.map((r) => [r.label, r.after])).toEqual([
+      ['Signing key', `0x${'5e'.repeat(20)}`],
+      // An agent names what it sells, so each name shows in quotes after a label the card wrote.
+      ['The job "fine-tuning"', 'From $100 a job, up to 3 a day'],
+      ['Any other service', 'From $40 a unit, up to 4 an order and 10 a day'],
+      ['The service "Bulk eval"', 'Any price a unit, up to 8 an order and 20 a day'],
+      ['Sells in', 'USD'],
+      ['Most for one order', '$500'],
+      ['Most promised and not yet delivered', '$2,000'],
+      ['Longest until delivery', '7 days'],
+      ['Lowest late-cancellation charge', '20%'],
+      ['Lowest no-show charge', '50%'],
+      ['Longest free cancellation for a service', '90 minutes'],
+      [
+        'Buyers',
+        "Any business except sandbox-blocked, with a self-declared country other than IR, KP, that passed Avow's simulated business check",
+      ],
+      ['Terms it may bargain over', 'None'],
+      ['A person decides', 'Sales over $300'],
+      ['Ends', '2027-02-14T08:00:00.000Z'],
+    ])
+    expect(new Set(words.rows.map((r) => r.before))).toEqual(new Set(['Not set']))
+    const replacing = changeWords({
+      ...asked,
+      reason: 'seller_limits',
+      basis: { sellerMandate: `0x${'33'.repeat(32)}` },
+    })
+    expect(replacing.title).toBe('Change what the agent may sell')
+    expect(replacing.rows[0]?.before).toBe('Set by the mandate this replaces')
+
+    // Every other way the terms can read, with amounts written exactly however large they are.
+    const after = (change: object) =>
+      Object.fromEntries(
+        changeWords({ ...asked, terms: { ...terms, ...change } }).rows.map((r) => [
+          r.label,
+          r.after,
+        ]),
+      )
+    const big = 10n ** 22n + 1n
+    const other = after({
+      limits: [
+        { ...terms.limits[0], item: null },
+        { ...terms.limits[2], item: 'Most for one order' },
+      ],
+      maxOrderValue: big,
+      maxOutstanding: big,
+      maxFreeCancelWindow: 0n,
+      buyers: ['biz_a', 'biz_b'],
+      excludedBuyers: [],
+      excludedCountries: [],
+      requiresBusinessCheck: false,
+      approvalRule: { kind: 'above', amount: big - 1n },
+      expiry: 253_402_300_799n,
+    })
+    expect(other['Any other job']).toBe('From $100 a job, up to 3 a day')
+    // A service named as a row of the card is still read as a service's name.
+    expect(other['The service "Most for one order"']).toBeDefined()
+    expect(other['Most for one order']).toBe('$10,000,000,000,000,000.000001')
+    expect(other['A person decides']).toBe('Sales over $10,000,000,000,000,000')
+    expect(other['Longest free cancellation for a service']).toBe('None')
+    expect(other.Buyers).toBe('Only biz_a, biz_b')
+    expect(other.Ends).toBe('9999-12-31T23:59:59.000Z')
+    expect(after({ approvalRule: { kind: 'always' } })['A person decides']).toBe('Every sale')
+    expect(after({ approvalRule: { kind: 'never' } })['A person decides']).toBe('No sale')
+  })
 })

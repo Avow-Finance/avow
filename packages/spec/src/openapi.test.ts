@@ -15,6 +15,10 @@ describe("the API reference's OpenAPI document", () => {
     expect(readFileSync(FILE, 'utf8')).toBe(written())
   })
 
+  it('marks no field a caller sends as one it may not send', () => {
+    expect(JSON.stringify(openApiDocument())).not.toContain('"readOnly"')
+  })
+
   it("passes every example through the schema its route's parser checks", () => {
     for (const op of API_OPERATIONS) {
       if (op.request?.example !== undefined) {

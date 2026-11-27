@@ -25,3 +25,6 @@ export const LOWER_ADDRESS = /^0x[0-9a-f]{40}$/
 
 /** A country as an ISO 3166-1 alpha-2 code in upper case. */
 export const COUNTRY_CODE = /^[A-Z]{2}$/
+
+/** A business's id as Avow writes one, which is 1 to 100 letters, digits, hyphens and underscores. */
+export const BUSINESS_ID = /^[A-Za-z0-9_-]{1,100}$/

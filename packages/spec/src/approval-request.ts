@@ -3,7 +3,14 @@ import { z } from 'zod'
 import { AGENT_REQUEST_LIFETIME } from './agent-connect.js'
 import { canonicalJson } from './canonical.js'
 import { type AvowDomain, domain, mandateHash } from './eip712.js'
+import { BUSINESS_ID } from './fields.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
+import {
+  carriesSellerMandateTerms,
+  type SellerMandate,
+  sellerMandateTermsJson,
+  sellerMandateTermsProblem,
+} from './seller-mandate.js'
 import { reasonCodeJson } from './session-fields.js'
 import type { Mandate, ReplacementMandate } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
@@ -32,11 +39,20 @@ export const APPROVAL_KINDS = [
   'raise_limit',
   'name_supplier',
   'open_mode',
+  'seller_mandate',
 ] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
-/** The kinds that change authority an agent already holds, which a business decides its agents may ask for. */
-export const APPROVAL_CHANGE_KINDS = ['raise_limit', 'name_supplier', 'open_mode'] as const
+/**
+ * The kinds an agent the business already knows asks for, which a business decides its agents may
+ * ask for. Each changes a buying agent's authority, or sets what a selling agent may promise.
+ */
+export const APPROVAL_CHANGE_KINDS = [
+  'raise_limit',
+  'name_supplier',
+  'open_mode',
+  'seller_mandate',
+] as const
 export type ApprovalChangeKind = (typeof APPROVAL_CHANGE_KINDS)[number]
 
 const DAY = 86_400n
@@ -52,6 +68,7 @@ export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   raise_limit: DAY,
   name_supplier: DAY,
   open_mode: DAY,
+  seller_mandate: DAY,
 }
 
 /** The window an agent's asks are counted over, in seconds. */
@@ -78,7 +95,9 @@ export const APPROVAL_DECLINE_COOLDOWN = DAY
 
 /**
  * Why an agent asked, from a fixed list, each with the words Avow shows for it. An agent gives no
- * text of its own, so a request can't carry instructions to whoever reads it.
+ * text of its own, so a request can't carry instructions to whoever reads it. The one thing an
+ * agent names is what it would sell, in an ask for a seller's mandate. Those names read on one line
+ * with no hidden mark in them, and a card shows each in quotes under a label of its own.
  */
 export const APPROVAL_REASONS = {
   new_agent: {
@@ -100,6 +119,14 @@ export const APPROVAL_REASONS = {
   listed_suppliers: {
     kind: 'open_mode',
     text: "The agent needs suppliers listed in the testnet's supplier registry",
+  },
+  new_seller: {
+    kind: 'seller_mandate',
+    text: 'The agent holds no authority to sell yet',
+  },
+  seller_limits: {
+    kind: 'seller_mandate',
+    text: 'The agent needs other limits on what it sells than the ones it holds',
   },
 } as const satisfies Record<string, { kind: ApprovalKind; text: string }>
 export type ApprovalReason = keyof typeof APPROVAL_REASONS
@@ -143,7 +170,7 @@ const KIND_FIELDS = {
     basis: z.strictObject({ mandate: bytes32 }),
   },
   name_supplier: {
-    terms: z.strictObject({ supplier: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }),
+    terms: z.strictObject({ supplier: z.string().regex(BUSINESS_ID) }),
     /**
      * The hash of the mandate the supplier would be added to, the account the lock would name, and
      * how many times that account's place on the lock had changed. The lock names the supplier
@@ -161,9 +188,32 @@ const KIND_FIELDS = {
      */
     basis: z.strictObject({ openCap: u256, openCapChanges: u256 }),
   },
+  seller_mandate: {
+    /**
+     * The exact terms of the seller's mandate the agent asks for, with the signing key the mandate
+     * would bind among them. The request's `agentKey` is the key of the agent that asks, which may
+     * be another key of the same agent. An approval is carried out only by a mandate the root key
+     * signs that carries these terms and nothing else, as `carriesOutSellerRequest` checks.
+     */
+    terms: sellerMandateTermsJson.refine(
+      (t) => sellerMandateTermsProblem(t) === null,
+      "well-formed terms of a seller's mandate",
+    ),
+    /**
+     * The hash of the seller's mandate the signing key holds, which the new one would replace, or
+     * null when it holds none. Another mandate signed in between makes the request stale. It is
+     * never the zero hash, which no mandate can replace.
+     */
+    basis: z.strictObject({
+      sellerMandate: bytes32.refine((h) => !/^0x0{64}$/.test(h), 'a mandate hash').nullable(),
+    }),
+  },
 } as const
 
-/** What an agent sends to ask for a change to authority it holds. Avow reads the basis itself. */
+/**
+ * What an agent sends to ask for a change to authority it holds, or for authority to sell. Avow
+ * reads the basis itself.
+ */
 export const approvalAskJson = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('raise_limit'),
@@ -179,6 +229,11 @@ export const approvalAskJson = z.discriminatedUnion('kind', [
     kind: z.literal('open_mode'),
     terms: KIND_FIELDS.open_mode.terms,
     reason: z.enum(reasonsFor('open_mode')),
+  }),
+  z.strictObject({
+    kind: z.literal('seller_mandate'),
+    terms: KIND_FIELDS.seller_mandate.terms,
+    reason: z.enum(reasonsFor('seller_mandate')),
   }),
 ])
 export type ApprovalAsk = z.infer<typeof approvalAskJson>
@@ -310,6 +365,19 @@ export const approvalRequestJson = z.discriminatedUnion('kind', [
       basis: KIND_FIELDS.open_mode.basis,
     })
     .refine((r) => r.terms.cap !== r.basis.openCap, 'open mode changes the cap the lock holds'),
+  z
+    .strictObject({
+      ...recordBase,
+      kind: z.literal('seller_mandate'),
+      businessId: z.string().min(1).max(200),
+      terms: KIND_FIELDS.seller_mandate.terms,
+      reason: z.enum(reasonsFor('seller_mandate')),
+      basis: KIND_FIELDS.seller_mandate.basis,
+    })
+    .refine(
+      (r) => (r.reason === 'new_seller') === (r.basis.sellerMandate === null),
+      "a first seller's mandate replaces none, and a change of limits replaces one",
+    ),
 ])
 export type ApprovalRequest = z.infer<typeof approvalRequestJson>
 
@@ -475,4 +543,18 @@ export function changedMandate(
     nonce: current.nonce + 1n,
     replaces: request.basis.mandate,
   }
+}
+
+/**
+ * Whether a seller's mandate carries out an approved request for one. The mandate is well formed
+ * and for the request's business, it replaces exactly the mandate the request was asked against,
+ * and it carries the terms asked for with nothing moved, the signing key among them. Whoever
+ * records the mandate also checks that the business account's root key signed it.
+ */
+export function carriesOutSellerRequest(request: ApprovalRequest, mandate: SellerMandate): boolean {
+  if (request.kind !== 'seller_mandate') return false
+  if (!carriesSellerMandateTerms(mandate, request.terms)) return false
+  return (
+    mandate.businessId === request.businessId && mandate.replaces === request.basis.sellerMandate
+  )
 }
