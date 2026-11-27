@@ -103,6 +103,33 @@ describe('registering the business as a sandbox supplier', () => {
     expect(body.registration).toMatchObject({ environment: 'sandbox', expiry: NOW + 120n })
   })
 
+  it("takes a plain key for the account, as a supplier's adapter holds one", async () => {
+    const root = privateKeyToAccount(generatePrivateKey())
+    const signingKey = privateKeyToAccount(generatePrivateKey())
+    const api = sandboxApi()
+    const profile = await registerSandboxSupplier({
+      deployment,
+      root,
+      signingKey,
+      payee: root.address,
+      fetch: api.fetcher,
+    })
+    expect(profile.account).toBe(root.address.toLowerCase())
+    const [sent] = api.seen
+    expect(isAddressEqual(sent?.signer as Address, root.address)).toBe(true)
+    const body = supplierRegistrationBody.parse(sent?.body)
+    const hash = registrationDigest(registrationDomain(deployment.chainId, deployment.factory), {
+      kind: 'supplier',
+      registration: body.registration,
+    })
+    expect(
+      isAddressEqual(
+        await recoverAddress({ hash, signature: body.accountSignature }),
+        root.address,
+      ),
+    ).toBe(true)
+  })
+
   it('refuses an answer that names another signing key than the one registered', async () => {
     const root = Account.fromSecp256k1(generatePrivateKey())
     const api = sandboxApi((r) => ({

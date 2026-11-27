@@ -15,7 +15,7 @@ The adapter takes GPU bookings and nothing else. It signs only terms built with 
 That leaves out several things a supplier may want, so plan around them.
 
 - **No service orders.** It doesn't sell `service/1` offers. [Services sold by quantity](/docs/reference/services) covers those, sold through the `avow-sandbox` package.
-- **No compute listing for jobs.** It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it. An agent books from it with terms it already has.
+- **No offers yet.** The adapter doesn't list offers yet. It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it, and an agent books from it with terms it already has.
 - **No seller's mandate.** It refuses an agreement that names one, since it acts under none.
 - **No check of your capacity.** It signs any offer that meets the rules below without asking your system first, and your system hears of the booking only once it's signed. Set `MAX_RESERVE_DOLLARS`, `MAX_OPEN_PER_BUYER` and `MAX_OPEN_BOOKINGS` to what you can actually serve.
 - **One process.** Run one `serve` at a time for a state directory, since it counts open bookings from what it saved itself.
@@ -25,13 +25,13 @@ That leaves out several things a supplier may want, so plan around them.
 You need four things.
 
 1. **Node 22.12 or later, pnpm 10, `curl` and `jq`**, to build the adapter from this repository and read the testnet's settings.
-2. **Registration with Avow's testnet as a supplier.** `init` makes your keys and prints three addresses, and Avow registers those addresses and sends you your business id. The adapter can't register itself yet, so send the addresses, with your business's name and country, to the person at Avow who invited you to the testnet. Nothing works until Avow has registered you.
+2. **Registration with Avow's testnet as a supplier**, which `init` does for you. It makes your keys, registers them with Avow's sandbox and prints the business id Avow registered you under. Your account key and your signing key both sign the registration, so nobody can register a key they don't hold.
 3. **A URL agents can reach**, on the port `serve` listens on.
 4. **A receiver for the webhook**, if you want events. The adapter runs without one, and the local check works either way.
 
 On testnet Avow registers you as a test business. Every buyer you meet there is a sandbox business, a test business too, and its commitments are test data. A registration, or a simulated [business check](/docs/reference/business-checks) that passes on testnet, never makes a business verified.
 
-A buyer's agent can reserve with you only once its business has named your account on its lock, or opened its lock to listed suppliers. The business does that with its own root key, and the [buyer quickstart](https://github.com/Avow-Finance/avow/tree/main/examples/buyer)'s `enroll` names the supplier it books from. A lock that hasn't named you refuses the reserve with `supplier.not_named`.
+A buyer's agent can reserve with you only once its business has named your account on its lock, or opened its lock to listed suppliers. The business does that with its own root key, and the [buyer quickstart](https://github.com/Avow-Finance/avow/tree/main/examples/buyer)'s `enroll` names the supplier it books from. A lock that hasn't named you refuses the reserve with `supplier.not_named`. A supplier `init` registers has no lock of its own, so it can't start a business check and the testnet's supplier registry doesn't list it. Expect every buyer to name you on its lock.
 
 ## Your two keys
 
@@ -63,14 +63,14 @@ The filter builds the adapter and the packages it uses. `pnpm build` builds ever
 
 | Command | What it does | Settings it needs |
 | --- | --- | --- |
-| `init` | Makes your account key and signing key, or keeps the ones `keys.json` holds, has Moderato's faucet fund the signing key, and prints your account, payout address and signing key | None |
+| `init` | Makes your account key and signing key, or keeps the ones `keys.json` holds, registers them with Avow's sandbox as a supplier, has Moderato's faucet fund the signing key, and prints your business id, account, payout address and signing key | None, or `AVOW_API_URL` and `AVOW_FACTORY` together |
 | `profile` | Prints the same three addresses again | None |
 | `secret` | Prints a new webhook secret for `WEBHOOK_SECRET` | None |
-| `serve` | Serves agents, accepts each reserve Avow authorizes, posts webhook events and answers the local check, until you stop it | Every setting Avow sends |
+| `serve` | Serves agents, accepts each reserve Avow authorizes, posts webhook events and answers the local check, until you stop it | `AVOW_API_URL`, `AVOW_FACTORY`, `AVOW_TOKEN`, `AVOW_APPROVAL_KEYS` and `SUPPLIER_BUSINESS_ID` |
 | `report` | Reports a late cancellation on an accepted booking, or a no-show with `--no-show`, then follows the lock until Avow confirms or refers it | `AVOW_FACTORY` and `AVOW_TOKEN` |
 | `redeliver` | Puts every webhook event the adapter gave up on back to be sent once `serve` runs | None |
 
-`init` prints JSON your registration needs. `payee` is your account, since charges pay the account itself.
+`init` registers with the deployment the testnet publishes at [try.testnet.avow.finance/config.json](https://try.testnet.avow.finance/config.json), and refuses one whose factory the SDK doesn't trust. With both `AVOW_API_URL` and `AVOW_FACTORY` set, it registers with those instead, and with only one of them set it still reads the published deployment. It prints what Avow registered. `businessId` goes in `SUPPLIER_BUSINESS_ID`, and `payee` is your account, since charges pay the account itself.
 
 ```bash
 node dist/main.js init
@@ -78,6 +78,7 @@ node dist/main.js init
 
 ```json
 {
+  "businessId": "sandbox-…",
   "account": "0x…",
   "payee": "0x…",
   "signingKey": "0x…"
@@ -108,11 +109,11 @@ Every setting comes from the environment. `serve` names every setting that's mis
 
 | Setting | What it is |
 | --- | --- |
-| `AVOW_API_URL` | Avow's API, `https://api.testnet.avow.finance` on testnet |
-| `AVOW_FACTORY` | Avow's lock factory on Moderato |
+| `AVOW_API_URL` | Avow's API, `https://api.testnet.avow.finance` on testnet. `init` uses it only when `AVOW_FACTORY` is set too |
+| `AVOW_FACTORY` | Avow's lock factory on Moderato. `init` uses it only when `AVOW_API_URL` is set too |
 | `AVOW_TOKEN` | The token reserves are held in |
 | `AVOW_APPROVAL_KEYS` | The address Avow signs authorizations with. Separate several with commas |
-| `SUPPLIER_BUSINESS_ID` | The business id Avow registered you under |
+| `SUPPLIER_BUSINESS_ID` | The business id Avow registered you under, which `init` prints |
 | `PORT` | Where agents reach you, 8790 by default |
 | `MAX_RESERVE_DOLLARS` | The largest reserve you take for one booking, in whole dollars, 1000 by default |
 | `POLL_SECONDS` | How often it asks Avow about open bookings, 5 by default |
@@ -310,11 +311,11 @@ A confirmed charge pays at most the amount the terms allow once the contest wind
 
 ## A booking end to end
 
-This runs a test supplier and a test buyer on one machine against Avow's hosted testnet, with test dollars. It takes about 20 minutes once Avow has registered both businesses. The [walkthroughs](/docs/walkthroughs/overview) run the same two quickstarts through charges and disputes.
+This runs a test supplier and a test buyer on one machine against Avow's hosted testnet, with test dollars. It takes about 20 minutes once Avow has registered the buyer. The [walkthroughs](/docs/walkthroughs/overview) run the same two quickstarts through charges and disputes.
 
 ### 1. Make both businesses
 
-From the repository's root, build everything and make the supplier's keys and the buyer's keys and lock. `AVOW_FACTORY` comes from the testnet's `config.json`, read here with `curl` and `jq`. Any factory in the SDK's `MODERATO_FACTORIES` counts, so a lock made from an earlier one still books.
+From the repository's root, build everything, register the supplier, and make the buyer's keys and lock. `AVOW_FACTORY` comes from the testnet's `config.json`, read here with `curl` and `jq`. Any factory in the SDK's `MODERATO_FACTORIES` counts, so a lock made from an earlier one still books.
 
 ```bash
 pnpm install
@@ -324,7 +325,7 @@ export AVOW_FACTORY=$(curl -fsS https://try.testnet.avow.finance/config.json | j
 (cd examples/buyer && node dist/main.js init)
 ```
 
-Send the supplier's three addresses and the buyer's account and lock to the person at Avow who invited you to the testnet, with a name and country for each business. Avow registers both as test businesses, sends the buyer test dollars for its reserves, and sends you each business id.
+The supplier's `init` registers it and prints its business id. The buyer quickstart doesn't register itself yet, so send the buyer's account and lock to the person at Avow who invited you to the testnet, with the business's name and country. Avow registers it as a test business, sends it test dollars for its reserves, and sends you its business id.
 
 ### 2. Write the settings
 
@@ -337,7 +338,7 @@ export AVOW_API_URL=$(echo "$CONFIG" | jq -r .apiUrl)
 export AVOW_TOKEN=$(echo "$CONFIG" | jq -r .token)
 export AVOW_APPROVAL_KEYS=$(echo "$CONFIG" | jq -r .approvalKey)
 export AVOW_ARBITER=$(echo "$CONFIG" | jq -r .arbiter)
-export SUPPLIER_BUSINESS_ID=<the supplier's id from Avow>
+export SUPPLIER_BUSINESS_ID=<the businessId the supplier's init printed>
 export BUYER_BUSINESS_ID=<the buyer's id from Avow>
 export SUPPLIER_URL=http://localhost:8790
 export WEBHOOK_URL=http://127.0.0.1:8792/avow
@@ -472,7 +473,9 @@ Run `init` on your own machine, then give the host only what `serve` needs. `ser
 | `These settings are missing or wrong: …` | `serve` or `report` found a setting missing or malformed, such as an `AVOW_API_URL` with a path, a business id with capitals, a `WEBHOOK_URL` over plain http to another machine, a `WEBHOOK_SECRET` that `secret` didn't make, or `LOCAL_PORT` equal to `PORT` | Fix each setting the error names, in the terminal that runs the command |
 | `These settings are missing or wrong: SUPPLIER_SIGNING_KEY` or `SUPPLIER_ACCOUNT` | Only one of the pair is set, or one is malformed | Set both, or neither to use `keys.json` |
 | `No keys in <dir>. Run init first.` | The state directory has no `keys.json` | Run `init`, or point `STATE_DIR` at the directory that has it |
-| `HTTP request failed` from `init` | Moderato's faucet or RPC didn't answer | Run `init` again. It keeps the keys it made and asks the faucet again |
+| `Avow refused these keys as taken (sandbox.taken)` | Avow holds this account with another payout address, or another supplier holds the signing key | Run `init` with a new `STATE_DIR`, which makes new keys |
+| `Avow's sandbox didn't register your business as a supplier (<reason>)` | Avow refused or didn't answer, for the reason code shown, such as `sandbox.closed` | Run `init` again once that's fixed. It keeps the keys it made, and Avow answers a repeat with the supplier it holds |
+| `Moderato's faucet didn't fund the signing key` | The faucet or Moderato's RPC didn't answer, after Avow registered you | Run `init` again. It keeps the keys and the registration, and asks the faucet again |
 | `couldn't open port <port> for agents` or `for your own systems` | Something else is listening there | Stop it, or set `PORT` or `LOCAL_PORT` |
 | An agent gets a 422 | The offer broke a rule, and the `error` sentence names it | Book GPU reservation terms within your limits, leaving at least a minute to accept |
 | An agent gets a 429 | The open-booking limits are full | Wait for a booking to be accepted or lapse, or raise `MAX_OPEN_PER_BUYER` or `MAX_OPEN_BOOKINGS` |

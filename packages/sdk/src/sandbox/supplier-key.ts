@@ -1,4 +1,5 @@
 import {
+  type HashSigner,
   type Parsed,
   parseSupplierProfile,
   registrationDigest,
@@ -62,14 +63,17 @@ const madeFor = (item: SupplierItem, business: StoredBusiness) =>
   isAddressEqual(item.profile.account, business.account)
 
 /**
- * Registers the business with Avow's sandbox as a supplier, under its own account, with the given
- * signing key and its account as the payout address. The root key and the signing key both sign
- * the registration, and the root key signs the request around it, naming the factory. Avow answers
- * a repeat of the same three addresses with the supplier it holds, and the answer has to name them.
+ * Registers an account with Avow's sandbox as a supplier, with the given signing key and payout
+ * address. The account's key, a Tempo root account or a plain key, and the signing key both sign
+ * the registration, and the account's key signs the request around it, naming the factory. Avow
+ * answers a repeat of the same three addresses with the supplier it holds, and the answer has to
+ * name them. A refusal throws an error whose cause is the `AvowApiError`, so a caller can tell
+ * `sandbox.taken` from the rest.
  */
 export async function registerSandboxSupplier(deps: {
   deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl' | 'factory'>
-  root: TempoAccount.RootAccount
+  /** The account's key, which the account's address is taken from. */
+  root: HashSigner & { address: Address }
   signingKey: PrivateKeyAccount
   payee: Address
   now?: () => bigint

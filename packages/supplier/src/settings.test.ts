@@ -1,6 +1,6 @@
 import { getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { envKeys, serveSettings } from './settings.js'
+import { envKeys, registrationSettings, serveSettings } from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 
 const KEY = `0x${'1a'.repeat(32)}`
@@ -117,5 +117,26 @@ describe('envKeys', () => {
     } catch (e) {
       expect(String(e)).not.toContain(KEY)
     }
+  })
+})
+
+describe('registrationSettings', () => {
+  it("leaves init to the published deployment unless Avow's API and factory are both set", () => {
+    expect(registrationSettings({})).toBeNull()
+    expect(registrationSettings({ AVOW_FACTORY: SERVE.AVOW_FACTORY })).toBeNull()
+    expect(registrationSettings({ AVOW_API_URL: SERVE.AVOW_API_URL })).toBeNull()
+    expect(
+      registrationSettings({ AVOW_API_URL: SERVE.AVOW_API_URL, AVOW_FACTORY: SERVE.AVOW_FACTORY }),
+    ).toEqual({
+      chainId: 42431,
+      apiUrl: SERVE.AVOW_API_URL,
+      factory: getAddress(SERVE.AVOW_FACTORY),
+    })
+  })
+
+  it('refuses a set pair that is wrong, naming each setting', () => {
+    expect(() =>
+      registrationSettings({ AVOW_API_URL: 'https://api.example/v1', AVOW_FACTORY: 'nope' }),
+    ).toThrow(/missing or wrong: AVOW_API_URL, AVOW_FACTORY\./)
   })
 })

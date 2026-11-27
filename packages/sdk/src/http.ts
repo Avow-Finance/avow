@@ -10,6 +10,7 @@ import {
   type Enrollment,
   type EnrollmentRequest,
   encodeApiBody,
+  type HashSigner,
   isApiAudience,
   newRequestId,
   type Parsed,
@@ -32,7 +33,6 @@ import {
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
-import type { Account as TempoAccount } from 'viem/tempo'
 import type { AgentKey } from './agent.js'
 import type { AvowApi, AvowRecords, BusinessRecords } from './avow-api.js'
 
@@ -180,7 +180,7 @@ export function agentRequestKey(key: AgentKey): RequestKey {
  * The business account's root key as a request signer. Its address is the account's own, and a
  * root key signs bare, so Avow reads the signature as the account's without a keychain envelope.
  */
-export function rootRequestKey(root: TempoAccount.RootAccount): RequestKey {
+export function rootRequestKey(root: HashSigner & { address: Address }): RequestKey {
   return { address: root.address, signDigest: (hash) => root.sign({ hash }) }
 }
 
