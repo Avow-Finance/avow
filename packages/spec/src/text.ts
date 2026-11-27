@@ -35,10 +35,12 @@ const isUnseen = (c: number) =>
 
 /**
  * Whether a value is sound text that reads as it's written, on one line, with no space at either
- * end. A name one party writes and another reads on a signing card has to be, or it could pose as
- * a line the card wrote.
+ * end and no double quote in it. A name one party writes and another reads on a signing card has
+ * to be, or it could pose as a line the card wrote. A card shows such text in double quotes, so a
+ * quote inside it would end the quoting early.
  */
 export const isPlainText = (v: unknown, max: number): v is string =>
   isSoundText(v, max) &&
   v === v.trim() &&
+  !/["\u201c\u201d\u201e\u201f\u00ab\u00bb]/.test(v) &&
   !Array.from(v).some((ch) => isUnseen(ch.codePointAt(0) as number))

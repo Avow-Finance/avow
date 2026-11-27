@@ -63,7 +63,8 @@ export function openModeAsk(cap: bigint): ApprovalAsk {
 /** One value a request changes, as it stands now beside what the request asks for. */
 export interface ChangeRow {
   label: string
-  before: string
+  /** How the value stands now, or null where the request changes nothing that stood before. */
+  before: string | null
   after: string
 }
 
@@ -122,7 +123,7 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
         title: 'Approve one sale',
         rows: saleWords(request.terms).map(({ label, value }) => ({
           label,
-          before: 'Waits for you',
+          before: null,
           after: value,
         })),
       }
@@ -181,10 +182,12 @@ export async function readOwnRequest(c: RequestContext, id: string): Promise<Ask
 }
 
 /**
- * Whether the agent can act on what it asked for. Approved isn't enough, since the change still
- * has to land: only an active request is.
+ * Whether the agent can act on what it asked for. For a change, approved isn't enough, since the
+ * change still has to land, and only an active request is. One sale has no change to land, so it
+ * can be made while its request is approved, and an active one was made already.
  */
-export const isUsable = (request: ApprovalRequest): boolean => request.status.state === 'active'
+export const isUsable = (request: ApprovalRequest): boolean =>
+  request.status.state === (request.kind === 'sale' ? 'approved' : 'active')
 
 /** Whether a request has stopped moving, so reading it again won't change it. */
 export const hasSettled = (request: ApprovalRequest): boolean =>

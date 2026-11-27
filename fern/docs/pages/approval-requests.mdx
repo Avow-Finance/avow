@@ -47,7 +47,7 @@ A signing key that holds no seller's mandate is asked for with `new_seller`, aga
 
 An approval is to be carried out by a mandate, within the hour an approved change has to land. `carriesOutSellerRequest` holds the rule. The mandate is for the request's business, replaces exactly the mandate the request was made against, and carries the terms asked for with nothing moved, the signing key among them. A mandate with one limit moved carries out nothing.
 
-This is the one kind where an agent writes words a person reads, which are the names of what it would sell. A name reads on one line, with no control character or mark that turns text around or hides it, and a business in a list of buyers is named by its id. `changeWords` in `@avow-finance/sdk` gives a row for every term, with each name in quotes after a label of its own, such as `The service "Bulk eval"`, so no name can pass for a row the card wrote. Where a rule reads Avow's records of a buyer, the words say the country is self-declared and the business check is simulated.
+This kind and a request for one sale are the two where an agent writes words a person reads. Here they are the names of what it would sell. A name reads on one line, with no control character, no mark that turns text around or hides it and no double quote, and a business in a list of buyers is named by its id. `changeWords` in `@avow-finance/sdk` gives a row for every term, with each name in quotes after a label of its own, such as `The service "Bulk eval"`, so no name can pass for a row the card wrote. Where a rule reads Avow's records of a buyer, the words say the country is self-declared and the business check is simulated.
 
 Nothing stores or enforces a seller's mandate yet, so a selling agent's signing key is still its only limit, and a card that shows these terms before Avow enforces them has to say so.
 
@@ -55,17 +55,31 @@ Nothing stores or enforces a seller's mandate yet, so a selling agent's signing 
 
 A seller's mandate can hand a sale to a person, every sale or each one above an amount. The spec holds a `sale` kind for the selling agent to ask for that one sale, and Avow doesn't take it yet. This section says how it is to work.
 
-The terms are the sale's content, which is the buyer's business id, the item, the id of the offer version for a service, the units, the price and the currency. `saleContentOf` in `@avow-finance/spec` reads them from a sale's terms. They name no deadline and no terms hash. A sale's supplier has 15 minutes to accept, and an approval over one set of terms would have to land inside them. An approval of the content waits for the buyer's next order instead.
+The terms are the sale's content, which is the signing key that would make the sale, the buyer's business id, the whole offer version and the units. `saleContentOf` in `@avow-finance/spec` reads them from a service's terms and the offer version that builds them. The offer version travels whole, so the card shows its price, its charges, its delivery and how it's paid, and no hash stands in for them. The price is the offer's price for each unit times the units, from `salePrice`.
+
+The terms name no deadline and no terms hash. A service's supplier has 15 minutes to accept, and an approval over one set of terms would have to land inside them. An approval of the content waits for the buyer's next order of those units from that version.
 
 The basis is the hash of the seller's mandate the sale would be made under. A mandate that replaces it, or its revocation, makes the request stale, so an approval never outlives the limits the administrator read it against.
 
-An approved sale can be made once, within `SALE_APPROVAL_LASTS`, a day from the approval, and `approvalExecutionWindow` gives that length for this kind. `checkSellerMandate` takes the approved sale and passes a sale a person has to decide only when its content is exactly the one approved, checked with `coversSale`. Every limit of the mandate holds the sale first, so an approval lifts none. `carriesOutSaleRequest` says whether a sale is the one a request covers, and whoever records the sale marks the approval used in the same step.
+A request for a sale has no change to land, so it works differently from the other kinds once it's approved.
 
-The item's name is the agent's own words, held to plain text as in a seller's mandate. `changeWords` shows it in quotes after words the card wrote.
+- **Approved means the sale can be made.** It stays approved for `SALE_APPROVAL_LASTS`, a day, which `APPROVAL_EXECUTION_WINDOWS` gives for this kind, and then lapses. `saleRequestCovers` says whether a sale can be made on a request as it stands at a moment.
+- **Active means the sale was made.** Whoever records the sale marks the request used by that sale in the same step. The spec reads only what it's handed, so keeping an approval to one sale and to its day is the record keeper's job.
+- **The check runs more than once for one sale,** when the seller agrees and again when the buyer's reserve is approved. So the record keeper hands `checkSellerMandate` an approval that is unused or was used by this same sale.
+
+`checkSellerMandate` passes a sale a person has to decide only when its content is exactly the one approved, checked with `coversSale`. Every limit of the mandate holds the sale first, so an approval lifts none.
+
+Three things can't be put to a person this way yet.
+
+- **A job.** It has no offer version, so nothing a person could approve would hold its compute, its start and its charges. A job a person has to decide stays with the person.
+- **An offer whose words aren't plain.** The item's name, its summary and what counts as delivery are the seller's agent's own words, and the card shows each in quotes. Text with a line break, a mark that turns text around or hides it, a space at an end or a double quote can be listed and sold, and can't be approved here.
+- **A buyer whose id isn't a plain id,** of letters, digits, hyphens and underscores.
+
+The limits on asking, below, are written for changes to authority. How often an agent may ask for a sale isn't set yet, and a business's policy on changes doesn't list this kind.
 
 ## The record
 
-Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed. For a seller's mandate it is to be the hash of the mandate the signing key holds, or null when it holds none. For a sale it is to be the hash of the mandate the sale would be made under.
+Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed. For a seller's mandate it is to be the hash of the mandate the signing key holds, or null when it holds none. For a sale it is to be the hash of the mandate that binds the signing key the sale names.
 
 The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
 
@@ -94,7 +108,7 @@ Avow checks the signature first, then checks the basis again under a lock on the
 | `expired` | It lapsed before anyone decided it, or its change didn't start within an hour of approval, in which case it carries `approvedAt` |
 | `stale` | What it would change changed first, so it never applies |
 
-An agent treats what it asked for as usable only once its request is `active`. Applying a change is idempotent, so a retry never applies it twice.
+An agent treats what it asked for as usable only once its request is `active`. A request for one sale is the exception, as its section says. Applying a change is idempotent, so a retry never applies it twice.
 
 ## Limits on asking
 

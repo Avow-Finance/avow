@@ -1,7 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
 import {
-  APPROVAL_EXECUTION_WINDOW,
+  APPROVAL_EXECUTION_WINDOWS,
   APPROVAL_KINDS,
   APPROVAL_LIFETIMES,
   APPROVAL_MOVES,
@@ -11,10 +11,8 @@ import {
   approvalBasisHash,
   approvalDecisionDigest,
   approvalDecisionTypedData,
-  approvalExecutionWindow,
   approvalTermsHash,
   canApprovalMove,
-  carriesOutSaleRequest,
   carriesOutSellerRequest,
   changedMandate,
   dailyLimitOf,
@@ -23,6 +21,7 @@ import {
   parseApprovalDecision,
   parseApprovalPolicy,
   parseApprovalRequest,
+  saleRequestCovers,
   signingHash,
   signingIdOf,
 } from './approval-request.js'
@@ -420,13 +419,25 @@ describe("a request for a seller's mandate", () => {
 
 describe('a request to approve one sale', () => {
   const content = {
+    signingKey: `0x${'5e'.repeat(20)}`,
     buyer: 'biz_buyer',
-    category: 'service',
-    item: 'Fine-tuning run',
-    offer: `0x${'0f'.repeat(32)}`,
+    offer: {
+      supplier: 'biz_supplier',
+      item: { name: 'Fine-tuning run', summary: 'One fine-tuning run on the dataset sent' },
+      currency: 'USD',
+      unitPrice: 100_000_000n,
+      rules: {
+        evidence: 'The tuned weights are delivered to the buyer',
+        leadTime: 172_800n,
+        maxPerBooking: 4,
+        dailyCapacity: 5,
+        freeCancelWindow: 7_200n,
+        lateCancellationBps: 2_000,
+        noShowBps: 5_000,
+        payment: { route: 'transfer', dueAfterDelivery: 604_800n },
+      },
+    },
     units: 4,
-    price: 400_000_000n,
-    currency: 'USD',
   } as const
   const asked: ApprovalRequest = {
     id: 'ef'.repeat(16),
@@ -440,6 +451,8 @@ describe('a request to approve one sale', () => {
     expiresAt: 1_800_086_400n,
     status: { state: 'waiting' },
   }
+  const APPROVED_AT = 1_800_000_600n
+  const approved: ApprovalRequest = { ...asked, status: { state: 'approved', at: APPROVED_AT } }
   const wire = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
 
   it('names the sale and the mandate it would be made under, and reads back as written', () => {
@@ -452,34 +465,68 @@ describe('a request to approve one sale', () => {
     expect(reads({ basis: { sellerMandate: `0x${'00'.repeat(32)}` } })).toBe(false)
     expect(reads({ reason: 'new_seller' })).toBe(false)
     expect(reads({ terms: { ...content, units: 0 } })).toBe(false)
-    expect(reads({ terms: { ...content, item: 'Run\nTotal: $1' } })).toBe(false)
     expect(reads({ terms: { ...content, acceptBy: 1n } })).toBe(false)
+    const named = { ...content.offer, item: { ...content.offer.item, name: 'Run\nTotal: $1' } }
+    expect(reads({ terms: { ...content, offer: named } })).toBe(false)
+    // A business is asked about its own offer, and a sale has no change of its own to land.
+    expect(reads({ businessId: 'biz_other' })).toBe(false)
+    expect(reads({ status: { state: 'executing', at: APPROVED_AT, transaction: null } })).toBe(
+      false,
+    )
   })
 
   it('waits a day for a decision, and once approved can be made for a day', () => {
     expect(APPROVAL_LIFETIMES.sale).toBe(86_400n)
-    expect(approvalExecutionWindow('sale')).toBe(SALE_APPROVAL_LASTS)
-    expect(approvalExecutionWindow('raise_limit')).toBe(APPROVAL_EXECUTION_WINDOW)
+    expect(APPROVAL_EXECUTION_WINDOWS.sale).toBe(SALE_APPROVAL_LASTS)
+    expect(APPROVAL_EXECUTION_WINDOWS.raise_limit).toBe(3600n)
+    // It changes no authority, so a business's policy on changes doesn't list it.
+    expect(parseApprovalPolicy({ agentsMayAsk: ['sale'] }).ok).toBe(false)
   })
 
-  it('binds a decision to the buyer, the item, the offer version, the units and the price', () => {
+  it('binds a decision to the key, the buyer, the units and every part of the offer version', () => {
     const hash = approvalTermsHash(asked)
+    const { offer } = content
     for (const change of [
+      { signingKey: `0x${'5f'.repeat(20)}` as const },
       { buyer: 'biz_other' },
-      { item: 'Bulk eval' },
-      { offer: `0x${'1f'.repeat(32)}` as const },
       { units: 3 },
-      { price: content.price + 1n },
+      { offer: { ...offer, unitPrice: offer.unitPrice + 1n } },
+      { offer: { ...offer, rules: { ...offer.rules, noShowBps: 4_000 } } },
     ]) {
       expect(approvalTermsHash({ ...asked, terms: { ...content, ...change } })).not.toBe(hash)
     }
+    expect(approvalBasisHash(asked)).not.toBe(
+      approvalBasisHash({ basis: { sellerMandate: `0x${'44'.repeat(32)}` } }),
+    )
   })
 
-  it('is carried out only by that sale, under the mandate it was asked against', () => {
-    expect(carriesOutSaleRequest(asked, { ...content }, MANDATE)).toBe(true)
-    expect(carriesOutSaleRequest(asked, { ...content, units: 3 }, MANDATE)).toBe(false)
-    // A mandate that replaced the one the administrator read the sale against carries out nothing.
-    expect(carriesOutSaleRequest(asked, { ...content }, `0x${'44'.repeat(32)}`)).toBe(false)
-    expect(carriesOutSaleRequest(raise, { ...content }, MANDATE)).toBe(false)
+  it('covers only that sale, under the mandate asked against, while approved and within a day', () => {
+    const made = APPROVED_AT + 60n
+    expect(saleRequestCovers(approved, { ...content }, MANDATE, made)).toBe(true)
+    expect(
+      saleRequestCovers(
+        approved,
+        { ...content },
+        MANDATE.toUpperCase().replace('0X', '0x') as never,
+        made,
+      ),
+    ).toBe(true)
+    expect(saleRequestCovers(approved, { ...content, units: 3 }, MANDATE, made)).toBe(false)
+    // A mandate that replaced the one the administrator read the sale against covers nothing.
+    expect(saleRequestCovers(approved, { ...content }, `0x${'44'.repeat(32)}`, made)).toBe(false)
+    const last = APPROVED_AT + SALE_APPROVAL_LASTS
+    expect(saleRequestCovers(approved, { ...content }, MANDATE, last - 1n)).toBe(true)
+    expect(saleRequestCovers(approved, { ...content }, MANDATE, last)).toBe(false)
+    // Waiting, declined or already made, a request covers no sale.
+    for (const status of [
+      { state: 'waiting' },
+      { state: 'declined', at: APPROVED_AT },
+      { state: 'active', at: APPROVED_AT, transaction: null },
+    ] as const) {
+      expect(
+        saleRequestCovers({ ...asked, status } as ApprovalRequest, { ...content }, MANDATE, made),
+      ).toBe(false)
+    }
+    expect(saleRequestCovers(raise, { ...content }, MANDATE, made)).toBe(false)
   })
 })

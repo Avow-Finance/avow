@@ -992,7 +992,9 @@ export function mcpAgent(
     // Asking reads the authority the agent holds now, which is where a raise starts from.
     const made = await asked(await open('authority'), args)
     const facts = requestFacts(made)
-    const rows = facts.change.rows.map((r) => `${r.label} from ${r.before} to ${r.after}`)
+    const rows = facts.change.rows.map((r) =>
+      r.before === null ? `${r.label} ${r.after}` : `${r.label} from ${r.before} to ${r.after}`,
+    )
     return {
       text: `Asked your business to ${facts.change.title.toLowerCase()}${rows.length ? `: ${rows.join(', ')}` : ''}, request ${made.request.id}. ${facts.sentence}`,
       structured: facts,

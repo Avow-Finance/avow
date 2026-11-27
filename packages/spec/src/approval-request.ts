@@ -1,4 +1,4 @@
-import { type Hex, hashTypedData, keccak256, stringToHex } from 'viem'
+import { type Hex, hashTypedData, keccak256, stringToHex, zeroHash } from 'viem'
 import { z } from 'zod'
 import { AGENT_REQUEST_LIFETIME } from './agent-connect.js'
 import { canonicalJson } from './canonical.js'
@@ -36,7 +36,8 @@ import type { Parsed } from './wire.js'
  * Approval and execution are separate. A request waits, is approved once the root key signs, then
  * executes while its change lands, and is active only once it has. It can also end failed,
  * declined, expired or stale. An agent treats the authority it asked for as usable only once its
- * request is active.
+ * request is active. A request to approve one sale is the exception. It has no change to land, so
+ * the sale can be made while the request is approved, and it's active once the sale was made.
  */
 
 /** What a request asks a person to change. */
@@ -52,14 +53,15 @@ export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
 /**
  * The kinds an agent the business already knows asks for, which a business decides its agents may
- * ask for. Each changes a buying agent's authority, or sets what a selling agent may promise.
+ * ask for. Each changes a buying agent's authority, or sets what a selling agent may promise. A
+ * request to approve one sale changes no authority, so it isn't one of these, and the limits on
+ * asking for one aren't set yet.
  */
 export const APPROVAL_CHANGE_KINDS = [
   'raise_limit',
   'name_supplier',
   'open_mode',
   'seller_mandate',
-  'sale',
 ] as const
 export type ApprovalChangeKind = (typeof APPROVAL_CHANGE_KINDS)[number]
 
@@ -90,19 +92,18 @@ export const APPROVAL_ASK_WINDOW = DAY
 export const APPROVAL_ASKS_PER_DAY = 10
 
 /**
- * How long an approved request has for its change to start, in seconds from its approval. One
- * whose change never started by then lapses, so an approval can't be held back and applied much
- * later.
+ * How long an approved request of each kind has before it lapses, in seconds from its approval. A
+ * change has an hour to start, so an approval can't be held back and applied much later. An
+ * approved sale has `SALE_APPROVAL_LASTS` to be made, since it waits on the buyer's next order.
  */
-export const APPROVAL_EXECUTION_WINDOW = 60n * 60n
-
-/**
- * How long an approved request of a kind has before it lapses, in seconds from its approval. A
- * change has `APPROVAL_EXECUTION_WINDOW` to start. An approved sale has `SALE_APPROVAL_LASTS` to be
- * made, since it waits on the buyer's next order.
- */
-export const approvalExecutionWindow = (kind: ApprovalKind): bigint =>
-  kind === 'sale' ? SALE_APPROVAL_LASTS : APPROVAL_EXECUTION_WINDOW
+export const APPROVAL_EXECUTION_WINDOWS: { readonly [K in ApprovalKind]: bigint } = {
+  agent_authority: 60n * 60n,
+  raise_limit: 60n * 60n,
+  name_supplier: 60n * 60n,
+  open_mode: 60n * 60n,
+  seller_mandate: 60n * 60n,
+  sale: SALE_APPROVAL_LASTS,
+}
 
 /**
  * How long after a decline an agent waits before it can ask the same again, in seconds. The same
@@ -178,6 +179,9 @@ const label = z
  * which the request is checked against again when it executes. Agent authority's limits are the
  * ones the administrator sets when approving, so its terms are the agent's name and keys.
  */
+/** The hash of a seller's mandate, which is never the zero hash, since no mandate has it. */
+const mandateHashJson = bytes32.refine((h) => h !== zeroHash, 'a mandate hash')
+
 const KIND_FIELDS = {
   agent_authority: {
     terms: z.strictObject({ label, signingKey: address.nullable() }),
@@ -212,9 +216,9 @@ const KIND_FIELDS = {
   },
   sale: {
     /**
-     * The content of the one sale the agent asks a person to approve: the buyer, the item, the
-     * offer version, the units, the price and the currency. Approving it lets the agent make that
-     * sale once within `SALE_APPROVAL_LASTS`, and widens nothing.
+     * The content of the one sale the agent asks a person to approve: the signing key that would
+     * make it, the buyer, the whole offer version and the units. Approving it lets that key make
+     * that sale once within `SALE_APPROVAL_LASTS`, and widens nothing.
      */
     terms: saleContentJson,
     /**
@@ -222,9 +226,7 @@ const KIND_FIELDS = {
      * or its revocation, makes the request stale, so an approval never outlives the limits the
      * administrator read it against.
      */
-    basis: z.strictObject({
-      sellerMandate: bytes32.refine((h) => !/^0x0{64}$/.test(h), 'a mandate hash'),
-    }),
+    basis: z.strictObject({ sellerMandate: mandateHashJson }),
   },
   seller_mandate: {
     /**
@@ -242,9 +244,7 @@ const KIND_FIELDS = {
      * null when it holds none. Another mandate signed in between makes the request stale. It is
      * never the zero hash, which no mandate can replace.
      */
-    basis: z.strictObject({
-      sellerMandate: bytes32.refine((h) => !/^0x0{64}$/.test(h), 'a mandate hash').nullable(),
-    }),
+    basis: z.strictObject({ sellerMandate: mandateHashJson.nullable() }),
   },
 } as const
 
@@ -305,7 +305,7 @@ export type ApprovalState = (typeof APPROVAL_STATES)[number]
  * The moves a request can make, from each state. Approved moves to active directly where the
  * change lands with the approval itself, such as a mandate Avow holds, and through executing where
  * a transaction has to land. A request found stale when it would execute never executes, and an
- * approved request whose change never started within `APPROVAL_EXECUTION_WINDOW` lapses. The last five states are final.
+ * approved request whose change never started within its kind's `APPROVAL_EXECUTION_WINDOWS` lapses. The last five states are final.
  */
 export const APPROVAL_MOVES: { readonly [S in ApprovalState]: readonly ApprovalState[] } = {
   waiting: ['approved', 'declined', 'expired', 'stale'],
@@ -421,14 +421,21 @@ export const approvalRequestJson = z.discriminatedUnion('kind', [
       (r) => (r.reason === 'new_seller') === (r.basis.sellerMandate === null),
       "a first seller's mandate replaces none, and a change of limits replaces one",
     ),
-  z.strictObject({
-    ...recordBase,
-    kind: z.literal('sale'),
-    businessId: z.string().min(1).max(200),
-    terms: KIND_FIELDS.sale.terms,
-    reason: z.enum(reasonsFor('sale')),
-    basis: KIND_FIELDS.sale.basis,
-  }),
+  z
+    .strictObject({
+      ...recordBase,
+      kind: z.literal('sale'),
+      businessId: z.string().min(1).max(200),
+      terms: KIND_FIELDS.sale.terms,
+      reason: z.enum(reasonsFor('sale')),
+      basis: KIND_FIELDS.sale.basis,
+    })
+    .refine(
+      (r) => r.terms.offer.supplier === r.businessId,
+      'a business is asked to approve a sale of its own offer',
+    )
+    // An approved sale is made by the buyer's order, with no change of its own to land.
+    .refine((r) => r.status.state !== 'executing', 'a sale has no change on its way'),
 ])
 export type ApprovalRequest = z.infer<typeof approvalRequestJson>
 
@@ -611,17 +618,20 @@ export function carriesOutSellerRequest(request: ApprovalRequest, mandate: Selle
 }
 
 /**
- * Whether a sale is the one an approved request for a sale covers. The request was asked against
- * the seller's mandate the sale is made under, and the sale's content is exactly the content
- * approved. Whoever records the sale also checks that the request is approved, unused and within
- * `SALE_APPROVAL_LASTS` of its approval, and marks it used in the same step.
+ * Whether a sale can be made on a request for one, as the request stands at `now`. The request is
+ * approved and within `SALE_APPROVAL_LASTS` of its approval, it was asked against the seller's
+ * mandate the sale is made under, and the sale is exactly the one approved, by the same signing
+ * key. Whoever records the sale marks the request used by that sale in the same step, since a
+ * request doesn't say which sale used it.
  */
-export function carriesOutSaleRequest(
+export function saleRequestCovers(
   request: ApprovalRequest,
   sale: SaleContent,
   sellerMandate: Hex,
+  now: bigint,
 ): boolean {
-  if (request.kind !== 'sale') return false
+  if (request.kind !== 'sale' || request.status.state !== 'approved') return false
+  if (typeof now !== 'bigint' || now >= request.status.at + SALE_APPROVAL_LASTS) return false
   if (typeof sellerMandate !== 'string') return false
   if (request.basis.sellerMandate !== sellerMandate.toLowerCase()) return false
   return coversSale(request.terms, sale)

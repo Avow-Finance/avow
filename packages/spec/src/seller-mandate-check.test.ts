@@ -17,7 +17,7 @@ import {
   saleFacts,
   sellerOfferProblem,
 } from './seller-mandate-check.js'
-import { offerVersionId, type ServiceOfferVersion, serviceOfferTerms } from './service.js'
+import { type ServiceOfferVersion, serviceOfferTerms } from './service.js'
 import { SERVICE_ORDER_CLOCK_SKEW } from './service-order.js'
 import { ARBITER, COMPUTE_REFERENCE, demoRequest, demoSellerMandate, NOW } from './test-helpers.js'
 
@@ -161,47 +161,91 @@ describe("the seller's mandate check", () => {
   it('passes a sale a person has to decide only as the exact sale a person approved', () => {
     const human = { result: 'needs_human', reason: 'approval.human_required' }
     const dear = withOffer({ unitPrice: dollars(100) })
-    const content = saleContentOf(sale(dear, 4), dear, buyer.businessId)
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    expect(content).toEqual({ signingKey: KEY, buyer: 'biz_buyer', offer: dear, units: 4 })
     if (!content) throw new Error('four runs from the offer are a sale')
-    expect(content).toEqual({
-      buyer: 'biz_buyer',
-      category: 'service',
-      item: 'Fine-tuning run',
-      offer: offerVersionId(dear),
-      units: 4,
-      price: dollars(400),
-      currency: 'USD',
-    })
     expect(sell(dear, 4, { approvedSale: content })).toEqual(approved)
-    // Another quantity, another buyer, another price or another version of the offer is another sale.
+    // Another price, another quantity, another buyer, another key or another wording of the offer
+    // is another sale.
     const dearer = withOffer({ unitPrice: dollars(110) })
     expect(sell(dearer, 4, { approvedSale: content })).toEqual(human)
-    for (const change of [{ units: 3 }, { buyer: 'biz_other' }, { price: dollars(399) }]) {
-      expect(sell(dear, 4, { approvedSale: { ...content, ...change } })).toEqual(human)
-    }
     const reworded = withOffer({ unitPrice: dollars(100) }, { evidence: 'Weights by email' })
     expect(sell(reworded, 4, { approvedSale: content })).toEqual(human)
-    expect(sell(dear, 4, { approvedSale: { ...content, extra: 1 } as never })).toEqual(human)
-    // An approval lifts no limit. Past an order's most, the same sale is still refused.
-    const tight = withMandate({ maxOrderValue: dollars(350), approvalRule: { kind: 'always' } })
-    expect(sell(dear, 4, { mandate: tight, approvedSale: content })).toEqual(
+    for (const change of [{ units: 3 }, { buyer: 'biz_other' }, { signingKey: OTHER_KEY }]) {
+      expect(sell(dear, 4, { approvedSale: { ...content, ...change } })).toEqual(human)
+    }
+  })
+
+  it('lets an approval lift no limit and undo no refusal', () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    const with_ = (change: Partial<SellerMandateCheckInput>) =>
+      sell(dear, 4, { approvedSale: content, ...change })
+    const always = { approvalRule: { kind: 'always' } } as const
+    expect(with_({ mandate: withMandate({ ...always, maxOrderValue: dollars(350) }) })).toEqual(
       denied('seller_mandate.over_order_value'),
     )
-    // A job is approved as its kind of work at its price, with no offer.
-    const always = withMandate({ approvalRule: { kind: 'always' } })
-    const work = saleContentOf(job(), null, buyer.businessId)
-    expect(work).toMatchObject({
-      category: 'compute-job',
-      item: 'fine-tuning',
-      offer: null,
-      units: 1,
+    expect(with_({ mandate: withMandate({ ...always, excludedBuyers: ['biz_buyer'] }) })).toEqual(
+      denied('counterparty.not_eligible'),
+    )
+    expect(with_({ mandate: withMandate({ expiry: NOW }) })).toEqual(
+      denied('seller_mandate.expired'),
+    )
+    expect(with_({ revoked: true })).toEqual(denied('seller_mandate.revoked'))
+    expect(with_({ signingKey: OTHER_KEY })).toEqual(denied('seller_mandate.key_mismatch'))
+    expect(with_({ ledger: { unitsToday: 8, outstanding: 0n } })).toEqual(
+      denied('seller_mandate.over_daily_units'),
+    )
+    expect(with_({ ledger: { unitsToday: 0, outstanding: dollars(1_700) } })).toEqual(
+      denied('seller_mandate.over_outstanding'),
+    )
+    const floor = withMandate({
+      limits: [jobLine, { ...anyService, minUnitPrice: dollars(101) }, bulkEval],
     })
+    expect(with_({ mandate: floor })).toEqual(denied('seller_mandate.under_price_floor'))
+  })
+
+  it('refuses an approval that is no well-formed sale, whether or not a person has to decide', () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
+    if (!content) throw new Error('four runs from the offer are a sale')
+    for (const approvedSale of [
+      undefined,
+      'approved',
+      7,
+      { ...content, units: '4' },
+      { ...content, offer: null },
+    ]) {
+      expect(sell(dear, 4, { approvedSale: approvedSale as never })).toEqual(
+        denied('message.invalid'),
+      )
+      expect(check({ approvedSale: approvedSale as never })).toEqual(denied('message.invalid'))
+    }
+  })
+
+  it('leaves a job a person has to decide with the person, since no job is approved this way yet', () => {
+    const human = { result: 'needs_human', reason: 'approval.human_required' }
+    const always = withMandate({ approvalRule: { kind: 'always' } })
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const content = saleContentOf(sale(dear, 4), dear, { signingKey: KEY, buyer: buyer.businessId })
     expect(sellJob({}, { mandate: always })).toEqual(human)
-    expect(sellJob({}, { mandate: always, approvedSale: work })).toEqual(approved)
-    expect(sellJob({ price: dollars(121) }, { mandate: always, approvedSale: work })).toEqual(human)
-    // A service's terms with no offer, or a job's with one, are no sale to approve.
-    expect(saleContentOf(sale(dear, 4), null, buyer.businessId)).toBeNull()
-    expect(saleContentOf(job(), dear, buyer.businessId)).toBeNull()
+    expect(sellJob({}, { mandate: always, approvedSale: content })).toEqual(human)
+  })
+
+  it("reads a sale's content only from a service's terms and the offer version that builds them", () => {
+    const dear = withOffer({ unitPrice: dollars(100) })
+    const who = { signingKey: KEY, buyer: buyer.businessId }
+    expect(saleContentOf(job(), dear, who)).toBeNull()
+    // Another version of the offer doesn't build these terms.
+    expect(saleContentOf(sale(dear, 4), offer, who)).toBeNull()
+    expect(saleContentOf(sale(dear, 4), dear, { ...who, buyer: 'not a buyer\nid' })).toBeNull()
+    // An offer whose words aren't plain lists and sells, and can't be put to a person this way.
+    const quoted = withOffer({ unitPrice: dollars(100), ...named('Run "fast"') })
+    expect(
+      sellerOfferProblem({ mandate, signingKey: KEY, revoked: false, now: NOW, version: quoted }),
+    ).toBeNull()
+    expect(saleContentOf(sale(quoted, 4), quoted, who)).toBeNull()
+    expect(saleContentOf(null as never, dear, who)).toBeNull()
   })
 
   it('refuses a sale past a limit and never hands it to a person', () => {

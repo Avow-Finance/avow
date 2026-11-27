@@ -137,18 +137,32 @@ describe("a request's words", () => {
     ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
 
-  it('shows one sale a person is asked to approve, with the item in quotes', () => {
+  it('shows one sale a person is asked to approve, whole, and says it changes no limit', () => {
     const sale = {
       ...base,
+      businessId: 'biz_supplier',
       kind: 'sale',
       terms: {
+        signingKey: `0x${'5e'.repeat(20)}`,
         buyer: 'sandbox-ab12',
-        category: 'service',
-        item: 'Total',
-        offer: `0x${'0f'.repeat(32)}`,
+        offer: {
+          supplier: 'biz_supplier',
+          // A service named as a row of the card still reads as a service's name.
+          item: { name: 'Total', summary: 'One fine-tuning run on the dataset sent' },
+          currency: 'USD',
+          unitPrice: 100_000_000n,
+          rules: {
+            evidence: 'The tuned weights are delivered to the buyer',
+            leadTime: 172_800n,
+            maxPerBooking: 4,
+            dailyCapacity: 5,
+            freeCancelWindow: 7_200n,
+            lateCancellationBps: 2_000,
+            noShowBps: 5_000,
+            payment: { route: 'transfer', dueAfterDelivery: 604_800n },
+          },
+        },
         units: 4,
-        price: 400_000_000n,
-        currency: 'USD',
       },
       reason: 'sale_needs_person',
       basis: { sellerMandate: `0x${'33'.repeat(32)}` },
@@ -156,23 +170,26 @@ describe("a request's words", () => {
     const words = changeWords(sale)
     expect(words.title).toBe('Approve one sale')
     expect(words.rows.map((r) => [r.label, r.after])).toEqual([
+      ['Approves', 'This one sale, once, within a day. No limit changes.'],
+      ['Sold by the key', `0x${'5e'.repeat(20)}`],
       ['Buyer', 'sandbox-ab12'],
-      // A service named as a row of the card still reads as a service's name.
       ['Sells', '4 of the service "Total"'],
-      ['Offer version', `0x${'0f'.repeat(32)}`],
-      ['Total', '$400'],
-      ['Paid in', 'USD'],
+      ['Described as', '"One fine-tuning run on the dataset sent"'],
+      ['Price for each', '$100 USD'],
+      ['Total', '$400 USD'],
+      ['Counts as delivered when', '"The tuned weights are delivered to the buyer"'],
+      ['Delivered within', '2 days'],
+      ['Buyer cancels at no charge for', '2 hours'],
+      ['Late-cancellation charge', '20%'],
+      ['No-show charge', '50%'],
+      ['Paid', 'By transfer, within 7 days of delivery'],
     ])
-    const job = changeWords({
-      ...sale,
-      terms: { ...sale.terms, category: 'compute-job', item: 'fine-tuning', offer: null, units: 1 },
-    })
-    expect(job.rows.map((r) => [r.label, r.after])).toEqual([
-      ['Buyer', 'sandbox-ab12'],
-      ['Sells', 'The job "fine-tuning"'],
-      ['Total', '$400'],
-      ['Paid in', 'USD'],
-    ])
+    // Nothing stood before, so no row has a value to set beside the one asked for.
+    expect(words.rows.every((r) => r.before === null)).toBe(true)
+    // A sale can be made while its request is approved. A change waits until it's active.
+    const at = base.requestedAt
+    expect(isUsable({ ...sale, status: { state: 'approved', at } })).toBe(true)
+    expect(isUsable({ ...sale, status: { state: 'active', at, transaction: null } })).toBe(false)
   })
 
   it("shows every limit a seller's mandate would set, and what on testnet is self-declared or simulated", () => {

@@ -5814,52 +5814,140 @@
               "terms": {
                 "type": "object",
                 "properties": {
+                  "signingKey": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
                   "buyer": {
                     "type": "string"
                   },
-                  "category": {
-                    "type": "string",
-                    "enum": [
-                      "service",
-                      "compute-job"
-                    ]
-                  },
-                  "item": {
-                    "type": "string"
-                  },
                   "offer": {
-                    "anyOf": [
-                      {
+                    "type": "object",
+                    "properties": {
+                      "supplier": {
                         "type": "string",
-                        "pattern": "^0x[0-9a-fA-F]{64}$"
+                        "minLength": 1,
+                        "maxLength": 100
                       },
-                      {
-                        "type": "null"
+                      "item": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 280
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD"
+                        ]
+                      },
+                      "unitPrice": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "rules": {
+                        "type": "object",
+                        "properties": {
+                          "evidence": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 280
+                          },
+                          "leadTime": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "maxPerBooking": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "dailyCapacity": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "freeCancelWindow": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "lateCancellationBps": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "noShowBps": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "payment": {
+                            "type": "object",
+                            "properties": {
+                              "route": {
+                                "type": "string",
+                                "enum": [
+                                  "transfer",
+                                  "invoice"
+                                ]
+                              },
+                              "dueAfterDelivery": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9][0-9]*)$"
+                              }
+                            },
+                            "required": [
+                              "route",
+                              "dueAfterDelivery"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "evidence",
+                          "leadTime",
+                          "maxPerBooking",
+                          "dailyCapacity",
+                          "freeCancelWindow",
+                          "lateCancellationBps",
+                          "noShowBps",
+                          "payment"
+                        ],
+                        "additionalProperties": false
                       }
-                    ]
+                    },
+                    "required": [
+                      "supplier",
+                      "item",
+                      "currency",
+                      "unitPrice",
+                      "rules"
+                    ],
+                    "additionalProperties": false
                   },
                   "units": {
                     "type": "number"
-                  },
-                  "price": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]*)$"
-                  },
-                  "currency": {
-                    "type": "string",
-                    "enum": [
-                      "USD"
-                    ]
                   }
                 },
                 "required": [
+                  "signingKey",
                   "buyer",
-                  "category",
-                  "item",
                   "offer",
-                  "units",
-                  "price",
-                  "currency"
+                  "units"
                 ],
                 "additionalProperties": false
               },
@@ -8867,52 +8955,140 @@
               "terms": {
                 "type": "object",
                 "properties": {
+                  "signingKey": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
                   "buyer": {
                     "type": "string"
                   },
-                  "category": {
-                    "type": "string",
-                    "enum": [
-                      "service",
-                      "compute-job"
-                    ]
-                  },
-                  "item": {
-                    "type": "string"
-                  },
                   "offer": {
-                    "anyOf": [
-                      {
+                    "type": "object",
+                    "properties": {
+                      "supplier": {
                         "type": "string",
-                        "pattern": "^0x[0-9a-fA-F]{64}$"
+                        "minLength": 1,
+                        "maxLength": 100
                       },
-                      {
-                        "type": "null"
+                      "item": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 280
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "currency": {
+                        "type": "string",
+                        "enum": [
+                          "USD"
+                        ]
+                      },
+                      "unitPrice": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]*)$"
+                      },
+                      "rules": {
+                        "type": "object",
+                        "properties": {
+                          "evidence": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 280
+                          },
+                          "leadTime": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "maxPerBooking": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "dailyCapacity": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "freeCancelWindow": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "lateCancellationBps": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "noShowBps": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "payment": {
+                            "type": "object",
+                            "properties": {
+                              "route": {
+                                "type": "string",
+                                "enum": [
+                                  "transfer",
+                                  "invoice"
+                                ]
+                              },
+                              "dueAfterDelivery": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9][0-9]*)$"
+                              }
+                            },
+                            "required": [
+                              "route",
+                              "dueAfterDelivery"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "evidence",
+                          "leadTime",
+                          "maxPerBooking",
+                          "dailyCapacity",
+                          "freeCancelWindow",
+                          "lateCancellationBps",
+                          "noShowBps",
+                          "payment"
+                        ],
+                        "additionalProperties": false
                       }
-                    ]
+                    },
+                    "required": [
+                      "supplier",
+                      "item",
+                      "currency",
+                      "unitPrice",
+                      "rules"
+                    ],
+                    "additionalProperties": false
                   },
                   "units": {
                     "type": "number"
-                  },
-                  "price": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]*)$"
-                  },
-                  "currency": {
-                    "type": "string",
-                    "enum": [
-                      "USD"
-                    ]
                   }
                 },
                 "required": [
+                  "signingKey",
                   "buyer",
-                  "category",
-                  "item",
                   "offer",
-                  "units",
-                  "price",
-                  "currency"
+                  "units"
                 ],
                 "additionalProperties": false
               },
@@ -9002,7 +9178,7 @@
         "type": "object",
         "properties": {
           "agentsMayAsk": {
-            "maxItems": 5,
+            "maxItems": 4,
             "type": "array",
             "items": {
               "type": "string",
@@ -9010,8 +9186,7 @@
                 "raise_limit",
                 "name_supplier",
                 "open_mode",
-                "seller_mandate",
-                "sale"
+                "seller_mandate"
               ]
             }
           }
