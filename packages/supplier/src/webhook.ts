@@ -297,7 +297,7 @@ function olderFormatCommitment(record: unknown): Hex | null {
 /**
  * Adds the event for each booking's current status, so a stop between saving a booking and adding
  * its event loses nothing. It covers every open booking, a finished one whose events an older
- * adapter left in its own format, and any other finished one only when its agreement came after the
+ * adapter left in its own format, and any other finished one only when its agreement expires after the
  * webhook was first turned on, so turning the webhook on for an adapter with a history doesn't
  * replay bookings that ended long ago.
  */
