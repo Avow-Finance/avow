@@ -343,6 +343,22 @@ describe('connecting an agent to a business', () => {
     expect(await loadAgentItem(store)).toBeNull()
   })
 
+  it('refuses a name with a hidden or direction-changing character before asking anyone', async () => {
+    for (const label of ['Agent \u202etcennoc ot sksa', 'Agent\u200bname', 'Agent "approved"']) {
+      const store = memoryStore()
+      const sent: string[] = []
+      const fetch = (async (input: string | URL | Request) => {
+        sent.push(String(input))
+        return json({})
+      }) as typeof globalThis.fetch
+      await expect(
+        connectToBusiness({ businessId: BUSINESS, label, store, fetch }),
+      ).rejects.toThrow(/name can't be used/)
+      expect(sent).toEqual([])
+      expect(await store.read('request')).toBeNull()
+    }
+  })
+
   it('refuses to run in a folder that already has an agent', async () => {
     const store = memoryStore()
     const world = sandbox(store)

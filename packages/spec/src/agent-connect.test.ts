@@ -1,6 +1,8 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_LABEL_MAX,
+  agentLabelOf,
   approvalHash,
   approvalKeyOf,
   pairingCode,
@@ -40,6 +42,82 @@ describe('an agent request', () => {
     expect(
       parseAgentRequest({ businessId: 'sandbox-ab', label: 'Seller', signingKey: KEY })?.signingKey,
     ).toBe(KEY.toLowerCase())
+  })
+
+  it('refuses a new label with a hidden or direction-changing character, or a double quote', () => {
+    const hidden = {
+      'a right-to-left override': 'Agent \u202etcennoc ot sksa',
+      'a left-to-right override': 'Agent \u202dname',
+      'a bidi isolate': 'Agent \u2067name\u2069',
+      'a pop of direction': 'Agent name\u202c',
+      'a right-to-left mark': 'Agent\u200f name',
+      'an Arabic letter mark': 'Agent\u061c name',
+      'a zero-width space': 'Agent\u200bname',
+      'a zero-width joiner': 'Agent\u200dname',
+      'a word joiner': 'Agent\u2060name',
+      'a soft hyphen': 'Agent\u00adname',
+      'a byte order mark': 'Agent\ufeffname',
+      'an interlinear annotation mark': 'Agent\ufff9name',
+      'a tag character': 'Agent\u{e0041}name',
+      'a line separator': 'Agent\u2028name',
+      'a line feed': 'Agent\nname',
+      'a C1 control': 'Agent\u0085name',
+      'a wide blank': 'Agent\u3000name',
+      'a Hangul filler': 'Agent\u3164name',
+      'a blank Braille cell': 'Agent\u2800name',
+      'a double quote': 'Agent "approved"',
+      'a curly quote': 'Agent \u201capproved\u201d',
+      'a full-width quote': 'Agent \uff02approved',
+      'two apostrophes': "Agent ''approved''",
+      'half a character': 'Agent \ud800',
+    }
+    for (const [what, label] of Object.entries(hidden)) {
+      expect(agentLabelOf(label), what).toBeNull()
+      expect(parseAgentRequest({ businessId: 'sandbox-ab', label }), what).toBeNull()
+      expect(parseOpenAgentRequest({ label }), what).toBeNull()
+    }
+  })
+
+  it('takes an ordinary name in any script, trimmed, up to its most characters', () => {
+    for (const label of [
+      'Research agent',
+      'リサーチエージェント',
+      '研究代理',
+      'وكيل البحث',
+      'סוכן מחקר',
+      'Agent de réservation Zoë',
+      'Größe & Søren (v2)',
+      'Агент закупок',
+      '🤖 Research agent',
+      "O'Brien's agent",
+      'x'.repeat(AGENT_LABEL_MAX),
+    ]) {
+      expect(agentLabelOf(label), label).toBe(label)
+      expect(parseOpenAgentRequest({ label })?.label, label).toBe(label)
+    }
+    expect(agentLabelOf('  Research agent ')).toBe('Research agent')
+    expect(agentLabelOf('x'.repeat(AGENT_LABEL_MAX + 1))).toBeNull()
+    expect(agentLabelOf('   ')).toBeNull()
+  })
+
+  it('reads back a request Avow already holds under the label it was asked under', () => {
+    // A label from before the rule for new labels, which Avow may still hold and answer with.
+    const held = {
+      businessId: 'sandbox-ab',
+      agentKey: KEY,
+      lock: '0x00000000000000000000000000000000000000b2',
+      label: 'Agent \u202etcennoc ot sksa "x"',
+      pairingCode: pairingCode(KEY),
+      requestedAt: '1800000000',
+      expiresAt: '1800003600',
+      signingKey: null,
+    }
+    expect(parseAgentRequestStatus({ ...held, state: 'pending' })?.label).toBe(held.label)
+    const { businessId: _b, lock: _l, ...open } = held
+    expect(parseOpenAgentRequestStatus({ ...open, state: 'open' })?.label).toBe(held.label)
+    expect(
+      parseAgentRequestStatus({ ...held, label: 'bad\u0007name', state: 'pending' }),
+    ).toBeNull()
   })
 
   it('carries an approval only once it is approved', () => {

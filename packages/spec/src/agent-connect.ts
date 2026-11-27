@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem'
 import { keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
 import { address, bytes32, hexBytes, u64 } from './json-fields.js'
+import { isPlainText } from './text.js'
 
 /**
  * An agent asking a business for authority, from wherever its developer runs it. The agent makes
@@ -37,16 +38,46 @@ export interface AgentRequest {
   signingKey?: Address
 }
 
-const labelJson = z
+/** The most characters an agent's label holds. */
+export const AGENT_LABEL_MAX = 60
+
+/** What a new label may hold, in the words an agent hears when its label can't be used. */
+export const AGENT_LABEL_RULE = `A label is 1 to ${AGENT_LABEL_MAX} characters on one line, with no double quote and no hidden character or mark that changes which way text reads`
+
+/**
+ * The label a new request carries, trimmed. An agent chooses it, and the administrator reads it on
+ * the card they approve, so it's held to `isPlainText` and can't pose as a line the card wrote or
+ * reorder the words after it.
+ */
+export const agentLabelJson = z
   .string()
   .trim()
   .min(1)
-  .max(60)
+  .max(AGENT_LABEL_MAX)
+  .refine((v) => isPlainText(v, AGENT_LABEL_MAX), AGENT_LABEL_RULE)
+  .describe(AGENT_LABEL_RULE)
+
+/** The label an agent would ask under, trimmed, or null when a new request can't carry it. */
+export function agentLabelOf(raw: string): string | null {
+  const parsed = agentLabelJson.safeParse(raw)
+  return parsed.success ? parsed.data : null
+}
+
+/**
+ * A label read back from a request Avow already holds, or from an approval request made from one.
+ * It keeps the looser rule labels were first asked under, so a record from before `agentLabelJson`
+ * still reads, and a label inside a signed decision keeps the terms it was signed over.
+ */
+export const heldAgentLabelJson = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_LABEL_MAX)
   .regex(/^[^\p{Cc}]+$/u, 'printable characters only')
 
 export const agentRequestJson = z.strictObject({
   businessId: z.string().min(1).max(200),
-  label: labelJson,
+  label: agentLabelJson,
   signingKey: address.optional(),
 })
 
@@ -77,7 +108,7 @@ const statusBase = {
   businessId: z.string().min(1),
   agentKey: address,
   lock: address,
-  label: labelJson,
+  label: heldAgentLabelJson,
   pairingCode: z.string().regex(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/),
   requestedAt: u64,
   expiresAt: u64,

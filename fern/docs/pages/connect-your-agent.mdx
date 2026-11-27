@@ -50,6 +50,8 @@ In your agent's project folder:
 npx avow-sandbox connect --name "Research agent"
 ```
 
+The name is what the administrator reads on the card they approve, so it holds 1 to 60 characters on one line in any script, with no double quote and no hidden character or mark that changes which way text reads, and a name that breaks this is refused before anything is sent.
+
 It makes the agent's key, keeps it in `.avow` in that folder, and asks for authority. Whoever opens its link signs in or sets up a business and approves, and that binds it to their business. Add `--business <id>` to ask one business only. It prints a pairing code and a link to the request, with a QR code for your phone when you're at the terminal:
 
 ```

@@ -1,6 +1,8 @@
 import {
+  AGENT_LABEL_RULE,
   type AgentRequestStatus,
   accountOfSandboxId,
+  agentLabelOf,
   approvalHash,
   type Enrollment,
   pairingCode,
@@ -67,7 +69,10 @@ export interface ConnectOptions {
    * one, and the person who opens its link signs in or sets up a business there and approves.
    */
   businessId?: string
-  /** The name the administrator sees, such as "Research agent". */
+  /**
+   * The name the administrator sees, such as "Research agent". It's trimmed, and refused before
+   * anything is sent unless it holds to `AGENT_LABEL_RULE`.
+   */
   label: string
   /**
    * Whether the agent sells as well as buys. It then makes a signing key of its own to quote and
@@ -197,6 +202,8 @@ async function waitToBeBound(o: {
  * It refuses when the store already holds an agent, and gives back the agent item once enrolled.
  */
 export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
+  const label = agentLabelOf(o.label)
+  if (label === null) throw new RangeError(`The agent's name can't be used. ${AGENT_LABEL_RULE}.`)
   const send = o.fetch ?? ((input, init) => fetch(input, init))
   const store = o.store ?? platformStore()
   if (!store) throw new Error('Pass a store to keep the agent key in, outside Node.')
@@ -215,7 +222,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     write(store, 'request', {
       agentKey: keyHex,
       businessId,
-      label: o.label,
+      label,
       ...(signingHex ? { signingKey: signingHex } : {}),
     } satisfies RequestItem)
   await remember(asked)
@@ -234,7 +241,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
     (await waitToBeBound({
       deployment,
       keyHex,
-      label: o.label,
+      label,
       signingKey: signing?.address,
       send,
       onEvent: o.onEvent,
@@ -269,7 +276,7 @@ export async function connectToBusiness(o: ConnectOptions): Promise<AgentItem> {
       path: SANDBOX_PATHS.agentRequests,
       body: {
         businessId,
-        label: o.label,
+        label,
         ...(signing ? { signingKey: signing.address } : {}),
       },
       read: (json) => {

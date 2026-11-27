@@ -3629,7 +3629,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 60,
-            "pattern": "^[^\\p{Cc}]+$"
+            "description": "A label is 1 to 60 characters on one line, with no double quote and no hidden character or mark that changes which way text reads"
           },
           "signingKey": {
             "type": "string",
@@ -3892,7 +3892,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 60,
-            "pattern": "^[^\\p{Cc}]+$"
+            "description": "A label is 1 to 60 characters on one line, with no double quote and no hidden character or mark that changes which way text reads"
           },
           "signingKey": {
             "type": "string",

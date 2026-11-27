@@ -4,7 +4,10 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import {
+  AGENT_LABEL_MAX,
+  AGENT_LABEL_RULE,
   type ApprovalRequest,
+  agentLabelOf,
   describeReason,
   formatUsd,
   isApprovalRequestId,
@@ -133,8 +136,8 @@ export const MCP_TOOLS = [
         },
         name: {
           type: 'string',
-          description:
-            'The name the administrator sees, which says what this agent does, such as "Research agent"',
+          maxLength: AGENT_LABEL_MAX,
+          description: `The name the administrator sees, which says what this agent does, such as "Research agent". ${AGENT_LABEL_RULE}.`,
         },
         sell: {
           type: 'boolean',
@@ -626,11 +629,13 @@ export function mcpAgent(
         'Leave business out to ask whoever approves through the link, or give the business ID from the console.',
       )
     }
-    const c = await connection.start({
-      businessId: business,
-      label: typeof args.name === 'string' && args.name.trim() !== '' ? args.name.trim() : null,
-      sell: args.sell === true,
-    })
+    // Left out or blank, the agent asks under the name it asked before, or the default one.
+    const named = typeof args.name === 'string' && args.name.trim() !== '' ? args.name : null
+    const label = named === null ? null : agentLabelOf(named)
+    if (named !== null && label === null) {
+      throw new RangeError(`That name can't be used. ${AGENT_LABEL_RULE}.`)
+    }
+    const c = await connection.start({ businessId: business, label, sell: args.sell === true })
     return connectionAnswer(c, business ?? undefined)
   }
 

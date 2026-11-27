@@ -1,6 +1,6 @@
 import { type Hex, hashTypedData, keccak256, stringToHex, zeroHash } from 'viem'
 import { z } from 'zod'
-import { AGENT_REQUEST_LIFETIME } from './agent-connect.js'
+import { AGENT_REQUEST_LIFETIME, heldAgentLabelJson } from './agent-connect.js'
 import { canonicalJson } from './canonical.js'
 import { type AvowDomain, domain, mandateHash } from './eip712.js'
 import { BUSINESS_ID } from './fields.js'
@@ -168,13 +168,6 @@ export const describeApprovalReason = (r: ApprovalReason): string => APPROVAL_RE
 export const RAISABLE_LIMITS = ['per_commitment', 'open_reserves'] as const
 export type RaisableLimit = (typeof RAISABLE_LIMITS)[number]
 
-const label = z
-  .string()
-  .trim()
-  .min(1)
-  .max(60)
-  .regex(/^[^\p{Cc}]+$/u, 'printable characters only')
-
 /** The hash of a seller's mandate, which is never the zero hash, since no mandate has it. */
 const mandateHashJson = bytes32.refine((h) => h !== zeroHash, 'a mandate hash')
 
@@ -185,7 +178,7 @@ const mandateHashJson = bytes32.refine((h) => h !== zeroHash, 'a mandate hash')
  */
 const KIND_FIELDS = {
   agent_authority: {
-    terms: z.strictObject({ label, signingKey: address.nullable() }),
+    terms: z.strictObject({ label: heldAgentLabelJson, signingKey: address.nullable() }),
     /** The agent holds no authority, which is what an approval would change. */
     basis: z.strictObject({ mandate: z.null() }),
   },

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -156,6 +156,19 @@ describe('avow-sandbox-mcp', () => {
     const answer = await c.callTool({ name: 'connect', arguments: { business: ' ' } })
     expect(answer.isError).toBe(true)
     expect(JSON.stringify(answer.content)).toMatch(/Leave business out/)
+  }, 30_000)
+
+  it('refuses a name with a hidden or direction-changing character before asking anyone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'avow-mcp-'))
+    const c = await connect(dir)
+    const answer = await c.callTool({
+      name: 'connect',
+      arguments: { name: 'Agent \u202etcennoc ot sksa' },
+    })
+    expect(answer.isError).toBe(true)
+    expect(JSON.stringify(answer.content)).toMatch(/name can't be used/)
+    // Nothing was asked, so the folder holds no key and no request.
+    expect(existsSync(join(dir, '.avow'))).toBe(false)
   }, 30_000)
 
   it.skipIf(process.platform === 'win32')(

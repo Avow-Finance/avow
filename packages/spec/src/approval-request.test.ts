@@ -94,6 +94,10 @@ describe('an approval request', () => {
       basis: { mandate: null },
     }
     expect(parseApprovalRequest(authority).ok).toBe(true)
+    // A request made before new labels were held to plain text still reads, with the terms the
+    // root key signed its decision over.
+    const older = { ...authority, terms: { label: 'Agent \u202etcennoc "x"', signingKey: null } }
+    expect(parseApprovalRequest(older).ok).toBe(true)
   })
 
   it('carries a reason only from the fixed list, so it holds no text an agent wrote', () => {
