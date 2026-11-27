@@ -161,7 +161,7 @@ Revoking is to stop every new promise and leave every commitment already made in
 
 The check reads only what it's handed, so four things fall to whoever stores mandates, which is Avow on a deployment that stores them.
 
-- Avow stores mandates sealed only where a deployment turns them on, and nothing stores a revocation yet. No SDK call or tool builds or signs either, and only the account's root key signs either.
+- Avow stores mandates sealed only where a deployment turns them on, and nothing stores a revocation yet. No SDK call or tool builds or signs a mandate or a revocation. Only the account's root key signs one.
 - A reader can't see a newer mandate or a revocation its server left out. Avow is to cover that, by approving a reserve only for a sale under the newest mandate of a key nobody revoked, and by serving a revoked key's revocation with every chain for it.
 - A reader can't see a second mandate signed to replace the same one, or a second first mandate for a key. Whoever stores mandates is to refuse both, so a key has one chain.
 - A revocation holds under the lock it was signed for. A business that moves to a new lock is to carry its revocations over before it takes a mandate there.
