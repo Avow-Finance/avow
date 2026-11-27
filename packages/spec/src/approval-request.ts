@@ -4,6 +4,7 @@ import { AGENT_REQUEST_LIFETIME } from './agent-connect.js'
 import { canonicalJson } from './canonical.js'
 import { type AvowDomain, domain, mandateHash } from './eip712.js'
 import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
+import { sellerMandateTermsJson, sellerMandateTermsProblem } from './seller-mandate.js'
 import { reasonCodeJson } from './session-fields.js'
 import type { Mandate, ReplacementMandate } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
@@ -32,11 +33,20 @@ export const APPROVAL_KINDS = [
   'raise_limit',
   'name_supplier',
   'open_mode',
+  'seller_mandate',
 ] as const
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number]
 
-/** The kinds that change authority an agent already holds, which a business decides its agents may ask for. */
-export const APPROVAL_CHANGE_KINDS = ['raise_limit', 'name_supplier', 'open_mode'] as const
+/**
+ * The kinds an agent the business already knows asks for, which a business decides its agents may
+ * ask for. Each changes a buying agent's authority, or sets what a selling agent may promise.
+ */
+export const APPROVAL_CHANGE_KINDS = [
+  'raise_limit',
+  'name_supplier',
+  'open_mode',
+  'seller_mandate',
+] as const
 export type ApprovalChangeKind = (typeof APPROVAL_CHANGE_KINDS)[number]
 
 const DAY = 86_400n
@@ -52,6 +62,7 @@ export const APPROVAL_LIFETIMES: { readonly [K in ApprovalKind]: bigint } = {
   raise_limit: DAY,
   name_supplier: DAY,
   open_mode: DAY,
+  seller_mandate: DAY,
 }
 
 /** The window an agent's asks are counted over, in seconds. */
@@ -100,6 +111,14 @@ export const APPROVAL_REASONS = {
   listed_suppliers: {
     kind: 'open_mode',
     text: "The agent needs suppliers listed in the testnet's supplier registry",
+  },
+  new_seller: {
+    kind: 'seller_mandate',
+    text: 'The agent holds no authority to sell yet',
+  },
+  seller_limits: {
+    kind: 'seller_mandate',
+    text: 'The agent needs other limits on what it sells than the ones it holds',
   },
 } as const satisfies Record<string, { kind: ApprovalKind; text: string }>
 export type ApprovalReason = keyof typeof APPROVAL_REASONS
@@ -161,9 +180,28 @@ const KIND_FIELDS = {
      */
     basis: z.strictObject({ openCap: u256, openCapChanges: u256 }),
   },
+  seller_mandate: {
+    /**
+     * The exact terms of the seller's mandate the agent asks for. The request's `agentKey` is the
+     * agent's signing key, which the mandate binds. An approval is carried out only by a mandate
+     * the root key signs for that key that carries these terms and nothing else.
+     */
+    terms: sellerMandateTermsJson.refine(
+      (t) => sellerMandateTermsProblem(t) === null,
+      "well-formed terms of a seller's mandate",
+    ),
+    /**
+     * The hash of the seller's mandate the signing key holds, which the new one would replace, or
+     * null when it holds none. Another mandate signed in between makes the request stale.
+     */
+    basis: z.strictObject({ sellerMandate: bytes32.nullable() }),
+  },
 } as const
 
-/** What an agent sends to ask for a change to authority it holds. Avow reads the basis itself. */
+/**
+ * What an agent sends to ask for a change to authority it holds, or for authority to sell. Avow
+ * reads the basis itself.
+ */
 export const approvalAskJson = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('raise_limit'),
@@ -179,6 +217,11 @@ export const approvalAskJson = z.discriminatedUnion('kind', [
     kind: z.literal('open_mode'),
     terms: KIND_FIELDS.open_mode.terms,
     reason: z.enum(reasonsFor('open_mode')),
+  }),
+  z.strictObject({
+    kind: z.literal('seller_mandate'),
+    terms: KIND_FIELDS.seller_mandate.terms,
+    reason: z.enum(reasonsFor('seller_mandate')),
   }),
 ])
 export type ApprovalAsk = z.infer<typeof approvalAskJson>
@@ -310,6 +353,14 @@ export const approvalRequestJson = z.discriminatedUnion('kind', [
       basis: KIND_FIELDS.open_mode.basis,
     })
     .refine((r) => r.terms.cap !== r.basis.openCap, 'open mode changes the cap the lock holds'),
+  z.strictObject({
+    ...recordBase,
+    kind: z.literal('seller_mandate'),
+    businessId: z.string().min(1).max(200),
+    terms: KIND_FIELDS.seller_mandate.terms,
+    reason: z.enum(reasonsFor('seller_mandate')),
+    basis: KIND_FIELDS.seller_mandate.basis,
+  }),
 ])
 export type ApprovalRequest = z.infer<typeof approvalRequestJson>
 

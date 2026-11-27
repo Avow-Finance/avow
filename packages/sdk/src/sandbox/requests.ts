@@ -11,6 +11,7 @@ import {
 import type { AgentKey } from '../agent.js'
 import { agentRequestKey, avowRequests } from '../http.js'
 import { approvalRequestLink } from './connect.js'
+import { sellerMandateWords } from './seller-mandate-words.js'
 
 /** Where the agent's requests go, and the key it signs them with. */
 export interface RequestContext {
@@ -80,7 +81,9 @@ const LIMIT_LABELS = {
 
 /**
  * What a request changes, with each value as it stands now beside the value asked for. A request
- * for agent authority has no rows, since the administrator sets its limits when approving.
+ * for agent authority has no rows, since the administrator sets its limits when approving. A
+ * request for a seller's mandate has a row for every limit it would set, and says only whether
+ * each replaces one signed before, since the request carries the earlier mandate's hash alone.
  */
 export function changeWords(request: ApprovalRequest): ChangeWords {
   switch (request.kind) {
@@ -113,6 +116,17 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
           },
         ],
       }
+    case 'seller_mandate': {
+      const before = request.basis.sellerMandate === null ? 'Not set' : 'As signed before'
+      return {
+        title: 'Let the agent sell',
+        rows: sellerMandateWords(request.terms).map(({ label, value }) => ({
+          label,
+          before,
+          after: value,
+        })),
+      }
+    }
   }
 }
 

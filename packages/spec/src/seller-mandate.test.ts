@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import type { Signed } from './eip712.js'
 import {
+  carriesSellerMandateTerms,
   parseSellerMandate,
   SELLER_MANDATE_TYPES,
   type SellerMandate,
   type SellingLimit,
   sellerMandateHash,
   sellerMandateProblem,
+  sellerMandateTermsOf,
+  sellerMandateTermsProblem,
   sellingLimitFor,
 } from './seller-mandate.js'
 import {
@@ -306,5 +309,52 @@ describe("the signed form of a seller's mandate", () => {
     expect(reason(message({ excludedBuyers: ['biz_b', 'biz_a'] }))).toBe(invalid)
     expect(reason(message({ limits: [] }))).toBe(invalid)
     expect(reason(message({ businessId: '' }))).toBe(invalid)
+  })
+})
+
+describe("a seller's mandate's terms", () => {
+  const terms = sellerMandateTermsOf(mandate)
+
+  it('are everything but which mandate it is, whose, and for which key', () => {
+    const identity = ['mandateId', 'businessId', 'account', 'signingKey', 'nonce', 'replaces']
+    expect(Object.keys(terms).sort()).toEqual(
+      Object.keys(mandate)
+        .filter((k) => !identity.includes(k))
+        .sort(),
+    )
+    expect(sellerMandateTermsProblem(terms)).toBeNull()
+  })
+
+  it('are held to the rules a mandate is, and hold nothing else', () => {
+    expect(sellerMandateTermsProblem({ ...terms, limits: [] })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, negotiable: ['unitPrice'] })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, expiry: 2n ** 64n })).toBe(invalid)
+    expect(sellerMandateTermsProblem(mandate)).toBe(invalid)
+    const { expiry: _, ...missing } = terms
+    expect(sellerMandateTermsProblem(missing as never)).toBe(invalid)
+    expect(sellerMandateTermsProblem(null as never)).toBe(invalid)
+  })
+
+  it('are carried by a mandate only exactly, whichever mandate and key it is for', () => {
+    expect(carriesSellerMandateTerms(mandate, terms)).toBe(true)
+    const another = withMandate({
+      mandateId: id('seller-mandate-2'),
+      signingKey: OTHER_KEY,
+      nonce: 2n,
+      replaces: id('the mandate before'),
+    })
+    expect(carriesSellerMandateTerms(another, terms)).toBe(true)
+    const moved: Partial<SellerMandate>[] = [
+      { maxOrderValue: mandate.maxOrderValue + 1n },
+      { limits: [jobLine, anyService] },
+      { limits: [jobLine, anyService, { ...bulkEval, minUnitPrice: 0n }] },
+      { excludedBuyers: [] },
+      { approvalRule: { kind: 'never' } },
+      { expiry: mandate.expiry + 1n },
+    ]
+    for (const change of moved) {
+      expect(carriesSellerMandateTerms(withMandate(change), terms)).toBe(false)
+    }
+    expect(carriesSellerMandateTerms(mandate, { ...terms, weeklyBudget: 1n } as never)).toBe(false)
   })
 })

@@ -1,5 +1,6 @@
 import { type Address, type Hex, hashTypedData, zeroHash } from 'viem'
 import { z } from 'zod'
+import { canonicalJson } from './canonical.js'
 import { APPROVAL_RULE_CODES, type AvowDomain, domain, type Signed } from './eip712.js'
 import { COUNTRY_CODE, isCount, isShare, LOWER_ADDRESS, LOWER_BYTES32 } from './fields.js'
 import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
@@ -15,7 +16,7 @@ import {
 import { isSoundText } from './text.js'
 import { type ApprovalRule, CURRENCIES, type Currency } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
-import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
+import { approvalRuleJson, type Parsed, parseSigned, toWire } from './wire.js'
 
 /**
  * A seller's mandate is the authority a business's administrator signs for one selling agent, bound
@@ -71,6 +72,10 @@ export interface SellingLimit {
 
 /** What one selling agent may promise for its business, signed by the business's administrator. */
 export interface SellerMandate {
+  /**
+   * 32 random bytes that name this mandate. A sale's record shows a buyer the mandate's hash, and
+   * the bytes keep anyone from finding the limits behind that hash by guessing them.
+   */
   mandateId: Hex
   businessId: string
   /** The business's account, whose root key signs the mandate. */
@@ -238,6 +243,25 @@ const MANDATE_KEYS = SELLER_MANDATE_TYPES.SellerMandate.map((f) => f.name).filte
   (name) => name !== 'approvalAbove',
 )
 
+/** The fields that say which mandate this is, whose, and for which key. Every other field is a term. */
+const IDENTITY_KEYS = [
+  'mandateId',
+  'businessId',
+  'account',
+  'signingKey',
+  'nonce',
+  'replaces',
+] as const satisfies readonly (keyof SellerMandate)[]
+
+/**
+ * What a seller's mandate lets its agent do, apart from which mandate it is, whose, and for which
+ * key. A selling agent asks for these, and the administrator signs a mandate that carries exactly
+ * them.
+ */
+export type SellerMandateTerms = Omit<SellerMandate, (typeof IDENTITY_KEYS)[number]>
+
+const TERMS_KEYS = MANDATE_KEYS.filter((k) => !(IDENTITY_KEYS as readonly string[]).includes(k))
+
 /** Whether one line of limits is well formed on its own, under the mandate's most for an order. */
 function isLimit(l: unknown, maxOrderValue: bigint): l is SellingLimit {
   if (!isObject(l) || !holdsOnly(l, LIMIT_KEYS) || !isCategory(l.category)) return false
@@ -302,36 +326,73 @@ export function sellerMandateProblem(m: SellerMandate): ReasonCode | null {
   for (const key of [v.account, v.signingKey]) {
     if (typeof key !== 'string' || !LOWER_ADDRESS.test(key)) return bad
   }
-  if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return bad
-
-  const { maxOrderValue, limits } = v
-  if (!uint(maxOrderValue, 256, 1n) || !uint(v.maxOutstanding, 256, maxOrderValue)) return bad
-  if (!Array.isArray(limits) || limits.length < 1 || limits.length > SELLER_LIMITS_MAX) return bad
-  const lines = Array.from(limits)
-  if (!lines.every((l): l is SellingLimit => isLimit(l, maxOrderValue))) return bad
-  if (!lines.every((l, i) => i === 0 || comesBefore(lines[i - 1] as SellingLimit, l))) return bad
-  for (const named of lines) {
-    const any = lines.find((l) => l.category === named.category && l.item === null)
-    if (named.item !== null && any && !loosens(named, any)) return bad
-  }
-
-  if (!uint(v.maxDeliveryHorizon, 64, 1n) || !uint(v.maxFreeCancelWindow, 64)) return bad
-  if (!isShare(v.minLateCancellationBps) || !isShare(v.minNoShowBps)) return bad
-  const businessId = (id: unknown) => isSoundText(id, BUSINESS_ID_MAX)
-  if (!ascendingList(v.buyers, SELLER_LIST_MAX, businessId)) return bad
-  if (!ascendingList(v.excludedBuyers, SELLER_LIST_MAX, businessId)) return bad
-  if (m.buyers.length > 0 && m.excludedBuyers.length > 0) return bad
-  const country = (c: unknown) => typeof c === 'string' && COUNTRY_CODE.test(c)
-  if (!ascendingList(v.excludedCountries, SELLER_LIST_MAX, country)) return bad
-  if (typeof v.requiresBusinessCheck !== 'boolean') return bad
-  if (!Array.isArray(v.negotiable) || v.negotiable.length > 0) return bad
-  if (!isApprovalRule(v.approvalRule, maxOrderValue)) return bad
-  if (!uint(v.expiry, 64) || !uint(v.nonce, 256)) return bad
+  if (!uint(v.nonce, 256)) return bad
   if (v.replaces !== null) {
     if (typeof v.replaces !== 'string' || !LOWER_BYTES32.test(v.replaces)) return bad
     if (v.replaces === zeroHash) return bad
   }
-  return null
+  return termsAreSound(v) ? null : bad
+}
+
+/**
+ * Checks what a selling agent asks for, before any mandate carries it, by the rules
+ * `sellerMandateProblem` holds a mandate's terms to. It gives `seller_mandate.invalid` for terms
+ * that aren't well formed, or that hold anything but a mandate's terms.
+ */
+export function sellerMandateTermsProblem(terms: SellerMandateTerms): ReasonCode | null {
+  const v: unknown = terms
+  return isObject(v) && holdsOnly(v, TERMS_KEYS) && termsAreSound(v)
+    ? null
+    : 'seller_mandate.invalid'
+}
+
+/** Whether the terms among a value's fields are well formed, whatever other fields it holds. */
+function termsAreSound(v: Record<string, unknown>): boolean {
+  if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return false
+
+  const { maxOrderValue, limits } = v
+  if (!uint(maxOrderValue, 256, 1n) || !uint(v.maxOutstanding, 256, maxOrderValue)) return false
+  if (!Array.isArray(limits) || limits.length < 1 || limits.length > SELLER_LIMITS_MAX) return false
+  const lines = Array.from(limits)
+  if (!lines.every((l): l is SellingLimit => isLimit(l, maxOrderValue))) return false
+  if (!lines.every((l, i) => i === 0 || comesBefore(lines[i - 1] as SellingLimit, l))) return false
+  for (const named of lines) {
+    const any = lines.find((l) => l.category === named.category && l.item === null)
+    if (named.item !== null && any && !loosens(named, any)) return false
+  }
+
+  if (!uint(v.maxDeliveryHorizon, 64, 1n) || !uint(v.maxFreeCancelWindow, 64)) return false
+  if (!isShare(v.minLateCancellationBps) || !isShare(v.minNoShowBps)) return false
+  const businessId = (id: unknown) => isSoundText(id, BUSINESS_ID_MAX)
+  const { buyers, excludedBuyers } = v
+  if (!ascendingList(buyers, SELLER_LIST_MAX, businessId)) return false
+  if (!ascendingList(excludedBuyers, SELLER_LIST_MAX, businessId)) return false
+  if ((buyers as unknown[]).length > 0 && (excludedBuyers as unknown[]).length > 0) return false
+  const country = (c: unknown) => typeof c === 'string' && COUNTRY_CODE.test(c)
+  if (!ascendingList(v.excludedCountries, SELLER_LIST_MAX, country)) return false
+  if (typeof v.requiresBusinessCheck !== 'boolean') return false
+  if (!Array.isArray(v.negotiable) || v.negotiable.length > 0) return false
+  return isApprovalRule(v.approvalRule, maxOrderValue) && uint(v.expiry, 64)
+}
+
+/** The terms a seller's mandate carries, without the fields that say which mandate it is. */
+export function sellerMandateTermsOf(m: SellerMandate): SellerMandateTerms {
+  const terms: Record<string, unknown> = { ...m }
+  for (const key of IDENTITY_KEYS) delete terms[key]
+  return terms as unknown as SellerMandateTerms
+}
+
+/**
+ * Whether a mandate carries exactly the terms given, with nothing moved, added or left out. An
+ * approval of terms a selling agent asked for is carried out only by a mandate that passes.
+ */
+export function carriesSellerMandateTerms(m: SellerMandate, terms: SellerMandateTerms): boolean {
+  try {
+    return canonicalJson(toWire(sellerMandateTermsOf(m))) === canonicalJson(toWire(terms))
+  } catch {
+    // Text that can't be written canonically is no terms a mandate carries.
+    return false
+  }
 }
 
 /**
@@ -368,22 +429,33 @@ export const sellerMandateJson = z.strictObject({
         maxUnitsPerDay: z.number(),
       }),
     )
-    .max(SELLER_LIMITS_MAX),
+    .max(SELLER_LIMITS_MAX)
+    .readonly(),
   maxOrderValue: u256,
   maxOutstanding: u256,
   maxDeliveryHorizon: u64,
   minLateCancellationBps: z.number(),
   minNoShowBps: z.number(),
   maxFreeCancelWindow: u64,
-  buyers: z.array(z.string()).max(SELLER_LIST_MAX),
-  excludedBuyers: z.array(z.string()).max(SELLER_LIST_MAX),
-  excludedCountries: z.array(z.string()).max(SELLER_LIST_MAX),
+  buyers: z.array(z.string()).max(SELLER_LIST_MAX).readonly(),
+  excludedBuyers: z.array(z.string()).max(SELLER_LIST_MAX).readonly(),
+  excludedCountries: z.array(z.string()).max(SELLER_LIST_MAX).readonly(),
   requiresBusinessCheck: z.boolean(),
-  negotiable: z.array(z.enum(OPEN_TERMS)),
+  negotiable: z.array(z.enum(OPEN_TERMS)).readonly(),
   approvalRule: approvalRuleJson,
   expiry: u64,
   nonce: u256,
   replaces: bytes32.nullable(),
+})
+
+/** A seller's mandate's terms as JSON, which is the mandate's own without its identity fields. */
+export const sellerMandateTermsJson = sellerMandateJson.omit({
+  mandateId: true,
+  businessId: true,
+  account: true,
+  signingKey: true,
+  nonce: true,
+  replaces: true,
 })
 
 /**

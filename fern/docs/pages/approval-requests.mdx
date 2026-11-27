@@ -13,6 +13,7 @@ When an agent needs authority it doesn't hold, it asks, and a person decides. Av
 | `raise_limit` | Replaces the agent's mandate with one at the higher limit per commitment or on open reserves | `over_commitment_limit`, `reserves_limit_full` |
 | `name_supplier` | Names a supplier on the lock and adds it to the agent's mandate | `new_supplier` |
 | `open_mode` | Sets the lock's cap on reserves held with suppliers listed in the testnet's supplier registry | `listed_suppliers` |
+| `seller_mandate` | Signs a seller's mandate for the agent's signing key, with exactly the limits asked for | `new_seller`, `seller_limits` |
 
 An agent asks for agent authority through `connect`, as it always has. Avow takes the other kinds as each ships, and refuses one it doesn't take yet with `approval_request.kind_unavailable`. None of them approves a single payment.
 
@@ -35,9 +36,21 @@ Avow judges a lock change by where the lock stands. The request becomes active o
 
 Avow reads what a business's lock can do from the lock itself. A lock made before these guarded changes takes no open mode request, which Avow refuses with `approval_request.lock_unsupported`. Its supplier requests are carried out through the lock's signed supplier change, which names the same count. Opening the lock directly from the console's settings works on every lock.
 
+## Asking for authority to sell
+
+A selling agent asks for a [seller's mandate](/docs/reference/seller-mandate) with the `seller_mandate` kind. Its terms are the whole of what the mandate would let it do, which is every line of what it may sell, the most for one order, the most promised and not yet delivered, how far ahead, the lowest charges, the buyers and when a person decides. The request's agent key is the agent's signing key, the one the mandate binds. `sellerMandateTermsProblem` in `@avow-finance/spec` holds the terms to the rules a mandate's own terms meet, so an ask that could never be signed is refused when it arrives.
+
+An agent that holds no seller's mandate asks with `new_seller`. One that holds a mandate and needs other limits asks with `seller_limits`, and names every limit again, since the request carries the whole of the new terms.
+
+Approving signs a mandate. The request stays approved until the root key signs a `SellerMandate` for that signing key which carries exactly the terms asked for, checked with `carriesSellerMandateTerms`, and which replaces the mandate the request was made against. A mandate with one limit moved carries out nothing.
+
+`sellerMandateWords` in `@avow-finance/sdk` gives every limit as a label and a value, in the order a person reads them, and `changeWords` builds the card's rows from it. No limit is left off, so the card shows what a signature would grant. Where a rule reads Avow's records of a buyer, the words say the country is self-declared and the business check is simulated.
+
+The spec holds this kind and Avow doesn't take it yet. Until it does, Avow answers `approval_request.kind_unavailable`, nothing stores or enforces a seller's mandate, and a selling agent's signing key is still its only limit.
+
 ## The record
 
-Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed.
+Each request carries its id, its kind, the business, the agent's key, the exact terms, the reason, when it was asked and when it expires. Beside the terms Avow stores the basis, the state the request was made against. For a raise that's the hash of the agent's current mandate. For a supplier it's that hash, the supplier's account and how many times its place on the lock has changed. For open mode it's the cap the lock held and how many times the cap has changed. For a seller's mandate it's the hash of the mandate the signing key holds, or null when it holds none.
 
 The agent sends only the kind, the terms and the reason. Avow reads the basis itself, and refuses with `approval_request.terms_mismatch` a raise whose starting value isn't what the agent holds now, a supplier the mandate already names, and open mode at the cap the lock already holds. A supplier has to be one Avow has a profile for, or the ask is refused with `supplier.unknown`.
 

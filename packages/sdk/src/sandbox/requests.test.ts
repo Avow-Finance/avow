@@ -136,4 +136,79 @@ describe("a request's words", () => {
       }).rows,
     ).toEqual([{ label: 'Supplier', before: 'Not named', after: 'sandbox-cd34' }])
   })
+
+  it("shows every limit a seller's mandate would set, and what on testnet is self-declared or simulated", () => {
+    const terms = {
+      currency: 'USD',
+      limits: [
+        {
+          category: 'compute-job',
+          item: 'fine-tuning',
+          minUnitPrice: 100_000_000n,
+          maxUnitsPerOrder: 1,
+          maxUnitsPerDay: 3,
+        },
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: 40_000_000n,
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+        {
+          category: 'service',
+          item: 'Bulk eval',
+          minUnitPrice: 0n,
+          maxUnitsPerOrder: 8,
+          maxUnitsPerDay: 20,
+        },
+      ],
+      maxOrderValue: 500_000_000n,
+      maxOutstanding: 2_000_000_000n,
+      maxDeliveryHorizon: 604_800n,
+      minLateCancellationBps: 2000,
+      minNoShowBps: 5000,
+      maxFreeCancelWindow: 5_400n,
+      buyers: [],
+      excludedBuyers: ['sandbox-blocked'],
+      excludedCountries: ['IR', 'KP'],
+      requiresBusinessCheck: true,
+      negotiable: [],
+      approvalRule: { kind: 'above', amount: 300_000_000n },
+      expiry: 1_802_592_000n,
+    } as const
+    const asked = {
+      ...base,
+      kind: 'seller_mandate',
+      terms,
+      reason: 'new_seller',
+      basis: { sellerMandate: null },
+    } as const
+    const words = changeWords(asked)
+    expect(words.title).toBe('Let the agent sell')
+    expect(words.rows.map((r) => [r.label, r.after])).toEqual([
+      ['fine-tuning', 'From $100 a job, up to 3 a day'],
+      ['Any other service', 'From $40 a unit, up to 4 an order and 10 a day'],
+      ['Bulk eval', 'Any price a unit, up to 8 an order and 20 a day'],
+      ['Most for one order', '$500'],
+      ['Most promised and not yet delivered', '$2,000'],
+      ['Longest until delivery', '7 days'],
+      ['Lowest late-cancellation charge', '20%'],
+      ['Lowest no-show charge', '50%'],
+      ['Longest free cancellation for a service', '90 minutes'],
+      [
+        'Buyers',
+        "Any business except sandbox-blocked, with a self-declared country other than IR, KP, that passed Avow's simulated business check",
+      ],
+      ['A person decides', 'Sales over $300'],
+      ['Ends', '2027-02-14T08:00:00.000Z'],
+    ])
+    expect(new Set(words.rows.map((r) => r.before))).toEqual(new Set(['Not set']))
+    const replacing = changeWords({
+      ...asked,
+      reason: 'seller_limits',
+      basis: { sellerMandate: `0x${'33'.repeat(32)}` },
+    })
+    expect(replacing.rows[0]?.before).toBe('As signed before')
+  })
 })
