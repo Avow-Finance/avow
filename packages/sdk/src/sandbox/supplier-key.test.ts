@@ -130,6 +130,21 @@ describe('registering the business as a sandbox supplier', () => {
     ).toBe(true)
   })
 
+  it('takes no access key for the account, which speaks for it only through the keychain', () => {
+    const access = Account.fromSecp256k1(generatePrivateKey(), {
+      access: privateKeyToAccount(generatePrivateKey()).address,
+    })
+    const register = () =>
+      registerSandboxSupplier({
+        deployment,
+        // @ts-expect-error An access key is never the account's own key.
+        root: access,
+        signingKey: privateKeyToAccount(generatePrivateKey()),
+        payee: access.address,
+      })
+    expect(typeof register).toBe('function')
+  })
+
   it('refuses an answer that names another signing key than the one registered', async () => {
     const root = Account.fromSecp256k1(generatePrivateKey())
     const api = sandboxApi((r) => ({

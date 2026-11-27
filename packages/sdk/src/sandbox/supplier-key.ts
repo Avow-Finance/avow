@@ -1,5 +1,4 @@
 import {
-  type HashSigner,
   type Parsed,
   parseSupplierProfile,
   registrationDigest,
@@ -13,7 +12,13 @@ import {
 import { type Address, type Hex, isAddressEqual } from 'viem'
 import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
 import type { Account as TempoAccount } from 'viem/tempo'
-import { AvowApiError, avowRequests, rootRequestKey, signingRequestKey } from '../http.js'
+import {
+  AvowApiError,
+  avowRequests,
+  relayReason,
+  rootRequestKey,
+  signingRequestKey,
+} from '../http.js'
 import { fundFees, type SandboxClient } from './fees.js'
 import { readBusiness, readJson, type SandboxStore, type StoredBusiness, write } from './store.js'
 
@@ -72,8 +77,8 @@ const madeFor = (item: SupplierItem, business: StoredBusiness) =>
  */
 export async function registerSandboxSupplier(deps: {
   deployment: Pick<SandboxDeployment, 'chainId' | 'apiUrl' | 'factory'>
-  /** The account's key, which the account's address is taken from. */
-  root: HashSigner & { address: Address }
+  /** The account's key, a Tempo root account or a plain key, never an access key. */
+  root: TempoAccount.RootAccount | PrivateKeyAccount
   signingKey: PrivateKeyAccount
   payee: Address
   now?: () => bigint
@@ -226,11 +231,7 @@ export async function ensureSandboxSupplier(m: {
       ...(m.fetch ? { fetch: m.fetch } : {}),
     })
   } catch (error) {
-    const taken =
-      error instanceof Error &&
-      error.cause instanceof AvowApiError &&
-      error.cause.reason === 'sandbox.taken'
-    if (!taken) throw error
+    if (relayReason(error) !== 'sandbox.taken') throw error
     throw new Error(
       "Avow already holds another signing key for your business as a supplier, and .avow/supplier.json doesn't hold that key, so your business can't take jobs. Put back the supplier.json that holds it, or set up a fresh business with npm run fresh, which registers a key of its own.",
       { cause: error },

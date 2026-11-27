@@ -126,7 +126,7 @@ cd packages/supplier
 node dist/main.js init
 ```
 
-`init` makes your account key and signing key, registers them with Avow's sandbox as a supplier, has Moderato's faucet fund the signing key's fees, and prints your business id and three addresses. Put the business id in `SUPPLIER_BUSINESS_ID`. Both keys sign the registration, so nobody can register a key they don't hold. It registers with the deployment the testnet publishes at https://try.testnet.avow.finance/config.json, where the other settings above are published too, unless `AVOW_API_URL` and `AVOW_FACTORY` are both set. Run it again after any failure. It keeps its keys, and Avow answers a repeat with the supplier it holds. A registered supplier has no lock, so the testnet's supplier registry doesn't list it, and every buyer names it on its lock.
+`init` makes your account key and signing key, registers them with Avow's sandbox as a supplier, has Moderato's faucet fund the signing key's fees when it holds too little for them, and prints your business id and three addresses. Put the business id in `SUPPLIER_BUSINESS_ID`. Both keys sign the registration, so nobody can register a key they don't hold. It registers with the deployment the testnet publishes at https://try.testnet.avow.finance/config.json, where the other settings above are published too, unless `AVOW_API_URL` and `AVOW_FACTORY` are both set, and it refuses a factory the SDK doesn't trust either way. Run it again after any failure. It keeps its keys, and Avow answers a repeat with the supplier it holds. A registered supplier has no lock, so the testnet's supplier registry doesn't list it, and every buyer names it on its lock.
 
 Make a webhook secret, give it to your receiver, and set `WEBHOOK_URL` and `WEBHOOK_SECRET`.
 
@@ -151,7 +151,7 @@ node dist/main.js report 0x<commitment id> --no-show
 
 ## Hosting it
 
-Run `init` on your own machine, then give the host only what `serve` needs. `serve` signs with the signing key alone and never with the account key, so the account key stays on your machine with `keys.json`. Back that file up, since the account is where charges are paid.
+Run `init` on your own machine, then give the host only what `serve` needs. `init` refuses to run where `SUPPLIER_SIGNING_KEY` and `SUPPLIER_ACCOUNT` are set. `serve` signs with the signing key alone and never with the account key, so the account key stays on your machine with `keys.json`. Back that file up, since the account is where charges are paid.
 
 | Setting | What it is |
 | --- | --- |

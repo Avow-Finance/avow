@@ -5,6 +5,7 @@ import {
   type AvowResend,
   type Call,
   factoriesToRead,
+  fundFees,
   loadSandboxDeployment,
   moderatoClient,
   moderatoUsdToken,
@@ -21,19 +22,12 @@ import {
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
 import type { Address } from 'viem'
 import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
-import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
 import { initSupplier } from './init.js'
 import { localHostnames, localServer } from './local.js'
 import { reportArgs, reportCharge } from './report.js'
-import {
-  baseSettings,
-  envKeys,
-  registrationSettings,
-  reportSettings,
-  serveSettings,
-} from './settings.js'
+import { baseSettings, envKeys, initSettings, reportSettings, serveSettings } from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 import { type Booking, SupplierStore } from './store.js'
 import { bookingEvent, fetchPost, Outbox, reconcile, webhookSender } from './webhook.js'
@@ -78,13 +72,11 @@ function keysOf(store: SupplierStore): { account: Address; signingKey: PrivateKe
  * both are set, and with the testnet's published deployment otherwise.
  */
 async function init() {
-  const { stateDir, rpcUrl } = baseSettings(process.env)
-  const avow = registrationSettings(process.env)
+  const { stateDir, rpcUrl, avow } = initSettings(process.env)
   const profile = await initSupplier({
     store: new SupplierStore(stateDir),
     deployment: async () => avow ?? (await loadSandboxDeployment()),
-    fund: (account) =>
-      Actions.faucet.fundSync(moderatoClient(rpcUrl), { account, timeout: 60_000 }),
+    fund: (account) => fundFees(moderatoClient(rpcUrl), account),
     log,
   })
   console.log(JSON.stringify(profile, null, 2))

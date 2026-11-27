@@ -1,6 +1,6 @@
 import { getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { envKeys, registrationSettings, serveSettings } from './settings.js'
+import { envKeys, initSettings, registrationSettings, serveSettings } from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 
 const KEY = `0x${'1a'.repeat(32)}`
@@ -134,9 +134,27 @@ describe('registrationSettings', () => {
     })
   })
 
+  it('refuses a factory the SDK does not trust on Moderato', () => {
+    expect(() =>
+      registrationSettings({
+        AVOW_API_URL: SERVE.AVOW_API_URL,
+        AVOW_FACTORY: '0x0000000000000000000000000000000000000fac',
+      }),
+    ).toThrow(/isn't a factory the SDK trusts on Moderato, so init won't register under it\./)
+  })
+
   it('refuses a set pair that is wrong, naming each setting', () => {
     expect(() =>
       registrationSettings({ AVOW_API_URL: 'https://api.example/v1', AVOW_FACTORY: 'nope' }),
     ).toThrow(/missing or wrong: AVOW_API_URL, AVOW_FACTORY\./)
+  })
+})
+
+describe('initSettings', () => {
+  it('refuses to run where the keys come from the environment', () => {
+    expect(() => initSettings({ SUPPLIER_SIGNING_KEY: KEY, SUPPLIER_ACCOUNT: ACCOUNT })).toThrow(
+      /run it on the machine where keys\.json lives/,
+    )
+    expect(initSettings({}).avow).toBeNull()
   })
 })

@@ -7,6 +7,7 @@ import { checkCommitment, localHostnames } from './local.js'
 import {
   baseSettings,
   envKeys,
+  initSettings,
   registrationSettings,
   reportSettings,
   serveSettings,
@@ -219,6 +220,7 @@ describe('the supplier adapter reference', () => {
       baseSettings,
       envKeys,
       registrationSettings,
+      initSettings,
     ]) {
       try {
         settings(env)

@@ -1,5 +1,5 @@
 import { isIP } from 'node:net'
-import { MODERATO_RPC_URL } from '@avow-finance/sdk'
+import { MODERATO_RPC_URL, trustedFactory } from '@avow-finance/sdk'
 import { TEMPO_MODERATO } from '@avow-finance/spec'
 import { type Address, getAddress, type Hex, isAddress } from 'viem'
 import { isWebhookSecret } from './signature.js'
@@ -90,7 +90,26 @@ export function registrationSettings(
   const apiUrl = apiUrlOf(env, missing)
   const factory = address(env, 'AVOW_FACTORY', missing)
   refuseMissing(missing)
+  if (!trustedFactory(TEMPO_MODERATO, factory)) {
+    throw new Error(
+      `AVOW_FACTORY is ${factory}, which isn't a factory the SDK trusts on Moderato, so init won't register under it. Leave AVOW_API_URL or AVOW_FACTORY unset to register with the testnet's published deployment.`,
+    )
+  }
   return { chainId: TEMPO_MODERATO, apiUrl, factory }
+}
+
+/**
+ * What `init` needs: the state directory, the RPC and where it registers. It refuses to run where
+ * the keys come from the environment, since `init` makes and registers the keys in the keys file,
+ * and a host that holds only the signing key has no account key to register with.
+ */
+export function initSettings(env: Record<string, string | undefined>) {
+  if (envKeys(env)) {
+    throw new Error(
+      'SUPPLIER_SIGNING_KEY and SUPPLIER_ACCOUNT are set, so this is a host that holds only the signing key. init makes and registers the keys in keys.json, so run it on the machine where keys.json lives, without those two settings.',
+    )
+  }
+  return { ...baseSettings(env), avow: registrationSettings(env) }
 }
 
 /** The state directory and RPC, which every command needs. */

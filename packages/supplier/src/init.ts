@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { AvowApiError, registerSandboxSupplier } from '@avow-finance/sdk'
+import { registerSandboxSupplier, relayReason } from '@avow-finance/sdk'
 import type { SandboxDeployment, SupplierProfile } from '@avow-finance/spec'
 import { type Address, BaseError } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
@@ -9,7 +9,10 @@ export interface InitDeps {
   store: SupplierStore
   /** The deployment to register with, read only once the keys are in place. */
   deployment: () => Promise<Pick<SandboxDeployment, 'chainId' | 'apiUrl' | 'factory'>>
-  /** Has Moderato's faucet fund an address, which the signing key needs for its fees. */
+  /**
+   * Has Moderato's faucet fund an address's fees when it holds too little for them, which the
+   * signing key needs to send acceptances and reports.
+   */
   fund: (address: Address) => Promise<unknown>
   fetch?: typeof fetch
   log: (line: string) => void
@@ -46,8 +49,7 @@ export async function initSupplier(deps: InitDeps): Promise<SupplierProfile> {
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
     })
   } catch (e) {
-    const reason = e instanceof Error && e.cause instanceof AvowApiError ? e.cause.reason : null
-    if (reason === 'sandbox.taken') {
+    if (relayReason(e) === 'sandbox.taken') {
       throw new Error(
         `Avow refused these keys as taken (sandbox.taken). It holds this account with another payout address, or another supplier holds the signing key ${signingKey.address}. Make new keys by running init with a new STATE_DIR.`,
         { cause: e },

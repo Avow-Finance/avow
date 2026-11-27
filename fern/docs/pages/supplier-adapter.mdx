@@ -15,7 +15,7 @@ The adapter takes GPU bookings and nothing else. It signs only terms built with 
 That leaves out several things a supplier may want, so plan around them.
 
 - **No service orders.** It doesn't sell `service/1` offers. [Services sold by quantity](/docs/reference/services) covers those, sold through the `avow-sandbox` package.
-- **No offers yet.** The adapter doesn't list offers yet. It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it, and an agent books from it with terms it already has.
+- **No offers yet.** It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it, and an agent books from it with terms it already has.
 - **No seller's mandate.** It refuses an agreement that names one, since it acts under none.
 - **No check of your capacity.** It signs any offer that meets the rules below without asking your system first, and your system hears of the booking only once it's signed. Set `MAX_RESERVE_DOLLARS`, `MAX_OPEN_PER_BUYER` and `MAX_OPEN_BOOKINGS` to what you can actually serve.
 - **One process.** Run one `serve` at a time for a state directory, since it counts open bookings from what it saved itself.
@@ -64,13 +64,13 @@ The filter builds the adapter and the packages it uses. `pnpm build` builds ever
 | Command | What it does | Settings it needs |
 | --- | --- | --- |
 | `init` | Makes your account key and signing key, or keeps the ones `keys.json` holds, registers them with Avow's sandbox as a supplier, has Moderato's faucet fund the signing key, and prints your business id, account, payout address and signing key | None, or `AVOW_API_URL` and `AVOW_FACTORY` together |
-| `profile` | Prints the same three addresses again | None |
+| `profile` | Prints your account, payout address and signing key again | None |
 | `secret` | Prints a new webhook secret for `WEBHOOK_SECRET` | None |
 | `serve` | Serves agents, accepts each reserve Avow authorizes, posts webhook events and answers the local check, until you stop it | `AVOW_API_URL`, `AVOW_FACTORY`, `AVOW_TOKEN`, `AVOW_APPROVAL_KEYS` and `SUPPLIER_BUSINESS_ID` |
 | `report` | Reports a late cancellation on an accepted booking, or a no-show with `--no-show`, then follows the lock until Avow confirms or refers it | `AVOW_FACTORY` and `AVOW_TOKEN` |
 | `redeliver` | Puts every webhook event the adapter gave up on back to be sent once `serve` runs | None |
 
-`init` registers with the deployment the testnet publishes at [try.testnet.avow.finance/config.json](https://try.testnet.avow.finance/config.json), and refuses one whose factory the SDK doesn't trust. With both `AVOW_API_URL` and `AVOW_FACTORY` set, it registers with those instead, and with only one of them set it still reads the published deployment. It prints what Avow registered. `businessId` goes in `SUPPLIER_BUSINESS_ID`, and `payee` is your account, since charges pay the account itself.
+`init` registers with the deployment the testnet publishes at [try.testnet.avow.finance/config.json](https://try.testnet.avow.finance/config.json), and refuses one whose factory the SDK doesn't trust. With both `AVOW_API_URL` and `AVOW_FACTORY` set, it registers with those instead, and it refuses a factory the SDK doesn't trust there too. With only one of them set it still reads the published deployment. If Moderato's faucet already funded the signing key's fees, `init` doesn't ask it again. It refuses to run where `SUPPLIER_SIGNING_KEY` and `SUPPLIER_ACCOUNT` are set, since a host holds no account key to register with, so run it where `keys.json` lives. It prints what Avow registered. `businessId` goes in `SUPPLIER_BUSINESS_ID`, and `payee` is your account, since charges pay the account itself.
 
 ```bash
 node dist/main.js init
@@ -460,7 +460,7 @@ Every transaction is on the [Moderato explorer](https://explore.testnet.tempo.xy
 
 Run `init` on your own machine, then give the host only what `serve` needs. `serve` signs with the signing key alone, so the account key can stay on your machine with `keys.json`.
 
-- Pass `SUPPLIER_SIGNING_KEY` from your host's secret store, and `SUPPLIER_ACCOUNT` beside it. Set both and `serve`, `report` and `profile` take the keys from the environment. Set neither and they read `keys.json`. One without the other stops the command and names the one that's missing.
+- Pass `SUPPLIER_SIGNING_KEY` from your host's secret store, and `SUPPLIER_ACCOUNT` beside it. Set both and `serve`, `report` and `profile` take the keys from the environment. Set neither and they read `keys.json`. One without the other stops the command and names the one that's missing. `init` refuses to run with either set.
 - Put `STATE_DIR` on a disk that outlives the process, such as a network volume, since bookings, reports and the outbox live there and a restart picks up from them.
 - Run one `serve` process at a time. A host that rolls out a new version stops the old process before it starts the new one.
 - Point a health check at `GET /health` on `PORT`.
