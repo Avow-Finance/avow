@@ -1,3 +1,4 @@
+import { LOCK_LOGS } from '@avow-finance/spec'
 import { decodeEventLog, type Hex, type Log } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
@@ -191,6 +192,28 @@ describe("the lock's pause event", () => {
       const data = `${PAUSED.data.slice(0, 2 + 128)}${word}${PAUSED.data.slice(2 + 192)}` as Hex
       const logs = [{ ...PAUSED, data, address: CONTEST_LOCK, topics: [...PAUSED.topics] }]
       expect(contestInLogs(logs as unknown as Log[], CONTEST_LOCK, COMMITMENT, 'buyer')).toBeNull()
+    }
+  })
+})
+
+describe("the lock's events as the spec lists their arguments", () => {
+  it('declares every event here exactly as the spec does, so the two never drift', () => {
+    const declared = [...LOCK_EVENTS_ABI, ...LOCK_PAUSED_EVENT_ABI]
+    expect(declared.map((event) => event.name).sort()).toEqual(
+      ['Charged', 'Paused', 'Released', 'Reserved', 'Resolved'].sort(),
+    )
+    const listed: Record<string, Record<string, string>> = LOCK_LOGS
+    for (const event of declared) {
+      expect(
+        event.inputs.map((input) => [input.name, input.type, input.indexed]),
+        event.name,
+      ).toEqual(
+        Object.entries(listed[event.name] ?? {}).map(([name, type]) => [
+          name,
+          type,
+          name === 'commitmentId',
+        ]),
+      )
     }
   })
 })

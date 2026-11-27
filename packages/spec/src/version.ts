@@ -99,6 +99,8 @@ export const SELLER_POLICY_VERSION = 'seller-mandate-check/1'
 /**
  * The version of a commitment event, the notice of one change in a commitment's life. An event is
  * no signed message and no lock checks it, so it has a version of its own. A reader refuses any
- * other version, and a new code, a new field or a change to how an event hashes takes a new one.
+ * other version. The version changes only when a code that exists changes, in what it means or in
+ * the fields it carries, or when the slot or the hash is derived another way. A new code takes no
+ * new version, since a reader refuses an event whose code it doesn't know and reads on.
  */
 export const COMMITMENT_EVENT_VERSION = '1'

@@ -8,6 +8,7 @@ import {
   holdsOnly,
   isCount,
   isShare,
+  isUint,
   LOWER_ADDRESS,
   LOWER_BYTES32,
 } from './fields.js'
@@ -226,8 +227,6 @@ export function sellerMandateHash(m: SellerMandate, d: AvowDomain): Hex {
   return hashTypedData(sellerMandateTypedData(m, d))
 }
 
-const uint = (v: unknown, bits: number, least = 0n): v is bigint =>
-  typeof v === 'bigint' && v >= least && v < 2n ** BigInt(bits)
 const isCategory = (v: unknown): v is SellerCategory =>
   (SELLER_CATEGORIES as readonly unknown[]).includes(v)
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
@@ -279,7 +278,7 @@ function isLimit(l: unknown, maxOrderValue: bigint): l is SellingLimit {
   // An agent writes an item's name and a person reads it on the card they sign, so it reads plainly.
   if (l.item !== null && !isPlainText(l.item, job ? JOB_KIND_MAX : SERVICE_NAME_MAX)) return false
   // A floor above the most an order may come to would be a line that sells nothing.
-  if (!uint(l.minUnitPrice, 256) || l.minUnitPrice > maxOrderValue) return false
+  if (!isUint(l.minUnitPrice, 256) || l.minUnitPrice > maxOrderValue) return false
   if (!isCount(l.maxUnitsPerOrder, job ? 1 : SERVICE_QUANTITY_MAX)) return false
   return isCount(l.maxUnitsPerDay, SELLER_UNITS_MAX) && l.maxUnitsPerDay >= l.maxUnitsPerOrder
 }
@@ -305,7 +304,7 @@ const loosens = (named: SellingLimit, any: SellingLimit) =>
 function isApprovalRule(rule: unknown, maxOrderValue: bigint): rule is ApprovalRule {
   if (!isObject(rule)) return false
   if (rule.kind === 'above') {
-    if (!holdsOnly(rule, ['kind', 'amount']) || !uint(rule.amount, 256, 1n)) return false
+    if (!holdsOnly(rule, ['kind', 'amount']) || !isUint(rule.amount, 256, 1n)) return false
     return rule.amount < maxOrderValue
   }
   return (rule.kind === 'never' || rule.kind === 'always') && holdsOnly(rule, ['kind'])
@@ -343,7 +342,7 @@ function identityIsSound(v: unknown): boolean {
   if (typeof v.mandateId !== 'string' || !LOWER_BYTES32.test(v.mandateId)) return false
   if (!isSoundText(v.businessId, BUSINESS_ID_MAX)) return false
   if (typeof v.account !== 'string' || !LOWER_ADDRESS.test(v.account)) return false
-  if (!uint(v.nonce, 256)) return false
+  if (!isUint(v.nonce, 256)) return false
   const { replaces } = v
   if (replaces !== null) {
     if (typeof replaces !== 'string' || !LOWER_BYTES32.test(replaces)) return false
@@ -373,7 +372,7 @@ function termsAreSound(v: Record<string, unknown>): boolean {
   if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return false
 
   const { maxOrderValue, limits } = v
-  if (!uint(maxOrderValue, 256, 1n) || !uint(v.maxOutstanding, 256, maxOrderValue)) return false
+  if (!isUint(maxOrderValue, 256, 1n) || !isUint(v.maxOutstanding, 256, maxOrderValue)) return false
   if (!Array.isArray(limits) || limits.length < 1 || limits.length > SELLER_LIMITS_MAX) return false
   const lines = Array.from(limits)
   if (!lines.every((l): l is SellingLimit => isLimit(l, maxOrderValue))) return false
@@ -383,7 +382,7 @@ function termsAreSound(v: Record<string, unknown>): boolean {
     if (named.item !== null && any && !loosens(named, any)) return false
   }
 
-  if (!uint(v.maxDeliveryHorizon, 64, 1n) || !uint(v.maxFreeCancelWindow, 64)) return false
+  if (!isUint(v.maxDeliveryHorizon, 64, 1n) || !isUint(v.maxFreeCancelWindow, 64)) return false
   if (!isShare(v.minLateCancellationBps) || !isShare(v.minNoShowBps)) return false
   const businessId = (id: unknown) => typeof id === 'string' && BUSINESS_ID.test(id)
   const { buyers, excludedBuyers } = v
@@ -396,7 +395,7 @@ function termsAreSound(v: Record<string, unknown>): boolean {
   const { negotiable, expiry } = v
   if (!Array.isArray(negotiable) || negotiable.length > 0) return false
   if (!isApprovalRule(v.approvalRule, maxOrderValue)) return false
-  return uint(expiry, 64, 1n) && expiry <= SELLER_EXPIRY_MAX
+  return isUint(expiry, 64, 1n) && expiry <= SELLER_EXPIRY_MAX
 }
 
 /** The terms a seller's mandate carries, without the fields that say which mandate it is and whose. */

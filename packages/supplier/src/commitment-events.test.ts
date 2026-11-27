@@ -1,10 +1,11 @@
 import {
   type CommitmentEvent,
-  type CommitmentReference,
   commitmentEvent,
+  commitmentEventHash,
   commitmentEventProblem,
+  commitmentEventSlot,
   parseCommitmentEvent,
-  type Terms,
+  sameSlot,
   termsHash,
   toWire,
 } from '@avow-finance/spec'
@@ -17,9 +18,9 @@ import { agreedBooking } from './test/fixtures.js'
 import { type BookingEventData, bookingEvent, type WebhookEvent } from './webhook.js'
 
 /*
- * The adapter's four webhook events, written as the spec's commitment events and read back. The
- * adapter doesn't send commitment events yet. This pins that it can, so the move loses nothing a
- * receiver gets today.
+ * The adapter's four webhook events, written as the spec's commitment events. The adapter doesn't
+ * send commitment events yet. This pins what the move would keep, what it would carry another way
+ * and what it would leave out, field by field.
  */
 
 const T0 = Date.parse('2027-01-04T09:00:00Z')
@@ -44,39 +45,47 @@ const bookings: Booking[] = [
 const webhookEvent = (b: Booking, ms = T0) => bookingEvent(b, new Date(ms)) as WebhookEvent
 
 /**
- * Where each field of a webhook event goes in a commitment event. A field the adapter adds to its
- * events has to be given a home here before this compiles.
+ * What becomes of each field of a webhook event in a commitment event. `kept` fields read back
+ * exactly. A field the adapter adds to its events has to be placed here before this compiles.
  */
-const HOME = {
-  id: 'the code and commitment.commitmentId, which the webhook id is made from',
-  type: 'code',
-  createdAt: 'at, with the source supplier, in whole seconds',
-  commitmentId: 'commitment.commitmentId',
-  chainId: 'commitment.chainId',
-  lock: 'commitment.lock',
-  buyerBusinessId: 'buyerBusinessId',
-  supplierBusinessId: 'supplierBusinessId',
-  reserveDollars: 'reserve, in micros',
-  agreementExpiresAt: 'agreementExpiry, in unix seconds',
-  acceptanceTransaction: 'acceptedIn, on reserve.accepted',
-  terms: 'commitment.termsHash, which names the terms the event leaves out',
-} as const satisfies Record<keyof BookingEventData | Exclude<keyof WebhookEvent, 'data'>, string>
+const FIELDS = {
+  id: { fate: 'derived', as: 'the slot, from the code and the commitment, and never carried' },
+  type: { fate: 'kept', as: 'code' },
+  createdAt: { fate: 'kept_to_the_second', as: 'at, with the source supplier' },
+  commitmentId: { fate: 'kept', as: 'commitment.commitmentId' },
+  chainId: { fate: 'kept', as: 'commitment.chainId' },
+  lock: { fate: 'kept', as: 'commitment.lock, in lower case' },
+  buyerBusinessId: { fate: 'left_out', as: 'nothing, since an event names no business' },
+  supplierBusinessId: { fate: 'left_out', as: 'nothing, since an event names no business' },
+  reserveDollars: { fate: 'kept', as: 'reserve, in micros' },
+  agreementExpiresAt: { fate: 'kept', as: 'agreementExpiry, in unix seconds' },
+  acceptanceTransaction: { fate: 'kept', as: 'acceptedIn, on reserve.accepted' },
+  terms: {
+    fate: 'by_hash',
+    as: 'termsHash, which the booking holds and the webhook event does not',
+  },
+} as const satisfies Record<
+  keyof BookingEventData | Exclude<keyof WebhookEvent, 'data'>,
+  { fate: 'kept' | 'kept_to_the_second' | 'derived' | 'by_hash' | 'left_out'; as: string }
+>
+type Kept = {
+  [K in keyof typeof FIELDS]: (typeof FIELDS)[K]['fate'] extends 'kept' | 'kept_to_the_second'
+    ? K
+    : never
+}[keyof typeof FIELDS]
 
-/** A webhook event as a commitment event, with the terms hash from the agreement it was made for. */
+/**
+ * A webhook event as a commitment event. The terms hash comes from the booking's agreement, since
+ * the webhook event carries the terms and no salt to hash them with.
+ */
 function asCommitmentEvent(e: WebhookEvent, hashOfTerms: Hex): CommitmentEvent {
-  const commitment: CommitmentReference = {
-    kind: 'commitment',
-    chainId: e.data.chainId,
-    lock: e.data.lock.toLowerCase() as Address,
-    commitmentId: e.data.commitmentId,
-    // The adapter books the buyer's side, the only side a lock reserves.
-    side: 'buyer',
-    termsHash: hashOfTerms,
-  }
   const stated = {
-    commitment,
-    buyerBusinessId: e.data.buyerBusinessId,
-    supplierBusinessId: e.data.supplierBusinessId,
+    commitment: {
+      chainId: e.data.chainId,
+      lock: e.data.lock.toLowerCase() as Address,
+      commitmentId: e.data.commitmentId,
+    },
+    termsHash: hashOfTerms,
     reserve: parseUnits(e.data.reserveDollars, TERMS_DECIMALS),
     source: 'supplier',
     at: seconds(e.createdAt),
@@ -94,35 +103,27 @@ function asCommitmentEvent(e: WebhookEvent, hashOfTerms: Hex): CommitmentEvent {
   }
 }
 
-const STATUS = {
-  'booking.agreed': 'agreed',
-  'reserve.held': 'held',
-  'reserve.accepted': 'accepted',
-  'booking.lapsed': 'lapsed',
-} as const
+const CODES = ['booking.agreed', 'reserve.held', 'reserve.accepted', 'booking.lapsed'] as const
 
-/** The webhook event a supplier's commitment event stands for, with the terms its hash names. */
-function asWebhookEvent(c: CommitmentEvent, terms: Terms): WebhookEvent {
-  if (c.source !== 'supplier' || !Object.hasOwn(STATUS, c.code)) {
+/** The fields of a webhook event that a supplier's commitment event gives back. */
+function keptFields(c: CommitmentEvent): Pick<WebhookEvent & BookingEventData, Kept> {
+  const code = CODES.find((known) => known === c.code)
+  if (c.source !== 'supplier' || !code) {
     throw new Error(`${c.code} by ${c.source} is none of the adapter's events`)
   }
   return {
-    id: `msg_${c.commitment.commitmentId.slice(2)}_${STATUS[c.code]}`,
-    type: c.code,
+    type: code,
     createdAt: iso(c.at),
-    data: {
-      commitmentId: c.commitment.commitmentId,
-      chainId: c.commitment.chainId,
-      lock: c.commitment.lock,
-      buyerBusinessId: c.buyerBusinessId,
-      supplierBusinessId: c.supplierBusinessId,
-      reserveDollars: dollars(c.reserve, TERMS_DECIMALS),
-      agreementExpiresAt: iso(c.agreementExpiry),
-      acceptanceTransaction: c.code === 'reserve.accepted' ? c.acceptedIn : null,
-      terms: toWire(terms),
-    },
+    commitmentId: c.commitment.commitmentId,
+    chainId: c.commitment.chainId,
+    lock: c.commitment.lock,
+    reserveDollars: dollars(c.reserve, TERMS_DECIMALS),
+    agreementExpiresAt: iso(c.agreementExpiry),
+    acceptanceTransaction: c.code === 'reserve.accepted' ? c.acceptedIn : null,
   }
 }
+const fated = (...fates: string[]) =>
+  (Object.keys(FIELDS) as (keyof typeof FIELDS)[]).filter((k) => fates.includes(FIELDS[k].fate))
 
 describe("the adapter's webhook events as commitment events", () => {
   it('writes each of the four as one well-formed commitment event of the same code', () => {
@@ -138,47 +139,97 @@ describe("the adapter's webhook events as commitment events", () => {
       expect(event.code).toBe(sent.type)
       return event.code
     })
-    expect(new Set(codes)).toEqual(new Set(Object.keys(STATUS)))
+    expect(new Set(codes)).toEqual(new Set(CODES))
   })
 
-  it('reads each one back with every field the adapter sent', () => {
-    for (const b of bookings) {
-      const sent = webhookEvent(b)
-      const event = asCommitmentEvent(sent, b.agreement.termsHash)
-      expect(asWebhookEvent(event, b.terms), sent.type).toEqual(sent)
-    }
-  })
-
-  it('gives every field of a webhook event a home', () => {
+  it('places every field of a webhook event, as kept, derived, by hash or left out', () => {
     for (const b of bookings) {
       const { data, ...envelope } = webhookEvent(b)
       expect([...Object.keys(envelope), ...Object.keys(data)].sort()).toEqual(
-        Object.keys(HOME).sort(),
+        Object.keys(FIELDS).sort(),
       )
     }
+    expect(fated('left_out')).toEqual(['buyerBusinessId', 'supplierBusinessId'])
+    expect(fated('by_hash')).toEqual(['terms'])
+    expect(fated('derived')).toEqual(['id'])
   })
 
-  it('names the terms by their hash and leaves their words out', () => {
+  it('reads back exactly the fields it keeps, and no other', () => {
     for (const b of bookings) {
-      const event = asCommitmentEvent(webhookEvent(b), b.agreement.termsHash)
-      // Whoever holds the booking's terms and salt can check they are the terms the event names.
-      expect(termsHash(b.terms, b.salt)).toBe(event.commitment.termsHash)
-      expect(Object.keys(event)).not.toContain('terms')
+      const sent = webhookEvent(b)
+      const back = keptFields(asCommitmentEvent(sent, b.agreement.termsHash))
+      expect(Object.keys(back).sort(), sent.type).toEqual(
+        fated('kept', 'kept_to_the_second').sort(),
+      )
+      const flat: Record<string, unknown> = { ...sent, ...sent.data }
+      for (const [name, value] of Object.entries(back)) {
+        expect(value, `${sent.type} ${name}`).toEqual(flat[name])
+      }
     }
   })
 
-  it('keeps one id for one status of one booking, as the webhook id does', () => {
-    const [agreed, held] = bookings as [Booking, Booking]
-    const first = asCommitmentEvent(webhookEvent(agreed), agreed.agreement.termsHash)
-    const again = asCommitmentEvent(webhookEvent(agreed, T0 + 60_000), agreed.agreement.termsHash)
-    expect(again.id).toBe(first.id)
-    expect(asCommitmentEvent(webhookEvent(held), held.agreement.termsHash).id).not.toBe(first.id)
+  it('names no business, so neither business id comes back', () => {
+    for (const b of bookings) {
+      const sent = webhookEvent(b)
+      const event = asCommitmentEvent(sent, b.agreement.termsHash)
+      const wire = JSON.stringify(toWire(event))
+      expect(wire).not.toContain(sent.data.buyerBusinessId)
+      expect(wire).not.toContain(sent.data.supplierBusinessId)
+      expect(wire).not.toMatch(/business/i)
+    }
   })
 
-  it('keeps the time to the second, which is as fine as a commitment event states one', () => {
+  it('carries the terms by hash, which the booking supplies and the webhook event cannot', () => {
+    for (const b of bookings) {
+      const sent = webhookEvent(b)
+      const event = asCommitmentEvent(sent, b.agreement.termsHash)
+      if (event.code === 'reserve.owed_paid') throw new Error('never an adapter event')
+      // The hash is the one both sides signed, and whoever holds the terms and salt can check it.
+      expect(event.termsHash).toBe(b.agreement.termsHash)
+      expect(termsHash(b.terms, b.salt)).toBe(event.termsHash)
+      // The terms themselves stay out, and the webhook event holds no salt to hash them with.
+      expect(Object.keys(event)).not.toContain('terms')
+      expect(JSON.stringify(sent)).not.toContain(b.salt.slice(2))
+    }
+  })
+
+  it('gives one status of one booking one slot, as the webhook id does, and a hash for each sending', () => {
+    const [agreed, held] = bookings as [Booking, Booking]
+    const first = asCommitmentEvent(webhookEvent(agreed), agreed.agreement.termsHash)
+    const again = asCommitmentEvent(webhookEvent(agreed), agreed.agreement.termsHash)
+    const later = asCommitmentEvent(webhookEvent(agreed, T0 + 60_000), agreed.agreement.termsHash)
+    const next = asCommitmentEvent(webhookEvent(held), held.agreement.termsHash)
+    expect(webhookEvent(agreed, T0 + 60_000).id).toBe(webhookEvent(agreed).id)
+    expect(commitmentEventSlot(later)).toBe(commitmentEventSlot(first))
+    expect(commitmentEventSlot(next)).not.toBe(commitmentEventSlot(first))
+    // The same event sent twice is a repeat. Recorded again a minute later it is another event.
+    expect(commitmentEventHash(again)).toBe(commitmentEventHash(first))
+    expect(sameSlot(first, again)).toBe('repeat')
+    expect(commitmentEventHash(later)).not.toBe(commitmentEventHash(first))
+    expect(sameSlot(first, later)).toBe('read_the_lock')
+  })
+
+  it('keeps the time to the second, so the milliseconds of a webhook event are lost', () => {
     const [agreed] = bookings as [Booking]
-    const event = asCommitmentEvent(webhookEvent(agreed, T0 + 250), agreed.agreement.termsHash)
+    const sent = webhookEvent(agreed, T0 + 250)
+    const event = asCommitmentEvent(sent, agreed.agreement.termsHash)
     expect(event.at).toBe(BigInt(T0 / 1000))
-    expect(asWebhookEvent(event, agreed.terms).createdAt).toBe(new Date(T0).toISOString())
+    expect(sent.createdAt).toBe(new Date(T0 + 250).toISOString())
+    expect(keptFields(event).createdAt).toBe(new Date(T0).toISOString())
+  })
+
+  it('writes a lapse the same whether or not a reserve had come, as the adapter records it', () => {
+    // The adapter lapses an agreed booking and a held one alike at the acceptance deadline. A held
+    // booking's reserve is still on the lock then. The record keeps no trace of which it was, so
+    // the event says the booking ended unaccepted and nothing about a reserve.
+    const lapses = (['agreed', 'held'] as const).map((was) => {
+      const { status: _status, sent: _sent, ...record } = withStatus(was)
+      const b: Booking = { ...record, status: 'lapsed' }
+      return asCommitmentEvent(webhookEvent(b), b.agreement.termsHash)
+    })
+    const [noReserve, withReserve] = lapses as [CommitmentEvent, CommitmentEvent]
+    expect(noReserve.code).toBe('booking.lapsed')
+    expect(withReserve).toEqual(noReserve)
+    expect(Object.keys(noReserve).filter((name) => /reserved|funded|held/i.test(name))).toEqual([])
   })
 })

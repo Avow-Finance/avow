@@ -10,6 +10,10 @@ export const BPS = 10_000n
 export const isCount = (n: unknown, max: number): n is number =>
   Number.isSafeInteger(n) && (n as number) >= 1 && (n as number) <= max
 
+/** Whether a value is a whole number of at least `least` that fits an unsigned integer of `bits` bits. */
+export const isUint = (v: unknown, bits: number, least = 0n): v is bigint =>
+  typeof v === 'bigint' && v >= least && v < 2n ** BigInt(bits)
+
 /** Whether a value is a share in basis points, from 0 to 100%, with zero written one way. */
 export const isShare = (bps: unknown): bps is number =>
   Number.isSafeInteger(bps) &&
