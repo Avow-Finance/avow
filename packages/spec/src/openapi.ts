@@ -475,7 +475,7 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     tag: 'Agents',
     summary: 'Ask for a change to authority',
     description:
-      "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.",
+      "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. The body also describes an ask for a seller's mandate, which Avow doesn't take yet. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of the agent's own, apart from the names of what it would sell in an ask for a seller's mandate. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.",
     signedBy: "The agent's key",
     domain: 'lock',
     refusals: [403, 409, 429],
@@ -759,9 +759,23 @@ function bodySchemas(): { refs: Map<z.ZodType, string>; schemas: Record<string, 
   const schemas: Record<string, unknown> = {}
   for (const [id, schema] of Object.entries(out.schemas)) {
     const { $schema: _, id: _id, ...rest } = schema
-    schemas[id] = rest
+    schemas[id] = sendable(rest)
   }
   return { refs, schemas }
+}
+
+/**
+ * A schema without its `readOnly` marks. A list the code may not change is marked so, and in
+ * OpenAPI the mark would say a caller may not send the field, which is wrong for every one here.
+ */
+function sendable(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sendable)
+  if (typeof schema !== 'object' || schema === null) return schema
+  return Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key, value]) => !(key === 'readOnly' && value === true))
+      .map(([key, value]) => [key, sendable(value)]),
+  )
 }
 
 const SIGNING = `Every route but the status routes and a supplier's profile is signed. The request carries an \`Authorization\` header of the form \`${API_AUTH_SCHEME} signer=<address>, lock=<address>, requestId=<bytes32>, expiry=<unix seconds>, signature=<hex>\`. The signature is EIP-712 over an \`ApiRequest\` naming this API's origin as its audience, the method, the path, the request id, the expiry and the body's hash, under the domain of the business's lock, or of the factory where a route says so. A request stays valid for at most ${API_REQUEST_MAX_VALIDITY} seconds, and a request id is used once. The SDK signs every request, so a caller rarely builds this header by hand, and the API Explorer can send only the unsigned routes.`

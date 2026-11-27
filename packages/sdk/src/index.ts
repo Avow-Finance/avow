@@ -99,7 +99,6 @@ export {
   raiseAsk,
   supplierAsk,
 } from './sandbox/requests.js'
-export { type SellerLimitWords, sellerMandateWords } from './sandbox/seller-mandate-words.js'
 export {
   type SandboxServices,
   SERVICE_ORDER_SECONDS,

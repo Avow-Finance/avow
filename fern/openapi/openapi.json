@@ -910,7 +910,7 @@
           "Agents"
         ],
         "summary": "Ask for a change to authority",
-        "description": "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of its own. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.\n\nSigned by the agent's key, under the business lock's domain.",
+        "description": "An agent that holds authority asks for more: a higher limit, a supplier its mandate doesn't name, or open mode on its business's lock. The body also describes an ask for a seller's mandate, which Avow doesn't take yet. Avow reads what the agent holds now and stores it beside the terms as the request's basis, and answers with the request. The request grants nothing. Only the business account's root key decides it, and an agent can't approve, decline or change one.\n\nThe reason is a code from a fixed list, so a request carries no text of the agent's own, apart from the names of what it would sell in an ask for a seller's mandate. An ask identical to one already waiting is answered with that request. A different ask of the same kind while one waits is refused with `approval_request.already_waiting`, an agent can ask one business for ten changes a day, and after a decline it waits a day before asking the same again. A business decides which kinds its agents may ask for. Avow refuses a kind it doesn't take yet with `approval_request.kind_unavailable`.\n\nSigned by the agent's key, under the business lock's domain.",
         "security": [
           {
             "AvowSignature": []
@@ -5609,6 +5609,10 @@
               "terms": {
                 "type": "object",
                 "properties": {
+                  "signingKey": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
                   "currency": {
                     "type": "string",
                     "enum": [
@@ -5616,7 +5620,6 @@
                     ]
                   },
                   "limits": {
-                    "readOnly": true,
                     "maxItems": 50,
                     "type": "array",
                     "items": {
@@ -5679,7 +5682,6 @@
                     "pattern": "^(0|[1-9][0-9]*)$"
                   },
                   "buyers": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -5687,7 +5689,6 @@
                     }
                   },
                   "excludedBuyers": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -5695,7 +5696,6 @@
                     }
                   },
                   "excludedCountries": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -5706,7 +5706,6 @@
                     "type": "boolean"
                   },
                   "negotiable": {
-                    "readOnly": true,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -5771,6 +5770,7 @@
                   }
                 },
                 "required": [
+                  "signingKey",
                   "currency",
                   "limits",
                   "maxOrderValue",
@@ -8149,6 +8149,10 @@
               "terms": {
                 "type": "object",
                 "properties": {
+                  "signingKey": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-fA-F]{40}$"
+                  },
                   "currency": {
                     "type": "string",
                     "enum": [
@@ -8156,7 +8160,6 @@
                     ]
                   },
                   "limits": {
-                    "readOnly": true,
                     "maxItems": 50,
                     "type": "array",
                     "items": {
@@ -8219,7 +8222,6 @@
                     "pattern": "^(0|[1-9][0-9]*)$"
                   },
                   "buyers": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -8227,7 +8229,6 @@
                     }
                   },
                   "excludedBuyers": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -8235,7 +8236,6 @@
                     }
                   },
                   "excludedCountries": {
-                    "readOnly": true,
                     "maxItems": 200,
                     "type": "array",
                     "items": {
@@ -8246,7 +8246,6 @@
                     "type": "boolean"
                   },
                   "negotiable": {
-                    "readOnly": true,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -8311,6 +8310,7 @@
                   }
                 },
                 "required": [
+                  "signingKey",
                   "currency",
                   "limits",
                   "maxOrderValue",
