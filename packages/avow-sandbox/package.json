@@ -1,6 +1,7 @@
 {
   "name": "avow-sandbox",
   "version": "0.12.0",
+  "mcpName": "io.github.Avow-Finance/avow-sandbox",
   "description": "Connects an agent to Avow's testnet sandbox, so npx avow-sandbox works without naming a scope",
   "license": "Apache-2.0",
   "type": "module",

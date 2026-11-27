@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Avow-Finance/avow-sandbox",
+  "title": "Avow sandbox",
+  "description": "Lets an agent make commitments backed by reserved money, on Tempo's testnet with test dollars.",
+  "repository": {
+    "url": "https://github.com/Avow-Finance/avow",
+    "source": "github",
+    "subfolder": "packages/sdk"
+  },
+  "version": "0.12.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "avow-sandbox",
+      "version": "0.12.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "--dir"
+        },
+        {
+          "type": "positional",
+          "valueHint": "agent_folder",
+          "description": "The agent's folder. The server makes the agent's key there, keeps it in .avow and never sends it anywhere.",
+          "format": "filepath",
+          "isRequired": true
+        }
+      ]
+    }
+  ]
+}
