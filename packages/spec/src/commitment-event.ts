@@ -437,7 +437,8 @@ const CODES = {
    * The lock sent what it still held back to the business. `cause` is which of the lock's five
    * steps did it. `reasonCode` is the reason as the lock logged it, which is any 8-bit number from
    * Avow or from the supplier's consent and zero for the other causes. `reason` is the name of a
-   * consent's reason, and null for any other cause or for a number that names none.
+   * consent's reason, and null for any other cause or for a number that names none. Avow's reasons
+   * stay numbers here, and `releaseReasonFor` reads `reasonCode` by its cause for either kind.
    */
   'reserve.released': {
     checks: ['lock'],

@@ -99,11 +99,13 @@ A release says which of the lock's five steps made it and what reason that step 
 
 | `cause` | The step | `reasonCode` and `reason` |
 | --- | --- | --- |
-| `returned_by_avow` | Avow returned a reserve the supplier hadn't accepted | Any number from 0 to 255, as Avow gave it. This spec lists no words for Avow's numbers, so `reason` is null |
+| `returned_by_avow` | Avow returned a reserve the supplier hadn't accepted | Any number from 0 to 255, as Avow gave it. 1 means the business revoked the agent that made the reserve, which `avowReturnReasonOf` reads as `agentRevoked`. `reason` stays null, since an event names only a consent's reasons |
 | `cancelled_in_time` | The business took its reserve back before free cancellation ended | 0 and null |
 | `supplier_consent` | The supplier's account consented to give the reserve back | Any number from 0 to 255. `reason` is `kept` for 1 and `supplierFailed` for 2, and null for any other |
 | `not_accepted` | A reserve nobody accepted went back at the acceptance deadline | 0 and null |
 | `reached_release_date` | A reserve with nothing reported went back at its release date | 0 and null |
+
+Avow doesn't return reserves for a revoked agent yet, so no lock has logged that reason. Until it does, a revoked agent's unaccepted reserve goes back at its acceptance deadline as `not_accepted`.
 
 A business cancelling in time has no code of its own. It takes its reserve back on the lock, so it is a `reserve.released` with the cause `cancelled_in_time`. `booking.cancelled_late` is the cancellation Avow records once free cancellation has ended, which a late-cancellation charge rests on.
 
@@ -238,7 +240,7 @@ A `block` event is written from three things: the arguments of the step's own lo
 
 An event takes four things from around its log. The chain and the lock's address are where the log was read. The commitment id is the log's `commitmentId`. The block's number, the transaction and the log's index are the log's place, and `at` is the time of that block.
 
-A log carries numbers where an event carries words. The spec holds each table and its lookup, which are `chargeKindOf`, `contestReasonOf`, `releaseCauseOf`, `releaseReasonOf`, `pauseCauseOf` and `lockPartyOf`. A lookup gives null for a number its table doesn't list, and the event keeps the number beside the null.
+A log carries numbers where an event carries words. The spec holds each table and its lookup, which are `chargeKindOf`, `contestReasonOf`, `releaseCauseOf`, `releaseReasonOf`, `avowReturnReasonOf`, `pauseCauseOf` and `lockPartyOf`. A lookup gives null for a number its table doesn't list, and the event keeps the number beside the null. A consent and Avow both number their reasons from 1, so read a release's `reasonCode` with `releaseReasonFor`, which takes the cause too and never reads one table's number with the other's words.
 
 `paid` and `owed` come from the lock's `PaymentOwed` log, which the lock writes inside a step, before the step's own log, for each transfer that fails. A resolution pays the supplier and then the business, so when both transfers fail its receipt holds two `PaymentOwed` logs in a row before `Resolved`. `sentStates(receiptLogs, logIndex)` reads them. For each party, it is `owed` when a `PaymentOwed` for that party, commitment and side sits between the step's own log and the lock's log before it that isn't a `PaymentOwed`, and `paid` otherwise. Logs from other contracts in between, such as the token's transfer, count for nothing. `PaymentOwed` has no code of its own.
 
