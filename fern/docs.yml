@@ -44,6 +44,8 @@ navigation:
     contents:
       - page: Tools and commands
         path: ./docs/pages/tools.mdx
+      - page: Supplier adapter
+        path: ./docs/pages/supplier-adapter.mdx
       - page: Services sold by quantity
         path: ./docs/pages/services.mdx
       - page: Negotiation threads

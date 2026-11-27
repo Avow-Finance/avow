@@ -48,8 +48,8 @@ export function acceptancePolicy(rules: OfferRules, limits: OpenLimits): Accepta
     rules: [
       `It signs GPU reservation terms that meet Avow's ${rules.profile.name} profile on chain ${rules.chainId}, for a reserve of at most ${dollars(rules.maxReserve)}.`,
       `Agents offer terms at POST /agreements. It signs an offer only on a lock Avow's factory made, and only when the acceptance deadline leaves it at least ${rules.minTimeToAccept} seconds.`,
-      "It holds capacity once Avow authorizes the funded reserve and its verifier passes Avow's authorization and approval, the buyer's mandate and the lock against the terms it signed. It grants the capacity once the lock holds its acceptance.",
-      'A booking whose reserve never arrives lapses at its acceptance deadline, and Avow releases any reserve back to the business.',
+      "It holds capacity once Avow authorizes the funded reserve and its verifier passes Avow's authorization, the buyer's mandate and the lock against the terms it signed. Its verifier checks Avow's approval against the same terms before it builds the acceptance, and it grants the capacity once the lock holds that acceptance.",
+      'A booking lapses when its acceptance deadline passes before the lock takes the acceptance, and Avow releases any reserve back to the business.',
       "It charges only what the terms allow, for a late cancellation from the free-cancellation deadline on or a no-show once the grace period has passed, and never more than the terms' most for that charge. The business can dispute a charge before its contest window closes.",
       `It holds at most ${limits.perBuyer} open bookings for one buyer's lock and ${limits.total} in all. An offer past either limit gets a 429 and can come again once a booking is accepted or lapses.`,
     ],
