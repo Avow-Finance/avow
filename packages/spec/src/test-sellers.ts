@@ -31,18 +31,51 @@ export const TEST_SELLERS_MAX = 10
 /** The most offers one test seller lists. */
 export const TEST_SELLER_OFFERS_MAX = 10
 
-/**
- * Words that would make a test business read as checked or vouched for. None of a test seller's
- * text may hold one, in any case.
- */
-const VOUCHING = /verif|certif|kyb|approved\s*by/i
+/** The longest name a test seller has, "(test business)" included. */
+export const TEST_SELLER_NAME_MAX = 80
 
 /**
- * Text a test seller shows, held to printable ASCII on one line, so no unseen character, look-alike
- * letter or new line can carry a word past the check, then checked for words that vouch for it.
+ * Words a test seller's text may not hold, since each would make a test business read as checked
+ * or vouched for. Avow writes the list itself, so this is a backstop, and it refuses these words
+ * and nothing more.
  */
-const isTestSellerText = (text: string, max: number): boolean =>
-  /^[\x20-\x7e]+$/.test(text) && isPlainText(text, max) && !VOUCHING.test(text)
+export const TEST_SELLER_REFUSED_WORDS = [
+  'verif',
+  'certif',
+  'kyb',
+  'kyc',
+  'vett',
+  'audit',
+  'accredit',
+  'approved',
+  'checked',
+  'trusted',
+] as const
+
+/**
+ * Text as the word check reads it: lower case, with the digits and marks that stand in for
+ * letters read as those letters, and everything that isn't a letter left out, so a word split by
+ * spaces, dots or hyphens reads whole.
+ */
+const squashed = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/0/g, 'o')
+    .replace(/[1l|]/g, 'i')
+    .replace(/3/g, 'e')
+    .replace(/[^a-z]/g, '')
+
+/**
+ * Whether text may show for a test seller. It's plain printable ASCII on one line, of up to `max`
+ * characters with no space at either end, and it holds none of the refused words, read as
+ * `squashed` reads them. Each refused word is also read with any l in it as an i, since the check
+ * reads every l as one.
+ */
+export function isTestSellerText(text: string, max: number): boolean {
+  if (!/^[\x20-\x7e]+$/.test(text) || !isPlainText(text, max)) return false
+  const read = squashed(text)
+  return !TEST_SELLER_REFUSED_WORDS.some((word) => read.includes(word.replace(/l/g, 'i')))
+}
 
 /** One test seller, with the sandbox business it sells for, its name and its offers, whole. */
 export interface TestSeller {
@@ -71,7 +104,7 @@ const listJson = z
  */
 function keepsRules(s: TestSeller): boolean {
   const named =
-    isTestSellerText(s.name, 80) &&
+    isTestSellerText(s.name, TEST_SELLER_NAME_MAX) &&
     s.name.endsWith(TEST_BUSINESS_SUFFIX) &&
     s.name.length > TEST_BUSINESS_SUFFIX.length
   return (

@@ -95,6 +95,34 @@ describe("the deployment's list of test sellers", () => {
       'a summary that says approved by',
       withOffer({ item: { ...ping.item, summary: 'A test ping, approved by Avow' } }),
     ],
+    [
+      'a one for an i in verified',
+      withOffer({ item: { ...ping.item, summary: 'A Ver1fied ping' } }),
+    ],
+    [
+      'an l for an i in verified',
+      withOffer({ item: { ...ping.item, summary: 'A Verlfied ping' } }),
+    ],
+    [
+      'a hyphen inside verified',
+      withOffer({ item: { ...ping.item, summary: 'A Ve-rified ping' } }),
+    ],
+    [
+      'spaces between the letters of verified',
+      withOffer({ item: { ...ping.item, summary: 'A V e r i f i e d ping' } }),
+    ],
+    [
+      'dots between the letters of KYB',
+      withOffer({ item: { ...ping.item, summary: 'A K.Y.B. ping' } }),
+    ],
+    [
+      'approved-by with a hyphen',
+      withOffer({ item: { ...ping.item, summary: 'A ping approved-by Avow' } }),
+    ],
+    [
+      'a seller that says it is vetted',
+      withOffer({ item: { ...ping.item, summary: 'Vetted by Avow' } }),
+    ],
     ['no offers', { ...seller, offers: [] }],
     ['a field the list does not take', { ...seller, sells: ['Test ping'] }],
   ])('refuses the whole list for %s', (_why, entry) => {
