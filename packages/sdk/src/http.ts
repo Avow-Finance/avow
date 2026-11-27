@@ -179,8 +179,10 @@ export function agentRequestKey(key: AgentKey): RequestKey {
 /**
  * The business account's root key as a request signer. Its address is the account's own, and a
  * root key signs bare, so Avow reads the signature as the account's without a keychain envelope.
+ * It takes a Tempo root account or a plain key, and never an access key, whose signature would
+ * speak for its account through the keychain instead.
  */
-export function rootRequestKey(root: TempoAccount.RootAccount): RequestKey {
+export function rootRequestKey(root: TempoAccount.RootAccount | PrivateKeyAccount): RequestKey {
   return { address: root.address, signDigest: (hash) => root.sign({ hash }) }
 }
 

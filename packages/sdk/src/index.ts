@@ -132,6 +132,7 @@ export {
   type SandboxStoreItem,
   type SandboxSupplier,
 } from './sandbox/store.js'
+export { registerSandboxSupplier } from './sandbox/supplier-key.js'
 export * from './sandbox/terms.js'
 export { type SandboxTestSellers, sandboxTestSellers } from './sandbox/test-sellers.js'
 export * from './sandbox/top-up.js'

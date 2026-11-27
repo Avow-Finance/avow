@@ -1,5 +1,6 @@
 import { isIP } from 'node:net'
-import { MODERATO_RPC_URL } from '@avow-finance/sdk'
+import { MODERATO_RPC_URL, trustedFactory } from '@avow-finance/sdk'
+import { TEMPO_MODERATO } from '@avow-finance/spec'
 import { type Address, getAddress, type Hex, isAddress } from 'viem'
 import { isWebhookSecret } from './signature.js'
 import type { WebhookTarget } from './webhook.js'
@@ -68,6 +69,49 @@ const whole = (value: string | undefined, fallback: number) => {
   return Number.isSafeInteger(n) && n > 0 ? n : null
 }
 
+/** Avow's API, an origin with no path, or the name pushed onto `missing` when it's wrong. */
+function apiUrlOf(env: Record<string, string | undefined>, missing: string[]): string {
+  const apiUrl = env.AVOW_API_URL?.trim() ?? ''
+  if (!/^https?:\/\/[^/]+$/.test(apiUrl)) missing.push('AVOW_API_URL')
+  return apiUrl
+}
+
+/**
+ * Where `init` registers the supplier: Avow's API and factory when both settings are set, or null
+ * when either is left out, so `init` reads the testnet's published deployment instead. A buyer's
+ * terminal often sets `AVOW_FACTORY` alone, and that leaves the published deployment in charge.
+ */
+export function registrationSettings(
+  env: Record<string, string | undefined>,
+): { chainId: number; apiUrl: string; factory: Address } | null {
+  const set = (name: string) => (env[name]?.trim() ?? '') !== ''
+  if (!set('AVOW_API_URL') || !set('AVOW_FACTORY')) return null
+  const missing: string[] = []
+  const apiUrl = apiUrlOf(env, missing)
+  const factory = address(env, 'AVOW_FACTORY', missing)
+  refuseMissing(missing)
+  if (!trustedFactory(TEMPO_MODERATO, factory)) {
+    throw new Error(
+      `AVOW_FACTORY is ${factory}, which isn't a factory the SDK trusts on Moderato, so init won't register under it. Leave AVOW_API_URL or AVOW_FACTORY unset to register with the testnet's published deployment.`,
+    )
+  }
+  return { chainId: TEMPO_MODERATO, apiUrl, factory }
+}
+
+/**
+ * What `init` needs: the state directory, the RPC and where it registers. It refuses to run where
+ * the keys come from the environment, since `init` makes and registers the keys in the keys file,
+ * and a host that holds only the signing key has no account key to register with.
+ */
+export function initSettings(env: Record<string, string | undefined>) {
+  if (envKeys(env)) {
+    throw new Error(
+      'SUPPLIER_SIGNING_KEY and SUPPLIER_ACCOUNT are set, so this is a host that holds only the signing key. init makes and registers the keys in keys.json, so run it on the machine where keys.json lives, without those two settings.',
+    )
+  }
+  return { ...baseSettings(env), avow: registrationSettings(env) }
+}
+
 /** The state directory and RPC, which every command needs. */
 export function baseSettings(env: Record<string, string | undefined>) {
   return {
@@ -88,8 +132,7 @@ export function reportSettings(env: Record<string, string | undefined>) {
 /** Every setting `serve` needs. It throws naming each one that's missing or wrong. */
 export function serveSettings(env: Record<string, string | undefined>): SupplierSettings {
   const missing: string[] = []
-  const apiUrl = env.AVOW_API_URL?.trim() ?? ''
-  if (!/^https?:\/\/[^/]+$/.test(apiUrl)) missing.push('AVOW_API_URL')
+  const apiUrl = apiUrlOf(env, missing)
   const factory = address(env, 'AVOW_FACTORY', missing)
   const token = address(env, 'AVOW_TOKEN', missing)
   const approvalKeys = (env.AVOW_APPROVAL_KEYS ?? '')
