@@ -130,7 +130,7 @@ export const SANDBOX_PATHS = {
    * another account than the business's, or whose `replaces` doesn't name the mandate the key
    * holds now, or names any when the key holds none, is `seller_mandate.chain_mismatch`. A key
    * whose chain already holds `MAX_MANDATE_CHAIN` mandates takes no more, as
-   * `seller_mandate.invalid`. One past its expiry is `seller_mandate.expired`, posted again or
+   * `seller_mandate.chain_full`. One past its expiry is `seller_mandate.expired`, posted again or
    * not, and one the business account didn't sign is `seller_mandate.signature_invalid`. When
    * Avow can't read its records or the chain it is to answer `service.unavailable` and record
    * nothing.
