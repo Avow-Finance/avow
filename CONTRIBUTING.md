@@ -42,7 +42,7 @@ Each package lives in `packages/`. A package stays marked private until it's rea
 
 ### Releasing
 
-1. Bump every public package to the same new version in one pull request, along with both versions in `server.json`.
+1. Bump every public package to the same new version in one pull request, along with both versions in `server.json` and the MCP server's version in `packages/sdk/src/node/mcp.ts`.
 2. Once it merges, a maintainer runs the Release workflow from the Actions tab. It runs the checks, packs each public package, installs the packs into an empty project to prove they run, and publishes whatever npm doesn't have yet.
 3. A package's first publish uses the `NPM_TOKEN` secret in the `npm` environment. Then the package is set on npm to trust this repository's Release workflow, and the token is deleted, so later releases carry no token at all.
 4. A maintainer then lists the new version in the MCP Registry by hand, as [scripts/release/listing.md](scripts/release/listing.md) describes.

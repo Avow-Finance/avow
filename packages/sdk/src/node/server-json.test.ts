@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterEach, describe, expect, it } from 'vitest'
+import { folderWithAgent } from '../test/agent-folder.js'
 import { MCP_TOOLS } from './mcp.js'
+import { fileStore, SANDBOX_DIR } from './platform.js'
 
 // The MCP Registry's listing of the server, read as the registry reads it, beside the packages it
 // names. A client starts the server from these fields alone, so they have to describe what the
@@ -50,7 +52,7 @@ afterEach(async () => {
 })
 
 describe('the MCP Registry listing', () => {
-  it('names the package npx runs, at the version this repo releases, which claims the name', () => {
+  it('names the package npx runs, at the version this repo releases, which carries its name', () => {
     expect(listing.packages).toHaveLength(1)
     expect(npm?.registryType).toBe('npm')
     expect(npm?.transport).toEqual({ type: 'stdio' })
@@ -86,19 +88,36 @@ describe('the MCP Registry listing', () => {
     expect(argvFor(dir).slice(1)).toEqual(launch?.args.slice(1))
   }, 30_000)
 
-  it('starts the server from the command line a client builds from it', async () => {
+  it('starts the server from the command line a client builds from it, for the folder it names', async () => {
+    // The folder holds a connected agent, and the server runs from somewhere else, so only the
+    // folder in the command line can tell the server about that agent.
     const dir = mkdtempSync(join(tmpdir(), 'avow-listing-'))
+    const made = await folderWithAgent('sandbox-listing', { suppliers: [], categories: [] })
+    const agent = await made.store.read('agent')
+    if (agent === null) throw new Error('the folder has no agent')
+    await fileStore(join(dir, SANDBOX_DIR)).write('agent', agent)
+    const elsewhere = mkdtempSync(join(tmpdir(), 'avow-elsewhere-'))
+
     client = new Client({ name: 'avow-test', version: '0.0.0' })
     await client.connect(
       new StdioClientTransport({
         command: process.execPath,
         args: [SANDBOX_CLI, ...(argvFor(dir) as string[])],
-        cwd: mkdtempSync(join(tmpdir(), 'avow-elsewhere-')),
+        cwd: elsewhere,
         stderr: 'ignore',
       }),
     )
-    expect(client.getServerVersion()?.name).toBe(listing.name.split('/')[1])
+    expect(client.getServerVersion()).toEqual({
+      name: listing.name.split('/')[1],
+      version: listing.version,
+    })
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name)).toEqual(MCP_TOOLS.map((t) => t.name))
+    const status = await client.callTool({ name: 'status', arguments: {} })
+    expect(status.structuredContent).toMatchObject({
+      at: 'connected',
+      businessId: 'sandbox-listing',
+    })
+    expect(existsSync(join(elsewhere, SANDBOX_DIR))).toBe(false)
   }, 30_000)
 })

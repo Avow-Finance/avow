@@ -30,7 +30,8 @@
         {
           "type": "positional",
           "valueHint": "agent_folder",
-          "description": "The agent's folder. The server makes the agent's key there, keeps it in .avow and never sends it anywhere.",
+          "description": "The absolute path of the agent's folder. The server makes the agent's key there, keeps it in .avow and never sends it anywhere.",
+          "placeholder": "/Users/you/my-agent",
           "format": "filepath",
           "isRequired": true
         }
