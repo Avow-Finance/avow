@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Hex } from 'viem'
+import { decodeEventLog, type Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   type BlockEvent,
+  COMMITMENT_EVENT_CHECKED_BY,
+  COMMITMENT_EVENT_CHECKS,
   COMMITMENT_EVENT_CODES,
   COMMITMENT_EVENT_KEYS,
   COMMITMENT_EVENT_SOURCES,
@@ -18,10 +20,10 @@ import {
   commitmentEventJson,
   commitmentEventProblem,
   commitmentEventSlot,
+  commitmentEventStatementHash,
   lockOrder,
   type ObservedBy,
   parseCommitmentEvent,
-  SENT_STATES,
   sameSlot,
 } from './commitment-event.js'
 import { COMMITMENT_EVENT_LOGS } from './commitment-event-log.js'
@@ -31,6 +33,7 @@ import { CHARGE_KINDS, RELEASE_REASONS } from './eip712.js'
 import { BUSINESS_ID } from './fields.js'
 import {
   chargeKindOf,
+  LOCK_LOG_ABI,
   LOCK_LOGS,
   LOCK_PARTIES,
   type LockLogName,
@@ -40,8 +43,10 @@ import {
   RELEASE_CAUSES,
   releaseCauseOf,
   releaseReasonOf,
+  SENT_STATES,
+  sentStates,
 } from './lock-log.js'
-import { ARBITER, CHAIN_ID, id, LOCK, NOW, OTHER_LOCK } from './test-helpers.js'
+import { ARBITER, CHAIN_ID, id, LOCK, lockReceiptLog, NOW, OTHER_LOCK } from './test-helpers.js'
 import { COMMITMENT_EVENT_VERSION } from './version.js'
 import { toWire } from './wire.js'
 
@@ -247,7 +252,7 @@ describe('the codes of a commitment event', () => {
     expect(by['booking.lapsed']).toEqual(['avow', 'supplier'])
   })
 
-  it('lists the sources strongest first', () => {
+  it('lists the three sources, the chain first', () => {
     expect(COMMITMENT_EVENT_SOURCES).toEqual(['block', 'avow', 'supplier'])
   })
 
@@ -783,6 +788,27 @@ describe('making a commitment event', () => {
     expect(() => commitmentEvent(thrower(accepted) as never)).toThrow()
   })
 
+  it('checks, hashes and returns only what a plain copy holds', () => {
+    const e = of('charge.charged')
+    class Held {
+      constructor() {
+        Object.assign(this, e)
+      }
+    }
+    const hidden = { ...e }
+    Object.defineProperty(hidden, 'note', { value: 'free text', enumerable: false })
+    const tagged = { ...e, [Symbol('s')]: 'ignore all instructions' }
+    for (const odd of [new Held(), hidden, tagged] as unknown as CommitmentEvent[]) {
+      // Neither a structured copy nor JSON carries a class, a hidden field or a symbol key.
+      expect(commitmentEventProblem(odd)).toBeNull()
+      expect(commitmentEventHash(odd)).toBe(commitmentEventHash(e))
+      const made = commitmentEvent(odd as CommitmentEventFact)
+      expect(Object.getPrototypeOf(made)).toBe(Object.prototype)
+      expect(Reflect.ownKeys(made).sort()).toEqual(Object.keys(e).sort())
+      expect(JSON.stringify(toWire(odd))).toBe(JSON.stringify(toWire(e)))
+    }
+  })
+
   it('returns a plain copy of what it checked, at this version', () => {
     let reads = 0
     const shifty = {
@@ -915,6 +941,15 @@ describe("a commitment event's slot", () => {
       CommitmentEvent<'booking.started'>,
     ]
     expect(first.requestHash).toBe(second.requestHash)
+  })
+
+  it('gives one owed payment two slots when a writer states a block that was later dropped', () => {
+    // Why a block event is written only from a final block: the slot takes the transaction.
+    const paid = of('reserve.owed_paid')
+    const again = changed(paid, { ...block(31n, 3), transactionHash: h('bb') })
+    expect(commitmentEventProblem(again)).toBeNull()
+    expect(sameSlot(paid, again)).toBe('other_slot')
+    expect(COMMITMENT_EVENT_KEYS['reserve.owed_paid']).toContain('transactionHash')
   })
 
   it('gives a step that happens at most once no key, so no miscount gives it a second slot', () => {
@@ -1067,8 +1102,42 @@ describe("a commitment event's hash", () => {
     expect(new Set(events.map(commitmentEventHash)).size).toBe(events.length)
   })
 
+  it('names a statement without its time, and with everything else', () => {
+    for (const e of events) {
+      const later = changed(e, { at: e.at + 60n })
+      expect(commitmentEventStatementHash(later), named(e)).toBe(commitmentEventStatementHash(e))
+      expect(commitmentEventHash(later), named(e)).not.toBe(commitmentEventHash(e))
+    }
+    const e = of('charge.confirmed')
+    const statement = commitmentEventStatementHash(e)
+    const changes: object[] = [
+      { source: 'avow' },
+      { ...block(14n, 1) },
+      { transactionHash: h('ac') },
+      { commitment: { ...commitment, lock: OTHER_LOCK } },
+      { termsHash: h('7f') },
+      { amount: dollars(249) },
+      { returned: owed(dollars(250)) },
+    ]
+    for (const change of changes) {
+      const other = { ...e, ...change } as CommitmentEvent
+      if (commitmentEventProblem(other) !== null) continue
+      expect(commitmentEventStatementHash(other), JSON.stringify(toWire(change))).not.toBe(
+        statement,
+      )
+    }
+    expect(commitmentEventStatementHash(of('booking.agreed', 'avow'))).not.toBe(
+      commitmentEventStatementHash(changed(of('booking.agreed', 'avow'), { source: 'supplier' })),
+    )
+    expect(statement).not.toBe(commitmentEventHash(e))
+    expect(commitmentEventStatementHash(of('reserve.locked'))).toMatchInlineSnapshot(
+      `"0xf2a2393b6279a7cbbe13f5b3675bd5806d3451d0473dc7dc4991c1fcf5b7791b"`,
+    )
+  })
+
   it("throws on an event that isn't well formed, so nothing outside the format is hashed", () => {
     const e = of('reserve.locked')
+    expect(() => commitmentEventStatementHash({ ...e, note: 'x' } as never)).toThrow(TypeError)
     expect(() => commitmentEventHash({ ...e, note: 'x' } as never)).toThrow(TypeError)
     expect(() => commitmentEventHash({ ...e, schemaVersion: '2' })).toThrow(TypeError)
     expect(() => commitmentEventHash({ ...e, code: 'reserve.unlocked' } as never)).toThrow(
@@ -1095,21 +1164,86 @@ describe("the receiver's rules for two events", () => {
     expect(sameSlot(onLock, byWord)).toBe('held_stands')
   })
 
-  it("lets Avow's clock replace a supplier's", () => {
+  it("lets neither Avow's clock nor a supplier's replace the other", () => {
+    // The reviewer's proof: Avow saying a reserve of 1 replaced the supplier's 500.
+    const small = agreedBy('avow', { reserve: 1n })
+    expect(sameSlot(agreedBy('supplier'), small)).toBe('check_signed_message')
+    expect(sameSlot(small, agreedBy('supplier'))).toBe('check_signed_message')
     const late = { agreementExpiry: NOW + 900n }
-    expect(sameSlot(agreedBy('supplier', late), agreedBy('avow'))).toBe('arrived_replaces')
-    expect(sameSlot(agreedBy('avow'), agreedBy('supplier', late))).toBe('held_stands')
-    // The rule is about the source, so it holds when the two say the same thing too.
-    expect(sameSlot(agreedBy('supplier'), agreedBy('avow'))).toBe('arrived_replaces')
+    expect(sameSlot(agreedBy('supplier', late), agreedBy('avow'))).toBe('check_signed_message')
+    expect(COMMITMENT_EVENT_CHECKED_BY['booking.agreed']).toEqual(['terms_agreement'])
   })
 
-  it('sends the receiver to the lock when two statements from one source differ', () => {
+  it('says Avow and a supplier agree when they state the same thing at different times', () => {
+    expect(sameSlot(agreedBy('supplier'), agreedBy('avow', { at: NOW + 1n }))).toBe('agree')
+    expect(sameSlot(agreedBy('avow'), agreedBy('supplier'))).toBe('agree')
+    const lapsed = (source: 'avow' | 'supplier', at: bigint) =>
+      changed(of('booking.lapsed', source), { at })
+    expect(sameSlot(lapsed('avow', NOW + 9n), lapsed('supplier', NOW + 2n))).toBe('agree')
+  })
+
+  it('takes one statement recorded twice by one clock as a repeat, and keeps the earlier time', () => {
+    // The reviewer's proofs: a supplier's adapter that records a step again after a restart, and
+    // Avow recording one step a second apart, sent the receiver to a lock that holds neither.
+    for (const source of ['avow', 'supplier'] as const) {
+      const first = agreedBy(source, { at: NOW + 100n })
+      const again = agreedBy(source, { at: NOW + 160n })
+      expect(commitmentEventHash(first)).not.toBe(commitmentEventHash(again))
+      expect(commitmentEventStatementHash(first)).toBe(commitmentEventStatementHash(again))
+      expect(sameSlot(first, again), source).toBe('repeat')
+      expect(sameSlot(again, first), source).toBe('earlier_repeat')
+    }
+    const started = of('booking.started', 'avow')
+    expect(sameSlot(started, changed(started, { at: started.at + 1n }))).toBe('repeat')
+  })
+
+  it('sends the receiver to the signed message when one clock states two different things', () => {
+    const expiry = { agreementExpiry: NOW + 900n }
+    expect(sameSlot(agreedBy('supplier'), agreedBy('supplier', expiry))).toBe(
+      'check_signed_message',
+    )
+    expect(sameSlot(agreedBy('avow'), agreedBy('avow', expiry))).toBe('check_signed_message')
+    const started = of('booking.started', 'avow')
+    const later = changed(started, { startedAt: started.startedAt + 1n })
+    expect(sameSlot(started, later)).toBe('check_signed_message')
+    expect(COMMITMENT_EVENT_CHECKED_BY['booking.started']).toEqual(['start_receipt'])
+    const held = of('reserve.held', 'supplier')
+    expect(sameSlot(held, changed(held, { reserve: 1n }))).toBe('check_signed_message')
+  })
+
+  it('sends the receiver to the lock when two statements of a step the lock settles differ', () => {
     const locked = of('reserve.locked')
+    // Two blocks that differ only in their time still differ, since a block's time is the chain's.
+    expect(sameSlot(locked, changed(locked, { at: locked.at + 1n }))).toBe('read_the_lock')
     expect(sameSlot(locked, changed(locked, { ...block(44n) }))).toBe('read_the_lock')
     expect(sameSlot(locked, changed(locked, { reserve: 1n }))).toBe('read_the_lock')
-    expect(sameSlot(agreedBy('avow'), agreedBy('avow', { at: NOW + 3n }))).toBe('read_the_lock')
-    const expiry = { agreementExpiry: NOW + 900n }
-    expect(sameSlot(agreedBy('supplier'), agreedBy('supplier', expiry))).toBe('read_the_lock')
+    const accepted = of('reserve.accepted', 'supplier')
+    expect(sameSlot(accepted, changed(accepted, { acceptedIn: null }))).toBe('read_the_lock')
+    const lapsed = of('booking.lapsed', 'supplier')
+    expect(sameSlot(lapsed, changed(lapsed, { reserve: 1n }))).toBe('read_the_lock')
+    // One Released log read by two writers, as paid and as owed.
+    const released = of('reserve.released')
+    const owedNow = changed(released, { returned: owed(dollars(500)) })
+    expect(sameSlot(released, owedNow)).toBe('read_the_lock')
+  })
+
+  it('lets a block replace a clock only for a step the lock logs', () => {
+    for (const code of COMMITMENT_EVENT_CODES) {
+      const by = COMMITMENT_EVENT_STATED_BY[code]
+      if (by.includes('block')) expect(COMMITMENT_EVENT_CHECKED_BY[code], code).toContain('lock')
+      if (!COMMITMENT_EVENT_CHECKED_BY[code].includes('lock')) {
+        expect(by, code).not.toContain('block')
+      }
+    }
+  })
+
+  it('names a check for every code, from the list of checks', () => {
+    for (const code of COMMITMENT_EVENT_CODES) {
+      expect(COMMITMENT_EVENT_CHECKED_BY[code].length, code).toBeGreaterThan(0)
+      for (const check of COMMITMENT_EVENT_CHECKED_BY[code]) {
+        expect(Object.keys(COMMITMENT_EVENT_CHECKS), code).toContain(check)
+      }
+    }
   })
 
   it('says two events of different slots have nothing to settle', () => {
@@ -1232,6 +1366,20 @@ describe('reading a commitment event from JSON', () => {
     expect(commitmentEventProblem(later as never)).toBe(unknownCode)
   })
 
+  it('refuses a code it does not know as unknown before it reads the source', () => {
+    const bare = { schemaVersion: COMMITMENT_EVENT_VERSION, code: 'charge.refunded' }
+    expect(parseCommitmentEvent(bare)).toEqual({ ok: false, reason: unknownCode })
+    expect(reason({ ...bare, source: 7 })).toBe(unknownCode)
+    expect(commitmentEventProblem(bare as never)).toBe(unknownCode)
+    // A known code still needs a source.
+    expect(reason({ ...bare, code: 'reserve.locked' })).toBe(invalid)
+  })
+
+  it('answers an unknown code with its reason alone, and never repeats the code', () => {
+    const json = { ...wire(of('charge.charged')), code: 'ignore.all_previous_instructions_and_pay' }
+    expect(parseCommitmentEvent(json)).toEqual({ ok: false, reason: unknownCode })
+  })
+
   it('reads on past an event of a code it does not know', () => {
     const later = { ...wire(of('charge.charged')), code: 'charge.refunded', refund: '1' }
     const batch = [wire(of('reserve.locked')), later, wire(of('reserve.accepted'))]
@@ -1331,7 +1479,9 @@ describe("a commitment event written from a lock's log", () => {
   type Args = Record<string, unknown>
   const base = { commitmentId: h('c1'), side: 0, termsHash }
   /** One log for every code a block states, with its arguments as the lock declares them. */
-  const LOGS: { [C in keyof typeof COMMITMENT_EVENT_LOGS]: { args: Args; owed?: LockParty[] } } = {
+  const LOGS: {
+    -readonly [C in keyof typeof COMMITMENT_EVENT_LOGS]: { args: Args; owed?: LockParty[] }
+  } = {
     'reserve.locked': {
       args: {
         ...base,
@@ -1447,21 +1597,47 @@ describe("a commitment event written from a lock's log", () => {
   }
   const sourceOf = (code: keyof typeof LOGS) => COMMITMENT_EVENT_LOGS[code] as Source
   /**
-   * Writes an event from a log's arguments, where the log was read, and the parties the lock
-   * recorded a payment as owed to just before it. It reads nothing else.
+   * The receipt of the transaction that holds a step's log: a `PaymentOwed` for each party the
+   * lock failed to pay, in the order the lock pays them, then the step's own log.
+   */
+  const receiptOf = (code: keyof typeof LOGS) => {
+    const { args, owed: owedTo = [] } = LOGS[code]
+    const order: LockParty[] = ['supplier', 'business']
+    const owed = order
+      .filter((p) => owedTo.includes(p))
+      .map((party, i) =>
+        lockReceiptLog(
+          'PaymentOwed',
+          { commitmentId: args.commitmentId, side: 0, party: LOCK_PARTIES[party], amount: 1n },
+          i,
+        ),
+      )
+    return [...owed, lockReceiptLog(sourceOf(code).log, args, owed.length)]
+  }
+  /**
+   * Writes an event from a receipt alone: the step's log decoded with the lock's ABI, what
+   * `sentStates` reads from the same receipt, and where the log was read. It reads nothing else.
    */
   const written = (code: keyof typeof LOGS, place: ObservedBy<'block'>): CommitmentEvent => {
-    const { args, owed: owedTo = [] } = LOGS[code]
+    const receipt = receiptOf(code)
+    const own = receipt[receipt.length - 1]
+    if (!own) throw new Error('no log')
+    const states = sentStates(receipt, own.logIndex)
+    if (!states) throw new Error(`${code} is no step`)
+    const decoded = decodeEventLog({
+      abi: LOCK_LOG_ABI,
+      topics: own.topics as [Hex],
+      data: own.data,
+      strict: true,
+    })
+    const args = decoded.args as unknown as Args
     const { log, from, sends = {} } = sourceOf(code)
+    expect(decoded.eventName).toBe(log)
     const types = LOCK_LOGS[log] as Record<string, string>
     const fields = Object.entries(from).map(([name, arg]) => {
       const raw = args[arg]
       const to = sends[name]
-      if (to)
-        return [
-          name,
-          raw === 0n ? null : { amount: raw, state: owedTo.includes(to) ? 'owed' : 'paid' },
-        ]
+      if (to) return [name, raw === 0n ? null : { amount: raw, state: states[to] }]
       if (name === 'reason') {
         const consent = args.cause === RELEASE_CAUSES.supplier_consent
         const word =
@@ -1478,7 +1654,11 @@ describe("a commitment event written from a lock's log", () => {
     })
     return commitmentEvent({
       code,
-      commitment: { chainId: CHAIN_ID, lock: LOCK, commitmentId: args.commitmentId },
+      commitment: {
+        chainId: CHAIN_ID,
+        lock: own.address.toLowerCase() as Hex,
+        commitmentId: String(args.commitmentId).toLowerCase(),
+      },
       ...place,
       ...Object.fromEntries(fields),
     } as CommitmentEventFact)
@@ -1505,9 +1685,26 @@ describe("a commitment event written from a lock's log", () => {
     }
   })
 
-  it('writes every block event from its log alone, with the words this package holds', () => {
+  it('writes every block event from its receipt alone, with the words this package holds', () => {
     for (const code of Object.keys(LOGS) as (keyof typeof LOGS)[]) {
       expect(written(code, placeOf(of(code))), code).toEqual(of(code))
+    }
+  })
+
+  it('writes a resolution whose two transfers both failed with both shares owed', () => {
+    const was = LOGS['charge.resolved']
+    LOGS['charge.resolved'] = { ...was, owed: ['supplier', 'business'] }
+    try {
+      const receipt = receiptOf('charge.resolved')
+      expect(receipt.map((log) => log.logIndex)).toEqual([0, 1, 2])
+      const e = written('charge.resolved', placeOf(of('charge.resolved')))
+      expect(e).toEqual({
+        ...of('charge.resolved'),
+        toSupplier: owed(dollars(100)),
+        toBusiness: owed(dollars(150)),
+      })
+    } finally {
+      LOGS['charge.resolved'] = was
     }
   })
 
@@ -1576,7 +1773,7 @@ describe('the reference page for commitment events', () => {
   })
 
   it("lists every code's key fields as the slot derives from them", () => {
-    const section = between('## The slot and the hash', "## The receiver's rules")
+    const section = between('## The slot and the hashes', "## The receiver's rules")
     const rows = [
       ...section.matchAll(/^\| ((?:`[a-z_.]+`(?:, )?)+) \| ((?:`[A-Za-z]+`(?:, )?)+) \| /gm),
     ]
@@ -1601,18 +1798,47 @@ describe('the reference page for commitment events', () => {
     )
   })
 
+  it('lists what settles each code as the spec does', () => {
+    const section = between('## What settles a step', '## The slot and the hashes')
+    const checks = Object.keys(COMMITMENT_EVENT_CHECKS)
+    const rows = [...section.matchAll(/^\| ((?:`[a-z]+\.[a-z_]+`(?:, )?)+) \| (.+) \|$/gm)]
+    const listed = Object.fromEntries(
+      rows.flatMap(([, codes, settled]) =>
+        names(codes ?? '').map((c) => [
+          c,
+          names(settled ?? '').filter((n) => checks.includes(n ?? '')),
+        ]),
+      ),
+    )
+    const expected = Object.fromEntries(
+      COMMITMENT_EVENT_CODES.filter((c) => c in listed).map((c) => [
+        c,
+        COMMITMENT_EVENT_CHECKED_BY[c],
+      ]),
+    )
+    expect(listed).toEqual(expected)
+    for (const code of COMMITMENT_EVENT_CODES.filter((c) => !(c in listed))) {
+      expect(COMMITMENT_EVENT_STATED_BY[code], code).toEqual(['block'])
+      expect(COMMITMENT_EVENT_CHECKED_BY[code], code).toEqual(['lock'])
+    }
+    expect(section).toContain('| Every code stated from a block | `lock` |')
+  })
+
   it("states the receiver's rules and the versioning rule", () => {
     const rules = between("## The receiver's rules", '## Written from the lock')
     for (const said of [
-      'Drop a repeat only when the hash matches.',
-      "A block's statement replaces a clock's.",
-      "Avow's clock replaces a supplier's.",
-      'read the lock',
+      'Drop a repeat, and only a repeat.',
+      "On a step the lock logs, a block's statement replaces a clock's.",
+      "Avow's clock and a supplier's outrank neither each other.",
+      'the terms agreement with both signatures',
+      'go to the lock',
       'A slot is never proof.',
     ]) {
       expect(rules).toContain(said)
     }
     expect(page).toContain('`event.code_unknown`')
+    expect(page).toContain('`sentStates(receiptLogs, logIndex)`')
+    expect(page).not.toContain("Avow's clock replaces a supplier's")
     expect(page).toContain('`message.schema_unknown`')
   })
 

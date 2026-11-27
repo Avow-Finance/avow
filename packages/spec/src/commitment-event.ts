@@ -18,6 +18,8 @@ import {
   RELEASE_CAUSES,
   type ReleaseCause,
   releaseReasonOf,
+  SENT_STATES,
+  type SentState,
 } from './lock-log.js'
 import type { ReasonCode } from './reasons.js'
 import { commitmentReferenceJson } from './references.js'
@@ -71,7 +73,10 @@ const time = field(u64, (v) => isUint(v, 64))
 const hash = field(bytes32, (v) => typeof v === 'string' && LOWER_BYTES32.test(v))
 /** An account's address in lower case. */
 const account = field(address, (v) => typeof v === 'string' && LOWER_ADDRESS.test(v))
-/** Micros of the terms' currency, whatever token the lock holds. */
+/**
+ * An amount of money. From a block it is in base units of the lock's token, exactly as the lock
+ * logged it, and from Avow or a supplier it is in micros of the terms' currency.
+ */
 const amount = field(u256, (v) => isUint(v, 256))
 /** An amount that is never zero, such as the reserve or a charge reported. */
 const positive = field(u256, (v) => isUint(v, 256, 1n))
@@ -96,17 +101,13 @@ const evidenceNumber = field(z.number().int().min(1).max(EVIDENCE_NUMBER_MAX), (
 const party = oneOf(namesOf<LockParty>(LOCK_PARTIES))
 
 /**
- * What became of an amount the lock sent. `paid` is a transfer that went through in that step.
- * `owed` is a transfer that failed, such as for a paused token or a blocked address, so the lock
- * recorded the amount as owed to that party. Anyone can have the lock pay an owed amount later,
- * which is a `reserve.owed_paid`.
+ * An amount the lock sent out of a reserve, which is never zero, and what became of it, as
+ * `sentStates` reads it from the step's receipt. The lock's later payment of an owed amount is a
+ * `reserve.owed_paid`.
  */
-export const SENT_STATES = ['paid', 'owed'] as const
-
-/** An amount the lock sent out of a reserve, which is never zero, and what became of it. */
 export interface SentAmount {
   amount: bigint
-  state: (typeof SENT_STATES)[number]
+  state: SentState
 }
 const SENT_KEYS = ['amount', 'state']
 /**
@@ -144,16 +145,19 @@ const isCommitment = (v: unknown): boolean => {
 
 /**
  * Who can state an event, and what an event carries to say how its time is known. The source is a
- * field of every event, so a reader never has to guess which clock a time came from. The sources
- * are listed strongest first, which is the order `sameSlot` settles two differing statements by.
+ * field of every event, so a reader never has to guess which clock a time came from.
  *
  * - `block` is a change the lock logged. `at` is the time of the block that holds the log, and the
  *   block's number, the transaction and the log's index say where the log sits, so anyone can read
- *   it from the chain. Whoever writes one waits until the block is final. That is a rule for the
- *   writer, and nothing in an event shows it was kept.
+ *   it from the chain. Its amounts are in base units of the lock's token, as the log holds them,
+ *   since no log names the token's decimals. Whoever writes one waits until the block is final, so
+ *   no event names a log a reorganization later drops. That is a rule for the writer, and nothing
+ *   in an event shows it was kept.
  * - `avow` is a change Avow's API recorded, with `at` by Avow's clock.
  * - `supplier` is a change a supplier's adapter recorded, with `at` by the clock of the machine the
  *   adapter runs on. It is the supplier's own word, good for the supplier's own system and no more.
+ *
+ * Avow and a supplier state amounts in micros of the terms' currency.
  */
 const SOURCES = {
   block: {
@@ -168,7 +172,7 @@ const SOURCES = {
 } as const satisfies Record<string, FieldSet>
 
 export type CommitmentEventSource = keyof typeof SOURCES
-/** Every source, strongest first. */
+/** Every source. A block outranks a clock on a step the lock logs, and no clock outranks another. */
 export const COMMITMENT_EVENT_SOURCES = Object.keys(SOURCES) as [
   CommitmentEventSource,
   ...CommitmentEventSource[],
@@ -188,6 +192,23 @@ const terms = { termsHash: hash } as const
 const agreement = { ...terms, reserve: positive, agreementExpiry: time } as const
 
 /**
+ * What a receiver checks when two statements of one step differ and neither source outranks the
+ * other. `lock` is the lock's own state and logs, read with the verifier. The rest are signed
+ * messages, each of which anyone holding it can hash and check without asking Avow.
+ */
+export const COMMITMENT_EVENT_CHECKS = {
+  lock: "The lock's state and its logs",
+  terms_agreement:
+    "The terms agreement, with both signatures: the buyer's agent key and the supplier's signing key",
+  approval:
+    "Avow's approval of the reserve, signed by Avow's approval key, which `approvalHash` names",
+  timestamped_request:
+    "The business's signed request, with Avow's signed timestamp over its digest, which `requestHash` names",
+  start_receipt: "The supplier's signed start receipt, which `receiptHash` names",
+} as const
+export type CommitmentEventCheck = keyof typeof COMMITMENT_EVENT_CHECKS
+
+/**
  * Every code, in the order a commitment's life can reach them, with who can state it and exactly
  * the fields it then carries. `key` names the fields that tell one occurrence of a step from
  * another on the same commitment, which the event's slot is derived from. A code with no key
@@ -197,24 +218,34 @@ const agreement = { ...terms, reserve: positive, agreementExpiry: time } as cons
  * `reserve` codes follow the money the business reserved. `charge` codes follow a charge the
  * supplier reported, through to its payment or its ruling.
  *
- * A code stated from a block carries only what the lock's log for that step holds, so it is
- * written from the lock's logs and nothing else. `COMMITMENT_EVENT_LOGS` names the log and the
- * argument each field is read from.
+ * A code stated from a block is written from three things and nothing else: the arguments of the
+ * step's own log, which `COMMITMENT_EVENT_LOGS` names field by field, the `PaymentOwed` logs of the
+ * same receipt, which `sentStates` reads to say whether each amount sent was paid or owed, and the
+ * time of the block.
+ *
+ * `checks` names what a receiver checks when two statements of the code differ and neither source
+ * outranks the other: the lock, or a signed message, as `COMMITMENT_EVENT_CHECKS` describes.
  */
 const CODES = {
   /** Both sides signed the terms agreement. Nothing is reserved yet. */
-  'booking.agreed': { key: [], by: { avow: agreement, supplier: agreement } },
+  'booking.agreed': {
+    checks: ['terms_agreement'],
+    key: [],
+    by: { avow: agreement, supplier: agreement },
+  },
   /**
    * Avow's reserve check passed and Avow signed its approval, which the lock needs before it takes
    * the reserve. Avow can approve one commitment more than once, so each approval is told apart by
    * its digest.
    */
   'reserve.approved': {
+    checks: ['approval'],
     key: ['approvalHash'],
     by: { avow: { ...terms, reserve: positive, approvalHash: hash, approvalExpiry: time } },
   },
   /** The lock took the reserve, under the approval and the mandate it names by their digests. */
   'reserve.locked': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, reserve: positive, approvalHash: hash, mandateHash: hash } },
   },
@@ -222,13 +253,14 @@ const CODES = {
    * The supplier's own check of the funded reserve passed, so the supplier holds the capacity
    * without granting it yet.
    */
-  'reserve.held': { key: [], by: { supplier: agreement } },
+  'reserve.held': { checks: ['terms_agreement'], key: [], by: { supplier: agreement } },
   /**
    * The lock took the supplier's acceptance, which is when the commitment exists. From a block it
    * names the signed acceptance by its digest. A supplier's adapter that states it names the
    * acceptance's transaction when it saw one.
    */
   'reserve.accepted': {
+    checks: ['lock', 'terms_agreement'],
     key: [],
     by: {
       block: { ...terms, acceptanceHash: hash },
@@ -240,9 +272,14 @@ const CODES = {
    * had come. A reserve that did reach the lock is still there when the booking lapses, and it goes
    * back to the business, which is a `reserve.released`.
    */
-  'booking.lapsed': { key: [], by: { avow: agreement, supplier: agreement } },
+  'booking.lapsed': {
+    checks: ['lock', 'terms_agreement'],
+    key: [],
+    by: { avow: agreement, supplier: agreement },
+  },
   /** Avow timestamped the business's signed request to start. `requestHash` is its digest. */
   'booking.start_requested': {
+    checks: ['timestamped_request'],
     key: ['requestHash'],
     by: { avow: { ...terms, requestHash: hash } },
   },
@@ -252,6 +289,7 @@ const CODES = {
    * names, and `startedAt` is the start the receipt states, by the supplier's word.
    */
   'booking.started': {
+    checks: ['start_receipt'],
     key: ['receiptHash'],
     by: { avow: { ...terms, requestHash: hash, receiptHash: hash, startedAt: time } },
   },
@@ -261,6 +299,7 @@ const CODES = {
    * apart. A cancellation in time is a release on the lock.
    */
   'booking.cancelled_late': {
+    checks: ['timestamped_request'],
     key: ['requestHash'],
     by: { avow: { ...terms, requestHash: hash } },
   },
@@ -271,6 +310,7 @@ const CODES = {
    * stands, so this one waits for a ruling from the start.
    */
   'charge.reported': {
+    checks: ['lock'],
     key: ['reportNumber'],
     by: {
       block: {
@@ -287,6 +327,7 @@ const CODES = {
   },
   /** The supplier withdrew its report before Avow answered it. */
   'charge.withdrawn': {
+    checks: ['lock'],
     key: ['reportNumber'],
     by: { block: { ...terms, reportNumber, evidenceHash: hash } },
   },
@@ -295,6 +336,7 @@ const CODES = {
    * back to the business, or null when the charge is the whole reserve.
    */
   'charge.confirmed': {
+    checks: ['lock'],
     key: [],
     by: {
       block: {
@@ -308,6 +350,7 @@ const CODES = {
   },
   /** Avow sent the report to a ruling, with the hash of what it rests that on. */
   'charge.referred': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, reportNumber, evidenceHash: hash, returned: orNull(sent) } },
   },
@@ -316,11 +359,13 @@ const CODES = {
    * `pausedAt` is the moment the days to a ruling count from.
    */
   'charge.unanswered': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, pausedAt: time, evidenceHash: hash, returned: orNull(sent) } },
   },
   /** Avow paused a charge it had confirmed, which then waits for a ruling. */
   'charge.paused': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, pausedAt: time, evidenceHash: hash } },
   },
@@ -331,6 +376,7 @@ const CODES = {
    * hash of the business's statement. A lock takes one contest for a commitment.
    */
   'charge.contested': {
+    checks: ['lock'],
     key: [],
     by: {
       block: {
@@ -345,6 +391,7 @@ const CODES = {
   },
   /** One party filed a piece of evidence on a paused charge. Each party numbers its own. */
   'charge.evidence_filed': {
+    checks: ['lock'],
     key: ['filer', 'number'],
     by: { block: { ...terms, filer: party, number: evidenceNumber, evidenceHash: hash } },
   },
@@ -354,6 +401,7 @@ const CODES = {
    * arbiter the terms name.
    */
   'charge.ruled': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, ruledBy: account, toSupplier: amount, evidenceHash: hash } },
   },
@@ -362,6 +410,7 @@ const CODES = {
    * sent it to the supplier. `amount` says whether the lock paid it or recorded it as owed.
    */
   'charge.charged': {
+    checks: ['lock'],
     key: [],
     by: { block: { ...terms, amount: sent, evidenceHash: hash } },
   },
@@ -371,6 +420,7 @@ const CODES = {
    * share of nothing is null.
    */
   'charge.resolved': {
+    checks: ['lock'],
     key: [],
     by: {
       block: {
@@ -389,6 +439,7 @@ const CODES = {
    * consent's reason, and null for any other cause or for a number that names none.
    */
   'reserve.released': {
+    checks: ['lock'],
     key: [],
     by: {
       block: {
@@ -404,15 +455,23 @@ const CODES = {
   /**
    * The lock paid an amount it had recorded as owed, to the party it was owed to. A lock numbers no
    * such payment, and it can pay one party more than once, so each is told apart by where its log
-   * sits. The lock's log names no terms, so this is the one code that carries no terms hash.
+   * sits, and its slot takes the transaction. That leans on the rule that a block event is written
+   * only from a final block. A payment logged in a block a reorganization drops can land again in
+   * another transaction, and an event written from the dropped block would give the one payment a
+   * second slot. The lock's log names no terms, so this is the one code that carries no terms hash.
    */
   'reserve.owed_paid': {
+    checks: ['lock'],
     key: ['party', 'transactionHash', 'logIndex'],
     by: { block: { party, amount: positive } },
   },
 } as const satisfies Record<
   string,
-  { key: readonly string[]; by: Partial<Record<CommitmentEventSource, FieldSet>> }
+  {
+    checks: readonly CommitmentEventCheck[]
+    key: readonly string[]
+    by: Partial<Record<CommitmentEventSource, FieldSet>>
+  }
 >
 
 type Codes = typeof CODES
@@ -499,6 +558,14 @@ const fieldsBy = (code: CommitmentEventCode): Partial<Record<CommitmentEventSour
 export const COMMITMENT_EVENT_STATED_BY = Object.fromEntries(
   COMMITMENT_EVENT_CODES.map((code) => [code, Object.keys(fieldsBy(code))]),
 ) as unknown as { readonly [C in CommitmentEventCode]: readonly CommitmentEventSource[] }
+
+/**
+ * What a receiver checks for each code when two statements of it differ and neither source
+ * outranks the other, from `COMMITMENT_EVENT_CHECKS`.
+ */
+export const COMMITMENT_EVENT_CHECKED_BY = Object.fromEntries(
+  COMMITMENT_EVENT_CODES.map((code) => [code, CODES[code].checks]),
+) as unknown as { readonly [C in CommitmentEventCode]: readonly CommitmentEventCheck[] }
 
 /**
  * The fields each code's slot is derived from beside the code and the commitment, which tell one
@@ -599,6 +666,9 @@ export const COMMITMENT_EVENT_SLOT_LABEL = 'avow:commitment-event-slot:v1'
 /** The label an event's hash starts from. */
 export const COMMITMENT_EVENT_LABEL = 'avow:commitment-event:v1'
 
+/** The label a statement's hash starts from. */
+export const COMMITMENT_EVENT_STATEMENT_LABEL = 'avow:commitment-event-statement:v1'
+
 const labelled = (label: string, value: unknown): Hex =>
   keccak256(
     encodeAbiParameters([{ type: 'string' }, { type: 'string' }], [label, canonicalJson(value)]),
@@ -633,36 +703,80 @@ export function commitmentEventHash(event: CommitmentEvent): Hex {
 }
 
 /**
- * What a receiver that holds one event does when another arrives.
+ * A statement's hash: keccak256 of the ABI encoding of the string
+ * `avow:commitment-event-statement:v1` and the canonical JSON of the event without `at`, and
+ * without nothing else. Two events that differ only in when their source recorded them make one
+ * statement, so a supplier's adapter that records one step again after a restart, with a later
+ * time, says nothing new. A receiver that drops exact redeliveries uses `commitmentEventHash`, and
+ * `sameSlot` uses this to tell a step recorded twice from two sources that disagree. It throws on
+ * an event `commitmentEventProblem` refuses.
+ */
+export function commitmentEventStatementHash(event: CommitmentEvent): Hex {
+  const { at: _, ...statement } = checkedCopy(event, 'hashed')
+  return labelled(COMMITMENT_EVENT_STATEMENT_LABEL, statement)
+}
+
+/**
+ * What a receiver that holds one event does when another of the same slot arrives.
  *
  * - `other_slot`: the two are about different steps, and neither bears on the other.
- * - `repeat`: the two are one event, hash for hash. Drop the one that arrived.
- * - `arrived_replaces`: they differ, and the one that arrived comes from a stronger source.
- * - `held_stands`: they differ, and the one already held comes from a stronger source.
- * - `read_the_lock`: they differ and come from the same source, so neither stands on its word.
+ * - `repeat`: the one that arrived says nothing the held one doesn't. It is the same event, hash
+ *   for hash, or the same statement from the same clock recorded again no earlier. Drop it.
+ * - `earlier_repeat`: the same statement from the same clock, and the one that arrived was
+ *   recorded earlier. Keep it in place of the held one, so the earlier time stands.
+ * - `agree`: Avow and a supplier state the same thing, each by its own clock. Keep the held one.
+ * - `arrived_replaces`: they differ, and the one that arrived is the lock's log of a step a
+ *   supplier stated by its clock.
+ * - `held_stands`: they differ, and the held one is the lock's log of that step.
+ * - `read_the_lock`: they differ, neither outranks the other, and the lock settles the step.
+ * - `check_signed_message`: they differ, neither outranks the other, and a signed message settles
+ *   the step. `COMMITMENT_EVENT_CHECKED_BY` names which.
  */
 export type SameSlot =
   | 'other_slot'
   | 'repeat'
+  | 'earlier_repeat'
+  | 'agree'
   | 'arrived_replaces'
   | 'held_stands'
   | 'read_the_lock'
+  | 'check_signed_message'
 
 /**
- * Settles two events by the receiver's rules. A repeat is an event with the same hash, and only a
- * repeat is dropped. When two events share a slot and differ, a block's statement replaces a
- * clock's and Avow's clock replaces a supplier's. Two differing statements from one source, two
- * blocks among them, leave nothing to choose between, so the receiver reads the lock, or checks the
- * signed message the events name. It throws on an event `commitmentEventProblem` refuses.
+ * Settles two events of one slot by the receiver's rules. Only a repeat is dropped. A block's
+ * statement replaces a clock's, which happens only for a step the lock logs. Avow's clock and a
+ * supplier's clock outrank neither each other, so when they differ, and when two statements from
+ * one source differ in more than their time, the receiver checks what settles the step: the lock,
+ * or the signed message `COMMITMENT_EVENT_CHECKED_BY` names. Two block statements that differ at
+ * all send it to the lock, since a block's time is part of what the chain says. It throws on an
+ * event `commitmentEventProblem` refuses.
  *
  * The answer ranks two notices. It makes neither of them proof.
  */
-export function sameSlot(held: CommitmentEvent, arrived: CommitmentEvent): SameSlot {
+export function sameSlot(heldEvent: CommitmentEvent, arrivedEvent: CommitmentEvent): SameSlot {
+  // Read each once into a checked plain copy, so nothing below can read a different value.
+  const held = checkedCopy(heldEvent, 'compared') as unknown as CommitmentEvent
+  const arrived = checkedCopy(arrivedEvent, 'compared') as unknown as CommitmentEvent
   if (commitmentEventSlot(held) !== commitmentEventSlot(arrived)) return 'other_slot'
   if (commitmentEventHash(held) === commitmentEventHash(arrived)) return 'repeat'
-  const rank = (e: CommitmentEvent) => COMMITMENT_EVENT_SOURCES.indexOf(e.source)
-  if (rank(held) === rank(arrived)) return 'read_the_lock'
-  return rank(arrived) < rank(held) ? 'arrived_replaces' : 'held_stands'
+  const clocked = held.source !== 'block' && arrived.source !== 'block'
+  if (clocked && held.source === arrived.source) {
+    if (commitmentEventStatementHash(held) === commitmentEventStatementHash(arrived)) {
+      return arrived.at < held.at ? 'earlier_repeat' : 'repeat'
+    }
+  }
+  if (held.source === 'block' && arrived.source !== 'block') return 'held_stands'
+  if (arrived.source === 'block' && held.source !== 'block') return 'arrived_replaces'
+  if (clocked && held.source !== arrived.source) {
+    const said = (e: CommitmentEvent) => {
+      const { at: _at, source: _source, ...rest } = e
+      return canonicalJson(rest)
+    }
+    if (said(held) === said(arrived)) return 'agree'
+  }
+  return COMMITMENT_EVENT_CHECKED_BY[held.code].includes('lock')
+    ? 'read_the_lock'
+    : 'check_signed_message'
 }
 
 /** Where a log sits, which every event from a block carries: its lock, its block and its index. */
@@ -745,13 +859,13 @@ export function parseCommitmentEvent(json: unknown): Parsed<CommitmentEvent> {
     if (schemaVersion !== COMMITMENT_EVENT_VERSION) {
       return { ok: false, reason: 'message.schema_unknown' }
     }
-    if (typeof code !== 'string' || typeof source !== 'string') {
-      return { ok: false, reason: 'message.invalid' }
-    }
-    // Only the tables' own keys count, never a name every object inherits.
+    if (typeof code !== 'string') return { ok: false, reason: 'message.invalid' }
+    // Only the tables' own keys count, never a name every object inherits. A code this reader
+    // doesn't know is unknown whatever else the event holds, since only that code's rules say.
     if (!Object.hasOwn(JSON_BY, code)) {
       return { ok: false, reason: isCodeShaped(code) ? 'event.code_unknown' : 'message.invalid' }
     }
+    if (typeof source !== 'string') return { ok: false, reason: 'message.invalid' }
     const by = JSON_BY[code] ?? {}
     const parsed = Object.hasOwn(by, source) ? by[source]?.safeParse(json) : undefined
     if (!parsed?.success) return { ok: false, reason: 'message.invalid' }

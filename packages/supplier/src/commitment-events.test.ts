@@ -4,6 +4,7 @@ import {
   commitmentEventHash,
   commitmentEventProblem,
   commitmentEventSlot,
+  commitmentEventStatementHash,
   parseCommitmentEvent,
   sameSlot,
   termsHash,
@@ -193,7 +194,7 @@ describe("the adapter's webhook events as commitment events", () => {
     }
   })
 
-  it('gives one status of one booking one slot, as the webhook id does, and a hash for each sending', () => {
+  it('gives one status of one booking one slot, as the webhook id does, and one statement however often it is recorded', () => {
     const [agreed, held] = bookings as [Booking, Booking]
     const first = asCommitmentEvent(webhookEvent(agreed), agreed.agreement.termsHash)
     const again = asCommitmentEvent(webhookEvent(agreed), agreed.agreement.termsHash)
@@ -202,11 +203,15 @@ describe("the adapter's webhook events as commitment events", () => {
     expect(webhookEvent(agreed, T0 + 60_000).id).toBe(webhookEvent(agreed).id)
     expect(commitmentEventSlot(later)).toBe(commitmentEventSlot(first))
     expect(commitmentEventSlot(next)).not.toBe(commitmentEventSlot(first))
-    // The same event sent twice is a repeat. Recorded again a minute later it is another event.
+    // The same event sent twice is a repeat. Recorded again a minute later, as the adapter does
+    // after a restart, it is another event and the same statement, so still a repeat, and the
+    // receiver keeps the earlier time.
     expect(commitmentEventHash(again)).toBe(commitmentEventHash(first))
     expect(sameSlot(first, again)).toBe('repeat')
     expect(commitmentEventHash(later)).not.toBe(commitmentEventHash(first))
-    expect(sameSlot(first, later)).toBe('read_the_lock')
+    expect(commitmentEventStatementHash(later)).toBe(commitmentEventStatementHash(first))
+    expect(sameSlot(first, later)).toBe('repeat')
+    expect(sameSlot(later, first)).toBe('earlier_repeat')
   })
 
   it('keeps the time to the second, so the milliseconds of a webhook event are lost', () => {

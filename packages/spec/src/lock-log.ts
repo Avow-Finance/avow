@@ -1,3 +1,4 @@
+import { decodeEventLog, type Hex, parseAbi } from 'viem'
 import { CHARGE_KINDS, type ChargeKind, RELEASE_REASONS, type ReleaseReason } from './eip712.js'
 
 /**
@@ -11,9 +12,10 @@ import { CHARGE_KINDS, type ChargeKind, RELEASE_REASONS, type ReleaseReason } fr
  * each. `commitmentId` is indexed in every one of them. A lock also logs changes to its own
  * settings, which belong to no commitment and are left out here.
  *
- * `PaymentOwed` is written inside a step, just before the step's own log, when the lock's transfer
- * of an amount failed and the lock recorded the amount as owed to `party`. A step that sends
- * nothing, or whose transfer went through, writes none.
+ * `PaymentOwed` is written inside a step, before the step's own log, when the lock's transfer of an
+ * amount failed and the lock recorded the amount as owed to `party`. A step that pays both parties
+ * can write two, one for each. A step that sends nothing, or whose transfers went through, writes
+ * none. `sentStates` reads them.
  */
 export const LOCK_LOGS = {
   Reserved: {
@@ -191,8 +193,91 @@ export const pauseCauseOf = wordOf<PauseCause>(PAUSE_CAUSES)
 /** The party a lock's code stands for, or null for a code that names none. */
 export const lockPartyOf = wordOf<LockParty>(LOCK_PARTIES)
 
-/**
- * The kind of charge a lock's code stands for, or null for a code that names none. A lock holds up
- * to four kinds, and this package names two of them.
- */
+/** The kind of charge a lock's code stands for, or null for a code this package names none for. */
 export const chargeKindOf = wordOf<ChargeKind>(CHARGE_KINDS)
+
+/** Every log in `LOCK_LOGS` as an ABI, so a chain client decodes a lock's logs with it. */
+export const LOCK_LOG_ABI = parseAbi(
+  (Object.keys(LOCK_LOGS) as LockLogName[]).map(lockLogSignature),
+)
+
+/**
+ * What became of an amount the lock sent. `paid` is a transfer that went through in that step.
+ * `owed` is a transfer that failed, such as for a paused token or a blocked address, so the lock
+ * recorded the amount as owed to that party. Anyone can have the lock pay an owed amount later.
+ */
+export const SENT_STATES = ['paid', 'owed'] as const
+export type SentState = (typeof SENT_STATES)[number]
+
+/** One log of a transaction's receipt as a chain client returns it, from any contract. */
+export interface ReceiptLog {
+  address: string
+  logIndex: number
+  topics: readonly Hex[]
+  data: Hex
+}
+
+interface LockLog {
+  name: LockLogName
+  args: Readonly<Record<string, unknown>>
+}
+
+/** A receipt's log read as one of the lock's logs, or null for a log of any other shape. */
+function lockLogOf(log: ReceiptLog): LockLog | null {
+  try {
+    const [selector, ...rest] = log.topics
+    if (!selector) return null
+    const read = decodeEventLog({
+      abi: LOCK_LOG_ABI,
+      topics: [selector, ...rest],
+      data: log.data,
+      strict: true,
+    })
+    const { eventName, args } = read as { eventName?: unknown; args?: unknown }
+    if (typeof eventName !== 'string' || !Object.hasOwn(LOCK_LOGS, eventName)) return null
+    if (typeof args !== 'object' || args === null || Array.isArray(args)) return null
+    return { name: eventName as LockLogName, args: args as Record<string, unknown> }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What became of what one step of a lock sent each party, read from the step's transaction's
+ * receipt. `logIndex` names the step's own log, such as a `Resolved` or a `Released`.
+ *
+ * The lock writes a `PaymentOwed` for each transfer that fails, after taking the amount out of the
+ * reserve and before the step's own log, so a step that pays both parties and fails both writes two
+ * of them in a row. A party is `owed` when a `PaymentOwed` for it, for the step's commitment and
+ * side, sits between the step's own log and the lock's log before it that isn't a `PaymentOwed`.
+ * Every other party is `paid`, which holds for a party the step sent nothing to as well, and the
+ * event then carries null for that party's amount. Logs from other contracts in between, such as a
+ * token's transfer, count for nothing.
+ *
+ * It gives null when `logIndex` names no log in the receipt, or names a log that isn't one of the
+ * lock's steps on a commitment.
+ */
+export function sentStates(
+  receiptLogs: readonly ReceiptLog[],
+  logIndex: number,
+): Record<LockParty, SentState> | null {
+  const logs = [...receiptLogs].sort((a, b) => a.logIndex - b.logIndex)
+  const at = logs.findIndex((log) => log.logIndex === logIndex)
+  const own = logs[at]
+  const step = own ? lockLogOf(own) : null
+  if (!own || !step || step.name === 'PaymentOwed') return null
+  const lock = own.address.toLowerCase()
+  const owed = new Set<LockParty | null>()
+  for (const log of logs.slice(0, at).reverse()) {
+    if (log.address.toLowerCase() !== lock) continue
+    const read = lockLogOf(log)
+    if (read?.name !== 'PaymentOwed') break
+    const { commitmentId, side, party } = read.args
+    const same = String(commitmentId).toLowerCase() === String(step.args.commitmentId).toLowerCase()
+    if (same && side === step.args.side) {
+      owed.add(lockPartyOf(Number(party)))
+    }
+  }
+  const stateOf = (p: LockParty): SentState => (owed.has(p) ? 'owed' : 'paid')
+  return { business: stateOf('business'), supplier: stateOf('supplier') }
+}

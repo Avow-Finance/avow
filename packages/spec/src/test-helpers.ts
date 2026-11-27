@@ -1,4 +1,13 @@
-import { type Address, type Hex, keccak256, stringToHex } from 'viem'
+import {
+  type AbiEvent,
+  type Address,
+  encodeAbiParameters,
+  encodeEventTopics,
+  type Hex,
+  keccak256,
+  parseAbiItem,
+  stringToHex,
+} from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import type { AgentSessionEvent } from './agent-session.js'
 import { demoComputeOffers, dollars, testnetDemoJobTerms, testnetDemoTerms } from './demo.js'
@@ -8,6 +17,7 @@ import type { GpuReservationTerms } from './gpu-reservation.js'
 import { chainedJobTerms } from './job.js'
 import type { JobEvent } from './job-session.js'
 import { jobVerificationOf } from './job-verification.js'
+import { type LockLogName, lockLogSignature, type ReceiptLog } from './lock-log.js'
 import type { RailToken } from './rail.js'
 import type { SellerMandate } from './seller-mandate.js'
 import { termsHash } from './terms.js'
@@ -390,3 +400,31 @@ export const AGENT_SESSION_EVENTS: AgentSessionEvent[] = (() => {
     },
   ]
 })()
+
+/**
+ * One of the lock's logs as a receipt holds it, encoded from its arguments, at a place in the
+ * receipt and from an address, the lock's own unless another is named.
+ */
+export function lockReceiptLog(
+  name: LockLogName,
+  args: Readonly<Record<string, unknown>>,
+  logIndex: number,
+  address: Address = LOCK,
+): ReceiptLog {
+  const event = parseAbiItem(lockLogSignature(name)) as AbiEvent
+  const topics = encodeEventTopics({
+    abi: [event],
+    eventName: name,
+    args: { commitmentId: args.commitmentId },
+  } as never) as Hex[]
+  const data = event.inputs.filter((input) => !input.indexed)
+  return {
+    address,
+    logIndex,
+    topics,
+    data: encodeAbiParameters(
+      data,
+      data.map((input) => args[input.name ?? '']),
+    ),
+  }
+}

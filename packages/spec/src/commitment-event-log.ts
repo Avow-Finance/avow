@@ -23,7 +23,8 @@ type LogOf<C extends CommitmentEventCode> = {
 /**
  * The lock's log each code is written from when a block states it, and the argument of that log
  * each of the code's fields is read from. A field with no argument here doesn't compile, so an
- * event stated from a block carries nothing its log doesn't hold.
+ * event stated from a block carries nothing but what its log holds, what `sentStates` reads from
+ * the same receipt and the block's time.
  *
  * An event takes four things from around its log. The chain and the lock's address are where the
  * log was read. The commitment id is the log's `commitmentId`. The block's number, the transaction
@@ -33,10 +34,9 @@ type LogOf<C extends CommitmentEventCode> = {
  * A field that names two arguments of the same log's number, such as `reason` and `reasonCode`,
  * carries the number as written and the word this package has for it, with null for none.
  *
- * `sends` lists the amounts a step sends. Each is `owed` when the lock wrote a `PaymentOwed` log
- * for that commitment and party directly before the step's log, in the same transaction, with no
- * other log of the lock's between them, and `paid` when it wrote none. An argument of zero is
- * null in the event, since the lock sends nothing then.
+ * `sends` lists the amounts a step sends and the party each goes to. `sentStates` reads the step's
+ * receipt and says, for each party, whether the lock paid it or recorded it as owed. An argument of
+ * zero is null in the event, since the lock sends nothing then.
  */
 export const COMMITMENT_EVENT_LOGS = {
   'reserve.locked': {
