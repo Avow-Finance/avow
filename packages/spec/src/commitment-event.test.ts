@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { decodeEventLog, type Hex } from 'viem'
+import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -27,24 +27,19 @@ import {
   sameSlot,
 } from './commitment-event.js'
 import { COMMITMENT_EVENT_LOGS } from './commitment-event-log.js'
+import { lockReceiptEvents } from './commitment-event-receipt.js'
 import { CONTEST_REASON_NAMES, contestReasonOf } from './contest.js'
 import { dollars } from './demo.js'
 import { CHARGE_KINDS, RELEASE_REASONS } from './eip712.js'
 import { BUSINESS_ID } from './fields.js'
 import {
-  chargeKindOf,
-  LOCK_LOG_ABI,
   LOCK_LOGS,
   LOCK_PARTIES,
   type LockLogName,
   type LockParty,
-  lockPartyOf,
   PAUSE_CAUSES,
   RELEASE_CAUSES,
-  releaseCauseOf,
-  releaseReasonOf,
   SENT_STATES,
-  sentStates,
 } from './lock-log.js'
 import { ARBITER, CHAIN_ID, id, LOCK, lockReceiptLog, NOW, OTHER_LOCK } from './test-helpers.js'
 import { COMMITMENT_EVENT_VERSION } from './version.js'
@@ -1583,12 +1578,6 @@ describe("a commitment event written from a lock's log", () => {
       args: { commitmentId: h('c1'), side: 0, party: 0, to: LOCK, amount: dollars(150) },
     },
   }
-  const WORDS: Record<string, (code: number) => string | null> = {
-    kind: chargeKindOf,
-    cause: releaseCauseOf,
-    filer: lockPartyOf,
-    party: lockPartyOf,
-  }
   type Source = {
     log: LockLogName
     cause?: keyof typeof PAUSE_CAUSES
@@ -1615,53 +1604,20 @@ describe("a commitment event written from a lock's log", () => {
     return [...owed, lockReceiptLog(sourceOf(code).log, args, owed.length)]
   }
   /**
-   * Writes an event from a receipt alone: the step's log decoded with the lock's ABI, what
-   * `sentStates` reads from the same receipt, and where the log was read. It reads nothing else.
+   * Writes the one event a step's receipt states, through `lockReceiptEvents`. The event takes its
+   * log's index from the receipt, and the samples here number their logs from 0, so the index is
+   * checked against the receipt and then set to the sample's for the comparison.
    */
   const written = (code: keyof typeof LOGS, place: ObservedBy<'block'>): CommitmentEvent => {
+    const { source: _, logIndex, ...at } = place as BlockEvent
     const receipt = receiptOf(code)
-    const own = receipt[receipt.length - 1]
-    if (!own) throw new Error('no log')
-    const states = sentStates(receipt, own.logIndex)
-    if (!states) throw new Error(`${code} is no step`)
-    const decoded = decodeEventLog({
-      abi: LOCK_LOG_ABI,
-      topics: own.topics as [Hex],
-      data: own.data,
-      strict: true,
-    })
-    const args = decoded.args as unknown as Args
-    const { log, from, sends = {} } = sourceOf(code)
-    expect(decoded.eventName).toBe(log)
-    const types = LOCK_LOGS[log] as Record<string, string>
-    const fields = Object.entries(from).map(([name, arg]) => {
-      const raw = args[arg]
-      const to = sends[name]
-      if (to) return [name, raw === 0n ? null : { amount: raw, state: states[to] }]
-      if (name === 'reason') {
-        const consent = args.cause === RELEASE_CAUSES.supplier_consent
-        const word =
-          code === 'charge.contested'
-            ? contestReasonOf(raw as number)
-            : consent
-              ? releaseReasonOf(raw as number)
-              : null
-        return [name, word]
-      }
-      const word = WORDS[name]
-      if (word) return [name, word(raw as number)]
-      return [name, types[arg] === 'address' ? (raw as string).toLowerCase() : raw]
-    })
-    return commitmentEvent({
+    const read = lockReceiptEvents(receipt, { ...at, chainId: CHAIN_ID, lock: LOCK })
+    expect(read.unread, code).toEqual([])
+    expect(
+      read.events.map((e) => e.logIndex),
       code,
-      commitment: {
-        chainId: CHAIN_ID,
-        lock: own.address.toLowerCase() as Hex,
-        commitmentId: String(args.commitmentId).toLowerCase(),
-      },
-      ...place,
-      ...Object.fromEntries(fields),
-    } as CommitmentEventFact)
+    ).toEqual([receipt.at(-1)?.logIndex])
+    return { ...read.events[0], logIndex } as CommitmentEvent
   }
   const placeOf = (e: CommitmentEvent) => {
     const { source, at, blockNumber, transactionHash, logIndex } = e as BlockEvent

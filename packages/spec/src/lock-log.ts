@@ -217,13 +217,17 @@ export interface ReceiptLog {
   data: Hex
 }
 
-interface LockLog {
+/** One of the lock's logs as `LOCK_LOG_ABI` decodes it. */
+export interface LockLog {
   name: LockLogName
   args: Readonly<Record<string, unknown>>
 }
 
-/** A receipt's log read as one of the lock's logs, or null for a log of any other shape. */
-function lockLogOf(log: ReceiptLog): LockLog | null {
+/**
+ * A receipt's log read as one of the lock's logs, or null for a log of any other shape. It reads
+ * the log's shape and nothing about who wrote it, so a caller checks the log's address first.
+ */
+export function readLockLog(log: ReceiptLog): LockLog | null {
   try {
     const [selector, ...rest] = log.topics
     if (!selector) return null
@@ -264,13 +268,13 @@ export function sentStates(
   const logs = [...receiptLogs].sort((a, b) => a.logIndex - b.logIndex)
   const at = logs.findIndex((log) => log.logIndex === logIndex)
   const own = logs[at]
-  const step = own ? lockLogOf(own) : null
+  const step = own ? readLockLog(own) : null
   if (!own || !step || step.name === 'PaymentOwed') return null
   const lock = own.address.toLowerCase()
   const owed = new Set<LockParty | null>()
   for (const log of logs.slice(0, at).reverse()) {
     if (log.address.toLowerCase() !== lock) continue
-    const read = lockLogOf(log)
+    const read = readLockLog(log)
     if (read?.name !== 'PaymentOwed') break
     const { commitmentId, side, party } = read.args
     const same = String(commitmentId).toLowerCase() === String(step.args.commitmentId).toLowerCase()
