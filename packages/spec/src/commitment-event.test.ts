@@ -1057,6 +1057,16 @@ describe("a commitment event's slot", () => {
 
 describe("a commitment event's hash", () => {
   it('is one fixed digest for one fixed event, so a change to the hashed form is noticed', () => {
+    // A reserve Avow returned, with the number for a revoked agent, which an event keeps as a number.
+    const returned = changed(of('reserve.released'), {
+      cause: 'returned_by_avow',
+      reason: null,
+      reasonCode: 1,
+    })
+    expect(commitmentEventProblem(returned)).toBeNull()
+    expect(commitmentEventHash(returned)).toMatchInlineSnapshot(
+      `"0x8dac50e341fe78f0f0488b599e043ae9146c6bf0d77d7513f5537693c478759c"`,
+    )
     expect(commitmentEventHash(of('reserve.locked'))).toMatchInlineSnapshot(
       `"0x00b40bab7d280ab4aecf5e22a070d02f6357964628fd3f0ac89bfb0a8a772d71"`,
     )

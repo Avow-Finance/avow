@@ -111,6 +111,11 @@ describe("the words for a lock's numbers", () => {
     expect(avowReturnReasonOf(0)).toBeNull()
   })
 
+  it("gives a consent's reasons and Avow's no word in common, so a word names one step's reason", () => {
+    const consent = Object.keys(RELEASE_REASONS)
+    for (const word of Object.keys(AVOW_RETURN_REASONS)) expect(consent).not.toContain(word)
+  })
+
   it("reads a release's reason by the step that gave it, so one number reads by its own table", () => {
     // Both tables use 1, so the cause alone says which word it is.
     expect(releaseReasonFor('returned_by_avow', 1)).toBe('agentRevoked')
