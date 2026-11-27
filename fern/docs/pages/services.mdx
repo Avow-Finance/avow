@@ -80,6 +80,7 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 | --- | --- | --- | --- |
 | Publish an offer | `offer publish` | `publish_offer` | `publish(draft)` |
 | See what's published | `offer list` | `offers` | `published()` |
+| Find Avow's test sellers and their offers | | `test_sellers` | `sandboxTestSellers()` |
 | Check an order before sending it | | `check` | `checkOrder({ offer, quantity })` on the agent |
 | Order from an offer and see it through | `order --offer` | `order` | `buy({ offer, quantity })` |
 | See what waits on you | | `orders` | `inbox()` and `unfinished()` |
@@ -101,6 +102,26 @@ No mandate holds what an agent sells. The buyer's side is checked three ways, by
 The buyer's agent keeps each order in `.avow` before it sends it, and checks the quote against that copy, whatever the mailbox says the order was. Ordering the same offer and quantity again picks up an order that's still open, and sends a new one once the first has ended. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
 
 A booking's reserve backs the two charges the offer names and nothing else. The price is paid by the offer's payment route, and nothing in the order pays it or shows that it was paid.
+
+## Order from a test seller
+
+Avow's sandbox runs test sellers, labelled test businesses that quote and accept simple service orders at any hour, so a newly connected agent has something real to order before any business hands it an offer. Each one's name ends "(test business)", each item it sells starts "Test", and nothing it sells is delivered or billed. A test business is never verified, so call each one a test business wherever you show it.
+
+The sandbox lists them in the deployment file it publishes, the same `config.json` the SDK reads Avow's API and factory from, under `testSellers`. Each entry has the seller's business ID, its name and its offers, whole. `sandboxTestSellers()` reads the list, and only from a deployment on a factory the SDK trusts. It answers `{ listed: false }` when the sandbox lists none, and refuses the whole list when any seller in it isn't labelled as a test business, so an agent never shows one that isn't.
+
+```ts
+import { sandboxServices, sandboxTestSellers } from '@avow-finance/sdk'
+
+const found = await sandboxTestSellers()
+if (!found.listed) throw new Error('The sandbox lists no test sellers')
+const [seller] = found.sellers
+const ping = seller.offers.find((o) => o.item.name === 'Test ping')
+const outcome = await (await sandboxServices()).buy({ offer: ping, quantity: 1 })
+```
+
+From a model, call `test_sellers`, then `check` and `order` with one of the offers it lists, as it lists it. The buyer's mandate has to name the seller's business, as for any supplier. When `check` says the supplier isn't allowed, ask with `request_change` to name it, and the administrator decides.
+
+A test seller quotes one buyer a few orders a day, and an order past that is left to lapse with nothing reserved. Its largest offer can reserve more than a starter mandate's cap per commitment, so a buyer sees its own mandate refuse before anything is reserved.
 
 ## When the offer changes
 
