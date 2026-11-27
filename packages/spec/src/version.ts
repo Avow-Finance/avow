@@ -84,5 +84,5 @@ export const COMMITMENT_RECORD_VERSION = '3'
 /** The version of the mandate check in `checkMandate`, recorded on every decision. */
 export const POLICY_VERSION = 'mandate-check/1'
 
-/** The version of the seller's mandate check in `checkSellerMandate`, recorded on every decision. */
+/** The version of the seller's mandate check in `checkSellerMandate`, for a decision to record. */
 export const SELLER_POLICY_VERSION = 'seller-mandate-check/1'

@@ -75,6 +75,8 @@ export const REASON_CODES = {
   'mandate.change_pending':
     "The agent's limits just changed, and Avow approves under the new ones once every approval given under the old ones has expired, which takes at most a few minutes, so send it again then",
   'approval.human_required': 'The mandate asks the administrator to approve this reserve',
+  'approval.acceptance_too_far':
+    "The supplier could still accept more than 15 minutes from now, so Avow doesn't approve the reserve yet. Ask again closer to the acceptance deadline",
   'approval.human_invalid':
     "The administrator's approval is forged, expired, used already, or names another amount or supplier",
   'terms.invalid': "The terms don't parse, or hold a field the terms hash doesn't cover",

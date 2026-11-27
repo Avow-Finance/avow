@@ -1,32 +1,20 @@
-import { type Address, type Hex, hashTypedData, isAddressEqual, zeroHash } from 'viem'
+import { type Address, type Hex, hashTypedData, isAddress, zeroHash } from 'viem'
 import { z } from 'zod'
+import { isWellFormedText } from './canonical.js'
 import { APPROVAL_RULE_CODES, type AvowDomain, domain, type Signed } from './eip712.js'
-import { JOB, JOB_CATEGORY, validateJob } from './job.js'
+import { COUNTRY_CODE, isCount, isShare, LOWER_BYTES32 } from './fields.js'
+import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import { address, bytes32, u64, u256 } from './json-fields.js'
-import type { MandateCheck } from './mandate.js'
 import { OPEN_TERMS, type OpenTerm } from './negotiation.js'
-import { businessIdJson } from './order-wire.js'
 import type { ReasonCode } from './reasons.js'
 import {
-  SERVICE,
+  BUSINESS_ID_MAX,
   SERVICE_CATEGORY,
   SERVICE_NAME_MAX,
   SERVICE_QUANTITY_MAX,
-  type ServiceOfferVersion,
-  serviceOfferProblem,
-  servicePrice,
-  validateService,
 } from './service.js'
-import { SERVICE_ORDER_CLOCK_SKEW } from './service-order.js'
 import { isFilled } from './text.js'
-import {
-  type ApprovalRule,
-  type ChainedTerms,
-  CURRENCIES,
-  type Currency,
-  type RemedyCharge,
-  type Terms,
-} from './types.js'
+import { type ApprovalRule, CURRENCIES, type Currency } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
 import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
 
@@ -36,14 +24,10 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
  * agent may sell and at what price, how much it may promise, how far ahead, on what charges, to
  * whom, and until when. The business account's root key signs it under the business's own lock.
  *
- * This module holds the message, its signed form and the check. `checkSellerMandate` is pure, so a
- * seller's own agent and Avow run the same code on the same inputs, and `sellerOfferProblem` is the
- * same check for an offer before anything is ordered. Those two are a seller's mandate's enforcing
- * layers. The lock belongs to the buyer and never reads a seller's mandate, and the signing key
- * moves no money, so no chain holds a seller to these limits.
- *
- * The limits are the seller's own. A reason this check gives is for the seller's agent, and
- * `buyerFacingReason` gives the one code a buyer hears in its place.
+ * This module holds the message, what makes one well formed, its signed form and its JSON.
+ * `checkSellerMandate` reads a sale against one. Nothing in this package stores a mandate, revokes
+ * one or follows one that replaces another, and a caller that does those brings the result to the
+ * check.
  *
  * Version 1 covers sales of `service/1` and `job/1`. A mandate binds one signing key and hands no
  * authority on to another agent.
@@ -71,7 +55,8 @@ export interface SellingLimit {
   /**
    * The item this line is for, or null for every item in the category that has no line of its
    * own. A mandate with no line for an item and no such line for its category doesn't let the
-   * agent sell it.
+   * agent sell it. An agent names its own items, so a line for an item can only loosen what the
+   * category's line for every other item allows, never tighten it.
    */
   item: string | null
   /**
@@ -79,9 +64,9 @@ export interface SellingLimit {
    * rounded down. Zero sets no floor.
    */
   minUnitPrice: bigint
-  /** The most units in one order. */
+  /** The most units in one order, which is one for a job. */
   maxUnitsPerOrder: number
-  /** The most units agreed in one day, across every order for this line. */
+  /** The most units agreed in one UTC day, across every order this line governs. */
   maxUnitsPerDay: number
 }
 
@@ -109,11 +94,14 @@ export interface SellerMandate {
   minLateCancellationBps: number
   /** The lowest no-show charge the agent may offer, as basis points of the price. */
   minNoShowBps: number
-  /** The longest the agent may let a buyer cancel at no charge, in seconds from agreement. */
+  /**
+   * The longest the agent may let a buyer of a service cancel at no charge, in seconds from
+   * agreement. A job's free cancellation always ends when work starts, so this doesn't read a job.
+   */
   maxFreeCancelWindow: bigint
   /** The only businesses the agent may sell to, by business id. Empty puts no such limit. */
   buyers: readonly string[]
-  /** Businesses the agent may never sell to. */
+  /** Businesses the agent may never sell to, which a mandate names only when `buyers` is empty. */
   excludedBuyers: readonly string[]
   /**
    * Countries the agent may not sell into, as ISO 3166-1 alpha-2 codes. While any is named, a
@@ -127,7 +115,10 @@ export interface SellerMandate {
    * offer's own terms.
    */
   negotiable: readonly OpenTerm[]
-  /** When a person decides a sale in place of the agent, by the order's whole price in micros. */
+  /**
+   * When a person decides a sale in place of the agent, by the order's whole price in micros. An
+   * `above` rule's amount is more than zero, since `always` says every sale.
+   */
   approvalRule: ApprovalRule
   expiry: bigint
   nonce: bigint
@@ -172,7 +163,8 @@ export const SELLER_MANDATE_TYPES = {
 /**
  * A seller's mandate's EIP-712 typed data, under the selling business's own lock. A line for every
  * other item signs an empty item name, and a mandate that replaces none signs a zero hash, which
- * `sellerMandateProblem` refuses as values of their own, so each mandate signs one way.
+ * `sellerMandateProblem` refuses as values of their own. It takes a mandate `sellerMandateProblem`
+ * passes, and may throw for one it refuses.
  */
 export function sellerMandateTypedData(m: SellerMandate, d: AvowDomain) {
   return {
@@ -220,80 +212,125 @@ export function sellerMandateHash(m: SellerMandate, d: AvowDomain): Hex {
   return hashTypedData(sellerMandateTypedData(m, d))
 }
 
-const whole = (n: unknown, max: number) =>
-  Number.isSafeInteger(n) && (n as number) >= 1 && (n as number) <= max
-const share = (bps: unknown) =>
-  Number.isSafeInteger(bps) && (bps as number) >= 0 && (bps as number) <= 10_000
-const amount = (v: unknown, least: bigint) => typeof v === 'bigint' && v >= least
-const distinct = (list: readonly string[]) => new Set(list).size === list.length
+const uint = (v: unknown, bits: number, least = 0n): v is bigint =>
+  typeof v === 'bigint' && v >= least && v < 2n ** BigInt(bits)
+const text = (v: unknown, max: number): v is string => isFilled(v, max) && isWellFormedText(v)
 const isCategory = (v: unknown): v is SellerCategory =>
   (SELLER_CATEGORIES as readonly unknown[]).includes(v)
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
-function limitProblem(l: SellingLimit): boolean {
-  if (typeof l !== 'object' || l === null || !isCategory(l.category)) return true
-  if (l.item !== null && !isFilled(l.item, SERVICE_NAME_MAX)) return true
-  if (!amount(l.minUnitPrice, 0n)) return true
-  if (!whole(l.maxUnitsPerOrder, SERVICE_QUANTITY_MAX)) return true
-  return !whole(l.maxUnitsPerDay, SELLER_UNITS_MAX) || l.maxUnitsPerDay < l.maxUnitsPerOrder
+/** Whether an object holds exactly these keys, so nothing unsigned rides along with a mandate. */
+const holdsOnly = (value: object, keys: readonly string[]) =>
+  Object.keys(value).length === keys.length && keys.every((k) => Object.hasOwn(value, k))
+
+/**
+ * Whether a value is a list of at most `max` strings that each pass, in strictly ascending order
+ * by code unit. A set written in one order has one hash, and nothing in it repeats.
+ */
+const ascendingList = (list: unknown, max: number, each: (v: unknown) => boolean): boolean =>
+  Array.isArray(list) &&
+  list.length <= max &&
+  // `Array.from` turns a hole into undefined, which no rule passes.
+  Array.from(list).every((v, i) => each(v) && (i === 0 || (list[i - 1] as string) < (v as string)))
+
+const LIMIT_KEYS = SELLER_MANDATE_TYPES.SellingLimit.map((f) => f.name)
+// The approval rule signs as two fields and travels as one.
+const MANDATE_KEYS = SELLER_MANDATE_TYPES.SellerMandate.map((f) => f.name).filter(
+  (name) => name !== 'approvalAbove',
+)
+
+/** Whether one line of limits is well formed on its own, under the mandate's most for an order. */
+function isLimit(l: unknown, maxOrderValue: bigint): l is SellingLimit {
+  if (!isObject(l) || !holdsOnly(l, LIMIT_KEYS) || !isCategory(l.category)) return false
+  const job = l.category === JOB_CATEGORY
+  if (l.item !== null && !text(l.item, job ? JOB_KIND_MAX : SERVICE_NAME_MAX)) return false
+  // A floor above the most an order may come to would be a line that sells nothing.
+  if (!uint(l.minUnitPrice, 256) || l.minUnitPrice > maxOrderValue) return false
+  if (!isCount(l.maxUnitsPerOrder, job ? 1 : SERVICE_QUANTITY_MAX)) return false
+  return isCount(l.maxUnitsPerDay, SELLER_UNITS_MAX) && l.maxUnitsPerDay >= l.maxUnitsPerOrder
 }
 
-const ids = (list: unknown): list is string[] =>
-  Array.isArray(list) &&
-  list.length <= SELLER_LIST_MAX &&
-  list.every((id) => businessIdJson.safeParse(id).success) &&
-  distinct(list)
+/** Whether line `a` comes strictly before line `b`: by category, then every other item, then by item. */
+function comesBefore(a: SellingLimit, b: SellingLimit): boolean {
+  if (a.category !== b.category) return a.category < b.category
+  if (a.item === null || b.item === null) return a.item === null && b.item !== null
+  return a.item < b.item
+}
+
+/** Whether a line for an item allows at least what its category's line for every other item does. */
+const loosens = (named: SellingLimit, any: SellingLimit) =>
+  named.minUnitPrice <= any.minUnitPrice &&
+  named.maxUnitsPerOrder >= any.maxUnitsPerOrder &&
+  named.maxUnitsPerDay >= any.maxUnitsPerDay
+
+function isApprovalRule(rule: unknown): rule is ApprovalRule {
+  if (!isObject(rule)) return false
+  if (rule.kind === 'above')
+    return holdsOnly(rule, ['kind', 'amount']) && uint(rule.amount, 256, 1n)
+  return (rule.kind === 'never' || rule.kind === 'always') && holdsOnly(rule, ['kind'])
+}
 
 /**
  * Checks a seller's mandate on its own, and gives `seller_mandate.invalid` for one that isn't well
- * formed. It names at least one line of limits and no item twice. Each line allows at least one
- * unit an order and no fewer a day. An order's most is above zero and within what may be
- * outstanding, the delivery horizon is above zero, and each charge floor is a share from 0 to 100%.
- * No business is both allowed and excluded, each country is a two-letter code, and no term is open
- * to bargaining, since version 1 sells on fixed terms. Every field has its declared type, so a
- * mandate that passes hashes one way only.
+ * formed. It never throws, whatever it's given, and a mandate that passes hashes without throwing
+ * and in one way only. So it holds exactly the fields the signed form names, each of its declared
+ * type and within what that form can carry, with text that is well-formed Unicode.
+ *
+ * It names at least one line of limits. Lines come in order, by category, then the line for every
+ * other item, then by item, so no item has two. A line's floor is within one order's most, it
+ * allows at least one unit an order and no fewer a day, and a job's line allows one. A line for an
+ * item allows at least what its category's line for every other item does, since an agent that
+ * names its own items could step around a tighter one. An order's most is above zero and within
+ * what may be outstanding, and the delivery horizon is above zero. Each charge floor is a share
+ * from 0 to 100%. Each list of businesses and countries is in ascending order, and a mandate that
+ * names the only buyers excludes none. No term is open to bargaining, since version 1 sells on
+ * fixed terms.
  */
 export function sellerMandateProblem(m: SellerMandate): ReasonCode | null {
   const bad = 'seller_mandate.invalid' as const
-  if (typeof m !== 'object' || m === null) return bad
-  if (!businessIdJson.safeParse(m.businessId).success) return bad
-  if (!(CURRENCIES as readonly unknown[]).includes(m.currency)) return bad
-  if (!Array.isArray(m.limits) || m.limits.length < 1 || m.limits.length > SELLER_LIMITS_MAX) {
-    return bad
+  const v: unknown = m
+  if (!isObject(v) || !holdsOnly(v, MANDATE_KEYS)) return bad
+  if (typeof v.mandateId !== 'string' || !LOWER_BYTES32.test(v.mandateId)) return bad
+  if (!text(v.businessId, BUSINESS_ID_MAX)) return bad
+  for (const key of [v.account, v.signingKey]) {
+    if (typeof key !== 'string' || !isAddress(key)) return bad
   }
-  if (m.limits.some(limitProblem)) return bad
-  // A line is found by its category and item, so two lines for one pair would leave it unsaid
-  // which applies. As JSON, a line for every other item stays apart from an item named "null".
-  if (!distinct(m.limits.map((l) => JSON.stringify([l.category, l.item])))) return bad
-  if (!amount(m.maxOrderValue, 1n) || !amount(m.maxOutstanding, m.maxOrderValue)) return bad
-  if (!amount(m.maxDeliveryHorizon, 1n) || !amount(m.maxFreeCancelWindow, 0n)) return bad
-  if (!share(m.minLateCancellationBps) || !share(m.minNoShowBps)) return bad
-  if (!ids(m.buyers) || !ids(m.excludedBuyers)) return bad
-  if (m.buyers.some((id) => m.excludedBuyers.includes(id))) return bad
-  if (
-    !Array.isArray(m.excludedCountries) ||
-    m.excludedCountries.length > SELLER_LIST_MAX ||
-    !m.excludedCountries.every((c) => typeof c === 'string' && /^[A-Z]{2}$/.test(c)) ||
-    !distinct(m.excludedCountries)
-  ) {
-    return bad
+  if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return bad
+
+  const { maxOrderValue, limits } = v
+  if (!uint(maxOrderValue, 256, 1n) || !uint(v.maxOutstanding, 256, maxOrderValue)) return bad
+  if (!Array.isArray(limits) || limits.length < 1 || limits.length > SELLER_LIMITS_MAX) return bad
+  const lines = Array.from(limits)
+  if (!lines.every((l): l is SellingLimit => isLimit(l, maxOrderValue))) return bad
+  if (!lines.every((l, i) => i === 0 || comesBefore(lines[i - 1] as SellingLimit, l))) return bad
+  for (const named of lines) {
+    const any = lines.find((l) => l.category === named.category && l.item === null)
+    if (named.item !== null && any && !loosens(named, any)) return bad
   }
-  if (typeof m.requiresBusinessCheck !== 'boolean') return bad
-  if (!Array.isArray(m.negotiable) || m.negotiable.length > 0) return bad
-  const rule = m.approvalRule
-  if (typeof rule !== 'object' || rule === null || !Object.hasOwn(APPROVAL_RULE_CODES, rule.kind)) {
-    return bad
-  }
-  if (rule.kind === 'above' && !amount(rule.amount, 0n)) return bad
-  if (!amount(m.expiry, 0n) || !amount(m.nonce, 0n)) return bad
-  if (m.replaces !== null && (!/^0x[0-9a-f]{64}$/.test(m.replaces) || m.replaces === zeroHash)) {
-    return bad
+
+  if (!uint(v.maxDeliveryHorizon, 64, 1n) || !uint(v.maxFreeCancelWindow, 64)) return bad
+  if (!isShare(v.minLateCancellationBps) || !isShare(v.minNoShowBps)) return bad
+  const businessId = (id: unknown) => text(id, BUSINESS_ID_MAX)
+  if (!ascendingList(v.buyers, SELLER_LIST_MAX, businessId)) return bad
+  if (!ascendingList(v.excludedBuyers, SELLER_LIST_MAX, businessId)) return bad
+  if (m.buyers.length > 0 && m.excludedBuyers.length > 0) return bad
+  const country = (c: unknown) => typeof c === 'string' && COUNTRY_CODE.test(c)
+  if (!ascendingList(v.excludedCountries, SELLER_LIST_MAX, country)) return bad
+  if (typeof v.requiresBusinessCheck !== 'boolean') return bad
+  if (!Array.isArray(v.negotiable) || v.negotiable.length > 0) return bad
+  if (!isApprovalRule(v.approvalRule)) return bad
+  if (!uint(v.expiry, 64) || !uint(v.nonce, 256)) return bad
+  if (v.replaces !== null) {
+    if (typeof v.replaces !== 'string' || !LOWER_BYTES32.test(v.replaces)) return bad
+    if (v.replaces === zeroHash) return bad
   }
   return null
 }
 
 /**
  * The line of a mandate's limits that governs an item: the item's own line, or failing that the
- * category's line for every other item, or null when the mandate lets the agent sell neither.
+ * category's line for every other item, or null when the mandate lets the agent sell neither. An
+ * item is matched by its exact name, so one spelled any other way falls to the category's line.
  */
 export function sellingLimitFor(
   mandate: Pick<SellerMandate, 'limits'>,
@@ -304,220 +341,13 @@ export function sellingLimitFor(
   return inCategory.find((l) => l.item === item) ?? inCategory.find((l) => l.item === null) ?? null
 }
 
-/** What a seller's mandate reads of a sale, whichever template its terms use. */
-export interface SaleFacts {
-  category: SellerCategory
-  /** The service's name or the job's kind of work. */
-  item: string
-  /** The units sold, which is one for a job. */
-  units: number
-  /** The whole price, in micros. */
-  price: bigint
-  deliverBy: bigint
-}
-
 /**
- * What a seller's mandate reads of a sale's terms, or the reason it can't read them. Terms under a
- * template version 1 doesn't cover give `seller_mandate.template_not_covered`, and terms their own
- * template refuses give that template's reason.
+ * A seller's mandate as JSON, with amounts and times as decimal strings and nothing else in it.
+ * It reads each field's type, and `sellerMandateProblem` holds every rule about its value.
  */
-export function saleFacts(terms: Terms | ChainedTerms): Parsed<SaleFacts> {
-  if (terms.template === SERVICE) {
-    const problem = validateService(terms)
-    if (problem) return { ok: false, reason: problem }
-    return {
-      ok: true,
-      value: {
-        category: SERVICE_CATEGORY,
-        item: terms.subject.item.name,
-        units: terms.subject.quantity,
-        price: servicePrice(terms),
-        deliverBy: terms.subject.delivery.by,
-      },
-    }
-  }
-  if (terms.template === JOB) {
-    const problem = validateJob(terms)
-    if (problem) return { ok: false, reason: problem }
-    return {
-      ok: true,
-      value: {
-        category: JOB_CATEGORY,
-        item: terms.subject.work.kind,
-        units: 1,
-        price: terms.consideration.amount,
-        deliverBy: terms.subject.deliverBy,
-      },
-    }
-  }
-  return { ok: false, reason: 'seller_mandate.template_not_covered' }
-}
-
-/** What Avow's records say of the business on the other side of a sale. */
-export interface SaleCounterparty {
-  businessId: string
-  /** The country the business declared, as an ISO 3166-1 alpha-2 code, or null when unknown. */
-  country: string | null
-  /** Whether it passed Avow's business check. On testnet that check is simulated. */
-  passedBusinessCheck: boolean
-}
-
-function counterpartyAllowed(m: SellerMandate, buyer: SaleCounterparty): boolean {
-  if (m.buyers.length > 0 && !m.buyers.includes(buyer.businessId)) return false
-  if (m.excludedBuyers.includes(buyer.businessId)) return false
-  if (m.excludedCountries.length > 0) {
-    if (buyer.country === null || m.excludedCountries.includes(buyer.country)) return false
-  }
-  return !m.requiresBusinessCheck || buyer.passedBusinessCheck
-}
-
-const chargeOf = (charges: readonly RemedyCharge[], kind: RemedyCharge['kind']): bigint =>
-  charges.find((c) => c.kind === kind)?.amount ?? 0n
-
-const BPS = 10_000n
-
-/** Whether a charge is at least `bps` of a price, with nothing lost to rounding. */
-const atLeast = (charge: bigint, bps: number, price: bigint) => charge * BPS >= BigInt(bps) * price
-
-/** The standing of a mandate before any sale is read: well formed, in force and this key's. */
-function standingProblem(
-  m: SellerMandate,
-  r: { signingKey: Address; revoked: boolean; now: bigint },
-): ReasonCode | null {
-  const malformed = sellerMandateProblem(m)
-  if (malformed) return malformed
-  if (m.expiry <= r.now) return 'seller_mandate.expired'
-  if (r.revoked) return 'seller_mandate.revoked'
-  if (!isAddressEqual(r.signingKey, m.signingKey)) return 'seller_mandate.key_mismatch'
-  return null
-}
-
-export interface SellerMandateCheckInput {
-  mandate: SellerMandate
-  /** The key that signed the seller's agreement to the terms. */
-  signingKey: Address
-  /** The sale's terms, which the caller has checked are the ones the offer builds. */
-  terms: Terms | ChainedTerms
-  buyer: SaleCounterparty
-  /**
-   * What the capacity ledger holds for this signing key apart from this sale: the units agreed
-   * today under the line that governs the item, and the agreed price of every sale not yet
-   * delivered, in micros.
-   */
-  ledger: { unitsToday: number; outstanding: bigint }
-  revoked: boolean
-  now: bigint
-}
-
-/**
- * The seller's mandate check, which Avow runs when a seller agrees to terms and again before it
- * approves the buyer's reserve, and a seller's agent runs before it signs. It's pure, and the
- * caller checks the mandate's signature first.
- *
- * The delivery horizon and the free-cancellation window count from `now`, with
- * `SERVICE_ORDER_CLOCK_SKEW` to spare, since an order's terms are built on another clock. The price
- * floor is on the whole price divided by the units, so no discount on quantity gets under it. A
- * sale above the approval rule's amount comes back as `needs_human`, for the caller to hold until
- * the administrator approves that sale.
- */
-export function checkSellerMandate(input: SellerMandateCheckInput): MandateCheck {
-  const { mandate: m, terms, now } = input
-  const deny = (reason: ReasonCode): MandateCheck => ({ result: 'denied', reason })
-
-  const standing = standingProblem(m, input)
-  if (standing) return deny(standing)
-  const sale = saleFacts(terms)
-  if (!sale.ok) return deny(sale.reason)
-  const { category, item, units, price, deliverBy } = sale.value
-  if (terms.currency !== m.currency) return deny('seller_mandate.currency_not_allowed')
-  const limit = sellingLimitFor(m, category, item)
-  if (!limit) return deny('seller_mandate.item_not_allowed')
-
-  if (price / BigInt(units) < limit.minUnitPrice) return deny('seller_mandate.under_price_floor')
-  if (price > m.maxOrderValue) return deny('seller_mandate.over_order_value')
-  if (units > limit.maxUnitsPerOrder) return deny('seller_mandate.over_units_per_order')
-  if (deliverBy - now > m.maxDeliveryHorizon + SERVICE_ORDER_CLOCK_SKEW) {
-    return deny('seller_mandate.over_delivery_horizon')
-  }
-  const { charges, freeCancelBy } = terms.remedies
-  if (
-    !atLeast(chargeOf(charges, 'lateCancellation'), m.minLateCancellationBps, price) ||
-    !atLeast(chargeOf(charges, 'noShow'), m.minNoShowBps, price) ||
-    freeCancelBy - now > m.maxFreeCancelWindow + SERVICE_ORDER_CLOCK_SKEW
-  ) {
-    return deny('seller_mandate.charges_not_allowed')
-  }
-  if (!counterpartyAllowed(m, input.buyer)) return deny('counterparty.not_eligible')
-
-  const { unitsToday, outstanding } = input.ledger
-  if (unitsToday + units > limit.maxUnitsPerDay) return deny('seller_mandate.over_daily_units')
-  if (outstanding + price > m.maxOutstanding) return deny('seller_mandate.over_outstanding')
-
-  const rule = m.approvalRule
-  if (rule.kind === 'always' || (rule.kind === 'above' && price > rule.amount)) {
-    return { result: 'needs_human', reason: 'approval.human_required' }
-  }
-  return { result: 'approved', reason: 'approved' }
-}
-
-/**
- * Why a seller's mandate doesn't let its agent list an offer version, or null when it does. The
- * offer is the mandate's business's, in its currency, for an item it may sell, at or above the
- * item's floor and within one order's most. One booking takes no more units than one order may,
- * the lead time is within the delivery horizon, and the charges and free cancellation keep to the
- * mandate's. An offer binds nobody, so this refuses early what the check would refuse at the sale.
- */
-export function sellerOfferProblem(input: {
-  mandate: SellerMandate
-  signingKey: Address
-  version: ServiceOfferVersion
-  revoked: boolean
-  now: bigint
-}): ReasonCode | null {
-  const { mandate: m, version: v } = input
-  const standing = standingProblem(m, input)
-  if (standing) return standing
-  // An offer that names another business isn't this mandate's to judge.
-  if (serviceOfferProblem(v) !== null || v.supplier !== m.businessId) return 'message.invalid'
-  if (v.currency !== m.currency) return 'seller_mandate.currency_not_allowed'
-  const limit = sellingLimitFor(m, SERVICE_CATEGORY, v.item.name)
-  if (!limit) return 'seller_mandate.item_not_allowed'
-  if (v.unitPrice < limit.minUnitPrice) return 'seller_mandate.under_price_floor'
-  if (v.unitPrice > m.maxOrderValue) return 'seller_mandate.over_order_value'
-  const r = v.rules
-  if (r.maxPerBooking > limit.maxUnitsPerOrder) return 'seller_mandate.over_units_per_order'
-  if (r.leadTime > m.maxDeliveryHorizon) return 'seller_mandate.over_delivery_horizon'
-  if (
-    r.lateCancellationBps < m.minLateCancellationBps ||
-    r.noShowBps < m.minNoShowBps ||
-    r.freeCancelWindow > m.maxFreeCancelWindow
-  ) {
-    return 'seller_mandate.charges_not_allowed'
-  }
-  return null
-}
-
-/** A reason only the seller's own agent and administrators hear, since it tells of a limit. */
-export type SellerMandateReason = Extract<ReasonCode, `seller_mandate.${string}`>
-
-const isSellerMandateReason = (reason: ReasonCode): reason is SellerMandateReason =>
-  reason.startsWith('seller_mandate.')
-
-/**
- * The reason a buyer hears for a refusal the seller's mandate check gave. Every reason that tells
- * of the seller's mandate or one of its limits becomes `supplier.not_authorized`, which names
- * none. Any other reason passes through as it is.
- */
-export function buyerFacingReason(reason: ReasonCode): Exclude<ReasonCode, SellerMandateReason> {
-  return isSellerMandateReason(reason) ? 'supplier.not_authorized' : reason
-}
-
-const unitsJson = z.number().int()
-
-/** A seller's mandate as JSON, with amounts and times as decimal strings and nothing else in it. */
 export const sellerMandateJson = z.strictObject({
   mandateId: bytes32,
-  businessId: businessIdJson,
+  businessId: z.string(),
   account: address,
   signingKey: address,
   currency: z.enum(CURRENCIES),
@@ -525,22 +355,21 @@ export const sellerMandateJson = z.strictObject({
     .array(
       z.strictObject({
         category: z.enum(SELLER_CATEGORIES),
-        item: z.string().min(1).max(SERVICE_NAME_MAX).nullable(),
+        item: z.string().nullable(),
         minUnitPrice: u256,
-        maxUnitsPerOrder: unitsJson,
-        maxUnitsPerDay: unitsJson,
+        maxUnitsPerOrder: z.number(),
+        maxUnitsPerDay: z.number(),
       }),
     )
-    .min(1)
     .max(SELLER_LIMITS_MAX),
   maxOrderValue: u256,
   maxOutstanding: u256,
   maxDeliveryHorizon: u64,
-  minLateCancellationBps: z.number().int(),
-  minNoShowBps: z.number().int(),
+  minLateCancellationBps: z.number(),
+  minNoShowBps: z.number(),
   maxFreeCancelWindow: u64,
-  buyers: z.array(businessIdJson).max(SELLER_LIST_MAX),
-  excludedBuyers: z.array(businessIdJson).max(SELLER_LIST_MAX),
+  buyers: z.array(z.string()).max(SELLER_LIST_MAX),
+  excludedBuyers: z.array(z.string()).max(SELLER_LIST_MAX),
   excludedCountries: z.array(z.string()).max(SELLER_LIST_MAX),
   requiresBusinessCheck: z.boolean(),
   negotiable: z.array(z.enum(OPEN_TERMS)),

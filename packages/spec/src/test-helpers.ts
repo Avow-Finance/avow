@@ -62,7 +62,10 @@ export function demoMandate(account: Address, agentKey: Address): Mandate {
   }
 }
 
-/** A seller's mandate for fine-tuning runs at $40 or more, and any other service at $5 or more. */
+/**
+ * A seller's mandate for any service at $40 or more a unit, bulk evals from $5, and fine-tuning
+ * jobs from $100.
+ */
 export function demoSellerMandate(account: Address, signingKey: Address): SellerMandate {
   return {
     mandateId: id('seller-mandate-1'),
@@ -72,25 +75,25 @@ export function demoSellerMandate(account: Address, signingKey: Address): Seller
     currency: 'USD',
     limits: [
       {
-        category: 'service',
-        item: 'Fine-tuning run',
-        minUnitPrice: dollars(40),
-        maxUnitsPerOrder: 8,
-        maxUnitsPerDay: 20,
-      },
-      {
-        category: 'service',
-        item: null,
-        minUnitPrice: dollars(5),
-        maxUnitsPerOrder: 4,
-        maxUnitsPerDay: 10,
-      },
-      {
         category: 'compute-job',
         item: 'fine-tuning',
         minUnitPrice: dollars(100),
         maxUnitsPerOrder: 1,
         maxUnitsPerDay: 3,
+      },
+      {
+        category: 'service',
+        item: null,
+        minUnitPrice: dollars(40),
+        maxUnitsPerOrder: 4,
+        maxUnitsPerDay: 10,
+      },
+      {
+        category: 'service',
+        item: 'Bulk eval',
+        minUnitPrice: dollars(5),
+        maxUnitsPerOrder: 8,
+        maxUnitsPerDay: 20,
       },
     ],
     maxOrderValue: dollars(500),
