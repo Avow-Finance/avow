@@ -105,6 +105,10 @@ async function twoAgents() {
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
     if (path === '/config.json') return json(wire(deployment))
+    // Avow serves no seller's mandate yet, so a seller sells as it did before.
+    if (path === SANDBOX_PATHS.sellerMandates) {
+      return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+    }
     const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
     if (path === SANDBOX_PATHS.serviceOrders) {
       request = body
@@ -367,6 +371,10 @@ describe('what a folder keeps', () => {
     const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(input)).pathname
       if (path === '/config.json') return json(wire(deployment))
+      // Avow serves no seller's mandate yet, so a seller sells as it did before.
+      if (path === SANDBOX_PATHS.sellerMandates) {
+        return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+      }
       const body = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))
       return refuse
         ? json({ error: { reason: 'message.expired', message: 'The order lapsed' } }, 409)

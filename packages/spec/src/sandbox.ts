@@ -149,8 +149,9 @@ export const SANDBOX_PATHS = {
    * `message.wrong_chain`, and one signed under another lock than the business's own as
    * `message.wrong_contract`. A key that isn't a signing key the business registered is
    * `request.signer_unknown`, a body that isn't an empty object is `message.invalid`, and a key
-   * that holds no seller's mandate is `seller_mandate.missing`. When Avow can't read its records
-   * it is to answer `service.unavailable`.
+   * that holds no seller's mandate is `seller_mandate.missing`, with status 404, which a selling
+   * agent reads as no mandate in force and every other 404 as a refusal. When Avow can't read its
+   * records it is to answer `service.unavailable`.
    */
   sellerMandates: '/v1/sandbox/sellers/mandates',
   /**

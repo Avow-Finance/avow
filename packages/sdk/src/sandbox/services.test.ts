@@ -72,6 +72,10 @@ function avow(answer: (path: string, body: Record<string, unknown>) => Response 
     const path = new URL(String(input)).pathname
     paths.push(path)
     if (path === '/config.json') return json(wire(deployment))
+    // Avow serves no seller's mandate yet, so a seller sells as it did before.
+    if (path === SANDBOX_PATHS.sellerMandates) {
+      return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+    }
     const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
     return (
       answer(path, body) ??

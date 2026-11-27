@@ -8,7 +8,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 ## MCP tools
 
-`connect` and `status` set the agent up, and `verify` works without connecting. The others refuse until the agent is connected. Every tool that reserves money acts within the limits the administrator approved. The last five carry a service between two businesses' agents, which [Services sold by quantity](/docs/reference/services) describes. No mandate holds what an agent sells, so `publish_offer` and `sell` are bound only by the agent's signing key and the offers in its folder.
+`connect` and `status` set the agent up, and `verify` works without connecting. The others refuse until the agent is connected. Every tool that reserves money acts within the limits the administrator approved. The last five carry a service between two businesses' agents, which [Services sold by quantity](/docs/reference/services) describes. `publish_offer` and `sell` are bound by the agent's signing key and the offers in its folder, and by a [seller's mandate](/docs/reference/seller-mandate) the agent holds itself to when Avow serves one. Avow serves none yet and doesn't enforce seller limits, and both tools say so.
 
 | Tool | Changes anything | What it does |
 | --- | --- | --- |

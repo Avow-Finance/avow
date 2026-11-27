@@ -92,6 +92,15 @@ export async function listenCommand(): Promise<void> {
       ? 'for no services yet, since it has published no offers'
       : `for ${offers.map((v) => v.item.name).join(', ')}`
   console.log(`Listening for orders to ${mailbox.businessId}, for jobs and ${selling}`)
+  // Said once up front, and read again before every quote and acceptance.
+  if (services.sells && !unserved) {
+    console.log(
+      await services.sellerStanding().then(
+        (standing) => standing.notice,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      ),
+    )
+  }
   console.log('Stop with Ctrl+C.')
   // A step that fails is tried again on every read, so its reason is said once an order.
   const said = new Set<string>()

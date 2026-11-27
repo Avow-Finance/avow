@@ -5,7 +5,7 @@ slug: docs/reference/seller-mandate
 
 A seller's mandate is the authority a business's administrator signs for one selling agent. A buyer's mandate limits what an agent may reserve. A seller's mandate limits what an agent may promise, which is what it sells, at what price, how much, how far ahead, on what charges and to whom.
 
-`@avow-finance/spec` holds the message, its signed form and the check. Avow's sandbox doesn't enforce a seller's mandate yet, so today a selling agent's signing key is still its only limit, and this page says so until that changes. Nothing here should be read as a limit a selling agent is held to today.
+`@avow-finance/spec` holds the message, its signed form and the check. Avow doesn't enforce a seller's mandate yet, and it doesn't serve one either. The SDK's selling agent reads its own mandates and holds itself to the newest, as [The agent holds itself to it](#the-agent-holds-itself-to-it) sets out, so a selling agent with no mandate from Avow sells as it did before, with its signing key as its only limit.
 
 ## The message
 
@@ -173,6 +173,21 @@ The amounts a seller's mandate sets stay with the seller. `buyerFacingReason` pa
 A buyer told that a person has to approve would wait for nothing today, so it hears `supplier.not_authorized` until one sale can be approved.
 
 A buyer that varies its orders can still infer roughly where a limit sits from which of them are refused.
+
+## The agent holds itself to it
+
+The SDK's selling agent is the first of the two layers. Before `publish` lists an offer, and before `sell` quotes an order or accepts one, it reads every seller's mandate its signing key has held from Avow at `SANDBOX_PATHS.sellerMandates`, signed by that key under its business's lock. It reads them with `parseSellerMandates` and `sellerMandateChainProblem`, and acts under the newest.
+
+- **No mandate.** Avow doesn't serve the route yet, and a key it holds no mandate for is to get a 404 too. Either way no seller's mandate is in force, and the agent sells as it did before. `sellerStanding()` and every selling answer say so in plain words, and say that Avow doesn't enforce seller limits yet.
+- **An offer.** `publish` checks the offer with `sellerOfferProblem` and refuses one the mandate doesn't allow with a `SellerMandateRefusal` carrying the spec's reason, such as `seller_mandate.under_price_floor`. Nothing is kept.
+- **A sale.** `sell` checks the terms it would sign with `checkSellerMandate` before the quote goes out, and again before it accepts, so a mandate replaced, ended or revoked in between holds. A refusal frees the capacity the order took, sends nothing and leaves the order to lapse.
+- **A chain that doesn't read.** Mandates the business account didn't sign, a revoked key or an answer that isn't a chain stop the agent selling, with the reason.
+
+The agent counts its own ledger from the quotes it keeps in its `.avow` folder. A sale it quoted today under the same line of limits counts toward the day's units while it can still bind the seller or binds it, and its price counts as outstanding until it's due. Another agent with the same key, in another folder, isn't counted, so run one seller on a key.
+
+Avow's records of a buyer aren't open to a selling agent yet, so the agent reads a buyer's country as unknown and treats it as not having passed a business check. A mandate that excludes any country, or requires a check, refuses every sale until they are. Avow takes no request to approve one sale yet, so a sale the mandate hands to a person is refused as `approval.human_required`, and its buyer sees the order lapse.
+
+The agent holds itself to its mandate in its own process, and a seller running other code isn't held by this. Avow is to be the second layer, and it enforces nothing for a seller today.
 
 ## Two layers, and no chain
 

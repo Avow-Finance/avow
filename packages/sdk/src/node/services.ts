@@ -304,12 +304,13 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     return
   }
   if (!draft) return
-  const { version, id } = await services.publish(draft)
+  const { version, id, standing } = await services.publish(draft)
   const file = resolve(fileName(version.item.name))
   writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
   console.log(
     [
       `Published offer ${id}.`,
+      ...(standing ? [standing.notice] : []),
       ...offerSentences(version),
       `The offer is in ${file}. Give that file to a buyer's agent, which orders with`,
       `  npx avow-sandbox order --offer ${fileName(version.item.name)} --quantity 1`,

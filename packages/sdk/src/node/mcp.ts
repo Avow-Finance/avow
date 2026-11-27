@@ -36,6 +36,7 @@ import {
   sandboxAgent,
 } from '../sandbox/agent.js'
 import { type AskedChange, changeWords } from '../sandbox/requests.js'
+import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -98,8 +99,9 @@ type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
  * mandate like any other commitment. The first two and `sell` are a supplier's, for an agent
- * connected to sell. No mandate holds what an agent sells. Its signing key and the offers in its
- * folder are its only limits, and the tools say so. None reports to the runner's screen.
+ * connected to sell. Its signing key, the offers in its folder and, once Avow serves one, the
+ * seller's mandate its own SDK holds it to are its limits, and the tools say which stand. Avow
+ * enforces no seller limit yet. None reports to the runner's screen.
  */
 const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
@@ -511,7 +513,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. Those are its only limits, since no mandate holds what an agent sells. To decline an order, leave it, and it lapses with nothing reserved.",
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. When Avow serves a seller's mandate for your signing key, it also refuses a quote or an acceptance the mandate doesn't allow, with the reason. Avow serves none and enforces no seller limit yet, and the answer says which applies. To decline an order, leave it, and it lapses with nothing reserved.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1104,10 +1106,11 @@ export function mcpAgent(
   async function publishOffer(args: Record<string, unknown>): Promise<ToolAnswer> {
     const draft = readOfferInput(args as OfferInput)
     if ('error' in draft) throw new RangeError(draft.error)
-    const { version, id } = await (await services()).publish(draft)
+    const { version, id, standing } = await (await services()).publish(draft)
     return {
       text: [
-        `Published offer ${id}, kept in this folder. Nothing was sent to Avow, and no directory lists it.`,
+        `Published offer ${id}, kept in this folder. The offer wasn't sent to Avow, and no directory lists it.`,
+        ...(standing ? [standing.notice] : []),
         ...offerSentences(version),
         "Hand the buyer's agent the offer below, whole, and it orders from it with its order tool. Call orders to see what comes, and sell to quote and accept.",
         JSON.stringify(toWire(version)),
@@ -1363,14 +1366,30 @@ export function mcpAgent(
       }
     }
     let acceptedIn: string | null = null
-    await mine.sell(waiting, (step) => {
-      if (step.step === 'accepted') acceptedIn = step.acceptedIn
-    })
+    let notice = ''
+    try {
+      await mine.sell(waiting, (step) => {
+        notice = step.standing.notice
+        if (step.step === 'accepted') acceptedIn = step.acceptedIn
+      })
+    } catch (error) {
+      if (!(error instanceof SellerMandateRefusal)) throw error
+      return {
+        text:
+          waiting.status === 'requested'
+            ? `${error.message} No quote was sent, so the order is left to lapse.`
+            : `${error.message} The order isn't accepted, so the buyer's reserve goes back once the acceptance deadline passes.`,
+        structured: { ...orderFacts(waiting), step: null, acceptedIn: null, refused: error.reason },
+        isError: true,
+      }
+    }
     const quoted = waiting.status === 'requested'
     return {
-      text: quoted
-        ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
-        : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`,
+      text: `${
+        quoted
+          ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
+          : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`
+      } ${notice}`.trim(),
       structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
       isError: false,
     }
