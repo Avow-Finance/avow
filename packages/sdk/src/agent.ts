@@ -35,6 +35,7 @@ import {
   type TermsAgreement,
   type TermsProfile,
   termsAgreementTypedData,
+  termsAgreementVersion,
   termsHash,
   termsShapeProblem,
 } from '@avow-finance/spec'
@@ -608,7 +609,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     const buyerSignature = await key.sign({ hash: digest, raw: true })
     const signed: SignedAgreement = {
       type: 'TermsAgreement',
-      schemaVersion: MESSAGE_VERSIONS.TermsAgreement,
+      schemaVersion: termsAgreementVersion(agreement),
       chainId: d.chainId,
       lock: d.verifyingContract,
       message: agreement,

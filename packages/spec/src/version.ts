@@ -39,6 +39,13 @@ export const MESSAGE_VERSIONS = {
  */
 export const MANDATE_REPLACEMENT_VERSION = '2'
 
+/**
+ * The domain version of a terms agreement that names the seller's mandate the supplier's agent
+ * agreed under. An agreement that names none keeps version 1 byte for byte, so every sale made
+ * under no seller's mandate signs and reads exactly as before.
+ */
+export const TERMS_AGREEMENT_SELLER_VERSION = '2'
+
 type VersionedType = keyof typeof MESSAGE_VERSIONS
 
 /** The domain versions this package reads for each message type. */
@@ -52,7 +59,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   SupplierAction: [MESSAGE_VERSIONS.SupplierAction],
   Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION],
   SellerMandate: [MESSAGE_VERSIONS.SellerMandate],
-  TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement],
+  TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement, TERMS_AGREEMENT_SELLER_VERSION],
   SupplierAuthorization: [MESSAGE_VERSIONS.SupplierAuthorization],
   HumanApproval: [MESSAGE_VERSIONS.HumanApproval],
   StartReceipt: [MESSAGE_VERSIONS.StartReceipt],

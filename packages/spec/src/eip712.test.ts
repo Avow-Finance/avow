@@ -38,9 +38,11 @@ import {
   startReceiptTypedData,
   supplierActionTypedData,
   supplierAuthorizationTypedData,
+  TERMS_AGREEMENT_TYPES,
   type TermsAgreement,
   type Timestamp,
   termsAgreementTypedData,
+  termsAgreementVersion,
   timestampTypedData,
 } from './eip712.js'
 import { sellerMandateTypedData } from './seller-mandate.js'
@@ -60,7 +62,7 @@ import {
   START,
   TOKEN,
 } from './test-helpers.js'
-import { isSupportedMessageVersion } from './version.js'
+import { isSupportedMessageVersion, TERMS_AGREEMENT_SELLER_VERSION } from './version.js'
 
 const SALT = `0x${'22'.repeat(32)}` as const
 const admin = newKey()
@@ -566,5 +568,47 @@ describe('replay keys', () => {
     ).toBe(k)
     expect(commitmentKey('StartReceipt', DOMAIN, id('commitment-1'))).not.toBe(k)
     expect(commitmentKey('SupplierAuthorization', OTHER_DOMAIN, id('commitment-1'))).not.toBe(k)
+  })
+})
+
+describe("a terms agreement that names a seller's mandate", () => {
+  const sellerMandate = `0x${'5a'.repeat(32)}` as const
+  const named = { ...agreement, sellerMandate }
+
+  it('signs at version 2 with the mandate as its last field, and leaves version 1 as it was', () => {
+    const plain = termsAgreementTypedData(agreement, DOMAIN)
+    const withMandate = termsAgreementTypedData(named, DOMAIN)
+    expect(plain.domain.version).toBe('1')
+    expect(plain.types).toBe(TERMS_AGREEMENT_TYPES)
+    expect('sellerMandate' in plain.message).toBe(false)
+    expect(withMandate.domain.version).toBe(TERMS_AGREEMENT_SELLER_VERSION)
+    expect(withMandate.types.TermsAgreement.at(-1)).toEqual({
+      name: 'sellerMandate',
+      type: 'bytes32',
+    })
+    expect(withMandate.types.TermsAgreement.slice(0, -1)).toEqual(
+      TERMS_AGREEMENT_TYPES.TermsAgreement,
+    )
+    expect(termsAgreementVersion(agreement)).toBe('1')
+    expect(termsAgreementVersion(named)).toBe('2')
+  })
+
+  it('has a digest of its own, which changes with the mandate it names', () => {
+    const plain = digestOf(termsAgreementTypedData(agreement, DOMAIN))
+    const withMandate = digestOf(termsAgreementTypedData(named, DOMAIN))
+    const other = { ...agreement, sellerMandate: `0x${'5b'.repeat(32)}` as const }
+    expect(withMandate).not.toBe(plain)
+    expect(digestOf(termsAgreementTypedData(other, DOMAIN))).not.toBe(withMandate)
+    // A signature over an agreement that names no mandate never stands for one that names one.
+    const { sellerMandate: _, ...without } = named
+    expect(digestOf(termsAgreementTypedData(without, DOMAIN))).toBe(plain)
+  })
+
+  it("refuses a hash no seller's mandate has, so nothing signs as a mandate nobody holds", () => {
+    for (const hash of [`0x${'00'.repeat(32)}`, `0x${'5A'.repeat(32)}`, '0x5a', 'biz_supplier']) {
+      expect(() =>
+        termsAgreementTypedData({ ...agreement, sellerMandate: hash as never }, DOMAIN),
+      ).toThrow(RangeError)
+    }
   })
 })

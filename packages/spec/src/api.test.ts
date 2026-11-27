@@ -157,11 +157,37 @@ describe('reserve approval requests', () => {
     const parsed = parseSignedAgreement(roundTrip(agreement), { chainId: CHAIN_ID, lock: LOCK })
     expect(parsed.ok && parsed.value.message.commitmentId).toBe(id('commitment-1'))
     expect(
-      parseSignedAgreement({ ...roundTrip(agreement), schemaVersion: '2' }, { chainId: CHAIN_ID }),
+      parseSignedAgreement({ ...roundTrip(agreement), schemaVersion: '3' }, { chainId: CHAIN_ID }),
     ).toEqual({
       ok: false,
       reason: 'message.schema_unknown',
     })
+  })
+
+  it("reads an agreement that names a seller's mandate at version 2, and at no other", () => {
+    const sellerMandate = id("seller's mandate")
+    const named = {
+      ...agreement,
+      schemaVersion: '2',
+      message: { ...agreementMessage, sellerMandate },
+    }
+    const parsed = parseSignedAgreement(roundTrip(named), { chainId: CHAIN_ID, lock: LOCK })
+    expect(parsed.ok && parsed.value.message.sellerMandate).toBe(sellerMandate)
+    const invalid = { ok: false, reason: 'message.invalid' }
+    const read = (change: object) =>
+      parseSignedAgreement({ ...roundTrip(named), ...change }, { chainId: CHAIN_ID })
+    // The envelope's version is the one the message signs at.
+    expect(read({ schemaVersion: '1' })).toEqual(invalid)
+    expect(
+      parseSignedAgreement({ ...roundTrip(agreement), schemaVersion: '2' }, { chainId: CHAIN_ID }),
+    ).toEqual(invalid)
+    // No mandate has the zero hash, and a mandate is named by its hash or left out.
+    const withMandate = (value: unknown) => ({
+      message: { ...roundTrip(named).message, sellerMandate: value },
+    })
+    expect(read(withMandate(`0x${'00'.repeat(32)}`))).toEqual(invalid)
+    expect(read(withMandate(null))).toEqual(invalid)
+    expect(read(withMandate('biz_supplier'))).toEqual(invalid)
   })
 })
 

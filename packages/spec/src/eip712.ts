@@ -27,6 +27,7 @@ import {
   isSupportedMessageVersion,
   MANDATE_REPLACEMENT_VERSION,
   MESSAGE_VERSIONS,
+  TERMS_AGREEMENT_SELLER_VERSION,
 } from './version.js'
 
 /**
@@ -99,6 +100,12 @@ export interface TermsAgreement {
   nonce: bigint
   /** When the offer lapses. */
   expiry: bigint
+  /**
+   * The hash of the seller's mandate the supplier's agent agreed under, so the record of a sale
+   * says whose authority it was made on. Left out for a sale made under none. Naming one is a
+   * statement both sides signed, and whoever relies on it checks the mandate itself.
+   */
+  sellerMandate?: Hex
 }
 
 /** One kind of charge in a commitment's terms: the most it can take, and when it can first be reported. */
@@ -449,6 +456,14 @@ export const TERMS_AGREEMENT_TYPES = {
   ],
 } as const
 
+/** The types of an agreement that names a seller's mandate: the same fields, then its hash. */
+export const TERMS_AGREEMENT_SELLER_TYPES = {
+  TermsAgreement: [
+    ...TERMS_AGREEMENT_TYPES.TermsAgreement,
+    { name: 'sellerMandate', type: 'bytes32' },
+  ],
+} as const
+
 const CHARGE_FIELDS = [
   { name: 'kind', type: 'uint8' },
   { name: 'most', type: 'uint256' },
@@ -694,14 +709,53 @@ function mandateFields(m: Mandate) {
   }
 }
 
+/**
+ * A terms agreement's EIP-712 typed data. One that names no seller's mandate signs at version 1
+ * under `TERMS_AGREEMENT_TYPES`, exactly as before, and one that names it at version 2 with
+ * `sellerMandate` as its last field. A hash that isn't a mandate's, such as the zero hash, is
+ * refused, since it would sign as a mandate nobody holds.
+ */
 export function termsAgreementTypedData(a: TermsAgreement, d: AvowDomain) {
+  const { sellerMandate, ...fields } = a
+  if (sellerMandate === undefined) {
+    return {
+      domain: domain(d, MESSAGE_VERSIONS.TermsAgreement),
+      types: TERMS_AGREEMENT_TYPES,
+      primaryType: 'TermsAgreement' as const,
+      message: fields,
+    }
+  }
+  if (!/^0x[0-9a-f]{64}$/.test(sellerMandate) || sellerMandate === ZERO_HASH) {
+    throw new RangeError("An agreement names a seller's mandate by its hash, in lower case")
+  }
   return {
-    domain: domain(d, MESSAGE_VERSIONS.TermsAgreement),
-    types: TERMS_AGREEMENT_TYPES,
+    domain: domain(d, TERMS_AGREEMENT_SELLER_VERSION),
+    types: TERMS_AGREEMENT_SELLER_TYPES,
     primaryType: 'TermsAgreement' as const,
-    message: { ...a },
+    message: { ...fields, sellerMandate },
   }
 }
+
+/** The domain version a terms agreement signs at, which `sellerMandate` decides. */
+export const termsAgreementVersion = (a: Pick<TermsAgreement, 'sellerMandate'>): string =>
+  a.sellerMandate === undefined ? MESSAGE_VERSIONS.TermsAgreement : TERMS_AGREEMENT_SELLER_VERSION
+
+/** A terms agreement's typed data, under either table. */
+export type TermsAgreementTypedData = ReturnType<typeof termsAgreementTypedData>
+
+/**
+ * The digest of a terms agreement's typed data under whichever table it signs with. Both branches
+ * make the same call, since viem types its argument by one table, so each has to see a single one.
+ */
+function hashAgreementTypedData(td: TermsAgreementTypedData): Hex {
+  return namesSellerMandate(td) ? hashTypedData(td) : hashTypedData(td)
+}
+
+/** Whether an agreement's typed data names a seller's mandate, which says which table it is. */
+const namesSellerMandate = (
+  td: TermsAgreementTypedData,
+): td is Extract<TermsAgreementTypedData, { types: typeof TERMS_AGREEMENT_SELLER_TYPES }> =>
+  'sellerMandate' in td.message
 
 export function approvalTypedData(a: Approval, d: AvowDomain) {
   return {
@@ -1013,7 +1067,7 @@ interface InterfacesMatchTables {
   SellingLimit: SameFields<keyof SellingLimit, FieldNames<typeof SELLER_MANDATE_TYPES.SellingLimit>>
   TermsAgreement: SameFields<
     keyof TermsAgreement,
-    FieldNames<typeof TERMS_AGREEMENT_TYPES.TermsAgreement>
+    FieldNames<typeof TERMS_AGREEMENT_SELLER_TYPES.TermsAgreement>
   >
   Approval: SameFields<keyof Approval, FieldNames<typeof APPROVAL_TYPES.Approval>>
   Charge: SameFields<keyof Charge, FieldNames<typeof APPROVAL_TYPES.Charge>>
@@ -1084,7 +1138,7 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'Mandate':
       return hashMandateTypedData(td)
     case 'TermsAgreement':
-      return hashTypedData(td)
+      return hashAgreementTypedData(td)
     case 'Approval':
       return hashTypedData(td)
     case 'SupplierAuthorization':
