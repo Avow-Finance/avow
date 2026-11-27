@@ -38,14 +38,15 @@ export const REASON_CODES = {
     "The supplier's agent isn't authorized to sell on these terms. The answer names no limit, since a seller's limits are its own",
   'seller_mandate.missing':
     "The supplier's agent holds no seller's mandate, so it can't list, quote or accept",
-  'seller_mandate.invalid': "The seller's mandate names nothing to sell, or its limits conflict",
+  'seller_mandate.invalid':
+    "The seller's mandate isn't well formed. A field is missing or of the wrong kind, its limits conflict, or its lines or lists are out of order",
   'seller_mandate.signature_invalid':
     "The seller's mandate isn't signed by the business account's root key, so it was changed or forged",
   'seller_mandate.expired': "The seller's mandate has expired",
   'seller_mandate.revoked': "The seller's mandate is revoked",
   'seller_mandate.key_mismatch': "The sale wasn't signed by the seller's mandate's signing key",
   'seller_mandate.template_not_covered':
-    "A seller's mandate covers services and jobs sold through the mailbox, and these terms are neither",
+    "A seller's mandate covers the terms of a service or a job, and these are neither's",
   'seller_mandate.currency_not_allowed': "The terms' currency isn't the seller's mandate's",
   'seller_mandate.item_not_allowed': "The seller's mandate doesn't let the agent sell this item",
   'seller_mandate.under_price_floor':

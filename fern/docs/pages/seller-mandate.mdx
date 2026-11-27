@@ -30,7 +30,7 @@ Version 1 covers sales of `service/1` and `job/1`. Terms under any other templat
 | `excludedCountries` | Countries the agent may not sell into |
 | `requiresBusinessCheck` | Whether a buyer has to have passed Avow's business check |
 | `negotiable` | The terms the agent may move when it bargains. Version 1 takes none, so every sale is on its offer's own terms |
-| `approvalRule` | The order value above which a person decides the sale |
+| `approvalRule` | Whether a person decides a sale: never, always, or above an order value under `maxOrderValue` |
 | `expiry` | When the agent's authority to sell ends |
 
 Amounts are in micros of the mandate's currency, and times are in seconds.
@@ -49,7 +49,7 @@ A floor of zero puts no floor on the price. The templates still require a price 
 
 ### One way to write a mandate
 
-A mandate that passes `sellerMandateProblem` hashes in one way only. Lines come in order by category, then the line for every other item, then by item. Each list of businesses and countries is in ascending order with nothing repeated. The mandate holds exactly the fields the signed form names, text is well-formed Unicode, and every amount fits the signed form. A mandate whose limits conflict is refused too, such as one order's most above what may be outstanding, or a floor above one order's most.
+A mandate that passes `sellerMandateProblem` hashes in one way only. Lines come in order by category, then the line for every other item, then by item. Each list of businesses and countries is in ascending order with nothing repeated. The mandate holds exactly the fields the signed form names, text is well-formed Unicode, addresses and hashes are in lower case, and every amount fits the signed form. A mandate whose limits conflict is refused too, such as one order's most above what may be outstanding, or a floor above one order's most.
 
 ## The check
 
@@ -59,19 +59,22 @@ It refuses in this order.
 
 | Reason | When |
 | --- | --- |
-| `message.invalid` | What the check was told is malformed, such as a ledger count that isn't a number |
+| `message.invalid` | What the check was told is malformed, such as a clock or a signing key that isn't one |
 | `seller_mandate.invalid` | The mandate isn't well formed |
 | `seller_mandate.expired`, `seller_mandate.revoked` | The mandate has ended, or the caller says the administrator revoked it |
 | `seller_mandate.key_mismatch` | Another key signed the sale |
+| `message.invalid` | The buyer, the ledger or the terms profile is malformed |
 | `counterparty.not_eligible` | The buyer fails the counterparty rules |
 | A `terms.*` or `dependency.*` reason | The terms aren't sound on their own, by the rules a buyer's mandate check holds them to |
 | `seller_mandate.template_not_covered` | The terms are neither a service's nor a job's |
 | `seller_mandate.currency_not_allowed` | The terms are in another currency |
 | `seller_mandate.item_not_allowed` | No line covers the item |
+| `message.invalid` | A service comes with no offer, an offer its template refuses or another business's offer, or a job comes with one |
 | `order.terms_changed` | A service's terms aren't exactly the ones its offer builds |
+| `message.invalid`, `message.expired` | A service's terms were built from a moment more than 60 seconds ahead, or their supplier can no longer accept |
 | `seller_mandate.under_price_floor` | The price for each unit is under the line's floor |
 | `seller_mandate.over_delivery_horizon` | Delivery is due later than the horizon allows |
-| `seller_mandate.charges_not_allowed` | A charge is under its floor, or a service's free cancellation lasts too long |
+| `seller_mandate.charges_not_allowed` | A charge is under its floor, a service's free cancellation lasts too long, or a job's no-show can't be reported by its delivery deadline |
 | `seller_mandate.over_order_value` | The order comes to more than one order may |
 | `seller_mandate.over_units_per_order` | The order takes more units than the line allows |
 | `seller_mandate.over_daily_units` | The order would take the day's units past the line's limit |
@@ -79,9 +82,11 @@ It refuses in this order.
 
 A sale inside every limit and above the approval rule's amount comes back as `needs_human` with `approval.human_required`. The caller holds it until the administrator approves that one sale. Nothing lets a person approve one sale yet.
 
+The arbiter and the day-90 share in a sale's terms are Avow's to hold to its own when it approves the reserve, as for any commitment.
+
 ### A service is sold on its offer's terms
 
-A service's terms have to be exactly the ones `serviceOfferTerms` builds from the offer version they book. So the price for each unit is the offer's whatever the quantity, and no discount gets under the floor. A job books no offer, and its floor is on the job's whole price. A job is read from its version 3 terms, which name the compute it runs on.
+A service's terms have to be exactly the ones `serviceOfferTerms` builds from the offer version they book. So the price for each unit is the offer's whatever the quantity, and no discount gets under the floor. The offer has to be the mandate's own business's. A job books no offer, and its floor is on the job's whole price. A job is read from its version 3 terms, which name the compute it runs on.
 
 ### Time
 
@@ -90,7 +95,7 @@ A limit on a length of time is held exactly wherever one clock measures both of 
 - A service's lead time and free-cancellation window are lengths its offer states. They meet the mandate's horizon and longest free cancellation with nothing to spare.
 - A service's terms are built from a moment the buyer's order names, on the buyer's clock. That moment may be up to 60 seconds ahead of the clock of whoever runs the check, and no more. So a service's delivery falls at most the horizon plus 60 seconds after the check.
 - A job's horizon runs from the clock of whoever runs the check to the job's delivery deadline, and is held exactly.
-- A job's free cancellation ends when work starts, which the job template fixes. The mandate's longest free cancellation doesn't read a job.
+- A job's free cancellation ends when work starts, and whoever agrees the job agrees when that is. The mandate's longest free cancellation is for a service and doesn't read a job, so nothing bounds how long a job's buyer can cancel at no charge.
 
 ### Counterparties
 
@@ -106,7 +111,7 @@ The day's units and what's outstanding come from a ledger the caller keeps, coun
 
 ## Listing an offer
 
-`sellerOfferProblem` reads an offer version before anyone orders. The offer has to be for an item the mandate covers, within the limits the check holds an offer to, and its largest booking has to be within the units and the value one order may come to. So every booking a listed offer invites is one the check would pass on those counts. An offer binds nobody, and this refuses early what the check would refuse at the sale.
+`sellerOfferProblem` reads an offer version before anyone orders. The offer has to be for an item the mandate covers, within the limits the check holds an offer to, and its largest booking has to be within the units and the value one order may come to. A price so small that one unit's charges round to nothing builds no terms, and isn't listed. So every booking a listed offer invites is one the check would pass on those counts, under a profile its terms are sound in. An offer binds nobody, and this refuses early what the check would refuse at the sale.
 
 ## When Avow approves a reserve for a sale
 

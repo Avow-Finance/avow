@@ -100,6 +100,8 @@ const denied = (reason: ReasonCode) => ({ result: 'denied', reason })
 
 interface JobChange {
   price?: bigint
+  /** How long after work starts a no-show can first be reported. */
+  grace?: bigint
   kind?: string
   startsIn?: bigint
   takes?: bigint
@@ -120,7 +122,7 @@ const plainJob = (change: JobChange = {}) => {
     price,
     lateCancellation: (price * (change.lateBps ?? 2_000n)) / 10_000n,
     noShow: price / 2n,
-    gracePeriod: 600n,
+    gracePeriod: change.grace ?? 600n,
     chargeDeadline: deliverBy + 600n,
     contestWindow: 600n,
     releaseDate: deliverBy + 600n,
@@ -186,10 +188,18 @@ describe("the seller's mandate check", () => {
       { ledger: { unitsToday: 2n as never, outstanding: 0n } },
       { ledger: { unitsToday: 0, outstanding: -dollars(100_000) } },
       { ledger: { unitsToday: 0, outstanding: 5 as never } },
+      { buyer: { ...buyer, businessId: '' } },
+      { profile: {} as never },
+      { profile: undefined as never },
       // A service is sold from an offer, and a job from none.
       { offer: null },
       { offer: undefined as never },
       { terms: job() },
+      // The offer has to be one the template takes, and the mandate's business's own.
+      { offer: { ...offer, rules: null } as never },
+      {
+        offer: withOffer({ item: { name: 'Fine-tuning run', summary: 'half a \ud800 character' } }),
+      },
     ]
     for (const change of malformed) expect(check(change)).toEqual(denied('message.invalid'))
     expect(checkSellerMandate(null as never)).toEqual(denied('message.invalid'))
@@ -203,7 +213,6 @@ describe("the seller's mandate check", () => {
     const terms = sale()
     const cheaper = { ...terms, consideration: { ...terms.consideration, amount: dollars(45) } }
     expect(check({ terms: cheaper })).toEqual(changed)
-    expect(check({ offer: { ...offer, rules: null } as never })).toEqual(changed)
   })
 
   it("reads an item's own line, and any other name by its category's line", () => {
@@ -224,6 +233,14 @@ describe("the seller's mandate check", () => {
     )
   })
 
+  it("sells only its own business's offer, and only while its supplier can still accept", () => {
+    expect(sell(withOffer({ supplier: 'biz_someone_else' }))).toEqual(denied('message.invalid'))
+    // Terms built 15 minutes ago gave their supplier until now to accept.
+    expect(sell(offer, 2, {}, NOW - 15n * 60n + 1n)).toEqual(approved)
+    expect(sell(offer, 2, {}, NOW - 15n * 60n)).toEqual(denied('message.expired'))
+    expect(sell(offer, 2, {}, NOW - 10n * DAY)).toEqual(denied('message.expired'))
+  })
+
   it('refuses an item the mandate has no line for', () => {
     const onlyNamed = withMandate({ limits: [jobLine, bulkEval] })
     expect(check({ mandate: onlyNamed })).toEqual(denied('seller_mandate.item_not_allowed'))
@@ -231,7 +248,7 @@ describe("the seller's mandate check", () => {
   })
 
   it('holds an order to the most it may come to', () => {
-    const small = withMandate({ maxOrderValue: dollars(150) })
+    const small = withMandate({ maxOrderValue: dollars(150), approvalRule: { kind: 'never' } })
     expect(sell(offer, 3, { mandate: small })).toEqual(approved)
     expect(sell(offer, 4, { mandate: small })).toEqual(denied('seller_mandate.over_order_value'))
   })
@@ -330,6 +347,9 @@ describe("the seller's mandate check", () => {
     expect(sellJob({ price: dollars(99) })).toEqual(denied('seller_mandate.under_price_floor'))
     expect(sellJob({ kind: 'inference' })).toEqual(denied('seller_mandate.item_not_allowed'))
     expect(sellJob({ lateBps: 1_999n })).toEqual(denied('seller_mandate.charges_not_allowed'))
+    // A no-show nobody can report until after delivery is no charge.
+    expect(sellJob({ grace: 2n * HOUR })).toEqual(approved)
+    expect(sellJob({ grace: 2n * HOUR + 1n })).toEqual(denied('seller_mandate.charges_not_allowed'))
     // The line takes three jobs a day.
     expect(sellJob({}, { ledger: { unitsToday: 3, outstanding: 0n } })).toEqual(
       denied('seller_mandate.over_daily_units'),
@@ -347,8 +367,8 @@ describe("the seller's mandate check", () => {
     expect(sellJob({ startsIn: 6n * DAY, takes: DAY + 1n }, { now: NOW + 1n })).toEqual(approved)
   })
 
-  it("leaves a job's free cancellation to its template", () => {
-    // It ends when work starts, here in six days, past the mandate's one day for a service.
+  it("puts no bound on a job's free cancellation, which lasts until work starts", () => {
+    // Work starts in six days, past the mandate's one day of free cancellation for a service.
     expect(sellJob({ startsIn: 6n * DAY, takes: HOUR })).toEqual(approved)
     const none = withMandate({ maxFreeCancelWindow: 0n })
     expect(sellJob({}, { mandate: none })).toEqual(approved)
@@ -365,6 +385,10 @@ describe("the seller's mandate check", () => {
       [null, 'terms.invalid'],
       [{ ...terms, remedies: undefined }, 'terms.incomplete'],
       [{ ...terms, remedies: { ...terms.remedies, charges: null } }, 'terms.invalid'],
+      // An amount that isn't a whole number of micros reads as no terms at all.
+      [{ ...terms, consideration: { ...terms.consideration, amount: 1 } }, 'terms.invalid'],
+      [{ ...terms, consideration: { ...terms.consideration, amount: undefined } }, 'terms.invalid'],
+      [{ ...job(), consideration: { kind: 'fixed', amount: 120_000_000 } }, 'terms.invalid'],
     ]
     for (const [given, reason] of unsound) {
       expect(check({ terms: given as never })).toEqual(denied(reason))
@@ -406,6 +430,12 @@ describe("listing an offer under a seller's mandate", () => {
       [withOffer({}, { freeCancelWindow: DAY + 1n }), 'seller_mandate.charges_not_allowed'],
       [withOffer({ supplier: 'biz_other' }), 'message.invalid'],
       [withOffer({ unitPrice: 0n }), 'message.invalid'],
+      // At a micro a unit every charge rounds to nothing, so the offer builds no terms.
+      [withOffer({ ...named('Bulk eval'), unitPrice: 1n }), 'message.invalid'],
+      [
+        withOffer({ item: { name: 'Fine-tuning run', summary: 'half a \ud800 character' } }),
+        'message.invalid',
+      ],
       [null as never, 'message.invalid'],
     ]
     for (const [version, reason] of cases) expect(problem(version)).toBe(reason)
@@ -448,6 +478,13 @@ describe('when Avow approves a reserve for a sale', () => {
     expect(saleApprovalProblem(job(), NOW)).toBe('approval.acceptance_too_far')
     expect(saleApprovalProblem(job(), starts - 15n * 60n - 1n)).toBe('approval.acceptance_too_far')
     expect(saleApprovalProblem(job(), starts - 15n * 60n)).toBeNull()
+  })
+
+  it('refuses what it cannot read, and never throws', () => {
+    const terms = sale()
+    expect(saleApprovalProblem(null as never, NOW)).toBe('message.invalid')
+    expect(saleApprovalProblem({ remedies: { acceptBy: 5 as never } }, NOW)).toBe('message.invalid')
+    expect(saleApprovalProblem(terms, 5 as never)).toBe('message.invalid')
   })
 })
 

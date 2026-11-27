@@ -13,22 +13,26 @@ import {
   sellingLimitFor,
 } from './seller-mandate.js'
 import {
+  BUSINESS_ID_MAX,
   SERVICE,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_CATEGORY,
   type ServiceOfferVersion,
   serviceOfferProblem,
+  serviceOfferQuote,
   servicePrice,
   serviceTermsMatchOffer,
 } from './service.js'
 import { SERVICE_ORDER_CLOCK_SKEW } from './service-order.js'
 import { validateChainedTerms, validateTerms } from './terms.js'
+import { isSoundText } from './text.js'
 import type { ChainedTerms, RemedyCharge, Terms } from './types.js'
 
 /**
  * The seller's mandate check. `checkSellerMandate` reads a sale against the mandate its seller's
  * agent acts under, and `sellerOfferProblem` reads an offer before anyone orders. Both are pure
  * and never throw, so a seller's own agent and Avow can run the same code on the same inputs.
+ * Whatever they're given that they can't read, they refuse.
  * Nothing calls them yet. The lock belongs to the buyer and never reads a seller's mandate, and
  * the signing key moves no money, so no chain will hold a seller to these limits.
  *
@@ -86,14 +90,21 @@ export function saleFacts(terms: Terms | ChainedTerms): SaleFacts | null {
 /**
  * Why a sale's terms aren't sound on their own, or null when they are, by the rules a buyer's
  * mandate check holds terms to. Job terms that name no compute are `dependency.required`, so a
- * job is read from its version 3 terms. Terms so malformed that reading them fails are
- * `terms.invalid`.
+ * job is read from its version 3 terms. Terms so malformed that reading them fails, or whose price,
+ * deadlines or charges aren't whole amounts, are `terms.invalid`. The arbiter and the day-90 share
+ * are Avow's to hold to its own when it approves the reserve.
  */
 function termsProblem(terms: Terms | ChainedTerms, profile: TermsProfile): ReasonCode | null {
   try {
-    return isChainedTerms(terms)
+    const unsound = isChainedTerms(terms)
       ? validateChainedTerms(terms, profile)
       : validateTerms(terms, profile)
+    // Version 1 terms have no template, and no mandate reads them.
+    if (unsound || !('template' in terms)) return unsound
+    const { acceptBy, freeCancelBy, charges } = terms.remedies
+    const read: unknown[] = [terms.consideration.amount, acceptBy, freeCancelBy]
+    for (const c of charges) read.push(c.amount, c.earliest)
+    return read.every((v) => typeof v === 'bigint') ? null : 'terms.invalid'
   } catch {
     return 'terms.invalid'
   }
@@ -217,8 +228,12 @@ function offerLimitProblem(
 /**
  * Why a job's terms go past a line's floor or the mandate's horizon and charges, or null when they
  * don't. The horizon runs from `now`, on the clock of whoever runs the check, to the delivery
- * deadline, and is held exactly. A job's free cancellation ends when work starts, which its
- * template fixes and no agent chooses, so the mandate's longest free cancellation doesn't read it.
+ * deadline, and is held exactly. Each charge is at least its share of the price, and a no-show can
+ * be reported by the delivery deadline, since a charge nobody can report in time is no charge.
+ *
+ * A job's free cancellation ends when work starts, and whoever agrees the job agrees when that
+ * is, up to its delivery. The mandate's longest free cancellation is for a service and doesn't
+ * read a job, so nothing here bounds how long a job's buyer can cancel at no charge.
  */
 function jobLimitProblem(
   m: SellerMandate,
@@ -229,9 +244,11 @@ function jobLimitProblem(
 ): ReasonCode | null {
   if (sale.price < limit.minUnitPrice) return 'seller_mandate.under_price_floor'
   if (sale.deliverBy - now > m.maxDeliveryHorizon) return 'seller_mandate.over_delivery_horizon'
+  const noShow = charges.find((c) => c.kind === 'noShow')
   if (
     !atLeast(chargeOf(charges, 'lateCancellation'), m.minLateCancellationBps, sale.price) ||
-    !atLeast(chargeOf(charges, 'noShow'), m.minNoShowBps, sale.price)
+    !atLeast(noShow?.amount ?? 0n, m.minNoShowBps, sale.price) ||
+    (noShow !== undefined && noShow.earliest > sale.deliverBy)
   ) {
     return 'seller_mandate.charges_not_allowed'
   }
@@ -251,13 +268,25 @@ function jobLimitProblem(
  * hold until the administrator approves that sale.
  */
 export function checkSellerMandate(input: SellerMandateCheckInput): MandateCheck {
+  try {
+    return readSale(input)
+  } catch {
+    // Every value is checked before it's read, and one that still fails to read is refused.
+    return { result: 'denied', reason: 'message.invalid' }
+  }
+}
+
+function readSale(input: SellerMandateCheckInput): MandateCheck {
   const deny = (reason: ReasonCode): MandateCheck => ({ result: 'denied', reason })
   if (!isObject(input)) return deny('message.invalid')
   const { mandate: m, terms, offer, buyer, ledger, now } = input
 
   const standing = standingProblem(m, input)
   if (standing) return deny(standing)
-  if (!isObject(buyer) || typeof buyer.businessId !== 'string' || !isLedger(ledger)) {
+  if (!isObject(buyer) || !isSoundText(buyer.businessId, BUSINESS_ID_MAX) || !isLedger(ledger)) {
+    return deny('message.invalid')
+  }
+  if (!isObject(input.profile) || typeof input.profile.minContestWindow !== 'bigint') {
     return deny('message.invalid')
   }
   if (!counterpartyAllowed(m, buyer)) return deny('counterparty.not_eligible')
@@ -273,12 +302,16 @@ export function checkSellerMandate(input: SellerMandateCheckInput): MandateCheck
   let past: ReasonCode | null
   if (terms.template === SERVICE) {
     // A service is sold from an offer, and a job from none.
-    if (!isObject(offer)) return deny('message.invalid')
+    // The offer is the mandate's business's own, as at listing.
+    if (!isObject(offer) || serviceOfferProblem(offer) !== null) return deny('message.invalid')
+    if (offer.supplier !== m.businessId) return deny('message.invalid')
     if (!serviceTermsMatchOffer(terms, offer)) return deny('order.terms_changed')
     // The offer's lead time back from the delivery deadline is the moment the terms were built
     // from, which the buyer's order named on the buyer's clock.
     const builtAt = sale.deliverBy - offer.rules.leadTime
     if (builtAt > now + SERVICE_ORDER_CLOCK_SKEW) return deny('message.invalid')
+    // Terms whose supplier can no longer accept are a sale nobody can make.
+    if (terms.remedies.acceptBy <= now) return deny('message.expired')
     past = offerLimitProblem(m, limit, offer)
   } else {
     if (offer !== null) return deny('message.invalid')
@@ -313,6 +346,16 @@ export function checkSellerMandate(input: SellerMandateCheckInput): MandateCheck
 export function sellerOfferProblem(
   input: Standing & { mandate: SellerMandate; version: ServiceOfferVersion },
 ): ReasonCode | null {
+  try {
+    return readOffer(input)
+  } catch {
+    return 'message.invalid'
+  }
+}
+
+function readOffer(
+  input: Standing & { mandate: SellerMandate; version: ServiceOfferVersion },
+): ReasonCode | null {
   if (!isObject(input)) return 'message.invalid'
   const { mandate: m, version: v } = input
   const standing = standingProblem(m, input)
@@ -321,6 +364,8 @@ export function sellerOfferProblem(
   if (!isObject(v) || serviceOfferProblem(v) !== null || v.supplier !== m.businessId) {
     return 'message.invalid'
   }
+  // A price so small that one unit's charges round to nothing builds no terms, and this throws.
+  serviceOfferQuote(v, 1)
   if (v.currency !== m.currency) return 'seller_mandate.currency_not_allowed'
   const limit = sellingLimitFor(m, SERVICE_CATEGORY, v.item.name)
   if (!limit) return 'seller_mandate.item_not_allowed'
@@ -346,15 +391,16 @@ export const SALE_ACCEPT_WITHIN_MAX = SERVICE_ACCEPT_WITHIN
  * deadline. The rule is exact, with nothing to spare for another clock. It bounds how long a
  * reserve can still be accepted after its seller's mandate ends or is revoked, since the lock
  * takes an acceptance until that deadline whatever the mandate says by then. A job can still run
- * for days after its supplier accepts.
+ * for days after its supplier accepts. Whether the deadline has already passed is the reserve
+ * check's own to say.
  */
 export function saleApprovalProblem(
   terms: { remedies: { acceptBy: bigint } },
   now: bigint,
 ): ReasonCode | null {
-  return terms.remedies.acceptBy - now > SALE_ACCEPT_WITHIN_MAX
-    ? 'approval.acceptance_too_far'
-    : null
+  const acceptBy = isObject(terms) && isObject(terms.remedies) ? terms.remedies.acceptBy : null
+  if (typeof acceptBy !== 'bigint' || typeof now !== 'bigint') return 'message.invalid'
+  return acceptBy - now > SALE_ACCEPT_WITHIN_MAX ? 'approval.acceptance_too_far' : null
 }
 
 /**

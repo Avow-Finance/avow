@@ -34,9 +34,17 @@ const withLines = (...limits: SellingLimit[]) => withMandate({ limits })
 const invalid = 'seller_mandate.invalid'
 
 describe("a well-formed seller's mandate", () => {
-  it('passes as the demo writes it, with a checksummed address too', () => {
+  it('passes as the demo writes it', () => {
     expect(sellerMandateProblem(mandate)).toBeNull()
-    expect(sellerMandateProblem(withMandate({ account: newKey().address }))).toBeNull()
+  })
+
+  it('refuses an address in mixed case, so an account is written one way', () => {
+    const checksummed = newKey().address
+    expect(checksummed).not.toBe(checksummed.toLowerCase())
+    expect(sellerMandateProblem(withMandate({ account: checksummed }))).toBe(invalid)
+    expect(sellerMandateProblem(withMandate({ signingKey: checksummed }))).toBe(invalid)
+    const lower = checksummed.toLowerCase() as Address
+    expect(sellerMandateProblem(withMandate({ account: lower }))).toBeNull()
   })
 
   it('takes a floor of zero, an empty counterparty policy and a mandate it replaces', () => {
@@ -63,8 +71,10 @@ describe("a well-formed seller's mandate", () => {
       { minNoShowBps: 0.5 },
       // No term is open to bargaining in version 1.
       { negotiable: ['unitPrice'] },
-      // `always` already says every sale.
+      // `always` already says every sale, and `never` says none.
       { approvalRule: { kind: 'above', amount: 0n } },
+      { approvalRule: { kind: 'above', amount: mandate.maxOrderValue } },
+      { minNoShowBps: -0 },
       // A list of the only buyers leaves nobody else to exclude.
       { buyers: ['biz_friend'] },
     ]

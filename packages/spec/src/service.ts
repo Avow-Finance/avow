@@ -4,7 +4,7 @@ import { canonicalJson } from './canonical.js'
 import { BPS, isCount, isShare, LOWER_BYTES32 } from './fields.js'
 import { u64, u256 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
-import { isFilled } from './text.js'
+import { isFilled, isSoundText } from './text.js'
 import {
   AMOUNT_DECIMALS,
   CURRENCIES,
@@ -288,11 +288,11 @@ export interface ServiceOfferVersion {
  * only.
  */
 export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
-  if (!isFilled(v.supplier, BUSINESS_ID_MAX)) return "Name the supplier's business."
-  if (!isFilled(v.item?.name, SERVICE_NAME_MAX)) {
+  if (!isSoundText(v.supplier, BUSINESS_ID_MAX)) return "Name the supplier's business."
+  if (!isSoundText(v.item?.name, SERVICE_NAME_MAX)) {
     return `Name the item in 1 to ${SERVICE_NAME_MAX} characters.`
   }
-  if (!isFilled(v.item?.summary, SERVICE_TEXT_MAX)) {
+  if (!isSoundText(v.item?.summary, SERVICE_TEXT_MAX)) {
     return `Say what the item is in 1 to ${SERVICE_TEXT_MAX} characters.`
   }
   if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return 'Choose a currency.'
@@ -301,7 +301,7 @@ export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
   }
   const r = v.rules
   if (typeof r !== 'object' || r === null) return 'Set the rules for booking.'
-  if (!isFilled(r.evidence, SERVICE_TEXT_MAX)) return 'Say what counts as delivery.'
+  if (!isSoundText(r.evidence, SERVICE_TEXT_MAX)) return 'Say what counts as delivery.'
   if (typeof r.leadTime !== 'bigint' || r.leadTime < SERVICE_ACCEPT_WITHIN) {
     return 'The lead time has to be at least 15 minutes, so you have time to accept.'
   }

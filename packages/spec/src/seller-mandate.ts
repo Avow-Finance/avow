@@ -1,8 +1,7 @@
-import { type Address, type Hex, hashTypedData, isAddress, zeroHash } from 'viem'
+import { type Address, type Hex, hashTypedData, zeroHash } from 'viem'
 import { z } from 'zod'
-import { isWellFormedText } from './canonical.js'
 import { APPROVAL_RULE_CODES, type AvowDomain, domain, type Signed } from './eip712.js'
-import { COUNTRY_CODE, isCount, isShare, LOWER_BYTES32 } from './fields.js'
+import { COUNTRY_CODE, isCount, isShare, LOWER_ADDRESS, LOWER_BYTES32 } from './fields.js'
 import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import { address, bytes32, u64, u256 } from './json-fields.js'
 import { OPEN_TERMS, type OpenTerm } from './negotiation.js'
@@ -13,7 +12,7 @@ import {
   SERVICE_NAME_MAX,
   SERVICE_QUANTITY_MAX,
 } from './service.js'
-import { isFilled } from './text.js'
+import { isSoundText } from './text.js'
 import { type ApprovalRule, CURRENCIES, type Currency } from './types.js'
 import { MESSAGE_VERSIONS } from './version.js'
 import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
@@ -117,7 +116,8 @@ export interface SellerMandate {
   negotiable: readonly OpenTerm[]
   /**
    * When a person decides a sale in place of the agent, by the order's whole price in micros. An
-   * `above` rule's amount is more than zero, since `always` says every sale.
+   * `above` rule's amount is more than zero and under `maxOrderValue`, since `always` and `never`
+   * say the rest.
    */
   approvalRule: ApprovalRule
   expiry: bigint
@@ -214,7 +214,6 @@ export function sellerMandateHash(m: SellerMandate, d: AvowDomain): Hex {
 
 const uint = (v: unknown, bits: number, least = 0n): v is bigint =>
   typeof v === 'bigint' && v >= least && v < 2n ** BigInt(bits)
-const text = (v: unknown, max: number): v is string => isFilled(v, max) && isWellFormedText(v)
 const isCategory = (v: unknown): v is SellerCategory =>
   (SELLER_CATEGORIES as readonly unknown[]).includes(v)
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
@@ -243,7 +242,7 @@ const MANDATE_KEYS = SELLER_MANDATE_TYPES.SellerMandate.map((f) => f.name).filte
 function isLimit(l: unknown, maxOrderValue: bigint): l is SellingLimit {
   if (!isObject(l) || !holdsOnly(l, LIMIT_KEYS) || !isCategory(l.category)) return false
   const job = l.category === JOB_CATEGORY
-  if (l.item !== null && !text(l.item, job ? JOB_KIND_MAX : SERVICE_NAME_MAX)) return false
+  if (l.item !== null && !isSoundText(l.item, job ? JOB_KIND_MAX : SERVICE_NAME_MAX)) return false
   // A floor above the most an order may come to would be a line that sells nothing.
   if (!uint(l.minUnitPrice, 256) || l.minUnitPrice > maxOrderValue) return false
   if (!isCount(l.maxUnitsPerOrder, job ? 1 : SERVICE_QUANTITY_MAX)) return false
@@ -263,10 +262,17 @@ const loosens = (named: SellingLimit, any: SellingLimit) =>
   named.maxUnitsPerOrder >= any.maxUnitsPerOrder &&
   named.maxUnitsPerDay >= any.maxUnitsPerDay
 
-function isApprovalRule(rule: unknown): rule is ApprovalRule {
+/**
+ * Whether an approval rule is well formed under the mandate's most for an order. An `above` rule's
+ * amount is from one micro to just under that most, since zero is `always` by another name and an
+ * amount no order can pass is `never`.
+ */
+function isApprovalRule(rule: unknown, maxOrderValue: bigint): rule is ApprovalRule {
   if (!isObject(rule)) return false
-  if (rule.kind === 'above')
-    return holdsOnly(rule, ['kind', 'amount']) && uint(rule.amount, 256, 1n)
+  if (rule.kind === 'above') {
+    if (!holdsOnly(rule, ['kind', 'amount']) || !uint(rule.amount, 256, 1n)) return false
+    return rule.amount < maxOrderValue
+  }
   return (rule.kind === 'never' || rule.kind === 'always') && holdsOnly(rule, ['kind'])
 }
 
@@ -274,7 +280,8 @@ function isApprovalRule(rule: unknown): rule is ApprovalRule {
  * Checks a seller's mandate on its own, and gives `seller_mandate.invalid` for one that isn't well
  * formed. It never throws, whatever it's given, and a mandate that passes hashes without throwing
  * and in one way only. So it holds exactly the fields the signed form names, each of its declared
- * type and within what that form can carry, with text that is well-formed Unicode.
+ * type and within what that form can carry, with text that is well-formed Unicode and addresses and
+ * hashes in lower case.
  *
  * It names at least one line of limits. Lines come in order, by category, then the line for every
  * other item, then by item, so no item has two. A line's floor is within one order's most, it
@@ -291,9 +298,9 @@ export function sellerMandateProblem(m: SellerMandate): ReasonCode | null {
   const v: unknown = m
   if (!isObject(v) || !holdsOnly(v, MANDATE_KEYS)) return bad
   if (typeof v.mandateId !== 'string' || !LOWER_BYTES32.test(v.mandateId)) return bad
-  if (!text(v.businessId, BUSINESS_ID_MAX)) return bad
+  if (!isSoundText(v.businessId, BUSINESS_ID_MAX)) return bad
   for (const key of [v.account, v.signingKey]) {
-    if (typeof key !== 'string' || !isAddress(key)) return bad
+    if (typeof key !== 'string' || !LOWER_ADDRESS.test(key)) return bad
   }
   if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return bad
 
@@ -310,7 +317,7 @@ export function sellerMandateProblem(m: SellerMandate): ReasonCode | null {
 
   if (!uint(v.maxDeliveryHorizon, 64, 1n) || !uint(v.maxFreeCancelWindow, 64)) return bad
   if (!isShare(v.minLateCancellationBps) || !isShare(v.minNoShowBps)) return bad
-  const businessId = (id: unknown) => text(id, BUSINESS_ID_MAX)
+  const businessId = (id: unknown) => isSoundText(id, BUSINESS_ID_MAX)
   if (!ascendingList(v.buyers, SELLER_LIST_MAX, businessId)) return bad
   if (!ascendingList(v.excludedBuyers, SELLER_LIST_MAX, businessId)) return bad
   if (m.buyers.length > 0 && m.excludedBuyers.length > 0) return bad
@@ -318,7 +325,7 @@ export function sellerMandateProblem(m: SellerMandate): ReasonCode | null {
   if (!ascendingList(v.excludedCountries, SELLER_LIST_MAX, country)) return bad
   if (typeof v.requiresBusinessCheck !== 'boolean') return bad
   if (!Array.isArray(v.negotiable) || v.negotiable.length > 0) return bad
-  if (!isApprovalRule(v.approvalRule)) return bad
+  if (!isApprovalRule(v.approvalRule, maxOrderValue)) return bad
   if (!uint(v.expiry, 64) || !uint(v.nonce, 256)) return bad
   if (v.replaces !== null) {
     if (typeof v.replaces !== 'string' || !LOWER_BYTES32.test(v.replaces)) return bad
