@@ -96,8 +96,9 @@ type FreeTool = 'connect' | 'status' | 'verify'
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
  * mandate like any other commitment. The first two and `sell` are a supplier's, for an agent
- * connected to sell. No mandate holds what an agent sells. Its signing key and the offers in its
- * folder are its only limits, and the tools say so. None reports to the runner's screen.
+ * connected to sell. Its signing key, the offers in its folder and, once Avow serves one, the
+ * seller's mandate its own SDK holds it to are its limits, and the tools say which stand. Avow
+ * enforces no seller limit yet. None reports to the runner's screen.
  */
 const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
@@ -496,7 +497,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. Those are its only limits, since no mandate holds what an agent sells. To decline an order, leave it, and it lapses with nothing reserved.",
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. When Avow serves a seller's mandate for your signing key, it also refuses a quote or an acceptance the mandate doesn't allow, with the reason. Avow serves none and enforces no seller limit yet, and the answer says which applies. To decline an order, leave it, and it lapses with nothing reserved.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1319,7 +1320,10 @@ export function mcpAgent(
     } catch (error) {
       if (!(error instanceof SellerMandateRefusal)) throw error
       return {
-        text: `${error.message}, so nothing was sent and the order is left to lapse. Avow doesn't enforce seller limits yet, and this agent holds itself to its mandate.`,
+        text:
+          waiting.status === 'requested'
+            ? `${error.message} No quote was sent, so the order is left to lapse.`
+            : `${error.message} The order isn't accepted, so the buyer's reserve goes back once the acceptance deadline passes.`,
         structured: { ...orderFacts(waiting), step: null, acceptedIn: null, refused: error.reason },
         isError: true,
       }

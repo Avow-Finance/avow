@@ -1,23 +1,17 @@
 import {
-  type AvowDomain,
   checkSellerMandate,
-  parseSellerMandates,
   type ReasonCode,
-  SANDBOX_PATHS,
   type SaleCounterparty,
   SERVICE_CATEGORY,
   type SellerLedger,
   type SellerMandateChain,
   type ServiceOfferVersion,
-  type SignatureCheck,
-  sellerMandateChainProblem,
   sellerOfferProblem,
   sellingLimitFor,
   TESTNET_DEMO_PROFILE,
   type Terms,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
-import { AvowApiError, type avowRequests } from '../http.js'
 
 /**
  * A selling agent's own reading of its seller's mandate, and the checks it holds itself to before
@@ -26,13 +20,18 @@ import { AvowApiError, type avowRequests } from '../http.js'
  * or keychain holds a seller to them, so this agent's own SDK is the only thing that does.
  */
 
+/** A day, in seconds, which a sale's ledger and an offer's capacity count over. */
+export const DAY = 86_400n
+
+/** What every word about a seller's mandate ends with, until Avow enforces one. */
+export const SELLER_LIMITS_UNENFORCED = "Avow doesn't enforce seller limits yet."
+
 /** What a selling agent is told when no seller's mandate is in force for its signing key. */
-export const NO_SELLER_MANDATE =
-  "No seller's mandate is in force for this agent's signing key, so its key is its only limit and it sells as it did before. Avow doesn't enforce seller limits yet."
+export const NO_SELLER_MANDATE = `No seller's mandate is in force for this agent's signing key, so its key is its only limit and it sells as it did before. ${SELLER_LIMITS_UNENFORCED}`
 
 /** What a selling agent is told when it acts under a seller's mandate. */
 export const sellerMandateNotice = (hash: Hex) =>
-  `This agent checked the sale against its seller's mandate ${hash}, which its own SDK holds it to. Avow doesn't enforce seller limits yet.`
+  `This agent checked the sale against its seller's mandate ${hash}, which its own SDK holds it to. ${SELLER_LIMITS_UNENFORCED}`
 
 /**
  * Where a selling agent stands. With no mandate in force it sells as it did before, and says so.
@@ -42,53 +41,24 @@ export type SellerStanding =
   | { inForce: false; notice: string }
   | { inForce: true; chain: SellerMandateChain; notice: string }
 
-/** A sale or an offer the seller's mandate doesn't allow, with the spec's reason for it. */
-export class SellerMandateRefusal extends Error {
-  readonly reason: ReasonCode
-  constructor(reason: ReasonCode, what: string) {
-    super(`The seller's mandate doesn't allow ${what} (${reason})`)
-    this.name = 'SellerMandateRefusal'
-    this.reason = reason
-  }
+/** What a refusal is about: an offer or a sale the mandate doesn't allow, or mandates that don't read. */
+export type RefusalOf = 'offer' | 'sale' | 'chain'
+
+const REFUSED: Record<RefusalOf, string> = {
+  offer: "The seller's mandate doesn't allow this offer",
+  sale: "The seller's mandate doesn't allow this sale",
+  chain: "This agent couldn't read its seller's mandates, so it doesn't sell",
 }
 
-/**
- * Reads every seller's mandate the agent's signing key has held from Avow, signed by that key, and
- * checks they link into one chain the business account signed, with no revocation of the key. A
- * 404 means Avow holds no mandate for the key, or doesn't serve the route yet, and either way none
- * is in force. A chain that doesn't read as one, or a revoked key, throws a refusal with the
- * spec's reason, and anything else that fails throws as it came, so the agent never sells under a
- * mandate it couldn't read.
- */
-export async function readSellerStanding(r: {
-  asSupplier: ReturnType<typeof avowRequests>
-  domain: AvowDomain
-  agent: { businessId: string; account: Address; signingKey: Address }
-  isAccountSignature: SignatureCheck
-}): Promise<SellerStanding> {
-  const expected = { chainId: r.domain.chainId, lock: r.domain.verifyingContract }
-  const served = await r
-    .asSupplier({
-      domain: r.domain,
-      path: SANDBOX_PATHS.sellerMandates,
-      body: {},
-      read: (json) => parseSellerMandates(json, expected),
-    })
-    .catch((error: unknown) => {
-      if (error instanceof AvowApiError && error.definite && error.status === 404) return null
-      throw error
-    })
-  if (served === null) return { inForce: false, notice: NO_SELLER_MANDATE }
-  const chain = await sellerMandateChainProblem(
-    served,
-    { domain: r.domain, ...r.agent },
-    r.isAccountSignature,
-  )
-  if (!chain.ok) throw new SellerMandateRefusal(chain.reason, 'this agent to sell')
-  return {
-    inForce: true,
-    chain: chain.value,
-    notice: sellerMandateNotice(chain.value.current.hash),
+/** A refusal by the agent's own seller's mandate, with the spec's reason for it. */
+export class SellerMandateRefusal extends Error {
+  readonly reason: ReasonCode
+  readonly of: RefusalOf
+  constructor(reason: ReasonCode, of: RefusalOf) {
+    super(`${REFUSED[of]} (${reason}). ${SELLER_LIMITS_UNENFORCED}`)
+    this.name = 'SellerMandateRefusal'
+    this.reason = reason
+    this.of = of
   }
 }
 
@@ -107,7 +77,7 @@ export function holdOffer(
     revoked: false,
     now,
   })
-  if (reason) throw new SellerMandateRefusal(reason, 'this offer')
+  if (reason) throw new SellerMandateRefusal(reason, 'offer')
 }
 
 /** One sale this agent quoted, as its ledger counts it. */
@@ -124,8 +94,6 @@ export interface CountedSale {
   deliverBy: bigint
   accepted: boolean
 }
-
-const DAY = 86_400n
 
 /**
  * What the ledger holds for a sale under the mandate, from the sales this agent quoted apart from
@@ -191,5 +159,5 @@ export function holdSale(
     revoked: false,
     now,
   })
-  if (verdict.result !== 'approved') throw new SellerMandateRefusal(verdict.reason, 'this sale')
+  if (verdict.result !== 'approved') throw new SellerMandateRefusal(verdict.reason, 'sale')
 }

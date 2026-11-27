@@ -13,6 +13,7 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, keccak256, recoverAddress, stringToHex } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json } from '../test/agent-folder.js'
 import { deployment, domain, LOCK } from '../test/sandbox-business.js'
@@ -33,6 +34,7 @@ vi.mock('../moderato.js', async (original) => ({
 
 const { sandboxServices } = await import('./services.js')
 const { NO_SELLER_MANDATE, SellerMandateRefusal } = await import('./seller-mandate.js')
+const { readSellerStanding, SELLER_STANDING_RETRY_FOR } = await import('./seller-mandate-read.js')
 
 /** A 32-byte id made from a word. */
 const id = (word: string): Hex => keccak256(stringToHex(word))
@@ -123,7 +125,10 @@ const signed = async (m: SellerMandate, by: Root) =>
  * Avow's API as far as a test needs it: the deployment, the seller's mandates it serves, and an
  * answer to everything else a seller sends, which records what was sent.
  */
-function avow(mandates: (() => Promise<unknown>) | null) {
+function avow(
+  mandates: (() => Promise<unknown>) | null,
+  respond?: (init?: RequestInit) => Promise<Response>,
+) {
   const posted: { path: string; body: Record<string, unknown> }[] = []
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
@@ -131,6 +136,7 @@ function avow(mandates: (() => Promise<unknown>) | null) {
     const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
     posted.push({ path, body })
     if (path === SANDBOX_PATHS.sellerMandates) {
+      if (respond) return respond(init)
       return mandates
         ? json(await mandates())
         : json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
@@ -201,11 +207,16 @@ describe('a selling agent under a seller’s mandate', () => {
   async function under(change: Partial<SellerMandate> = {}) {
     const s = await seller()
     const mandate = mandateFor(s.root.address, s.signingKey, change)
+    let current = mandate
     const served = async () =>
-      toWire({ current: await signed(mandate, s.root), earlier: [], revocation: null })
+      toWire({ current: await signed(current, s.root), earlier: [], revocation: null })
     const api = avow(served)
     const services = await sandboxServices({ store: s.store, fetch: api.fetch })
-    return { ...s, mandate, services, ...api }
+    /** Serves a mandate with these changes in place of the first, as an administrator's new one. */
+    const changeTo = (next: Partial<SellerMandate>) => {
+      current = mandateFor(s.root.address, s.signingKey, { ...change, ...next })
+    }
+    return { ...s, mandate, services, changeTo, ...api }
   }
 
   it('reads its newest mandate as one chain the business account signed, and says it holds itself to it', async () => {
@@ -285,6 +296,84 @@ describe('a selling agent under a seller’s mandate', () => {
     expect(quoted(posted, order.orderId)).toBeNull()
   })
 
+  it('lets only one of two orders quoted at once take the last of the day’s units', async () => {
+    const { services, posted } = await under({
+      limits: [
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: dollars(40),
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 6,
+        },
+      ],
+    })
+    const { version } = await services.publish(draft)
+    const orders = [0, 1].map((i) => ({
+      ...orderFor(version, 4),
+      orderId: id(`race-${i}`).slice(2, 34),
+    }))
+    const results = await Promise.allSettled(orders.map((o) => services.sell(o)))
+    const refused = results.filter(
+      (r) =>
+        r.status === 'rejected' &&
+        r.reason instanceof SellerMandateRefusal &&
+        r.reason.reason === 'seller_mandate.over_daily_units',
+    )
+    expect(refused).toHaveLength(1)
+    expect(orders.filter((o) => quoted(posted, o.orderId) !== null)).toHaveLength(1)
+  })
+
+  it('still counts a sale accepted days ago as outstanding until it is due', async () => {
+    const { services, store, posted } = await under({ maxOutstanding: dollars(500) })
+    const { version } = await services.publish(draft)
+    const now = BigInt(Math.floor(Date.now() / 1000))
+    // A sale of $400 quoted and accepted three days ago, delivered a week from now.
+    const kept = JSON.parse((await store.read('services')) ?? '{}')
+    kept.quoted = [
+      {
+        orderId: 'aa'.repeat(16),
+        item: 'Transcript',
+        at: String(now - 3n * 86_400n),
+        until: String(now - 3n * 86_400n + 900n),
+        accepted: true,
+        hashes: [],
+        sale: { units: 8, price: String(dollars(400)), deliverBy: String(now + 7n * 86_400n) },
+      },
+    ]
+    await store.write('services', JSON.stringify(kept))
+    const order = orderFor(version, 3)
+    await expect(services.sell(order)).rejects.toMatchObject({
+      reason: 'seller_mandate.over_outstanding',
+    })
+    expect(quoted(posted, order.orderId)).toBeNull()
+    // The kept sale is still there once the file is written again.
+    const again = JSON.parse((await store.read('services')) ?? '{}')
+    expect(again.quoted.map((q: { orderId: string }) => q.orderId)).toEqual(['aa'.repeat(16)])
+  })
+
+  it('keeps an earlier quote when quoting the same order again is refused', async () => {
+    const { services, store, posted, changeTo } = await under()
+    const { version } = await services.publish(draft)
+    const order = orderFor(version, 2)
+    await services.sell(order).catch(() => {})
+    expect(quoted(posted, order.orderId)).not.toBeNull()
+    changeTo({ excludedBuyers: [BUYER] })
+    await expect(services.sell(order)).rejects.toMatchObject({
+      reason: 'counterparty.not_eligible',
+    })
+    const kept = JSON.parse((await store.read('services')) ?? '{}')
+    const record = kept.quoted.find((q: { orderId: string }) => q.orderId === order.orderId)
+    expect(record?.hashes).toHaveLength(1)
+  })
+
+  it('says in the refusal itself, once, that Avow enforces no seller limit', async () => {
+    const { services } = await under()
+    const refused = await services.publish({ ...draft, unitPrice: dollars(10) }).catch((e) => e)
+    expect(refused).toBeInstanceOf(SellerMandateRefusal)
+    expect(refused.message.match(/Avow doesn't enforce seller limits yet/g)).toHaveLength(1)
+  })
+
   it('refuses to sell at all once its mandate has ended', async () => {
     const { services } = await under({ expiry: 1_700_000_000n })
     await expect(services.publish(draft)).rejects.toMatchObject({
@@ -294,6 +383,34 @@ describe('a selling agent under a seller’s mandate', () => {
 })
 
 describe('a selling agent whose mandates don’t read as one chain', () => {
+  it('says it couldn’t read its mandates when the chain doesn’t read', async () => {
+    const s = await seller()
+    const stranger = (await seller()).root
+    const mandate = mandateFor(s.root.address, s.signingKey)
+    const served = async () =>
+      toWire({ current: await signed(mandate, stranger), earlier: [], revocation: null })
+    const services = await sandboxServices({ store: s.store, fetch: avow(served).fetch })
+    const refused = await services.sellerStanding().catch((e) => e)
+    expect(refused).toMatchObject({ of: 'chain' })
+    expect(refused.message).toMatch(/couldn't read its seller's mandates/)
+  })
+
+  it('reads Avow holding no mandate for its key as none in force, and any other 404 as a refusal', async () => {
+    const s = await seller()
+    const missing = avow(null, async () =>
+      json({ error: { reason: 'seller_mandate.missing', message: 'No mandate' } }, 404),
+    )
+    const none = await sandboxServices({ store: s.store, fetch: missing.fetch })
+    expect(await none.sellerStanding()).toEqual({ inForce: false, notice: NO_SELLER_MANDATE })
+    const unknown = avow(null, async () =>
+      json({ error: { reason: 'request.signer_unknown', message: 'Unknown key' } }, 404),
+    )
+    const refused = await sandboxServices({ store: s.store, fetch: unknown.fetch })
+    await expect(refused.sellerStanding()).rejects.toThrow(/Unknown key/)
+    await expect(refused.publish(draft)).rejects.toThrow()
+    expect(await refused.published()).toEqual([])
+  })
+
   it('refuses to sell when the business account didn’t sign its mandate', async () => {
     const s = await seller()
     const stranger = (await seller()).root
@@ -340,5 +457,44 @@ describe('a selling agent whose mandates don’t read as one chain', () => {
     await expect(services.sellerStanding()).rejects.toThrow()
     await expect(services.publish(draft)).rejects.toThrow()
     expect(await services.published()).toEqual([])
+  })
+})
+
+describe('reading the seller’s mandates when Avow can’t answer', () => {
+  async function readWith(respond: (init?: RequestInit) => Promise<Response>) {
+    const s = await seller()
+    const signing = privateKeyToAccount(
+      (JSON.parse((await s.store.read('supplier')) ?? '{}') as { signingKey: Hex }).signingKey,
+    )
+    return readSellerStanding({
+      apiUrl: deployment.apiUrl,
+      signing,
+      domain,
+      agent: { businessId: SELLER, account: s.root.address, signingKey: signing.address },
+      isAccountSignature: async () => true,
+      fetch: avow(null, respond).fetch,
+      retryFor: 0n,
+      attemptTimeout: 50,
+    })
+  }
+
+  it('waits no more than its short retry for its mandates, and gives SELLER_STANDING_RETRY_FOR as that', () => {
+    expect(SELLER_STANDING_RETRY_FOR).toBeGreaterThanOrEqual(20n)
+    expect(SELLER_STANDING_RETRY_FOR).toBeLessThanOrEqual(30n)
+  })
+
+  it('refuses to sell on a 5xx, which says nothing about a mandate', async () => {
+    await expect(readWith(async () => json({ error: { message: 'down' } }, 503))).rejects.toThrow(
+      /No definite answer/,
+    )
+  })
+
+  it('refuses to sell when no answer comes in time', async () => {
+    // A request that hangs until its own timeout gives up on it.
+    const never = (init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      })
+    await expect(readWith(never)).rejects.toThrow(/No definite answer/)
   })
 })
