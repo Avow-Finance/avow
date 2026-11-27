@@ -15,7 +15,7 @@ Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each tim
 | `booking.agreed` | The adapter signed an agent's agreement, and the agent is funding its reserve | Mark the capacity as spoken for |
 | `reserve.held` | Avow authorized the funded reserve and the verifier passed it | Hold the capacity |
 | `reserve.accepted` | The lock took the adapter's acceptance | Grant the capacity |
-| `booking.lapsed` | No reserve came before the acceptance deadline | Free the capacity |
+| `booking.lapsed` | The acceptance deadline passed before the lock took the acceptance | Free the capacity |
 
 Each post is JSON like this, with money in dollars and times in UTC.
 
@@ -31,16 +31,18 @@ Each post is JSON like this, with money in dollars and times in UTC.
     "buyerBusinessId": "biz_…",
     "supplierBusinessId": "biz_…",
     "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-04T09:05:00.000Z",
+    "agreementExpiresAt": "2027-01-11T09:00:00.000Z",
     "acceptanceTransaction": "0x…",
     "terms": { "…": "the terms both sides signed" }
   }
 }
 ```
 
+`agreementExpiresAt` is when the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy`.
+
 Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) specification, so check each one with that project's library for your language before you act on it. The `webhook-id`, `webhook-timestamp` and `webhook-signature` headers carry what the library needs, and it refuses a post older than five minutes. `avow-supplier secret` makes a secret, which goes in `WEBHOOK_SECRET` here and in your receiver, and nowhere else.
 
-Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones agreed after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
+Answer with any 2xx status once you've stored the event. The adapter delivers each event at least once, so handle each `id` once. Events for one booking arrive in order, and a failed delivery holds back that booking's later events while it retries after 5 seconds, 30 seconds, 2 minutes and longer, up to every 3 hours. Three days after an event's first attempt it gives the event up, logs it and keeps it in `outbox/failed` in the state directory, and `avow-supplier redeliver` puts every such event back to go out again. A slow or unreachable receiver never holds up an acceptance, since the webhook runs on its own loop. An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment. Each start adds any event the outbox is missing, for every open booking and for finished ones whose agreement expires after you first turned the webhook on, so turning it on doesn't replay bookings that ended before.
 
 ### The check
 
@@ -78,9 +80,9 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 - It holds at most 5 open bookings for one buyer's lock and 200 in all, so one buyer can't take every slot and the poll stays short however many agents book. An offer past either limit gets a 429 and can come again once a booking is accepted or lapses. An offer it already signed still gets its signature.
 - `GET /health` answers while the process runs, for a load balancer or a container platform.
 - Every few seconds it asks Avow to authorize each booking it signed, with a request its signing key signs. Once the agent has funded the reserve, Avow answers with its authorization, its approval and the buyer's mandate.
-- The verifier checks all three against the supplier's own terms and the lock before the supplier holds capacity, then builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
+- The verifier checks the authorization and the mandate against the supplier's own terms and the lock before the supplier holds capacity. It checks the approval against the same terms before it builds the acceptance. The supplier signs it and sends it to the lock, paying the fee from its signing key.
 - It grants the capacity only once the acceptance's receipt shows the lock took it, as the verifier's README asks. Until then the reserve can still go back to the business, so a booking stays `held` and nothing is granted.
-- A booking whose reserve never arrives lapses at its acceptance deadline, and Avow returns any reserve then.
+- A booking lapses when its acceptance deadline passes before the lock takes the acceptance, and Avow returns any reserve then.
 
 Each acceptance transaction's hash is recorded before its bytes go to the chain. After a restart the adapter reads the lock, so a booking is accepted once whatever happened in between. The adapter reads an accepted or lapsed booking once, then leaves it alone. It logs a booking file it can't read once, and reads that file again once it changes.
 

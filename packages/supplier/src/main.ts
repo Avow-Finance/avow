@@ -292,19 +292,23 @@ function redeliver() {
   log(`${count} events will go out again once serve runs`)
 }
 
-const commands: Record<string, () => Promise<void> | void> = {
-  init,
-  serve,
-  report,
-  profile,
-  secret,
-  redeliver,
-}
-const command = commands[process.argv[2] ?? '']
+/** Each command, with what it takes as the usage line shows it. The usage line is built from this. */
+const commands = {
+  init: { run: init, takes: '' },
+  profile: { run: profile, takes: '' },
+  secret: { run: secret, takes: '' },
+  serve: { run: serve, takes: '' },
+  redeliver: { run: redeliver, takes: '' },
+  report: { run: report, takes: '[commitmentId] [--no-show]' },
+} satisfies Record<string, { run: () => Promise<void> | void; takes: string }>
+
+const name = process.argv[2] ?? ''
+const command = Object.hasOwn(commands, name)
+  ? commands[name as keyof typeof commands].run
+  : undefined
 if (!command) {
-  console.error(
-    'Usage: avow-supplier init | profile | secret | serve | redeliver | report [commitmentId] [--no-show]',
-  )
+  const forms = Object.entries(commands).map(([n, c]) => (c.takes ? `${n} ${c.takes}` : n))
+  console.error(`Usage: avow-supplier ${forms.join(' | ')}`)
   process.exit(2)
 }
 Promise.resolve(command()).catch((e: unknown) => {
