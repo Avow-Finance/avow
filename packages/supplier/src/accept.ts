@@ -88,7 +88,9 @@ export async function advance(deps: AcceptDeps, booking: Booking): Promise<Booki
     save({ ...record, status: 'held' })
   }
   if (deps.now() >= b.terms.remedies.acceptBy) {
-    deps.log(`the reserve for ${b.commitmentId} never came before its acceptance deadline`)
+    deps.log(
+      `the acceptance deadline for ${b.commitmentId} passed before the lock took the acceptance`,
+    )
     return save({ ...record, status: 'lapsed' })
   }
 

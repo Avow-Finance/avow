@@ -24,6 +24,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `request_status` | No | Where one of the agent's requests stands: waiting, landing, active, or ended as declined, lapsed, out of date or failed |
 | `publish_offer` | Keeps an offer in the folder | Publishes an offer of a service the business sells by the unit, and answers with the offer to hand a buyer's agent. Nothing is sent to Avow |
 | `offers` | No | The offers the business has published from this folder, each with its id and the offer to hand over |
+| `test_sellers` | No | Avow's test sellers, labelled test businesses that sell simple services through the sandbox at any hour, each with its business ID and its offers whole. Nothing they sell is delivered or billed. It needs no connection |
 | `order` | Reserves money | Orders units from an offer a supplier's agent handed over, checks the quote against the order, funds the commitment and waits for the acceptance |
 | `orders` | No | The service orders waiting on the agent, as a supplier to quote or accept and as a buyer to see through |
 | `sell` | Signs an agreement, or accepts on the lock | Takes the next step on an order to the business. It quotes a new order for an offer the business published, and accepts a funded one |

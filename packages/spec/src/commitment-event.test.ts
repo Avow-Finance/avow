@@ -690,6 +690,9 @@ describe('a step a lock allows that names no listed word', () => {
     const wrong: object[] = [
       // Avow's numbers are its own, so a consent's word is never read into one.
       { cause: 'returned_by_avow', reason: 'kept', reasonCode: 1 },
+      // An event names a consent's reasons only, and keeps Avow's as the number, so defining
+      // Avow's words changed no event and no event's hash.
+      { cause: 'returned_by_avow', reason: 'agentRevoked', reasonCode: 1 },
       { cause: 'supplier_consent', reason: 'kept', reasonCode: 2 },
       { cause: 'supplier_consent', reason: null, reasonCode: 1 },
       { cause: 'cancelled_in_time', reason: null, reasonCode: 1 },
@@ -1049,6 +1052,16 @@ describe("a commitment event's slot", () => {
 
 describe("a commitment event's hash", () => {
   it('is one fixed digest for one fixed event, so a change to the hashed form is noticed', () => {
+    // A reserve Avow returned, with the number for a revoked agent, which an event keeps as a number.
+    const returned = changed(of('reserve.released'), {
+      cause: 'returned_by_avow',
+      reason: null,
+      reasonCode: 1,
+    })
+    expect(commitmentEventProblem(returned)).toBeNull()
+    expect(commitmentEventHash(returned)).toMatchInlineSnapshot(
+      `"0x8dac50e341fe78f0f0488b599e043ae9146c6bf0d77d7513f5537693c478759c"`,
+    )
     expect(commitmentEventHash(of('reserve.locked'))).toMatchInlineSnapshot(
       `"0x00b40bab7d280ab4aecf5e22a070d02f6357964628fd3f0ac89bfb0a8a772d71"`,
     )

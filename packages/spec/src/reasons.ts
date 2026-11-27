@@ -47,6 +47,8 @@ export const REASON_CODES = {
     "The selling agent's signing key is revoked, which ends every seller's mandate for it. A reader of a key's mandates answers this when a revocation came with them, before anyone checks who signed it",
   'seller_mandate.chain_mismatch':
     "The seller's mandates aren't one chain for the expected business and account. One of them names another, or doesn't name the one before it as the one it replaces",
+  'seller_mandate.chain_full':
+    "The signing key's chain of seller's mandates is as long as a chain may be, so it takes no replacement",
   'seller_mandate.key_mismatch':
     "The seller's mandate binds another signing key than the one that signed the sale, or the one its reader expects",
   'seller_mandate.template_not_covered':

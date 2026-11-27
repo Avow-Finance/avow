@@ -30,7 +30,8 @@ export interface SupplierKeys {
  * authorized the funded reserve and the verifier passed it, so the supplier holds the capacity
  * without granting it yet. `accepting` while the acceptance is on its way to the lock. `accepted`
  * once the lock holds the acceptance, which is when the supplier grants the capacity. `lapsed` when
- * no reserve came before the acceptance deadline.
+ * the acceptance deadline passed before the lock took the acceptance, whether or not a reserve had
+ * come. A reserve that came goes back to the business then.
  */
 export const BOOKING_STATUSES = ['agreed', 'held', 'accepting', 'accepted', 'lapsed'] as const
 export type BookingStatus = (typeof BOOKING_STATUSES)[number]

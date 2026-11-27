@@ -124,6 +124,7 @@ export {
   type SandboxSupplier,
 } from './sandbox/store.js'
 export * from './sandbox/terms.js'
+export { type SandboxTestSellers, sandboxTestSellers } from './sandbox/test-sellers.js'
 export * from './sandbox/top-up.js'
 export { lockReadersFor } from './sandbox/trusted-readers.js'
 export {

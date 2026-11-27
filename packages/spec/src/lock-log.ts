@@ -158,6 +158,15 @@ export const RELEASE_CAUSES = {
 export type ReleaseCause = keyof typeof RELEASE_CAUSES
 
 /**
+ * Why Avow returned a reserve the supplier hadn't accepted, by the number a `Released` log carries
+ * as its `reason` when its cause is `returned_by_avow`. `agentRevoked` is a reserve whose agent the
+ * business revoked before any supplier accepted it. Avow gives no other number a meaning, and zero
+ * names no reason. A lock takes any number here, so a reader keeps one this table doesn't list.
+ */
+export const AVOW_RETURN_REASONS = { agentRevoked: 1 } as const
+export type AvowReturnReason = keyof typeof AVOW_RETURN_REASONS
+
+/**
  * What paused a charge, by the code a `Paused` log carries as its `cause`. A referral pauses a
  * charge too, and has a log of its own, so no `Paused` log carries its code.
  */
@@ -183,9 +192,30 @@ export const releaseCauseOf = wordOf<ReleaseCause>(RELEASE_CAUSES)
 /**
  * The reason a supplier's consent gave, from the code a `Released` log carries as its `reason`, or
  * null for a code that names none. Only a release by the supplier's consent carries one of these.
- * Avow gives a number of its own when it returns a reserve, which this table says nothing about.
+ * Avow's numbers, when it returns a reserve, are `avowReturnReasonOf`'s.
  */
 export const releaseReasonOf = wordOf<ReleaseReason>(RELEASE_REASONS)
+
+/**
+ * The reason Avow gave for returning a reserve, from the code a `Released` log carries as its
+ * `reason`, or null for a code that names none. Only a release whose cause is `returned_by_avow`
+ * carries one of these.
+ */
+export const avowReturnReasonOf = wordOf<AvowReturnReason>(AVOW_RETURN_REASONS)
+
+/**
+ * The reason a release gave, read by the step that made it, so a consent's number and Avow's are
+ * never read as one another. It is null for a step that gives no reason, as the other three
+ * causes are, and for a number its step's table doesn't list.
+ */
+export function releaseReasonFor(
+  cause: ReleaseCause,
+  code: number,
+): ReleaseReason | AvowReturnReason | null {
+  if (cause === 'supplier_consent') return releaseReasonOf(code)
+  if (cause === 'returned_by_avow') return avowReturnReasonOf(code)
+  return null
+}
 
 /** The cause a `Paused` log's code stands for, or null for a code that names none. */
 export const pauseCauseOf = wordOf<PauseCause>(PAUSE_CAUSES)

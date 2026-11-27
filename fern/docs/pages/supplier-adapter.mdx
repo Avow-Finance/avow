@@ -167,7 +167,7 @@ Until the acceptance lands, the reserve can still go back to the business, so th
 
 ## The webhook
 
-Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each time a booking reaches a status your system acts on.
+Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each time a booking reaches a status your system acts on. Each event is a [commitment event](/docs/reference/commitment-events), the shape `@avow-finance/spec` holds for every change in a commitment's life, stated by the supplier.
 
 | Event | When | What your system does |
 | --- | --- | --- |
@@ -180,41 +180,39 @@ The webhook says nothing after `reserve.accepted`. A business can still cancel b
 
 ### The payload
 
-Each post is a JSON body like this, with money in dollars and times in UTC.
+Each post is a JSON body like this, with the reserve in micros of the terms' currency and times in unix seconds, both as decimal strings.
 
 ```json
 {
-  "id": "msg_4f1c…_accepted",
-  "type": "reserve.accepted",
-  "createdAt": "2027-01-04T09:00:12.000Z",
-  "data": {
-    "commitmentId": "0x4f1c…",
-    "chainId": 42431,
-    "lock": "0x…",
-    "buyerBusinessId": "…",
-    "supplierBusinessId": "…",
-    "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-11T09:00:00.000Z",
-    "acceptanceTransaction": "0x…",
-    "terms": { "…": "the terms both sides signed" }
-  }
+  "schemaVersion": "1",
+  "code": "reserve.accepted",
+  "source": "supplier",
+  "commitment": { "chainId": 42431, "lock": "0x…", "commitmentId": "0x4f1c…" },
+  "at": "1799053212",
+  "termsHash": "0x…",
+  "reserve": "500000000",
+  "agreementExpiry": "1799658000",
+  "acceptedIn": "0x…"
 }
 ```
 
 | Field | What it holds |
 | --- | --- |
-| `id` | `msg_`, the commitment id without `0x`, and the status. It's the same on every delivery of one event |
-| `type` | One of the four events |
-| `createdAt` | When the adapter made the event |
-| `data.commitmentId` | The commitment, which names the booking everywhere else |
-| `data.chainId` | 42431, Moderato |
-| `data.lock` | The buyer's lock |
-| `data.buyerBusinessId` | The business that booked |
-| `data.supplierBusinessId` | Your business id |
-| `data.reserveDollars` | The reserve the business funds, the most you can charge on this booking |
-| `data.agreementExpiresAt` | When the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy` |
-| `data.acceptanceTransaction` | The acceptance's transaction on the lock in `reserve.accepted`, and `null` in every other event |
-| `data.terms` | The terms both sides signed, as the spec writes them. [Version 3 terms](/docs/composable-commitments/terms-v3) describes their sections |
+| `schemaVersion` | `"1"`, the commitment event's version |
+| `code` | One of the four events |
+| `source` | `supplier`, since the adapter states each event by its own clock |
+| `commitment.chainId` | 42431, Moderato |
+| `commitment.lock` | The buyer's lock, in lower case |
+| `commitment.commitmentId` | The commitment, which names the booking everywhere else |
+| `at` | When the adapter made the event |
+| `termsHash` | The hash of the terms both sides signed. The local check returns the terms themselves |
+| `reserve` | The reserve the business funds, the most you can charge on this booking. 500000000 is \$500 |
+| `agreementExpiry` | When the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy` |
+| `acceptedIn` | On `reserve.accepted` only. The acceptance's transaction on the lock, or `null` when the adapter found the acceptance on the lock without sending it |
+
+An event names no business and carries no terms. Read the terms and the booking's status from the [local check](#the-local-check). `parseCommitmentEvent` in `@avow-finance/spec` reads a post into a typed event and refuses one that isn't well formed.
+
+This shape is new in this release, and it breaks a receiver written for the adapter's earlier events. Those had an `id`, a `type`, a `createdAt` and a `data` section with business ids, the reserve in dollars and the terms. A post in the new shape always has `schemaVersion`, and an earlier one never does. When an upgraded adapter starts, it moves any event an earlier adapter left in `outbox/pending` or `outbox/failed` to `outbox/older`, then sends that booking's current status again in the new shape, so no booking waits on a file it can't read.
 
 ### Checking the signature
 
@@ -223,7 +221,7 @@ Posts are signed to the [Standard Webhooks](https://www.standardwebhooks.com) sp
 | Header | What it carries |
 | --- | --- |
 | `content-type` | `application/json` |
-| `webhook-id` | The event's `id` |
+| `webhook-id` | `msg_`, the commitment id without `0x`, and the status. It's the same on every delivery of one booking's status |
 | `webhook-timestamp` | When this delivery was sent, in whole seconds since the epoch |
 | `webhook-signature` | `v1,` and the base64 HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`, keyed with the base64 after `whsec_` in the secret |
 
@@ -235,7 +233,7 @@ Check the signature over the raw body, before you parse it, and refuse a deliver
 
 Answer with any 2xx status once you've stored the event. Anything else, a redirect, or no answer within ten seconds counts as a failed delivery.
 
-- **At least once.** The adapter can deliver an event more than once, so handle each `id` once.
+- **At least once.** The adapter can deliver an event more than once, so handle each `webhook-id` once.
 - **In order for one booking.** A failed delivery holds back that booking's later events, and no other booking's, while it retries.
 - **Retries.** It tries again 5 seconds after a failure, then after 30 seconds, 2 minutes, 10 minutes, 30 minutes and an hour, then every 3 hours.
 - **Giving up.** Three days after an event's first attempt, it gives the event up, logs it, and keeps it in `outbox/failed` in the state directory. Once your receiver is back, `redeliver` puts every such event back to go out the next time `serve` runs.
@@ -265,6 +263,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
     "freeCancellationEndsAt": "2027-01-05T09:00:00.000Z",
     "releaseDate": "2027-01-06T09:00:00.000Z"
   },
+  "buyerBusinessId": "…",
   "terms": { "…": "the terms both sides signed" }
 }
 ```
@@ -281,6 +280,7 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 | `onChain.paysYou` | Whether a charge on this commitment pays your account |
 | `onChain.freeCancellationEndsAt` | When the business can no longer cancel at no charge |
 | `onChain.releaseDate` | When the lock gives back what it still holds |
+| `buyerBusinessId` | The business that booked, as the agreement both sides signed names it. The webhook's events name no business, so this is where your system learns who booked |
 | `terms` | The terms both sides signed, as the spec writes them |
 
 The local port also answers `GET /health`. A commitment the adapter never signed answers 404. It listens on `127.0.0.1` unless you set `LOCAL_HOST`, and it refuses with 403 any request whose `Host` header names another host, so a web page can't reach it through a name it controls. The answer shows your bookings' terms and buyers, so another address in `LOCAL_HOST` makes the adapter warn you, and that port belongs behind your firewall. `0.0.0.0` or `::` listens on every address but still answers only requests made to `localhost`, `127.0.0.1` or `[::1]`, so a request to the machine's own address gets a 403. When other machines need the check, set `LOCAL_HOST` to that one address and call the check at it.
@@ -352,7 +352,7 @@ node dist/main.js secret
 
 ### 3. Start a receiver
 
-Save this as `receiver.mjs` anywhere and run it with `node receiver.mjs` in a terminal that has the settings loaded. It checks each delivery's signature with Node's own crypto, so it needs no package. A real system checks with a Standard Webhooks library and stores each `id` it handled.
+Save this as `receiver.mjs` anywhere and run it with `node receiver.mjs` in a terminal that has the settings loaded. It checks each delivery's signature with Node's own crypto, so it needs no package. A real system checks with a Standard Webhooks library, reads each event with `parseCommitmentEvent` and stores each `webhook-id` it handled.
 
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto'
@@ -387,9 +387,10 @@ createServer((req, res) => {
       return
     }
     const event = JSON.parse(body)
-    if (!handled.has(event.id)) {
-      handled.add(event.id)
-      console.log(event.type, event.data.commitmentId, `$${event.data.reserveDollars}`)
+    const id = req.headers['webhook-id']
+    if (!handled.has(id)) {
+      handled.add(id)
+      console.log(event.code, event.commitment.commitmentId, `$${Number(event.reserve) / 1e6}`)
     }
     res.writeHead(204).end()
   })

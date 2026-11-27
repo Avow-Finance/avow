@@ -4,7 +4,7 @@ slug: docs/get-started/trust-model
 subtitle: Who holds which key, what the lock holds Avow to, and what a reserve leaves unbacked
 ---
 
-Avow never holds a business's money. Every reserve sits in the business's own lock, and the lock sends it to two places only, back to the business or to the payee the terms name. You do trust Avow with three decisions on each commitment. Avow approves the reserve, confirms or refers a charge the supplier reports, and rules on a disputed charge for the first 30 days. The lock caps what each of those decisions can move.
+Avow never holds a business's money. Every reserve sits in the business's own lock, and the lock sends it to two places only, back to the business or to the payee Avow's approval names. You do trust Avow with three decisions on each commitment. Avow approves the reserve, confirms or refers a charge the supplier reports, and rules on a disputed charge for the first 30 days. The lock caps what each of those decisions can move.
 
 This page lists the keys, what the lock enforces whatever Avow does, the most a dishonest Avow could cost each side, what happens when Avow stops answering, and what a reserve leaves unbacked.
 
@@ -21,11 +21,11 @@ This page lists the keys, what the lock enforces whatever Avow does, the most a 
 | Arbiter | A party each approval names, apart from Avow's keys and both sides | Rule from day 30 until day 90 when Avow hasn't |
 | Fee payer | Avow | Pay the chain's fee for a transaction the agent signed |
 
-None of Avow's keys can put money into a lock or take it out to an address of Avow's choosing. The lock pulls a reserve only from the business account that calls it, and it pays only that account or the payee fixed when the reserve was made. The fee payer adds its signature to a transaction the agent already signed, so it can pay for the transaction and can't change it.
+None of Avow's keys can put money into a lock. The lock pulls a reserve only from the business account that calls it, and it pays only that account or the payee fixed when the reserve was made. Avow's approval names that payee, so the business's client must check it before it funds, as the section on the client's checks sets out. The fee payer adds its signature to a transaction the agent already signed, so it can pay for the transaction and can't change it.
 
 ## What the lock enforces whatever Avow does
 
-- **The business chooses its suppliers.** The lock reserves only for a supplier the root key approved on it, so Avow's approval can't point a reserve at anyone else.
+- **The business chooses its suppliers.** The lock reserves for a supplier account the root key approved on it. Once the root key opens the lock to listed suppliers, it also reserves for any supplier the registry lists and the business never removed, and what it holds with those at once stays within the open-supplier cap the root key set.
 - **Every charge has a cap and an earliest time.** Both are fixed in the terms when the reserve is made. The lock reverts a report above the cap with `BadAmount` and one sent early with `TooEarly`, and it takes at most two reports on a commitment.
 - **A charge needs three things before it pays.** The supplier signs a report, Avow confirms it, and the contest window closes with no contest. The lock's factory sets the shortest window a commitment can have.
 - **The business can always contest.** The root key calls `contest` on its own lock and pays its own fee, or signs the contest for any account to send. The contest pauses the charge, and Avow has no way to block it.
@@ -35,9 +35,17 @@ None of Avow's keys can put money into a lock or take it out to an address of Av
 
 The limits on the agent sit under these. The account's keychain holds the access key to its daily limit, and the root key revokes it there, whatever Avow's API says. [Limits that hold](/docs/walkthroughs/limits) walks through each check.
 
+## What the client checks before it funds
+
+The lock takes three addresses from Avow's signed approval and checks none of them. The payee is where a charge is paid, the supplier's signing key accepts the reserve and reports charges, and the arbiter rules from day 30. The lock checks that the supplier account is one the root key approved, or one the registry lists while the lock is open to listed suppliers, and nothing on the lock ties those three addresses to that supplier or to the terms both businesses signed. An approval that put an address Avow controls in any of those places would pass the lock. With the signing key, Avow could report a charge and confirm it with its own settlement key. With the payee, every charge the lock pays the supplier would be paid to Avow. With the arbiter, Avow would rule on any paused charge after day 30 as well as before it.
+
+A client must check all three before it funds a reserve. It compares the payee and the signing key with the supplier's own, and the arbiter with the one the signed terms name, and it refuses the approval when any of them differs. The SDK makes this check every time it funds, and refuses with `approval.parties_mismatch` for the payee or the signing key and `approval.dispute_mismatch` for the arbiter. A client that funds without the SDK has to make the same check, and one that skips it trusts Avow with the whole reserve.
+
+The check takes trust out of Avow only when the client learned the supplier's payee and signing key from the supplier itself. In the sandbox the SDK learns them from Avow's own record of the supplier or from a supplier Avow runs, so there the check catches an approval that disagrees with Avow's record and can't catch a dishonest Avow.
+
 ## The most a dishonest Avow could cost you
 
-Avow's decisions are bounded, and inside those bounds you rely on Avow to decide honestly. Nothing on the lock overturns a ruling Avow posts in the first 30 days. The ruling delay gives both sides notice before the money moves, and that is all it does.
+Avow's decisions are bounded, and inside those bounds you rely on Avow to decide honestly. These bounds hold for a business whose client checked the approval before it funded, against addresses it learned from the supplier. In the sandbox those addresses come from Avow, so there the bounds rest on Avow's record as well. Nothing on the lock overturns a ruling Avow posts in the first 30 days. The ruling delay gives both sides notice before the money moves, and that is all it does.
 
 - **A business** can lose the charge its terms cap, on a commitment its supplier reports against. For that to happen the supplier signs a false report, Avow confirms it, and Avow rules against the business's contest. The business can't lose more than the reserve, and it can't lose anything on a commitment with no report.
 - **A supplier** can lose a charge it was owed. Avow can refer a true report or leave it unanswered, and then rule that the supplier gets nothing.

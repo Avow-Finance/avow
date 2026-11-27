@@ -1,6 +1,12 @@
-import { readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { enforceableTerms } from '@avow-finance/spec'
+import {
+  COMMITMENT_EVENT_VERSION,
+  commitmentEventProblem,
+  enforceableTerms,
+  parseCommitmentEvent,
+  toWire,
+} from '@avow-finance/spec'
 import type { Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { makeWebhookSecret, verifyWebhook } from './signature.js'
@@ -11,7 +17,7 @@ import {
   Outbox,
   reconcile,
   type SenderDeps,
-  type WebhookEvent,
+  type WebhookDelivery,
   webhookSender,
 } from './webhook.js'
 
@@ -41,35 +47,65 @@ const accepted = (): Booking => ({
   status: 'accepted',
   sent: { hash: TX, validBefore: null },
 })
-const at = (booking: Booking, ms = T0) => bookingEvent(booking, new Date(ms)) as WebhookEvent
+const at = (booking: Booking, ms = T0) => bookingEvent(booking, new Date(ms)) as WebhookDelivery
 const pendingOf = (outbox: Outbox) => outbox.pending(() => {}).events
 
 describe('booking events', () => {
   it('gives each status the supplier acts on one event, with an id from the commitment and status', () => {
     const agreed = at(withStatus('agreed'))
-    expect(agreed.type).toBe('booking.agreed')
+    expect(agreed.event.code).toBe('booking.agreed')
     expect(agreed.id).toBe(`msg_${COMMITMENT.slice(2)}_agreed`)
     expect(at(withStatus('agreed'), T0 + 60_000).id).toBe(agreed.id)
-    expect(at(withStatus('held')).type).toBe('reserve.held')
-    expect(at(accepted()).type).toBe('reserve.accepted')
-    expect(at(withStatus('lapsed')).type).toBe('booking.lapsed')
+    expect(at(withStatus('held')).event.code).toBe('reserve.held')
+    expect(at(accepted()).event.code).toBe('reserve.accepted')
+    expect(at(withStatus('lapsed')).event.code).toBe('booking.lapsed')
     expect(bookingEvent(withStatus('accepting'), new Date(T0))).toBeNull()
   })
 
-  it('says who booked, the reserve in dollars and when the agreement lapses, and the acceptance once there is one', () => {
+  it("writes each as a well-formed commitment event of the spec's, stated by the supplier", () => {
+    for (const b of [withStatus('agreed'), withStatus('held'), accepted(), withStatus('lapsed')]) {
+      const { event } = at(b)
+      expect(event.schemaVersion).toBe(COMMITMENT_EVENT_VERSION)
+      expect(event.source).toBe('supplier')
+      expect(commitmentEventProblem(event), event.code).toBeNull()
+      expect(parseCommitmentEvent(JSON.parse(JSON.stringify(toWire(event))))).toEqual({
+        ok: true,
+        value: event,
+      })
+    }
+  })
+
+  it('names the commitment, the terms by their hash, the reserve and the agreement, and no business', () => {
     const b = withStatus('agreed')
-    const { data } = at(b)
-    expect(data).toMatchObject({
-      commitmentId: COMMITMENT,
-      lock: b.lock,
+    const { event } = at(b)
+    expect(event.commitment).toEqual({
       chainId: b.chainId,
-      buyerBusinessId: b.agreement.buyerBusinessId,
-      supplierBusinessId: b.agreement.supplierBusinessId,
-      acceptanceTransaction: null,
+      lock: b.lock.toLowerCase(),
+      commitmentId: COMMITMENT.toLowerCase(),
     })
-    expect(BigInt(Number(data.reserveDollars) * 1_000_000)).toBe(enforceableTerms(b.terms).reserve)
-    expect(data.agreementExpiresAt).toBe(new Date(Number(b.agreement.expiry) * 1000).toISOString())
-    expect(at(accepted()).data.acceptanceTransaction).toBe(TX)
+    expect(event.termsHash).toBe(b.agreement.termsHash.toLowerCase())
+    expect(event.reserve).toBe(enforceableTerms(b.terms).reserve)
+    expect(event.agreementExpiry).toBe(b.agreement.expiry)
+    expect(event.at).toBe(BigInt(T0 / 1000))
+    const wire = JSON.stringify(toWire(event))
+    expect(wire).not.toContain(b.agreement.buyerBusinessId)
+    expect(wire).not.toContain(b.agreement.supplierBusinessId)
+    expect(wire).not.toMatch(/business|terms"|"data"|"type"/i)
+  })
+
+  it('names the acceptance transaction once the adapter sent one, and null when it found it on the lock', () => {
+    const sent = at(accepted()).event
+    if (sent.code !== 'reserve.accepted') throw new Error('an acceptance')
+    expect(sent.acceptedIn).toBe(TX)
+    const { sent: _sent, ...found } = accepted()
+    const seen = at(found as Booking).event
+    if (seen.code !== 'reserve.accepted') throw new Error('an acceptance')
+    expect(seen.acceptedIn).toBeNull()
+  })
+
+  it('says a lapse ended unaccepted, the same whether or not a reserve had come', () => {
+    const { event } = at(withStatus('lapsed'))
+    expect(Object.keys(event).filter((k) => /reserved|funded|held|returned/i.test(k))).toEqual([])
   })
 })
 
@@ -82,7 +118,7 @@ function receiver(answers: (number | 'down')[]) {
     if (answer === 'down') throw new Error('connection refused')
     return answer
   }
-  return { posts, post, ids: () => posts.map((p) => JSON.parse(p.body).id as string) }
+  return { posts, post, ids: () => posts.map((p) => p.headers['webhook-id'] as string) }
 }
 
 function sender(outbox: Outbox, post: SenderDeps['post'], clock: { now: number }) {
@@ -119,7 +155,7 @@ describe('the webhook outbox', () => {
     await sender(outbox, post, { now: T0 }).send()
     expect(posts).toHaveLength(1)
     const [{ headers, body }] = posts as [(typeof posts)[number]]
-    expect(JSON.parse(body)).toEqual(event)
+    expect(parseCommitmentEvent(JSON.parse(body))).toEqual({ ok: true, value: event.event })
     const signed = {
       id: headers['webhook-id'] as string,
       timestamp: headers['webhook-timestamp'] as string,
@@ -147,7 +183,7 @@ describe('the webhook outbox', () => {
     expect(r.posts).toHaveLength(2)
     clock.now += 5_000
     await send()
-    expect(r.posts.slice(2).map((p) => JSON.parse(p.body).type)).toEqual([
+    expect(r.posts.slice(2).map((p) => JSON.parse(p.body).code)).toEqual([
       'booking.agreed',
       'reserve.held',
     ])
@@ -197,7 +233,7 @@ describe('the webhook outbox', () => {
     await send()
     await send()
     const left = pendingOf(outbox)
-    expect(left.map((p) => p.event.type)).toEqual(['reserve.held'])
+    expect(left.map((p) => p.event.code)).toEqual(['reserve.held'])
     expect(left[0]?.attempts).toBe(1)
   })
 
@@ -248,7 +284,7 @@ describe('the webhook outbox', () => {
     hooked.put(withStatus('held'))
     hooked.put(withStatus('held'))
     expect(seen).toEqual(['agreed', 'held', 'held'])
-    expect(pendingOf(outbox).map((p) => p.event.type)).toEqual(['booking.agreed', 'reserve.held'])
+    expect(pendingOf(outbox).map((p) => p.event.code)).toEqual(['booking.agreed', 'reserve.held'])
   })
 
   it('counts a booking as no longer open before the hook runs, even when the hook throws', () => {
@@ -263,7 +299,38 @@ describe('the webhook outbox', () => {
   })
 })
 
+describe("the order a booking's events go out in", () => {
+  it("sends one booking's statuses in order when two fall in the same second", async () => {
+    const outbox = new Outbox(store.dir, T0)
+    // Added in the wrong order, within one second, so only the statuses can order them.
+    outbox.add(at(accepted(), T0 + 900), T0 + 900)
+    outbox.add(at(withStatus('held'), T0 + 100), T0 + 100)
+    outbox.add(at(withStatus('agreed'), T0 + 500), T0 + 500)
+    outbox.add(at(withStatus('agreed', OTHER), T0 + 200), T0 + 200)
+    const r = receiver([])
+    const { send } = sender(outbox, r.post, { now: T0 + 1000 })
+    for (let i = 0; i < 4; i++) await send()
+    const mine = r.ids().filter((id) => id.includes(COMMITMENT.slice(2)))
+    expect(mine).toEqual(
+      ['agreed', 'held', 'accepted'].map((s) => `msg_${COMMITMENT.slice(2)}_${s}`),
+    )
+    expect(r.ids()).toHaveLength(4)
+  })
+})
+
 describe('reconciling the outbox with the bookings', () => {
+  it("logs a booking it can't add and carries on with the rest", () => {
+    const outbox = new Outbox(store.dir, T0)
+    const broken = { ...withStatus('held'), terms: null } as unknown as Booking
+    const lines: string[] = []
+    const added = reconcile(outbox, [broken, withStatus('agreed', OTHER)], new Date(T0), (l) =>
+      lines.push(l),
+    )
+    expect(added).toBe(1)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(`couldn't add the event for ${COMMITMENT}`)
+  })
+
   it('adds every open booking, and a finished one only when it was agreed after the webhook was turned on', () => {
     const expiry = withStatus('agreed').agreement.expiry
     const finished = [accepted(), withStatus('lapsed', OTHER)]
@@ -271,10 +338,89 @@ describe('reconciling the outbox with the bookings', () => {
 
     const later = new Outbox(join(store.dir, 'later'), Number(expiry + 60n) * 1000)
     expect(reconcile(later, [open, ...finished], new Date(T0))).toBe(1)
-    expect(pendingOf(later).map((p) => p.event.type)).toEqual(['reserve.held'])
+    expect(pendingOf(later).map((p) => p.event.code)).toEqual(['reserve.held'])
 
     const earlier = new Outbox(join(store.dir, 'earlier'), Number(expiry - 60n) * 1000)
     expect(reconcile(earlier, finished, new Date(T0))).toBe(2)
     expect(reconcile(earlier, finished, new Date(T0))).toBe(0)
+  })
+})
+
+describe('an outbox an older adapter left', () => {
+  /** A pending file as an adapter before commitment events wrote it, in its own format. */
+  const older = (id: Hex, status: string) => ({
+    event: {
+      id: `msg_${id.slice(2)}_${status}`,
+      type: 'booking.agreed',
+      createdAt: new Date(T0).toISOString(),
+      data: { commitmentId: id, chainId: 42431, lock: withStatus('agreed').lock, terms: {} },
+    },
+    attempts: 2,
+    nextAttemptAt: T0,
+  })
+
+  it('sets its pending and given-up events aside, and adds their bookings again as commitment events', async () => {
+    const root = join(store.dir, 'outbox')
+    for (const dir of ['pending', 'failed']) mkdirSync(join(root, dir), { recursive: true })
+    const pendingFile = join(root, 'pending', `msg_${COMMITMENT.slice(2)}_agreed.json`)
+    writeFileSync(pendingFile, JSON.stringify(older(COMMITMENT, 'agreed')))
+    // A finished booking, agreed before the webhook was turned on, still gets its event again.
+    writeFileSync(
+      join(root, 'failed', `msg_${OTHER.slice(2)}_lapsed.json`),
+      JSON.stringify(older(OTHER, 'lapsed')),
+    )
+    const outbox = new Outbox(store.dir, Number(withStatus('agreed').agreement.expiry + 60n) * 1000)
+    expect([...outbox.replaced].sort()).toEqual(
+      [COMMITMENT, OTHER].map((x) => x.toLowerCase()).sort(),
+    )
+    expect(existsSync(pendingFile)).toBe(false)
+    expect(readdirSync(join(root, 'older')).sort()).toHaveLength(2)
+    expect(pendingOf(outbox)).toEqual([])
+
+    const added = reconcile(
+      outbox,
+      [withStatus('agreed'), withStatus('lapsed', OTHER)],
+      new Date(T0),
+    )
+    expect(added).toBe(2)
+    const r = receiver([200, 200])
+    await sender(outbox, r.post, { now: T0 }).send()
+    expect(r.posts.map((p) => JSON.parse(p.body).code).sort()).toEqual([
+      'booking.agreed',
+      'booking.lapsed',
+    ])
+    expect(outbox.redeliverFailed(T0)).toBe(0)
+  })
+
+  it('remembers what it set aside at every start, so redeliver before serve loses nothing', async () => {
+    const root = join(store.dir, 'outbox')
+    mkdirSync(join(root, 'failed'), { recursive: true })
+    writeFileSync(
+      join(root, 'failed', `msg_${OTHER.slice(2)}_lapsed.json`),
+      JSON.stringify(older(OTHER, 'lapsed')),
+    )
+    const after = Number(withStatus('agreed').agreement.expiry + 60n) * 1000
+    // redeliver opens the outbox first, which sets the file aside, and finds nothing it gave up on.
+    const first = new Outbox(store.dir, after)
+    expect(first.redeliverFailed(after)).toBe(0)
+    // serve opens it again later, and still sends the finished booking's status.
+    const serve = new Outbox(store.dir, after)
+    expect([...serve.replaced]).toEqual([OTHER.toLowerCase()])
+    expect(reconcile(serve, [withStatus('lapsed', OTHER)], new Date(T0))).toBe(1)
+    const r = receiver([200])
+    await sender(serve, r.post, { now: T0 }).send()
+    expect(r.ids()).toEqual([`msg_${OTHER.slice(2)}_lapsed`])
+    // Once delivered, a later start adds it no more.
+    const again = new Outbox(store.dir, after)
+    expect(reconcile(again, [withStatus('lapsed', OTHER)], new Date(T0))).toBe(0)
+  })
+
+  it("leaves a file it can't read where it is, so its booking waits until it is mended", () => {
+    const root = join(store.dir, 'outbox', 'pending')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, `msg_${COMMITMENT.slice(2)}_agreed.json`), '{ not json')
+    const outbox = new Outbox(store.dir, T0)
+    expect(outbox.replaced.size).toBe(0)
+    expect(outbox.pending(() => {}).unreadable).toEqual(new Set([COMMITMENT.toLowerCase()]))
   })
 })
