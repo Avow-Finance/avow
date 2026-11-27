@@ -1,0 +1,144 @@
+---
+title: Commitment events
+slug: docs/reference/commitment-events
+---
+
+A commitment event is the notice of one change in a commitment's life, such as a reserve reaching the lock, the supplier's acceptance or a charge being paid. It is one typed record with a code and that code's fixed fields, so your code can act on a change without parsing a sentence.
+
+`@avow-finance/spec` holds the shape, its JSON form, its id and its hash. Nothing sends events yet. Avow keeps no event log, takes no subscription and delivers nothing, and no SDK call or MCP tool reads events. The supplier's adapter still sends its own four webhook events in its own format. Today this page describes a format, and it says so until that changes.
+
+## An event is a notice
+
+The lock is the record. An event tells you something changed and where to look, and that is all it does.
+
+- **It grants nothing.** No event gives an agent authority, approves a request or moves money.
+- **It proves nothing by itself.** An event carries no signature. Before you act on one, read the lock with the verifier, or check the signed message the event names by its hash.
+- **It carries no words.** Every field is an id, a hash, an amount, a time or a word from a fixed list. No field holds text a person or a model wrote, so an event can't carry an instruction to whoever reads it. An event names the terms by their hash and never carries them, since terms hold words a party wrote.
+
+## What every event carries
+
+| Field | Type | Value |
+| --- | --- | --- |
+| `schemaVersion` | string | `"1"`, which is `COMMITMENT_EVENT_VERSION` |
+| `id` | 32 bytes of hex | The same for the same fact, however often it is observed or sent |
+| `code` | string | One of the codes below |
+| `commitment` | A commitment reference | The chain, the lock, the commitment id, the side and the terms hash |
+| `buyerBusinessId` | A business id | The business that reserves |
+| `supplierBusinessId` | A business id | The business the reserve is for |
+| `reserve` | Micros | The most the supplier can charge on the commitment |
+| `source` | string | Who states the event, which says how its time is known |
+| `at` | Unix seconds | When the change happened, by that source's clock |
+
+In JSON an amount is a decimal string of micros of the terms' currency, a time is a decimal string of unix seconds, and hex is in lower case. A reader refuses a version, a code or a field it doesn't know.
+
+## How the time is known
+
+Three sources can state an event, and each event says which one did. A reader never has to guess which clock a time came from.
+
+| `source` | Who states it | What `at` is | What else the event carries |
+| --- | --- | --- | --- |
+| `block` | Whoever read the lock's log | The time of the block that holds the log | `blockNumber`, `transactionHash` and `logIndex`, so anyone can read the log from the chain |
+| `avow` | Avow's API | Avow's clock when it recorded the change | Nothing |
+| `supplier` | A supplier's adapter | The clock of the machine the adapter runs on | Nothing |
+
+A writer states a block only once it is final, so an event never names a log a reorganization dropped. The code fixes which sources can state it. A reserve the lock took is stated from a block and never from a clock. In TypeScript, checking an event's `code` and `source` narrows it to exactly the fields it carries.
+
+## The codes
+
+`booking` codes are changes off the lock, to the agreement and to what Avow records beside it. `reserve` codes follow the money the business reserved. `charge` codes follow a charge the supplier reported, through to its payment or its ruling. The table lists them in the order a commitment's life can reach them.
+
+| Code | Stated by | When | Carries |
+| --- | --- | --- | --- |
+| `booking.agreed` | `avow`, `supplier` | Both sides signed the terms agreement. Nothing is reserved yet | `agreementExpiry` |
+| `reserve.approved` | `avow` | Avow's reserve check passed and Avow signed its approval | `approvalHash`, `approvalExpiry` |
+| `reserve.locked` | `block` | The lock took the reserve | `approvalHash`, `mandateHash` |
+| `reserve.held` | `supplier` | The supplier's own check of the funded reserve passed, so it holds the capacity without granting it yet | `agreementExpiry` |
+| `reserve.accepted` | `block`, `supplier` | The lock took the supplier's acceptance, which is when the commitment exists | `agreementExpiry`, `acceptedIn` |
+| `booking.lapsed` | `avow`, `supplier` | The booking ended with no acceptance, since no reserve came in time | `agreementExpiry` |
+| `booking.start_requested` | `avow` | Avow timestamped the business's signed request to start | `requestHash` |
+| `booking.started` | `avow` | Avow recorded the supplier's signed start receipt | `requestHash`, `startedAt` |
+| `booking.cancelled_late` | `avow` | Avow recorded the business's cancellation after free cancellation had ended | `requestHash` |
+| `charge.reported` | `block` | The lock took the supplier's report of a charge. Nothing has moved | `reportNumber`, `kind`, `amount`, `evidenceHash`, `answerBy`, `contested` |
+| `charge.withdrawn` | `block` | The supplier withdrew its report before Avow answered it | `reportNumber` |
+| `charge.confirmed` | `block` | Avow confirmed the report, and the reserve above the charge went back to the business | `reportNumber`, `amount`, `returned`, `contestableUntil` |
+| `charge.referred` | `block` | Avow sent the report to a ruling | `reportNumber`, `returned` |
+| `charge.unanswered` | `block` | Avow didn't answer the report by its deadline, so it waits for a ruling | `reportNumber`, `pausedAt`, `returned` |
+| `charge.paused` | `block` | Avow paused a charge it had confirmed | `reportNumber` |
+| `charge.contested` | `block` | The business contested the charge, and nothing pays until someone rules | `reportNumber`, `reason`, `statementHash`, `pausedAt`, `returned` |
+| `charge.evidence_filed` | `block` | One side filed a piece of evidence on a paused charge | `filer`, `number`, `evidenceHash` |
+| `charge.ruled` | `block` | A ruling was posted. The lock pays it once the ruling delay has passed | `ruledBy`, `toSupplier`, `evidenceHash` |
+| `charge.paid` | `block` | The contest window closed with no contest, and the lock paid the supplier | `reportNumber`, `kind`, `amount` |
+| `charge.resolved` | `block` | The lock paid a paused charge out, by its ruling or by the day-90 default | `outcome`, `toSupplier`, `toBusiness` |
+| `reserve.released` | `block` | The lock gave what it still held back to the business | `outcome`, `returned` |
+
+`reserve.accepted` carries `agreementExpiry` and `acceptedIn` only when a supplier's adapter states it. `acceptedIn` is the acceptance's transaction, or null when the adapter found the acceptance on the lock and never saw the transaction. Stated from a block, the event carries neither, since its own `transactionHash` names the transaction.
+
+A few fields need a word.
+
+- **`reportNumber`** is 1 or 2, since a lock takes at most two reports for a commitment.
+- **`kind`** is `lateCancellation` or `noShow`, and `reason` is one of the six reasons a business [contests a charge](/docs/charges-and-disputes/contesting) for.
+- **`contested`** on a report says the business's contest of an earlier report stands, so the new report waits for a ruling from the start.
+- **`contestableUntil`** is null when the business had already contested, so no contest window opens.
+- **`returned`** is what went back to the business with that change. A confirmation returns the reserve above the charge, so a later release returns only what the lock still held.
+- **`outcome`** on a release is `kept`, `reached_release_date`, `cancelled_in_time`, `supplier_failed`, `not_accepted` or `agent_revoked`. On a resolution it is `ruled` or `day_90_default`. They are the kinds a commitment record's outcome takes.
+- **`ruledBy`** is `avow` or `arbiter`, and `filer` is `buyer` or `supplier`.
+- **`startedAt`** is the start the supplier's receipt states, by the supplier's word.
+
+A reserve that reached the lock and was never accepted goes back to the business as a `reserve.released` with the outcome `not_accepted`. A business cancelling in time has no code of its own either. It takes its reserve back on the lock, so it is a `reserve.released` with the outcome `cancelled_in_time`. `booking.cancelled_late` is the cancellation Avow records once free cancellation has ended, which a late-cancellation charge rests on.
+
+No amount in an event is more than the reserve. The charge and what a confirmation returned are together at most the reserve, and so are the two shares of a resolution.
+
+## The id
+
+An event's id names the fact and nothing about who observed it or when.
+
+```
+keccak256(abi.encode(string "avow:commitment-event-id:v1", string canonicalJson))
+```
+
+The canonical JSON, RFC 8785 as the terms use, holds the code, the commitment's reference and the code's key fields. `commitmentEventId` computes it, and `COMMITMENT_EVENT_KEYS` lists each code's key fields.
+
+| Codes | Key fields | So |
+| --- | --- | --- |
+| `reserve.approved` | `approvalHash` | Avow can approve a commitment more than once, and each approval is its own event |
+| `booking.start_requested`, `booking.started` | `requestHash` | Each start request is its own event, with its receipt |
+| `charge.reported`, `charge.withdrawn`, `charge.confirmed`, `charge.referred`, `charge.unanswered`, `charge.paused` | `reportNumber` | Each of a commitment's two reports has its own events |
+| `charge.evidence_filed` | `filer`, `number` | Each piece of evidence is its own event |
+| Every other code | None | It happens at most once for a commitment |
+
+The lock's log of an acceptance and a supplier's own record of the same acceptance share one id. Handle each id once and drop every later event with it. Two events with one id can differ in their source and time, and the one stated from a block is the one you can check on the chain.
+
+## Order
+
+Events carry no sequence number. No one party observes every change. The lock sees what reaches it, Avow sees what its API records, and a supplier's adapter sees its own bookings. A counter would belong to one writer, and the same fact would take a different number from each.
+
+You can rely on three things instead.
+
+- **Changes one lock logged have the lock's own order.** `lockOrder` compares two `block` events of the same lock by block number and then by log index.
+- **A time compares only with times from the same source.** Avow's clock, a supplier's clock and the chain's clock are three clocks.
+- **Where a commitment stands is on the lock.** An event can arrive late, twice, out of order or never. Read the lock for the state, and treat an event as the reason to look.
+
+## Reading, checking and hashing
+
+| Function | What it does |
+| --- | --- |
+| `commitmentEvent` | Makes an event from what a writer states, at this version and with its id |
+| `commitmentEventProblem` | Checks an event you hold. It never throws, and an event that passes has one canonical form |
+| `parseCommitmentEvent` | Reads an event from JSON. A version it doesn't read is `message.schema_unknown`, and a code, a source or a field it doesn't know is `message.invalid` |
+| `commitmentEventHash` | Hashes an event whole, its source and time included |
+| `commitmentEventFields` | Names the fields a code carries when a source states it |
+
+The hash is
+
+```
+keccak256(abi.encode(string "avow:commitment-event:v1", string canonicalJson))
+```
+
+over the whole event. Two events with one id that differ in who observed the fact have two hashes.
+
+## What isn't an event
+
+- **A refusal.** Avow refusing a reserve, or a supplier declining an order, changes nothing in a commitment's life. The caller hears it in the answer to its own request, with a reason code.
+- **A payment of the price.** A [job's price](/docs/composable-commitments/jobs) arrives as a separate transfer, which a payment reference names and anyone checks on the chain. The reserve doesn't secure it.
+- **A job's session event.** A sandbox session's `job_` events are what a developer's own process posts for its screen to show. They stay as they are, and nothing here replaces them.
+- **A change to an agent's authority.** A mandate, a limit or a revocation belongs to the agent and the business, and an [approval request](/docs/reference/approval-requests) carries it.
