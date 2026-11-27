@@ -21,6 +21,7 @@ export const MESSAGE_VERSIONS = {
   BusinessAction: LOCK_MESSAGE_VERSION,
   SupplierAction: LOCK_MESSAGE_VERSION,
   Mandate: '1',
+  SellerMandate: '1',
   TermsAgreement: '1',
   SupplierAuthorization: '1',
   HumanApproval: '1',
@@ -50,6 +51,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   BusinessAction: [MESSAGE_VERSIONS.BusinessAction],
   SupplierAction: [MESSAGE_VERSIONS.SupplierAction],
   Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION],
+  SellerMandate: [MESSAGE_VERSIONS.SellerMandate],
   TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement],
   SupplierAuthorization: [MESSAGE_VERSIONS.SupplierAuthorization],
   HumanApproval: [MESSAGE_VERSIONS.HumanApproval],
@@ -81,3 +83,6 @@ export const COMMITMENT_RECORD_VERSION = '3'
 
 /** The version of the mandate check in `checkMandate`, recorded on every decision. */
 export const POLICY_VERSION = 'mandate-check/1'
+
+/** The version of the seller's mandate check in `checkSellerMandate`, recorded on every decision. */
+export const SELLER_POLICY_VERSION = 'seller-mandate-check/1'

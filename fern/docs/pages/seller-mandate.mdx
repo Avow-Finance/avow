@@ -1,0 +1,94 @@
+---
+title: Seller's mandates
+slug: docs/reference/seller-mandate
+---
+
+A seller's mandate is the authority a business's administrator signs for one selling agent. A buyer's mandate limits what an agent may reserve. A seller's mandate limits what an agent may promise, which is what it sells, at what price, how much, how far ahead, on what charges and to whom.
+
+`@avow-finance/spec` holds the message, its signed form and the check. Avow's sandbox doesn't enforce a seller's mandate yet, so today a selling agent's signing key is still its only limit, and this page says so until that changes. Nothing here should be read as a limit a selling agent is held to today.
+
+## Who signs it, and what it binds
+
+The business account's root key signs a `SellerMandate` as EIP-712 typed data, under the business's own lock. The administrator signs with the business's passkey. No tool or SDK call an agent can reach signs one, widens one or revokes one.
+
+A mandate binds one signing key, the key the business registered for its agent to quote and accept with. It hands no authority on to another agent. To change an agent's limits, the administrator signs a new mandate whose `replaces` names the hash of the one before, for the same key.
+
+Version 1 covers sales of `service/1` and `job/1`. Terms under any other template are refused with `seller_mandate.template_not_covered`.
+
+## What it holds
+
+| Field | What it limits |
+| --- | --- |
+| `limits` | What the agent may sell. Each line names a category, `service` or `compute-job`, and an item, with the lowest price for a unit and the most units in one order and in one day. A line whose item is null covers every other item in its category |
+| `maxOrderValue` | The most one order may come to |
+| `maxOutstanding` | The most the agent may have promised and not yet delivered, as the agreed price of every sale from agreement to delivery |
+| `maxDeliveryHorizon` | The longest from agreement to the delivery deadline |
+| `minLateCancellationBps`, `minNoShowBps` | The lowest charges the agent may offer, as shares of the price |
+| `maxFreeCancelWindow` | The longest a buyer may cancel at no charge |
+| `buyers`, `excludedBuyers` | The only businesses the agent may sell to, when any is named, and those it never may |
+| `excludedCountries` | Countries the agent may not sell into |
+| `requiresBusinessCheck` | Whether a buyer has to have passed Avow's business check |
+| `negotiable` | The terms the agent may move when it bargains. Version 1 takes none |
+| `approvalRule` | The order value above which a person decides the sale |
+| `expiry` | When the agent's authority to sell ends |
+
+An item is a service's name or a job's kind of work. A job counts as one unit whose price is the job's price. An item with no line of its own and no line for its category can't be sold.
+
+Amounts are in micros of the mandate's currency, and times are in seconds. `sellerMandateProblem` refuses a mandate whose limits conflict, such as one order's most above what may be outstanding, a business both allowed and excluded, or two lines for one item.
+
+## The check
+
+`checkSellerMandate` is pure. A seller's agent runs it before it signs an agreement, and Avow is to run the same code on the same inputs when a seller agrees to terms and again before it approves the buyer's reserve. It takes the mandate, the key that signed, the sale's terms, what Avow's records say of the buyer, and what the capacity ledger already holds.
+
+It refuses in this order, each with a reason code.
+
+| Reason | When |
+| --- | --- |
+| `seller_mandate.invalid` | The mandate isn't well formed |
+| `seller_mandate.expired`, `seller_mandate.revoked` | The mandate has ended or the administrator revoked it |
+| `seller_mandate.key_mismatch` | Another key signed the sale |
+| `seller_mandate.template_not_covered` | The terms are neither a service's nor a job's |
+| `seller_mandate.currency_not_allowed` | The terms are in another currency |
+| `seller_mandate.item_not_allowed` | No line covers the item |
+| `seller_mandate.under_price_floor` | The price for each unit is under the line's floor |
+| `seller_mandate.over_order_value` | The order comes to more than one order may |
+| `seller_mandate.over_units_per_order` | The order takes more units than the line allows |
+| `seller_mandate.over_delivery_horizon` | Delivery is due later than the horizon allows |
+| `seller_mandate.charges_not_allowed` | A charge is under its floor, or free cancellation lasts too long |
+| `counterparty.not_eligible` | The buyer fails the counterparty rules |
+| `seller_mandate.over_daily_units` | The order would take the day's units past the line's limit |
+| `seller_mandate.over_outstanding` | The order would take what's promised and undelivered past the limit |
+
+A sale that passes and is above the approval rule's amount comes back as `needs_human` with `approval.human_required`. The caller holds it until the administrator approves that one sale, which widens nothing.
+
+### The price floor is on the effective price
+
+The floor applies to the order's whole price divided by its units, rounded down. A discount on quantity can't get under it, since each sale is checked on its own terms.
+
+### Counterparties
+
+The check reads three facts about the buyer from Avow's records, its business id, its country and whether it passed Avow's business check. On testnet every business check is simulated and a country is the one the business declared. Any surface that shows these rules labels them that way, as "Passed Avow's simulated business check" and a self-declared country. Neither makes a business verified.
+
+A mandate that excludes any country refuses a buyer whose country isn't known.
+
+### Capacity
+
+The day's units and what's outstanding come from a ledger the caller keeps, counted apart from the sale being checked. The check adds the sale and compares. Counting and recording have to happen in one step wherever sales can arrive at once, and that step belongs to whoever keeps the ledger.
+
+### Time
+
+The delivery horizon and the free-cancellation window count from the moment of the check. An order's terms are built on another clock, so both allow the 60 seconds a service order's build moment may run ahead.
+
+## Listing an offer
+
+`sellerOfferProblem` is the same check for an offer version, before anyone orders. The offer has to be for an item the mandate covers, at or above its floor, taking no more units in a booking than one order may, with a lead time inside the horizon and charges that keep to the mandate's. An offer binds nobody, so this refuses early what the check would refuse at the sale.
+
+## What a buyer hears
+
+A seller's limits are its own, and a buyer learns none of them. `buyerFacingReason` turns every `seller_mandate.*` reason into `supplier.not_authorized`, which says the supplier's agent isn't authorized to sell on these terms and names no limit. The seller's agent hears the specific reason.
+
+A buyer can still learn roughly where a seller stops by ordering again and again, as in any market.
+
+## Two layers, and no chain
+
+A buyer's mandate has three enforcing layers. A seller's mandate has two, the seller's own agent and Avow. The lock belongs to the buyer and never reads a seller's mandate, and the signing key moves no money, so Tempo's keychain has nothing to hold. Once a buyer's reserve is on the lock, the lock takes an acceptance signed by the seller's key until the acceptance deadline, whatever the seller's mandate says by then.

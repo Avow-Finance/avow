@@ -48,6 +48,8 @@ navigation:
         path: ./docs/pages/services.mdx
       - page: Negotiation threads
         path: ./docs/pages/negotiation.mdx
+      - page: Seller's mandates
+        path: ./docs/pages/seller-mandate.mdx
       - page: Business checks
         path: ./docs/pages/business-check.mdx
       - page: Test dollar top-ups

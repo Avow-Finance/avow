@@ -9,6 +9,12 @@ import {
 import type { APPROVAL_DECISION_TYPES, approvalDecisionTypedData } from './approval-request.js'
 import type { ReasonCode } from './reasons.js'
 import type {
+  SELLER_MANDATE_TYPES,
+  SellerMandate,
+  SellingLimit,
+  sellerMandateTypedData,
+} from './seller-mandate.js'
+import type {
   ApprovalRule,
   Mandate,
   MandateFields,
@@ -46,7 +52,8 @@ export function domain(d: AvowDomain, version: string): TypedDataDomain & { vers
 /** Each side of a commitment by the code the lock stores, takes in calls and logs in its events. */
 export const SIDE_CODES = { buyer: 0, supplier: 1 } as const satisfies Record<Side, number>
 
-const ruleCode = { never: 0, above: 1, always: 2 } as const satisfies Record<
+/** An approval rule's kind by the code a signed mandate carries, on either side of a deal. */
+export const APPROVAL_RULE_CODES = { never: 0, above: 1, always: 2 } as const satisfies Record<
   ApprovalRule['kind'],
   number
 >
@@ -680,7 +687,7 @@ function mandateFields(m: Mandate) {
       amount: l.amount,
       period: l.period,
     })),
-    approvalRule: ruleCode[m.approvalRule.kind],
+    approvalRule: APPROVAL_RULE_CODES[m.approvalRule.kind],
     approvalAbove: m.approvalRule.kind === 'above' ? m.approvalRule.amount : 0n,
     expiry: m.expiry,
     nonce: m.nonce,
@@ -952,6 +959,7 @@ export type AvowTypedData =
   | ReturnType<typeof businessActionTypedData>
   | ReturnType<typeof supplierActionTypedData>
   | ReturnType<typeof approvalDecisionTypedData>
+  | ReturnType<typeof sellerMandateTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -980,9 +988,9 @@ type SameFields<Keys extends PropertyKey, Names extends PropertyKey> = [
 /**
  * Each signed message's interface against its type table, and each struct a message nests, field
  * for field in both directions. viem encodes only the fields a table lists, so a field added to an
- * interface alone would travel unsigned, and the build fails here instead. The mandate's approval
- * rule is the one field a table writes as two, its kind as `approvalRule` and the amount of an
- * `above` rule as `approvalAbove`.
+ * interface alone would travel unsigned, and the build fails here instead. A mandate's approval
+ * rule, a buyer's or a seller's, is the one field a table writes as two, its kind as `approvalRule`
+ * and the amount of an `above` rule as `approvalAbove`.
  */
 interface InterfacesMatchTables {
   ApprovalDecision: SameFields<
@@ -998,6 +1006,11 @@ interface InterfacesMatchTables {
     FieldNames<typeof MANDATE_TYPES.Mandate>
   >
   PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>
+  SellerMandate: SameFields<
+    keyof SellerMandate | 'approvalAbove',
+    FieldNames<typeof SELLER_MANDATE_TYPES.SellerMandate>
+  >
+  SellingLimit: SameFields<keyof SellingLimit, FieldNames<typeof SELLER_MANDATE_TYPES.SellingLimit>>
   TermsAgreement: SameFields<
     keyof TermsAgreement,
     FieldNames<typeof TERMS_AGREEMENT_TYPES.TermsAgreement>
@@ -1040,6 +1053,8 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   Mandate: true,
   FirstMandate: true,
   PaymentLimit: true,
+  SellerMandate: true,
+  SellingLimit: true,
   TermsAgreement: true,
   Approval: true,
   Charge: true,
@@ -1097,6 +1112,8 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'SupplierAction':
       return hashTypedData(td)
     case 'ApprovalDecision':
+      return hashTypedData(td)
+    case 'SellerMandate':
       return hashTypedData(td)
   }
 }

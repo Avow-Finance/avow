@@ -34,6 +34,34 @@ export const REASON_CODES = {
   'proposal.unacceptable':
     'The other side refuses the proposal as it stands, and says nothing about what it would take',
   'counterparty.not_eligible': "The other business isn't one this side may deal with",
+  'supplier.not_authorized':
+    "The supplier's agent isn't authorized to sell on these terms. The answer names no limit, since a seller's limits are its own",
+  'seller_mandate.missing':
+    "The supplier's agent holds no seller's mandate, so it can't list, quote or accept",
+  'seller_mandate.invalid': "The seller's mandate names nothing to sell, or its limits conflict",
+  'seller_mandate.signature_invalid':
+    "The seller's mandate isn't signed by the business account's root key, so it was changed or forged",
+  'seller_mandate.expired': "The seller's mandate has expired",
+  'seller_mandate.revoked': "The seller's mandate is revoked",
+  'seller_mandate.key_mismatch': "The sale wasn't signed by the seller's mandate's signing key",
+  'seller_mandate.template_not_covered':
+    "A seller's mandate covers services and jobs sold through the mailbox, and these terms are neither",
+  'seller_mandate.currency_not_allowed': "The terms' currency isn't the seller's mandate's",
+  'seller_mandate.item_not_allowed': "The seller's mandate doesn't let the agent sell this item",
+  'seller_mandate.under_price_floor':
+    "The price for each unit is under the seller's mandate's floor for the item",
+  'seller_mandate.over_order_value':
+    "The order's price is above the seller's mandate's most for one order",
+  'seller_mandate.over_units_per_order':
+    "The order takes more units than the seller's mandate allows in one order",
+  'seller_mandate.over_daily_units':
+    "The order would take the units agreed today above the seller's mandate's daily limit",
+  'seller_mandate.over_outstanding':
+    "The order would take what the agent has promised and not yet delivered above the seller's mandate's limit",
+  'seller_mandate.over_delivery_horizon':
+    "Delivery is due later than the seller's mandate lets the agent promise",
+  'seller_mandate.charges_not_allowed':
+    "A cancellation or no-show charge is under the seller's mandate's lowest, or free cancellation lasts longer than it allows",
   'negotiation.rounds_exhausted':
     'The thread has taken as many proposals and counter-offers as a thread can',
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",

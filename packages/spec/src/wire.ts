@@ -278,7 +278,8 @@ function sectionSchema(section: ChainedTermsSection, template: string): z.ZodTyp
   }
 }
 
-const approvalRuleJson = z.discriminatedUnion('kind', [
+/** When a person has to approve in place of the agent, as a mandate on either side carries it. */
+export const approvalRuleJson = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('never') }),
   z.strictObject({ kind: z.literal('always') }),
   z.strictObject({ kind: z.literal('above'), amount: u256 }),

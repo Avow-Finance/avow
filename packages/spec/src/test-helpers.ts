@@ -9,6 +9,7 @@ import { chainedJobTerms } from './job.js'
 import type { JobEvent } from './job-session.js'
 import { jobVerificationOf } from './job-verification.js'
 import type { RailToken } from './rail.js'
+import type { SellerMandate } from './seller-mandate.js'
 import { termsHash } from './terms.js'
 import { SIMULATED_RESULT_LABEL, TEST_CUSTOMER_LABEL } from './test-customer.js'
 import type { Mandate, ReserveRequest } from './types.js'
@@ -58,6 +59,55 @@ export function demoMandate(account: Address, agentKey: Address): Mandate {
     approvalRule: { kind: 'above', amount: dollars(800) },
     expiry: START + 30n * 86_400n,
     nonce: 1n,
+  }
+}
+
+/** A seller's mandate for fine-tuning runs at $40 or more, and any other service at $5 or more. */
+export function demoSellerMandate(account: Address, signingKey: Address): SellerMandate {
+  return {
+    mandateId: id('seller-mandate-1'),
+    businessId: 'biz_supplier',
+    account,
+    signingKey,
+    currency: 'USD',
+    limits: [
+      {
+        category: 'service',
+        item: 'Fine-tuning run',
+        minUnitPrice: dollars(40),
+        maxUnitsPerOrder: 8,
+        maxUnitsPerDay: 20,
+      },
+      {
+        category: 'service',
+        item: null,
+        minUnitPrice: dollars(5),
+        maxUnitsPerOrder: 4,
+        maxUnitsPerDay: 10,
+      },
+      {
+        category: 'compute-job',
+        item: 'fine-tuning',
+        minUnitPrice: dollars(100),
+        maxUnitsPerOrder: 1,
+        maxUnitsPerDay: 3,
+      },
+    ],
+    maxOrderValue: dollars(500),
+    maxOutstanding: dollars(2000),
+    maxDeliveryHorizon: 7n * 86_400n,
+    minLateCancellationBps: 2000,
+    minNoShowBps: 5000,
+    maxFreeCancelWindow: 86_400n,
+    buyers: [],
+    excludedBuyers: ['biz_blocked'],
+    excludedCountries: [],
+    requiresBusinessCheck: false,
+    negotiable: [],
+    approvalRule: { kind: 'above', amount: dollars(300) },
+    expiry: START + 30n * 86_400n,
+    nonce: 1n,
+    replaces: null,
   }
 }
 

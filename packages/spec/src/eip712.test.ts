@@ -43,12 +43,14 @@ import {
   termsAgreementTypedData,
   timestampTypedData,
 } from './eip712.js'
+import { sellerMandateTypedData } from './seller-mandate.js'
 import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
   CHAIN_ID,
   DOMAIN,
   demoMandate,
+  demoSellerMandate,
   id,
   LOCK,
   NOW,
@@ -64,6 +66,7 @@ const SALT = `0x${'22'.repeat(32)}` as const
 const admin = newKey()
 const agent = newKey()
 const mandate = demoMandate(admin.address, agent.address)
+const sellerMandate = demoSellerMandate(admin.address, agent.address)
 const terms = testnetDemoTerms(START, ARBITER)
 const lock = lockTerms(terms, TOKEN.decimals)
 const hash = termsHash(terms, SALT)
@@ -262,6 +265,7 @@ const builders = {
   decision: (d = DOMAIN) =>
     approvalDecisionTypedData(decided, { businessId: 'sandbox-test', decision: 'approve' }, d),
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
+  sellerMandate: (d = DOMAIN) => sellerMandateTypedData(sellerMandate, d),
   agreement: (d = DOMAIN) => termsAgreementTypedData(agreement, d),
   approval: (d = DOMAIN) => approvalTypedData(approval, d),
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
@@ -320,6 +324,7 @@ describe('signed messages', () => {
     const samples: { [T in MessageType]: { typedData: AvowTypedData; from: object } } = {
       ApprovalDecision: { typedData: builders.decision(), from: builders.decision().message },
       Mandate: { typedData: builders.mandate(), from: mandate },
+      SellerMandate: { typedData: builders.sellerMandate(), from: sellerMandate },
       TermsAgreement: { typedData: builders.agreement(), from: agreement },
       Approval: { typedData: builders.approval(), from: approval },
       SupplierAuthorization: { typedData: builders.authorization(), from: authorization },
@@ -347,8 +352,9 @@ describe('signed messages', () => {
         expect(typedData.primaryType).toBe(type)
         const table = names(typedData, type)
         expect(table.length).toBeGreaterThan(0)
-        // The mandate's approval rule is written as two fields, its kind and an above rule's amount.
-        const fields = Object.keys(from).concat(type === 'Mandate' ? ['approvalAbove'] : [])
+        // A mandate's approval rule is written as two fields, its kind and an above rule's amount.
+        const twoFields = type === 'Mandate' || type === 'SellerMandate'
+        const fields = Object.keys(from).concat(twoFields ? ['approvalAbove'] : [])
         expect(fields.sort()).toEqual(table)
         expect(keys(typedData.message)).toEqual(table)
       })
@@ -358,6 +364,9 @@ describe('signed messages', () => {
       const m = builders.mandate()
       expect(keys(mandate.paymentLimits[0])).toEqual(names(m, 'PaymentLimit'))
       expect(keys(m.message.paymentLimits[0])).toEqual(names(m, 'PaymentLimit'))
+      const s = builders.sellerMandate()
+      expect(keys(sellerMandate.limits[0])).toEqual(names(s, 'SellingLimit'))
+      expect(keys(s.message.limits[0])).toEqual(names(s, 'SellingLimit'))
       const a = builders.approval()
       expect(keys(approval.charges[0])).toEqual(names(a, 'Charge'))
       expect(keys(a.message.charges[0])).toEqual(names(a, 'Charge'))
