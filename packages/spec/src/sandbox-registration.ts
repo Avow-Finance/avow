@@ -8,6 +8,7 @@ import {
   zeroAddress,
 } from 'viem'
 import { z } from 'zod'
+import { COUNTRY_CODE } from './fields.js'
 import type { HashSigner } from './keychain.js'
 import type { Parsed } from './wire.js'
 
@@ -137,7 +138,7 @@ export const businessRegistrationBody = z.strictObject({
     ...common,
     lock: address,
     legalName: z.string().min(1).max(200),
-    country: z.string().regex(/^[A-Z]{2}$/),
+    country: z.string().regex(COUNTRY_CODE),
   }),
   accountSignature: signature,
 })

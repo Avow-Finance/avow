@@ -1,9 +1,10 @@
 import { type Address, encodeAbiParameters, type Hex, keccak256 } from 'viem'
 import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
+import { BPS, isCount, isShare, LOWER_BYTES32 } from './fields.js'
 import { u64, u256 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
-import { isFilled } from './text.js'
+import { isFilled, isSoundText } from './text.js'
 import {
   AMOUNT_DECIMALS,
   CURRENCIES,
@@ -46,8 +47,8 @@ export const SERVICE_TEXT_MAX = 280
 /** The most units one booking of a service can take. */
 export const SERVICE_QUANTITY_MAX = 1_000_000
 
-/** The longest a supplier's business id is in an offer. */
-const SUPPLIER_ID_MAX = 100
+/** The longest a business id is, in an offer or a mandate. */
+export const BUSINESS_ID_MAX = 100
 
 /**
  * How the buyer pays the price, which the lock never reads. `transfer` is a transfer of the
@@ -154,9 +155,6 @@ export function serviceTerms(input: ServiceInput): ServiceTerms {
   }
 }
 
-/** A 32-byte id in lower-case hex, so the same offer never hashes two ways. */
-const OFFER_ID = /^0x[0-9a-f]{64}$/
-
 /**
  * What's wrong with a service's subject on its own, or null when nothing is. The offer is a
  * lower-case 32-byte id, the item has a name and a summary of bounded length, the quantity is a
@@ -166,7 +164,7 @@ const OFFER_ID = /^0x[0-9a-f]{64}$/
  */
 export function serviceSubjectProblem(s: ServiceSubject): ReasonCode | null {
   if (typeof s !== 'object' || s === null) return 'terms.template_invalid'
-  if (typeof s.offer !== 'string' || !OFFER_ID.test(s.offer)) return 'terms.template_invalid'
+  if (typeof s.offer !== 'string' || !LOWER_BYTES32.test(s.offer)) return 'terms.template_invalid'
   const item: Partial<ServiceSubject['item']> | undefined = s.item
   const delivery: Partial<ServiceSubject['delivery']> | undefined = s.delivery
   const payment: Partial<ServiceSubject['payment']> | undefined = s.payment
@@ -280,11 +278,6 @@ export interface ServiceOfferVersion {
   rules: ServiceRules
 }
 
-const whole = (n: unknown, max: number) =>
-  Number.isSafeInteger(n) && (n as number) >= 1 && (n as number) <= max
-const share = (bps: unknown) =>
-  Number.isSafeInteger(bps) && (bps as number) >= 0 && (bps as number) <= 10_000
-
 /**
  * What's wrong with an offer version, in words for the person setting it, or null when nothing
  * is. The supplier and item are named, the price is above zero, the lead time leaves the supplier
@@ -295,11 +288,11 @@ const share = (bps: unknown) =>
  * only.
  */
 export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
-  if (!isFilled(v.supplier, SUPPLIER_ID_MAX)) return "Name the supplier's business."
-  if (!isFilled(v.item?.name, SERVICE_NAME_MAX)) {
+  if (!isSoundText(v.supplier, BUSINESS_ID_MAX)) return "Name the supplier's business."
+  if (!isSoundText(v.item?.name, SERVICE_NAME_MAX)) {
     return `Name the item in 1 to ${SERVICE_NAME_MAX} characters.`
   }
-  if (!isFilled(v.item?.summary, SERVICE_TEXT_MAX)) {
+  if (!isSoundText(v.item?.summary, SERVICE_TEXT_MAX)) {
     return `Say what the item is in 1 to ${SERVICE_TEXT_MAX} characters.`
   }
   if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return 'Choose a currency.'
@@ -308,7 +301,7 @@ export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
   }
   const r = v.rules
   if (typeof r !== 'object' || r === null) return 'Set the rules for booking.'
-  if (!isFilled(r.evidence, SERVICE_TEXT_MAX)) return 'Say what counts as delivery.'
+  if (!isSoundText(r.evidence, SERVICE_TEXT_MAX)) return 'Say what counts as delivery.'
   if (typeof r.leadTime !== 'bigint' || r.leadTime < SERVICE_ACCEPT_WITHIN) {
     return 'The lead time has to be at least 15 minutes, so you have time to accept.'
   }
@@ -319,13 +312,13 @@ export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
   ) {
     return 'Free cancellation is off, or lasts from 15 minutes to the lead time.'
   }
-  if (!whole(r.maxPerBooking, SERVICE_QUANTITY_MAX)) {
+  if (!isCount(r.maxPerBooking, SERVICE_QUANTITY_MAX)) {
     return `A booking takes from 1 to ${SERVICE_QUANTITY_MAX} units.`
   }
-  if (!whole(r.dailyCapacity, SERVICE_QUANTITY_MAX)) {
+  if (!isCount(r.dailyCapacity, SERVICE_QUANTITY_MAX)) {
     return 'Capacity is at least one booking a day.'
   }
-  if (!share(r.lateCancellationBps) || !share(r.noShowBps)) {
+  if (!isShare(r.lateCancellationBps) || !isShare(r.noShowBps)) {
     return 'A charge is a share of the price from 0 to 100%.'
   }
   if (r.lateCancellationBps === 0 && r.noShowBps === 0) {
@@ -344,7 +337,7 @@ const text = (max: number) => z.string().min(1).max(max)
 
 /** An offer version as JSON, with amounts and times as decimal strings and nothing else in it. */
 export const serviceOfferVersionJson = z.strictObject({
-  supplier: text(SUPPLIER_ID_MAX),
+  supplier: text(BUSINESS_ID_MAX),
   item: z.strictObject({ name: text(SERVICE_NAME_MAX), summary: text(SERVICE_TEXT_MAX) }),
   currency: z.enum(CURRENCIES),
   unitPrice: u256,
@@ -407,8 +400,6 @@ export function offerVersionId(version: ServiceOfferVersion): Hex {
   )
 }
 
-const BPS = 10_000n
-
 /** What booking a number of units of an offer version costs, in micros. */
 export interface ServiceOfferQuote {
   /** The whole price, the unit price times the quantity, paid by the payment route. */
@@ -434,7 +425,7 @@ export function serviceOfferQuote(
   const problem = serviceOfferProblem(version)
   if (problem) throw new RangeError(problem)
   const { rules } = version
-  if (!whole(quantity, rules.maxPerBooking)) {
+  if (!isCount(quantity, rules.maxPerBooking)) {
     throw new RangeError(`The offer takes 1 to ${rules.maxPerBooking} units a booking`)
   }
   const total = totalOf(version.unitPrice, quantity)

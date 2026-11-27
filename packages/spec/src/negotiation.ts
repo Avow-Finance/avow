@@ -145,7 +145,8 @@ export const isDeclineReason = (reason: string): reason is DeclineReason =>
   Object.hasOwn(DECLINE_RULES, reason)
 
 /** The terms a proposal may set against its base offer. */
-export type OpenTerm = 'unitPrice' | 'quantity' | 'leadTime'
+export const OPEN_TERMS = ['unitPrice', 'quantity', 'leadTime'] as const
+export type OpenTerm = (typeof OPEN_TERMS)[number]
 
 /** What a thread about an offer allows: which terms can move, and how many proposals it takes. */
 export interface NegotiationRules {
