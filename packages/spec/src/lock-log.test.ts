@@ -313,7 +313,7 @@ describe("the lock's logs as a chain client decodes them", () => {
 })
 
 describe('what this package says about kinds of charge', () => {
-  it('claims no limit on how many kinds a lock holds', () => {
+  it('says no limit on how many kinds a lock holds', () => {
     const files = [
       './lock-log.ts',
       './commitment-event.ts',

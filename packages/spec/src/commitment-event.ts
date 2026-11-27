@@ -705,7 +705,7 @@ export function commitmentEventHash(event: CommitmentEvent): Hex {
 /**
  * A statement's hash: keccak256 of the ABI encoding of the string
  * `avow:commitment-event-statement:v1` and the canonical JSON of the event without `at`, and
- * without nothing else. Two events that differ only in when their source recorded them make one
+ * with nothing else left out. Two events that differ only in when their source recorded them make one
  * statement, so a supplier's adapter that records one step again after a restart, with a later
  * time, says nothing new. A receiver that drops exact redeliveries uses `commitmentEventHash`, and
  * `sameSlot` uses this to tell a step recorded twice from two sources that disagree. It throws on

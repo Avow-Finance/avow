@@ -183,7 +183,7 @@ The statement hash names what a source said, whenever it said it.
 keccak256(abi.encode(string "avow:commitment-event-statement:v1", string canonicalJson))
 ```
 
-Its canonical JSON is the whole event without `at`, and without nothing else. A supplier's adapter that records one step again after a restart, with a later time, makes the same statement. Use it to tell a step recorded twice from two statements that disagree.
+Its canonical JSON is the whole event without `at`, with nothing else left out. A supplier's adapter that records one step again after a restart, with a later time, makes the same statement. Use it to tell a step recorded twice from two statements that disagree.
 
 The event hash names one event, whole.
 
