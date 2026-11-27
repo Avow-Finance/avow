@@ -99,7 +99,6 @@ const random = (bytes: number): Hex => toHex(crypto.getRandomValues(new Uint8Arr
 export const SERVICE_ORDER_SECONDS = SERVICE_ACCEPT_WITHIN - SERVICE_ORDER_ACCEPT_MARGIN
 /** How long a supplier's quote stays valid, in seconds. */
 const QUOTE_VALIDITY = 120n
-/** The day an offer's capacity counts over, in seconds. */
 
 /** Where buying a service got to, in order. */
 export type ServiceBuyStep =
@@ -597,11 +596,15 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       // The offer in an order is the buyer's copy, so only a version published here is quoted.
       const version = publishedOffer(sale, await published())
       if (!version) throw new Error("The order is for an offer this business hasn't published.")
+      const early = serviceOrderProblem(sale, systemClock())
+      if (early) throw new Error(`The order can't be quoted: ${early}`)
+      // The mandate in force is read first, so nothing below waits on Avow inside a change.
+      const standing = await sellerStanding()
+      // The read can take a while, so the order, the mandate and the quote's expiry are all held
+      // to the clock as it reads once the mandate is in hand.
       const now = systemClock()
       const problem = serviceOrderProblem(sale, now)
       if (problem) throw new Error(`The order can't be quoted: ${problem}`)
-      // The mandate in force is read first, so nothing below waits on Avow inside a change.
-      const standing = await sellerStanding()
       // The terms this order builds, which the quote signs and the seller's mandate reads.
       const terms = serviceOfferTerms(version, sale.quantity, sale.builtAt, settlement)
       const facts = saleFacts(terms)
