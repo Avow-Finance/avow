@@ -695,6 +695,9 @@ describe('a step a lock allows that names no listed word', () => {
     const wrong: object[] = [
       // Avow's numbers are its own, so a consent's word is never read into one.
       { cause: 'returned_by_avow', reason: 'kept', reasonCode: 1 },
+      // An event names a consent's reasons only, and keeps Avow's as the number, so defining
+      // Avow's words changed no event and no event's hash.
+      { cause: 'returned_by_avow', reason: 'agentRevoked', reasonCode: 1 },
       { cause: 'supplier_consent', reason: 'kept', reasonCode: 2 },
       { cause: 'supplier_consent', reason: null, reasonCode: 1 },
       { cause: 'cancelled_in_time', reason: null, reasonCode: 1 },
