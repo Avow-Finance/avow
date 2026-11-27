@@ -385,7 +385,7 @@ export async function orderServiceCommand(args: readonly string[]): Promise<void
 export function readAskToSellArgs(args: readonly string[]): { file: string } | { error: string } {
   const at = args.indexOf('--terms')
   const file = at >= 0 ? args[at + 1] : undefined
-  const unknown = args.filter((a, i) => i !== at && i !== at + 1)
+  const unknown = args.filter((_, i) => i !== at && i !== at + 1)
   if (!file || file.startsWith('--') || unknown.length > 0) {
     return { error: 'ask-to-sell takes --terms <file>' }
   }
