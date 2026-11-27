@@ -41,7 +41,10 @@ const dataJson = z.strictObject({
   supplierBusinessId: z.string(),
   /** The most the supplier can charge on this booking, the reserve the business funds. */
   reserveDollars: z.string().regex(/^[0-9]+(\.[0-9]+)?$/),
-  /** When the agreement the supplier signed lapses if no reserve arrives. */
+  /**
+   * When the signed agreement offer stops being valid. A booking lapses at its terms' acceptance
+   * deadline, `terms.remedies.acceptBy`, a separate time.
+   */
   agreementExpiresAt: z.iso.datetime(),
   /** The acceptance's transaction on the lock, once `reserve.accepted` has it. */
   acceptanceTransaction: hex<Hex>(BYTES32).nullable(),

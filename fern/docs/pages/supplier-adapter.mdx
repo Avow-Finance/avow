@@ -15,7 +15,7 @@ The adapter takes GPU bookings and nothing else. It signs only terms built with 
 That leaves out several things a supplier may want, so plan around them.
 
 - **No service orders.** It doesn't sell `service/1` offers. [Services sold by quantity](/docs/reference/services) covers those, sold through the `avow-sandbox` package.
-- **No compute listing for jobs.** It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/reference/jobs) on can't find yours through it. An agent books from it with terms it already has.
+- **No compute listing for jobs.** It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it. An agent books from it with terms it already has.
 - **No seller's mandate.** It refuses an agreement that names one, since it acts under none.
 - **No check of your capacity.** It signs any offer that meets the rules below without asking your system first, and your system hears of the booking only once it's signed. Set `MAX_RESERVE_DOLLARS`, `MAX_OPEN_PER_BUYER` and `MAX_OPEN_BOOKINGS` to what you can actually serve.
 - **One process.** Run one `serve` at a time for a state directory, since it counts open bookings from what it saved itself.
@@ -29,7 +29,7 @@ You need four things.
 3. **A URL agents can reach**, on the port `serve` listens on.
 4. **A receiver for the webhook**, if you want events. The adapter runs without one, and the local check works either way.
 
-On testnet Avow registers you as a test business. Every buyer you meet there is a sandbox business, a test business too, and its commitments are test data. A registration, or a [business check](/docs/reference/business-checks) that passes on testnet, never makes a business verified.
+On testnet Avow registers you as a test business. Every buyer you meet there is a sandbox business, a test business too, and its commitments are test data. A registration, or a simulated [business check](/docs/reference/business-checks) that passes on testnet, never makes a business verified.
 
 A buyer's agent can reserve with you only once its business has named your account on its lock, or opened its lock to listed suppliers. The business does that with its own root key, and the [buyer quickstart](https://github.com/Avow-Finance/avow/tree/main/examples/buyer)'s `enroll` names the supplier it books from. A lock that hasn't named you refuses the reserve with `supplier.not_named`.
 
@@ -153,7 +153,7 @@ The adapter records a booking before it answers `POST /agreements`, so a restart
 
 ## How a booking moves
 
-Every few seconds, `serve` asks Avow to authorize each open booking, with a request its signing key signs. Avow answers once the agent has funded the reserve, with its authorization, its approval and the buyer's mandate. The verifier checks all three against your terms and the lock before the adapter holds capacity, then builds the acceptance, which the signing key signs and sends to the lock.
+Every few seconds, `serve` asks Avow to authorize each open booking, with a request its signing key signs. Avow answers once the agent has funded the reserve, with its authorization, its approval and the buyer's mandate. The verifier checks the authorization and the mandate against your terms and the lock before the adapter holds capacity. It checks the approval against the same terms before it builds the acceptance, which the signing key signs and sends to the lock.
 
 | Status | Means |
 | --- | --- |
@@ -161,7 +161,7 @@ Every few seconds, `serve` asks Avow to authorize each open booking, with a requ
 | `held` | Avow authorized the funded reserve and the verifier passed it, so the capacity is held and not yet granted |
 | `accepting` | The acceptance is on its way to the lock |
 | `accepted` | The lock holds the acceptance, so the capacity is granted |
-| `lapsed` | No reserve came before the acceptance deadline, and Avow returns any reserve |
+| `lapsed` | The acceptance deadline passed before the lock took the acceptance, and Avow returns any reserve |
 
 Until the acceptance lands, the reserve can still go back to the business, so the adapter grants nothing before the acceptance's receipt or the lock shows the lock took it. It records each acceptance's transaction hash before the bytes go out, and reads the lock after a restart, so a booking is accepted once whatever happened in between. Before it signs, the adapter logs the verifier's disclosure in full.
 
@@ -174,7 +174,7 @@ Set `WEBHOOK_URL` and `WEBHOOK_SECRET`, and the adapter posts one event each tim
 | `booking.agreed` | The adapter signed an agent's agreement, and the agent is funding its reserve | Mark the capacity as spoken for |
 | `reserve.held` | Avow authorized the funded reserve and the verifier passed it | Hold the capacity |
 | `reserve.accepted` | The lock took the adapter's acceptance | Grant the capacity |
-| `booking.lapsed` | No reserve came before the acceptance deadline | Free the capacity |
+| `booking.lapsed` | The acceptance deadline passed before the lock took the acceptance | Free the capacity |
 
 The webhook says nothing after `reserve.accepted`. A business can still cancel before free cancellation ends and take its reserve back, and the [local check](#the-local-check) is how your system hears of that.
 
@@ -194,7 +194,7 @@ Each post is a JSON body like this, with money in dollars and times in UTC.
     "buyerBusinessId": "…",
     "supplierBusinessId": "…",
     "reserveDollars": "500",
-    "agreementExpiresAt": "2027-01-04T09:05:00.000Z",
+    "agreementExpiresAt": "2027-01-04T08:59:30.000Z",
     "acceptanceTransaction": "0x…",
     "terms": { "…": "the terms both sides signed" }
   }
@@ -212,9 +212,9 @@ Each post is a JSON body like this, with money in dollars and times in UTC.
 | `data.buyerBusinessId` | The business that booked |
 | `data.supplierBusinessId` | Your business id |
 | `data.reserveDollars` | The reserve the business funds, the most you can charge on this booking |
-| `data.agreementExpiresAt` | When the agreement lapses if no reserve arrives |
+| `data.agreementExpiresAt` | When the signed agreement offer stops being valid. A booking lapses at a separate time, its terms' acceptance deadline, `terms.remedies.acceptBy` |
 | `data.acceptanceTransaction` | The acceptance's transaction on the lock in `reserve.accepted`, and `null` in every other event |
-| `data.terms` | The terms both sides signed, as the spec writes them. [Version 3 terms](/docs/reference/terms-v3) describes their sections |
+| `data.terms` | The terms both sides signed, as the spec writes them. [Version 3 terms](/docs/composable-commitments/terms-v3) describes their sections |
 
 ### Checking the signature
 
@@ -242,7 +242,7 @@ Answer with any 2xx status once you've stored the event. Anything else, a redire
 - **Never in the way.** The webhook runs on its own loop, so a slow or unreachable receiver never holds up an acceptance.
 - **Latest status wins.** An event can be skipped when the adapter stopped between two statuses, so act on the latest status you've seen for a commitment.
 
-The outbox lives in `outbox` in the state directory, with an event in `pending`, `delivered` or `failed`, so a restart loses none. Each start adds any event the outbox is missing, for every open booking and for finished ones agreed after you first turned the webhook on, so turning it on later doesn't replay bookings that ended before.
+The outbox lives in `outbox` in the state directory, with an event in `pending`, `delivered` or `failed`, so a restart loses none. Each start adds any event the outbox is missing, for every open booking and for finished ones whose agreement expires after you first turned the webhook on, so turning it on later doesn't replay bookings that ended before.
 
 ## The local check
 
@@ -271,18 +271,23 @@ curl http://127.0.0.1:8791/commitments/0x4f1c…
 
 | Field | What it holds |
 | --- | --- |
+| `commitmentId` | The commitment you asked about |
 | `status` | Where the adapter has the booking, one of the five statuses above |
 | `grant` | True only when the adapter accepted the booking, the lock reads `accepted` now and the commitment pays your payout address |
 | `onChain` | What the lock holds, or `null` until a reserve reaches it |
 | `onChain.state` | The lock's state, such as `reserved`, `accepted`, `charge_pending`, `paused`, `released`, `charged` or `resolved` |
+| `onChain.reserveDollars` | The reserve the business funded |
 | `onChain.heldDollars` | What the lock still holds, less anything already returned or paid |
 | `onChain.paysYou` | Whether a charge on this commitment pays your account |
+| `onChain.freeCancellationEndsAt` | When the business can no longer cancel at no charge |
+| `onChain.releaseDate` | When the lock gives back what it still holds |
+| `terms` | The terms both sides signed, as the spec writes them |
 
-The local port also answers `GET /health`. A commitment the adapter never signed answers 404. It listens on `127.0.0.1` unless you set `LOCAL_HOST`, and it refuses with 403 any request whose `Host` header names another host, so a web page can't reach it through a name it controls. The answer shows your bookings' terms and buyers, so another address in `LOCAL_HOST` makes the adapter warn you, and that port belongs behind your firewall.
+The local port also answers `GET /health`. A commitment the adapter never signed answers 404. It listens on `127.0.0.1` unless you set `LOCAL_HOST`, and it refuses with 403 any request whose `Host` header names another host, so a web page can't reach it through a name it controls. The answer shows your bookings' terms and buyers, so another address in `LOCAL_HOST` makes the adapter warn you, and that port belongs behind your firewall. `0.0.0.0` or `::` listens on every address but still answers only requests made to `localhost`, `127.0.0.1` or `[::1]`, so a request to the machine's own address gets a 403. When other machines need the check, set `LOCAL_HOST` to that one address and call the check at it.
 
 ### What `grant` proves
 
-A true `grant` proves that at the moment you asked, the buyer's lock held this commitment as accepted, for your account, with the reserve it shows. The lock is the record, so the check reads the lock every time and trusts neither the adapter's files nor the webhook for it.
+A true `grant` proves that at the moment you asked, the buyer's lock held this commitment as accepted, for your account, with the reserve it shows. The lock is the record, and the check reads the lock every time, so neither the adapter's files nor the webhook alone can make `grant` true.
 
 The reserve backs what the buyer owes you if it cancels late or isn't there when the window starts, up to the charges the terms name. It doesn't pay for the GPU hours. Usage is billed and paid like any other purchase, and the reserve never secures it. A charge also pays only after you report it and Avow confirms it, once the business's contest window closes with no contest, or when a ruling decides for you.
 
@@ -309,12 +314,12 @@ This runs a test supplier and a test buyer on one machine against Avow's hosted 
 
 ### 1. Make both businesses
 
-From the repository's root, build everything and make the supplier's keys and the buyer's keys and lock. Take `AVOW_FACTORY` from the testnet's `config.json`.
+From the repository's root, build everything and make the supplier's keys and the buyer's keys and lock. `AVOW_FACTORY` comes from the testnet's `config.json`, read here with `curl` and `jq`. Any factory in the SDK's `MODERATO_FACTORIES` counts, so a lock made from an earlier one still books.
 
 ```bash
 pnpm install
 pnpm build
-export AVOW_FACTORY=<factory from config.json>
+export AVOW_FACTORY=$(curl -s https://try.testnet.avow.finance/config.json | jq -r .factory)
 (cd packages/supplier && node dist/main.js init)
 (cd examples/buyer && node dist/main.js init)
 ```
@@ -326,11 +331,12 @@ Send the supplier's three addresses and the buyer's account and lock to the pers
 Put the settings in `avow-settings.sh` at the repository's root, and keep it out of version control.
 
 ```bash
-export AVOW_FACTORY=<factory from config.json>
-export AVOW_API_URL=https://api.testnet.avow.finance
-export AVOW_TOKEN=<token from config.json>
-export AVOW_APPROVAL_KEYS=<approvalKey from config.json>
-export AVOW_ARBITER=<arbiter from config.json>
+CONFIG=$(curl -s https://try.testnet.avow.finance/config.json)
+export AVOW_FACTORY=$(echo "$CONFIG" | jq -r .factory)
+export AVOW_API_URL=$(echo "$CONFIG" | jq -r .apiUrl)
+export AVOW_TOKEN=$(echo "$CONFIG" | jq -r .token)
+export AVOW_APPROVAL_KEYS=$(echo "$CONFIG" | jq -r .approvalKey)
+export AVOW_ARBITER=$(echo "$CONFIG" | jq -r .arbiter)
 export SUPPLIER_BUSINESS_ID=<the supplier's id from Avow>
 export BUYER_BUSINESS_ID=<the buyer's id from Avow>
 export SUPPLIER_URL=http://localhost:8790
@@ -484,5 +490,5 @@ Run `init` on your own machine, then give the host only what `serve` needs. `ser
 | `The booking <id> is <status>, and only an accepted one takes a report` | The booking isn't accepted | Only accepted bookings take a charge |
 | `The verifier built no report for <id>: … (report.too_early)` | The terms don't let that charge be reported yet | Wait until free cancellation has ended for a late cancellation, or the grace period has passed for a no-show |
 | `The report sent in <hash> may still land. Run report again in a minute.` | A report went out and hasn't settled | Run `report` again in a minute |
-| A local check answers 403 | The request named a host the check doesn't serve | Call it at `127.0.0.1`, `localhost` or the address in `LOCAL_HOST` |
+| A local check answers 403 | The request named a host the check doesn't serve | Call it at `127.0.0.1`, `localhost` or the address in `LOCAL_HOST`. With `LOCAL_HOST` set to `0.0.0.0` or `::`, only the loopback names work, so set the one address other machines call |
 | A local check answers 404 | The adapter never signed that commitment, or the path isn't `/commitments/<id>` | Check the commitment id and the state directory |

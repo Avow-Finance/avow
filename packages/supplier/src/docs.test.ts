@@ -3,21 +3,28 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { checkCommitment, localHostnames } from './local.js'
+import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 import type { Booking } from './store.js'
-import { agreedBooking, tempStore } from './test/fixtures.js'
+import {
+  agreedBooking,
+  COMMITMENT,
+  LOCK,
+  reservedChain,
+  supplierAccount,
+  tempStore,
+} from './test/fixtures.js'
 import { bookingEvent, Outbox, WEBHOOK_EVENTS, webhookSender } from './webhook.js'
 
 // The reference page has to name the adapter as it is, so these tests read it and compare what it
-// shows with the built command, the webhook and the settings.
+// shows with the built command, the webhook, the local check and the settings.
 
 const PAGE = readFileSync(
   join(import.meta.dirname, '../../../fern/docs/pages/supplier-adapter.mdx'),
   'utf8',
 )
 const MAIN = join(import.meta.dirname, '..', 'dist', 'main.js')
-const SETTINGS_SOURCE = readFileSync(join(import.meta.dirname, 'settings.ts'), 'utf8')
-
 /** The page's text from a heading to the next heading of the same level or higher. */
 function section(heading: string): string {
   const level = /^#+/.exec(heading)?.[0].length ?? 2
@@ -191,12 +198,60 @@ describe('the supplier adapter reference', () => {
   })
 
   it('lists every setting the adapter reads, and none it lacks', () => {
-    const read = new Set(
-      [...SETTINGS_SOURCE.matchAll(/env\.([A-Z][A-Z_]+)|address\(env, '([A-Z][A-Z_]+)'/g)].map(
-        (m) => (m[1] ?? m[2]) as string,
-      ),
-    )
+    // Every command reads its settings through one of these, so an environment that records each
+    // name asked of it learns every setting the adapter reads.
+    const read = new Set<string>()
+    const env = new Proxy({} as Record<string, string | undefined>, {
+      get: (_target, name) => {
+        if (typeof name === 'string') read.add(name)
+        return undefined
+      },
+    })
+    for (const settings of [serveSettings, reportSettings, baseSettings, envKeys]) {
+      try {
+        settings(env)
+      } catch {
+        // An empty environment leaves the required settings missing, and they've been read by then.
+      }
+    }
     const listed = firstCells(section('## Settings'), /^[A-Z][A-Z_]+$/)
     expect(new Set(listed)).toEqual(read)
+  })
+
+  it("shows the local check's answer and fields as the adapter writes them", async () => {
+    const { store, remove } = tempStore()
+    try {
+      store.put({ ...agreedBooking(), status: 'accepted' })
+      const chain = reservedChain()
+      const held = await chain.backing(LOCK, COMMITMENT, 'buyer')
+      chain.setBacking(LOCK, COMMITMENT, 'buyer', held && { ...held, state: 'accepted' })
+      const check = await checkCommitment(
+        {
+          store,
+          chain,
+          payee: supplierAccount.address,
+          decimals: 6,
+          hostnames: localHostnames('127.0.0.1'),
+          log: () => {},
+        },
+        COMMITMENT,
+      )
+      expect(check?.grant).toBe(true)
+      const onChain = Object.keys(check?.onChain ?? {})
+      expect(onChain.length).toBeGreaterThan(0)
+      const local = section('## The local check').split('\n### ')[0] ?? ''
+      const sample = [...local.matchAll(/```json\n([\s\S]*?)```/g)].map((m) =>
+        JSON.parse(m[1] as string),
+      )
+      expect(sample).toHaveLength(1)
+      expect(Object.keys(sample[0]).sort()).toEqual(Object.keys(check ?? {}).sort())
+      expect(Object.keys(sample[0].onChain).sort()).toEqual([...onChain].sort())
+      const fields = firstCells(local, /^[a-zA-Z.]+$/)
+      expect(new Set(fields)).toEqual(
+        new Set([...Object.keys(check ?? {}), ...onChain.map((k) => `onChain.${k}`)]),
+      )
+    } finally {
+      remove()
+    }
   })
 })
