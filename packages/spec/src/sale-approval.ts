@@ -1,8 +1,10 @@
 import type { Address } from 'viem'
 import { z } from 'zod'
+import { canonicalJson } from './canonical.js'
 import { BUSINESS_ID, isCount, LOWER_ADDRESS } from './fields.js'
 import { address } from './json-fields.js'
 import {
+  offerVersionFields,
   offerVersionId,
   SERVICE_NAME_MAX,
   SERVICE_TEXT_MAX,
@@ -60,6 +62,8 @@ function isSaleContent(v: unknown): v is SaleContent {
   if (typeof signingKey !== 'string' || !LOWER_ADDRESS.test(signingKey)) return false
   if (typeof buyer !== 'string' || !BUSINESS_ID.test(buyer)) return false
   if (serviceOfferProblem(offer) !== null) return false
+  // The offer holds its own fields and nothing else, so what a person reads is all there is.
+  if (canonicalJson(offer) !== canonicalJson(offerVersionFields(offer))) return false
   // A business is named by its id, and no business approves a sale to itself.
   if (!BUSINESS_ID.test(offer.supplier) || offer.supplier === buyer) return false
   // The seller's agent wrote these, and a person reads them on the card they sign.
@@ -80,7 +84,8 @@ const readOnce = (v: unknown): unknown => structuredClone(v)
 
 /**
  * Checks a sale's content on its own, and gives `message.invalid` for one that isn't well formed.
- * It never throws. The offer version passes `serviceOfferProblem`, its supplier and the buyer are
+ * It never throws. The offer version passes `serviceOfferProblem` and holds nothing but its own
+ * fields, its supplier and the buyer are
  * named by their ids and differ, the units are from one to the most the version takes in a
  * booking, and the item's name, its summary and what counts as delivery are plain text. An offer
  * whose words aren't plain can be listed and sold, and can't be put to a person this way.

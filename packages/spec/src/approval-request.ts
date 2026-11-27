@@ -114,9 +114,10 @@ export const APPROVAL_DECLINE_COOLDOWN = DAY
 /**
  * Why an agent asked, from a fixed list, each with the words Avow shows for it. An agent gives no
  * text of its own, so a request can't carry instructions to whoever reads it. The one thing an
- * agent names is what it would sell, in an ask for a seller's mandate or for one sale. Those names
- * read on one line with no hidden mark in them, and a card shows each in quotes under a label of
- * its own.
+ * agent writes is what it would sell: its names in an ask for a seller's mandate, and its name, its
+ * summary and what counts as delivery in an ask for one sale. Each reads on one line with no hidden
+ * mark in it, and a card shows each in quotes under a label of its own. They are still an agent's
+ * words, and the quotes are what tell a person so.
  */
 export const APPROVAL_REASONS = {
   new_agent: {
@@ -174,14 +175,14 @@ const label = z
   .max(60)
   .regex(/^[^\p{Cc}]+$/u, 'printable characters only')
 
+/** The hash of a seller's mandate, which is never the zero hash, since no mandate has it. */
+const mandateHashJson = bytes32.refine((h) => h !== zeroHash, 'a mandate hash')
+
 /**
  * Each kind's terms, as the agent asks for them, and the state Avow read when the request arrived,
  * which the request is checked against again when it executes. Agent authority's limits are the
  * ones the administrator sets when approving, so its terms are the agent's name and keys.
  */
-/** The hash of a seller's mandate, which is never the zero hash, since no mandate has it. */
-const mandateHashJson = bytes32.refine((h) => h !== zeroHash, 'a mandate hash')
-
 const KIND_FIELDS = {
   agent_authority: {
     terms: z.strictObject({ label, signingKey: address.nullable() }),
@@ -434,8 +435,15 @@ export const approvalRequestJson = z.discriminatedUnion('kind', [
       (r) => r.terms.offer.supplier === r.businessId,
       'a business is asked to approve a sale of its own offer',
     )
-    // An approved sale is made by the buyer's order, with no change of its own to land.
-    .refine((r) => r.status.state !== 'executing', 'a sale has no change on its way'),
+    // An approved sale is made by the buyer's order. It has no change of its own to land, so it's
+    // never on its way, never fails to land, and no transaction carried it.
+    .refine(
+      ({ status: s }) =>
+        s.state !== 'executing' &&
+        s.state !== 'failed' &&
+        (s.state !== 'active' || s.transaction === null),
+      'a sale has no change to land',
+    ),
 ])
 export type ApprovalRequest = z.infer<typeof approvalRequestJson>
 
@@ -622,7 +630,9 @@ export function carriesOutSellerRequest(request: ApprovalRequest, mandate: Selle
  * approved and within `SALE_APPROVAL_LASTS` of its approval, it was asked against the seller's
  * mandate the sale is made under, and the sale is exactly the one approved, by the same signing
  * key. Whoever records the sale marks the request used by that sale in the same step, since a
- * request doesn't say which sale used it.
+ * request doesn't say which sale used it. Once the sale was made the request is active and covers
+ * nothing, so a later check of that same sale goes by the record keeper's note of which sale used
+ * the approval.
  */
 export function saleRequestCovers(
   request: ApprovalRequest,

@@ -4,6 +4,7 @@ import { Account } from 'viem/tempo'
 import { describe, expect, it } from 'vitest'
 import {
   askForChange,
+  type ChangeRow,
   changeWords,
   hasSettled,
   isUsable,
@@ -12,6 +13,10 @@ import {
   readOwnRequest,
   supplierAsk,
 } from './requests.js'
+
+/** A row's new value and its value now, for a row that sets one beside the other. */
+const afterOf = (r: ChangeRow) => ('after' in r ? r.after : null)
+const beforeOf = (r: ChangeRow) => ('before' in r ? r.before : null)
 
 const current = { capPerCommitment: 250_000_000n, capOpenReserves: 1_000_000_000n } as Mandate
 const ID = 'ab'.repeat(16)
@@ -169,10 +174,12 @@ describe("a request's words", () => {
     } as const
     const words = changeWords(sale)
     expect(words.title).toBe('Approve one sale')
-    expect(words.rows.map((r) => [r.label, r.after])).toEqual([
-      ['Approves', 'This one sale, once, within a day. No limit changes.'],
+    // Nothing stood before, so each row states one fact and none sets a value beside another.
+    expect(words.rows.map((r) => ('value' in r ? [r.label, r.value] : r))).toEqual([
+      ['Approves', 'This one sale, once, within 1 day. No limit changes.'],
       ['Sold by the key', `0x${'5e'.repeat(20)}`],
       ['Buyer', 'sandbox-ab12'],
+      ['Sold by', 'biz_supplier'],
       ['Sells', '4 of the service "Total"'],
       ['Described as', '"One fine-tuning run on the dataset sent"'],
       ['Price for each', '$100 USD'],
@@ -184,8 +191,12 @@ describe("a request's words", () => {
       ['No-show charge', '50%'],
       ['Paid', 'By transfer, within 7 days of delivery'],
     ])
-    // Nothing stood before, so no row has a value to set beside the one asked for.
-    expect(words.rows.every((r) => r.before === null)).toBe(true)
+    const due = { ...sale.terms.offer.rules, payment: { route: 'transfer', dueAfterDelivery: 0n } }
+    const atDelivery = changeWords({
+      ...sale,
+      terms: { ...sale.terms, offer: { ...sale.terms.offer, rules: due } },
+    } as never)
+    expect(atDelivery.rows.at(-1)).toEqual({ label: 'Paid', value: 'By transfer, at delivery' })
     // A sale can be made while its request is approved. A change waits until it's active.
     const at = base.requestedAt
     expect(isUsable({ ...sale, status: { state: 'approved', at } })).toBe(true)
@@ -242,7 +253,7 @@ describe("a request's words", () => {
     } as const
     const words = changeWords(asked)
     expect(words.title).toBe('Let the agent sell')
-    expect(words.rows.map((r) => [r.label, r.after])).toEqual([
+    expect(words.rows.map((r) => [r.label, afterOf(r)])).toEqual([
       ['Signing key', `0x${'5e'.repeat(20)}`],
       // An agent names what it sells, so each name shows in quotes after a label the card wrote.
       ['The job "fine-tuning"', 'From $100 a job, up to 3 a day'],
@@ -263,21 +274,21 @@ describe("a request's words", () => {
       ['A person decides', 'Sales over $300'],
       ['Ends', '2027-02-14T08:00:00.000Z'],
     ])
-    expect(new Set(words.rows.map((r) => r.before))).toEqual(new Set(['Not set']))
+    expect(new Set(words.rows.map(beforeOf))).toEqual(new Set(['Not set']))
     const replacing = changeWords({
       ...asked,
       reason: 'seller_limits',
       basis: { sellerMandate: `0x${'33'.repeat(32)}` },
     })
     expect(replacing.title).toBe('Change what the agent may sell')
-    expect(replacing.rows[0]?.before).toBe('Set by the mandate this replaces')
+    expect(replacing.rows.map(beforeOf)[0]).toBe('Set by the mandate this replaces')
 
     // Every other way the terms can read, with amounts written exactly however large they are.
     const after = (change: object) =>
       Object.fromEntries(
         changeWords({ ...asked, terms: { ...terms, ...change } }).rows.map((r) => [
           r.label,
-          r.after,
+          afterOf(r),
         ]),
       )
     const big = 10n ** 22n + 1n

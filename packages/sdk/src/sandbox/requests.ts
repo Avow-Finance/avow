@@ -61,12 +61,13 @@ export function openModeAsk(cap: bigint): ApprovalAsk {
 }
 
 /** One value a request changes, as it stands now beside what the request asks for. */
-export interface ChangeRow {
-  label: string
-  /** How the value stands now, or null where the request changes nothing that stood before. */
-  before: string | null
-  after: string
-}
+/**
+ * One row a request's card shows. A change sets a value that stands now beside the one asked for.
+ * A request that changes nothing that stood before, such as one sale, states each fact once.
+ */
+export type ChangeRow =
+  | { label: string; before: string; after: string }
+  | { label: string; value: string }
 
 /** What a request asks for, in words any card or page can show the same way. */
 export interface ChangeWords {
@@ -121,11 +122,7 @@ export function changeWords(request: ApprovalRequest): ChangeWords {
       // One sale, good once. It changes no limit, and every limit of the mandate still holds it.
       return {
         title: 'Approve one sale',
-        rows: saleWords(request.terms).map(({ label, value }) => ({
-          label,
-          before: null,
-          after: value,
-        })),
+        rows: saleWords(request.terms),
       }
     case 'seller_mandate': {
       const first = request.basis.sellerMandate === null

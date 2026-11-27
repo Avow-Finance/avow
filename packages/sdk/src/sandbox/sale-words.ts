@@ -1,23 +1,11 @@
-import { formatUsd, type SaleContent, salePrice } from '@avow-finance/spec'
+import { formatUsd, SALE_APPROVAL_LASTS, type SaleContent, salePrice } from '@avow-finance/spec'
+import { duration, percent, span } from './words.js'
 
 /** One fact of a sale a person is asked to approve, in words a card or page can show. */
 export interface SaleWords {
   label: string
   value: string
 }
-
-const count = (n: bigint, unit: string) => `${n} ${unit}${n === 1n ? '' : 's'}`
-
-/** A length of time in the largest unit that states it exactly. */
-function duration(seconds: bigint): string {
-  if (seconds === 0n) return 'None'
-  if (seconds % 86_400n === 0n) return count(seconds / 86_400n, 'day')
-  if (seconds % 3_600n === 0n) return count(seconds / 3_600n, 'hour')
-  if (seconds % 60n === 0n) return count(seconds / 60n, 'minute')
-  return count(seconds, 'second')
-}
-
-const percent = (bps: number) => `${bps / 100}%`
 
 type Offer = SaleContent['offer']
 
@@ -39,22 +27,24 @@ const RULE_WORDS: { [K in keyof Offer['rules']]: (o: Offer) => SaleWords | null 
     value: percent(o.rules.lateCancellationBps),
   }),
   noShowBps: (o) => ({ label: 'No-show charge', value: percent(o.rules.noShowBps) }),
-  payment: (o) => ({
-    label: 'Paid',
-    value: `By ${o.rules.payment.route}, within ${duration(o.rules.payment.dueAfterDelivery)} of delivery`,
-  }),
+  payment: (o) => {
+    const due = o.rules.payment.dueAfterDelivery
+    const when = due === 0n ? 'at delivery' : `within ${span(due)} of delivery`
+    return { label: 'Paid', value: `By ${o.rules.payment.route}, ${when}` }
+  },
 }
 
 /**
- * The words for each part of a sale, by the part's own name, with none left out. The seller's
- * agent wrote the item's name, its summary and what counts as delivery, so each shows in quotes
- * after words the card wrote. The first row says what a signature does, so nobody takes one sale
- * for a change to the agent's limits.
+ * The words for each part of a sale, by the part's own name. The seller's agent wrote the item's
+ * name, its summary and what counts as delivery, so each shows in quotes after words the card
+ * wrote. The most one booking takes and the offer's capacity for a day have no row, since neither
+ * changes what this sale is, and the version's id still binds them.
  */
 const SALE_WORDS: { [K in keyof SaleContent]: (s: SaleContent) => SaleWords[] } = {
   signingKey: (s) => [{ label: 'Sold by the key', value: s.signingKey }],
   buyer: (s) => [{ label: 'Buyer', value: s.buyer }],
   offer: (s) => [
+    { label: 'Sold by', value: s.offer.supplier },
     { label: 'Sells', value: `${s.units} of the service "${s.offer.item.name}"` },
     { label: 'Described as', value: `"${s.offer.item.summary}"` },
     { label: 'Price for each', value: `${formatUsd(s.offer.unitPrice)} ${s.offer.currency}` },
@@ -64,8 +54,11 @@ const SALE_WORDS: { [K in keyof SaleContent]: (s: SaleContent) => SaleWords[] } 
   units: () => [],
 }
 
-/** What approving one sale does, which is the same for every sale. */
-export const SALE_APPROVAL_WORDS = 'This one sale, once, within a day. No limit changes.'
+/**
+ * What approving one sale does, which is the same for every sale. It leads the card, so nobody
+ * takes one sale for a change to the agent's limits.
+ */
+export const SALE_APPROVAL_WORDS = `This one sale, once, within ${span(SALE_APPROVAL_LASTS)}. No limit changes.`
 
 /** Every part of a sale a person is asked to approve, in words. */
 export function saleWords(s: SaleContent): SaleWords[] {

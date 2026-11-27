@@ -15,7 +15,7 @@ import {
 } from './seller-mandate.js'
 import {
   BUSINESS_ID_MAX,
-  offerVersionId,
+  offerVersionFields,
   SERVICE,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_CATEGORY,
@@ -379,12 +379,13 @@ export function saleContentOf(
     if (!('template' in terms) || terms.template !== SERVICE) return null
     const facts = saleFacts(terms)
     if (!facts || !serviceTermsMatchOffer(terms, offer)) return null
-    const content: SaleContent = {
+    // A plain copy, read once, so what's returned is what was checked.
+    const content: SaleContent = structuredClone({
       signingKey: sale.signingKey.toLowerCase() as Address,
       buyer: sale.buyer,
-      offer,
+      offer: offerVersionFields(offer),
       units: facts.units,
-    }
+    })
     return saleContentProblem(content) === null ? content : null
   } catch {
     return null

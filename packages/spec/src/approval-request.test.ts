@@ -470,9 +470,11 @@ describe('a request to approve one sale', () => {
     expect(reads({ terms: { ...content, offer: named } })).toBe(false)
     // A business is asked about its own offer, and a sale has no change of its own to land.
     expect(reads({ businessId: 'biz_other' })).toBe(false)
-    expect(reads({ status: { state: 'executing', at: APPROVED_AT, transaction: null } })).toBe(
-      false,
-    )
+    const stands = (status: object) => reads({ status: { at: APPROVED_AT, ...status } })
+    expect(stands({ state: 'executing', transaction: null })).toBe(false)
+    expect(stands({ state: 'failed', reason: 'message.invalid' })).toBe(false)
+    expect(stands({ state: 'active', transaction: MANDATE })).toBe(false)
+    expect(stands({ state: 'active', transaction: null })).toBe(true)
   })
 
   it('waits a day for a decision, and once approved can be made for a day', () => {

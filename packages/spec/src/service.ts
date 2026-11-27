@@ -375,8 +375,21 @@ const OFFER_VERSION_LABEL = 'avow:offer:service/1'
 export function offerVersionId(version: ServiceOfferVersion): Hex {
   const problem = serviceOfferProblem(version)
   if (problem) throw new RangeError(problem)
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: 'string' }, { type: 'string' }],
+      [OFFER_VERSION_LABEL, canonicalJson(offerVersionFields(version))],
+    ),
+  )
+}
+
+/**
+ * An offer version with exactly its own fields, read from one that may hold more. The id is over
+ * these and nothing else, so anything else a value carries is no part of the version.
+ */
+export function offerVersionFields(version: ServiceOfferVersion): ServiceOfferVersion {
   const { supplier, item, currency, unitPrice, rules: r } = version
-  const hashed: ServiceOfferVersion = {
+  return {
     supplier,
     item: { name: item.name, summary: item.summary },
     currency,
@@ -392,12 +405,6 @@ export function offerVersionId(version: ServiceOfferVersion): Hex {
       payment: { route: r.payment.route, dueAfterDelivery: r.payment.dueAfterDelivery },
     },
   }
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: 'string' }, { type: 'string' }],
-      [OFFER_VERSION_LABEL, canonicalJson(hashed)],
-    ),
-  )
 }
 
 /** What booking a number of units of an offer version costs, in micros. */

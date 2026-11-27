@@ -73,7 +73,7 @@ It refuses in this order.
 | `seller_mandate.invalid` | The mandate isn't well formed |
 | `seller_mandate.expired`, `seller_mandate.revoked` | The mandate has ended, or the caller says the administrator revoked it |
 | `seller_mandate.key_mismatch` | Another key signed the sale |
-| `message.invalid` | The buyer, the ledger or the terms profile is malformed |
+| `message.invalid` | The buyer, the ledger or the terms profile is malformed, or the approved sale handed in is no well-formed sale |
 | `counterparty.not_eligible` | The buyer fails the counterparty rules |
 | A `terms.*` or `dependency.*` reason | The terms aren't sound on their own, by the rules a buyer's mandate check holds them to |
 | `seller_mandate.template_not_covered` | The terms are neither a service's nor a job's |

@@ -72,7 +72,7 @@ A request for a sale has no change to land, so it works differently from the oth
 Three things can't be put to a person this way yet.
 
 - **A job.** It has no offer version, so nothing a person could approve would hold its compute, its start and its charges. A job a person has to decide stays with the person.
-- **An offer whose words aren't plain.** The item's name, its summary and what counts as delivery are the seller's agent's own words, and the card shows each in quotes. Text with a line break, a mark that turns text around or hides it, a space at an end or a double quote can be listed and sold, and can't be approved here.
+- **An offer whose words aren't plain.** The item's name, its summary and what counts as delivery are the seller's agent's own words, and the card shows each in quotes. Text with a line break, a mark that turns text around or hides it, a space at an end or anything that reads as a double quote can be listed and sold, and can't be approved here. The quotes keep the agent's words apart from the card's, and a person still reads what those words say.
 - **A buyer whose id isn't a plain id,** of letters, digits, hyphens and underscores.
 
 The limits on asking, below, are written for changes to authority. How often an agent may ask for a sale isn't set yet, and a business's policy on changes doesn't list this kind.
@@ -105,7 +105,7 @@ Avow checks the signature first, then checks the basis again under a lock on the
 | `active` | Its change landed, and the agent can use it |
 | `failed` | Its change didn't land, with the reason |
 | `declined` | The root key declined it |
-| `expired` | It lapsed before anyone decided it, or its change didn't start within an hour of approval, in which case it carries `approvedAt` |
+| `expired` | It lapsed before anyone decided it, or it was approved and its time ran out, in which case it carries `approvedAt`. A change has an hour from approval to start, and one sale has a day to be made |
 | `stale` | What it would change changed first, so it never applies |
 
 An agent treats what it asked for as usable only once its request is `active`. A request for one sale is the exception, as its section says. Applying a change is idempotent, so a retry never applies it twice.

@@ -1,23 +1,11 @@
 import { formatUsd, type SellerMandateTerms, type SellingLimit } from '@avow-finance/spec'
+import { duration, percent } from './words.js'
 
 /** One limit of a seller's mandate, in words a card or page can show. */
 export interface SellerLimitWords {
   label: string
   value: string
 }
-
-const count = (n: bigint, unit: string) => `${n} ${unit}${n === 1n ? '' : 's'}`
-
-/** A length of time in the largest unit that states it exactly. */
-function duration(seconds: bigint): string {
-  if (seconds === 0n) return 'None'
-  if (seconds % 86_400n === 0n) return count(seconds / 86_400n, 'day')
-  if (seconds % 3_600n === 0n) return count(seconds / 3_600n, 'hour')
-  if (seconds % 60n === 0n) return count(seconds / 60n, 'minute')
-  return count(seconds, 'second')
-}
-
-const percent = (bps: number) => `${bps / 100}%`
 
 /**
  * One line of limits. An agent writes an item's name, so the name shows in quotes after a label the

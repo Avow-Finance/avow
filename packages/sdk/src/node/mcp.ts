@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import {
+  type ApprovalRequest,
   describeReason,
   formatUsd,
   isApprovalRequestId,
@@ -931,6 +932,8 @@ export function mcpAgent(
   function requestSentence(asked: AskedChange): string {
     const { request, link } = asked
     const s = request.status
+    // One sale changes no limit, so none of the words about a change landing fit it.
+    if (request.kind === 'sale') return saleSentence(request.status.state, link)
     switch (s.state) {
       case 'waiting':
         return `It waits for your business's administrator until ${new Date(Number(request.expiresAt) * 1000).toISOString()}. Send your person this link to decide it with their passkey: ${link}. Keep within your current limits until it's active.`
@@ -948,6 +951,27 @@ export function mcpAgent(
         return "Your agent's limits changed since it asked, so it can never apply. Check authority and ask again if you still need to."
       case 'failed':
         return `The change didn't land, so nothing changed. ${describeReason(s.reason)}.`
+    }
+  }
+
+  /** Where a request to approve one sale stands. It can be made while approved, once. */
+  function saleSentence(state: ApprovalRequest['status']['state'], link: string): string {
+    switch (state) {
+      case 'waiting':
+        return `It waits for your business's administrator. Send your person this link to decide it with their passkey: ${link}. Don't make the sale until it's approved.`
+      case 'approved':
+        return 'Your administrator approved this one sale. It can be made once, within a day of the approval, and no limit changed.'
+      case 'active':
+        return 'This sale was made on its approval, which is now used up.'
+      case 'declined':
+        return 'Your business declined this sale.'
+      case 'expired':
+        return 'It lapsed, so this sale needs asking for again.'
+      case 'stale':
+        return "The seller's mandate changed since it was asked, so this approval can never be used."
+      case 'executing':
+      case 'failed':
+        throw new RangeError('a request for one sale has no change to land')
     }
   }
 
@@ -993,7 +1017,7 @@ export function mcpAgent(
     const made = await asked(await open('authority'), args)
     const facts = requestFacts(made)
     const rows = facts.change.rows.map((r) =>
-      r.before === null ? `${r.label} ${r.after}` : `${r.label} from ${r.before} to ${r.after}`,
+      'value' in r ? `${r.label} ${r.value}` : `${r.label} from ${r.before} to ${r.after}`,
     )
     return {
       text: `Asked your business to ${facts.change.title.toLowerCase()}${rows.length ? `: ${rows.join(', ')}` : ''}, request ${made.request.id}. ${facts.sentence}`,

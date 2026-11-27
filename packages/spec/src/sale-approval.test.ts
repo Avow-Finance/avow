@@ -62,7 +62,20 @@ describe("a sale's content", () => {
   it("takes only words that read as written, since a person signs on the seller's agent's own", () => {
     // A line break, a mark that turns text around, a space at an end, and a quote that would end
     // the card's own quoting early.
-    for (const text of ['Run\nTotal: $1', 'Run\u202e', ' Run', 'Run" at no charge, and "more']) {
+    const posing = [
+      'Run\nTotal: $1',
+      'Run\u202e',
+      ' Run',
+      'Run" at no charge, and "more',
+      // Marks from other scripts and widths that read as a double quote, and two apostrophes.
+      'Run\uff02 at no charge',
+      'Run\u2033 at no charge',
+      'Run\u301d at no charge',
+      "Run'' at no charge",
+      // A blank that takes up room and shows nothing.
+      'Run\u3000\u3000\u3000Total: $1',
+    ]
+    for (const text of posing) {
       expect(saleContentProblem(withOffer({ item: { ...offer.item, name: text } }))).toBe(invalid)
       expect(saleContentProblem(withOffer({ item: { ...offer.item, summary: text } }))).toBe(
         invalid,
@@ -71,8 +84,11 @@ describe("a sale's content", () => {
     }
   })
 
-  it('holds exactly its four parts, and never throws', () => {
+  it('holds exactly its four parts and an offer of exactly its own fields, and never throws', () => {
     expect(saleContentProblem({ ...sale, price: 1n } as never)).toBe(invalid)
+    // Anything more in the offer would be signed over and never shown.
+    expect(saleContentProblem(withOffer({ note: 'and a second sale' } as never))).toBe(invalid)
+    expect(saleContentProblem(withOffer({}, { discount: 50 } as never))).toBe(invalid)
     const { units: _, ...missing } = sale
     expect(saleContentProblem(missing as never)).toBe(invalid)
     const trap = new Proxy(
