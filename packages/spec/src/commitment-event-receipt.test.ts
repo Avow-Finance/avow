@@ -32,12 +32,12 @@ const released = (commitmentId: Hex, logIndex: number, address = LOCK) =>
     logIndex,
     address,
   )
-const owed = (commitmentId: Hex, logIndex: number) =>
-  lockReceiptLog(
-    'PaymentOwed',
-    { commitmentId, side: 0, party: LOCK_PARTIES.business, amount: dollars(500) },
-    logIndex,
-  )
+const owed = (
+  commitmentId: Hex,
+  logIndex: number,
+  party: number = LOCK_PARTIES.business,
+  side = 0,
+) => lockReceiptLog('PaymentOwed', { commitmentId, side, party, amount: dollars(500) }, logIndex)
 const paused = (cause: number, logIndex: number) =>
   lockReceiptLog(
     'Paused',
@@ -130,9 +130,56 @@ describe("the events a lock's receipt states", () => {
     expect(lockReceiptEvents([supplierSide, nobody], place)).toEqual({ events: [], unread: [0, 1] })
   })
 
-  it('makes no event from a payment the lock owes, a log of another shape, or an empty receipt', () => {
+  it('makes no event from a log of another shape or an empty receipt', () => {
     const settings: ReceiptLog = { address: LOCK, logIndex: 1, topics: [h('51')], data: '0x' }
-    expect(lockReceiptEvents([owed(ONE, 0), settings], place)).toEqual({ events: [], unread: [] })
+    expect(lockReceiptEvents([settings], place)).toEqual({ events: [], unread: [] })
     expect(lockReceiptEvents([], place)).toEqual({ events: [], unread: [] })
+  })
+
+  it('marks a payment owed that no step accounts for, whose step then reads as paid', () => {
+    const cases: [string, ReceiptLog[]][] = [
+      ['alone', [owed(ONE, 0)]],
+      ['for another commitment', [owed(TWO, 0), released(ONE, 1)]],
+      ['for the other side', [owed(ONE, 0, LOCK_PARTIES.business, 1), released(ONE, 1)]],
+      ['for a party the lock has no word for', [owed(ONE, 0, 7), released(ONE, 1)]],
+      [
+        'for a party the step sends nothing to',
+        [owed(ONE, 0, LOCK_PARTIES.supplier), released(ONE, 1)],
+      ],
+    ]
+    for (const [what, logs] of cases) {
+      const { events, unread } = lockReceiptEvents(logs, place)
+      expect(unread, what).toEqual([0])
+      for (const e of events) {
+        expect(e.code === 'reserve.released' && e.returned, what).toEqual({
+          amount: dollars(500),
+          state: 'paid',
+        })
+      }
+    }
+    // The payment owed to the business for this release is the one it accounts for.
+    expect(lockReceiptEvents([owed(ONE, 0), released(ONE, 1)], place).unread).toEqual([])
+  })
+
+  it("marks a log with one of the lock's signatures that doesn't decode", () => {
+    const broken: ReceiptLog = { ...released(ONE, 0), data: '0x' }
+    expect(lockReceiptEvents([broken, released(ONE, 1)], place)).toMatchObject({ unread: [0] })
+  })
+
+  it('marks a release with a cause the spec has no word for, since the event keeps no number for it', () => {
+    const cause = lockReceiptLog(
+      'Released',
+      {
+        commitmentId: ONE,
+        side: 0,
+        termsHash,
+        cause: 9,
+        reason: 0,
+        evidenceHash: h('e6'),
+        returned: 0n,
+      },
+      0,
+    )
+    expect(lockReceiptEvents([cause], place)).toEqual({ events: [], unread: [0] })
   })
 })

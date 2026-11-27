@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import { type Address, type Hex, toEventSelector } from 'viem'
 import {
   type BlockEvent,
   type CommitmentEventCode,
@@ -10,6 +10,7 @@ import { contestReasonOf } from './contest.js'
 import { SIDE_CODES } from './eip712.js'
 import {
   chargeKindOf,
+  LOCK_LOG_ABI,
   LOCK_LOGS,
   type LockLog,
   type LockLogName,
@@ -23,6 +24,7 @@ import {
   releaseCauseOf,
   releaseReasonOf,
   sentStates,
+  stepOwed,
 } from './lock-log.js'
 
 /**
@@ -44,9 +46,12 @@ export interface LockReceiptEvents {
   /** An event for each of the lock's steps on a commitment, in the order of their logs. */
   events: BlockEvent[]
   /**
-   * The index of each log of the lock that reads as one of its commitment logs and still makes no
-   * event, such as a `Paused` log with a cause this package doesn't know, or a log for a side no
-   * lock reserves. A reader that meets one knows it holds a log it can't state, and says so.
+   * The index of each log of the lock that names one of its commitment logs and still makes no
+   * event, in the order of the receipt. That is a log of a commitment log's signature that doesn't
+   * decode, a step this package can't state, such as a `Paused` log with a cause it doesn't know or
+   * a log for a side no lock reserves, and a `PaymentOwed` that no step's event accounts for, whose
+   * step then reads as paid. A reader that meets one knows it holds a log it can't state, and says
+   * so.
    */
   unread: number[]
 }
@@ -86,7 +91,8 @@ const WORDS: Readonly<Record<string, (code: number) => string | null>> = {
  *
  * A block event names a log no reorganization drops, so the caller passes only a receipt from a
  * final block. Logs from other addresses, the lock's `PaymentOwed` logs, which a step folds in, and
- * logs that aren't the lock's commitment logs, such as a change to its settings, make no event.
+ * logs that aren't the lock's commitment logs, such as a change to its settings, make no event, and
+ * `unread` names each of the lock's commitment logs that no event accounts for.
  * The receipt's logs are read in the order of their indexes, whatever order they come in.
  */
 export function lockReceiptEvents(
@@ -97,29 +103,59 @@ export function lockReceiptEvents(
   const logs = [...receiptLogs].sort((a, b) => a.logIndex - b.logIndex)
   const events: BlockEvent[] = []
   const unread: number[] = []
+  const owed: number[] = []
+  const folded = new Set<number>()
   for (const log of logs) {
     if (log.address.toLowerCase() !== lock) continue
     const read = readLockLog(log)
-    if (!read || read.name === 'PaymentOwed') continue
-    const event = eventOf(logs, log, read, place)
-    if (event) events.push(event)
-    else unread.push(log.logIndex)
+    if (!read) {
+      // A log with a commitment log's signature that doesn't decode is the lock's, and unread.
+      if (LOCK_SELECTORS.has(String(log.topics[0]).toLowerCase())) unread.push(log.logIndex)
+      continue
+    }
+    if (read.name === 'PaymentOwed') {
+      owed.push(log.logIndex)
+      continue
+    }
+    const made = eventOf(logs, log, read, place)
+    if (!made) {
+      unread.push(log.logIndex)
+      continue
+    }
+    events.push(made.event)
+    for (const i of made.folds) folded.add(i)
   }
-  return { events, unread }
+  unread.push(...owed.filter((i) => !folded.has(i)))
+  return { events, unread: unread.sort((a, b) => a - b) }
 }
 
-/** The event one of the lock's logs states, or null when it states none this package can write. */
+/** The first topic of each of the lock's commitment logs. */
+const LOCK_SELECTORS = new Set<string>(
+  LOCK_LOG_ABI.filter((item) => item.type === 'event').map((e) => toEventSelector(e).toLowerCase()),
+)
+
+/**
+ * The event one of the lock's logs states, with the `PaymentOwed` logs it accounts for, which are
+ * those for a party it sends an amount to, or null when it states none this package can write.
+ */
 function eventOf(
   logs: readonly ReceiptLog[],
   log: ReceiptLog,
   read: LockLog,
   place: LockReceiptPlace,
-): BlockEvent | null {
+): { event: BlockEvent; folds: number[] } | null {
   const found = codeOf(read)
   const states = sentStates(logs, log.logIndex)
-  if (!found || !states || read.args.side !== SIDE_CODES.buyer) return null
+  const owed = stepOwed(logs, log.logIndex)
+  if (!found || !states || !owed || read.args.side !== SIDE_CODES.buyer) return null
   const [code, { from, sends = {} }] = found
   const args = read.args
+  const sentTo = new Set(
+    Object.entries(sends)
+      .filter(([name]) => args[from[name] as string] !== 0n)
+      .map(([, party]) => party),
+  )
+  const folds = owed.filter((o) => sentTo.has(o.party)).map((o) => o.logIndex)
   const types = LOCK_LOGS[read.name] as Readonly<Record<string, string>>
   const fields = Object.entries(from).map(([name, arg]) => {
     const raw = args[arg]
@@ -142,7 +178,7 @@ function eventOf(
     return [name, types[arg] === 'address' || types[arg] === 'bytes32' ? lower(raw) : raw]
   })
   try {
-    return commitmentEvent({
+    const event = commitmentEvent({
       code,
       commitment: {
         chainId: place.chainId,
@@ -156,6 +192,7 @@ function eventOf(
       logIndex: log.logIndex,
       ...Object.fromEntries(fields),
     } as CommitmentEventFact) as BlockEvent
+    return { event, folds }
   } catch {
     // A field the event refuses, such as a cause or a party with no word, makes no event.
     return null
