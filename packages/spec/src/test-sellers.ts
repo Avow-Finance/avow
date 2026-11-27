@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { parseServiceOfferVersion, type ServiceOfferVersion } from './service.js'
+import {
+  parseServiceOfferVersion,
+  SERVICE_NAME_MAX,
+  SERVICE_TEXT_MAX,
+  type ServiceOfferVersion,
+} from './service.js'
 import { isPlainText } from './text.js'
 import type { Parsed } from './wire.js'
 
@@ -20,11 +25,24 @@ export const TEST_BUSINESS_SUFFIX = ` (${TEST_BUSINESS_LABEL})`
 /** What every item a test business sells starts with. */
 export const TEST_ITEM_PREFIX = 'Test '
 
-/** The most test sellers a deployment lists, and the most offers one seller lists. */
+/** The most test sellers a deployment lists. */
 export const TEST_SELLERS_MAX = 10
 
-/** A test business is never called verified, whatever else it says. */
-const callsVerified = (text: string) => /verif/i.test(text)
+/** The most offers one test seller lists. */
+export const TEST_SELLER_OFFERS_MAX = 10
+
+/**
+ * Words that would make a test business read as checked or vouched for. None of a test seller's
+ * text may hold one, in any case.
+ */
+const VOUCHING = /verif|certif|kyb|approved\s*by/i
+
+/**
+ * Text a test seller shows, held to printable ASCII on one line, so no unseen character, look-alike
+ * letter or new line can carry a word past the check, then checked for words that vouch for it.
+ */
+const isTestSellerText = (text: string, max: number): boolean =>
+  /^[\x20-\x7e]+$/.test(text) && isPlainText(text, max) && !VOUCHING.test(text)
 
 /** One test seller, with the sandbox business it sells for, its name and its offers, whole. */
 export interface TestSeller {
@@ -40,26 +58,33 @@ const listJson = z
     z.strictObject({
       businessId: z.string().regex(/^sandbox-[0-9a-f]{40}$/),
       name: z.string(),
-      offers: z.array(z.unknown()).min(1).max(TEST_SELLERS_MAX),
+      offers: z.array(z.unknown()).min(1).max(TEST_SELLER_OFFERS_MAX),
     }),
   )
   .max(TEST_SELLERS_MAX)
 
 /**
- * Whether one seller keeps the rules. Its name is plain text that ends "(test business)", and each
- * offer is a version the service template takes, published under the seller's own business, for
- * an item whose name starts "Test". Nothing in it says verified.
+ * Whether one seller keeps the rules. Its name ends "(test business)", and each offer is a version
+ * the service template takes, published under the seller's own business, for an item whose name
+ * starts "Test". Its name and each offer's item name, summary and evidence are test seller text,
+ * which is everything an agent shows of it.
  */
 function keepsRules(s: TestSeller): boolean {
   const named =
-    isPlainText(s.name, 80) &&
+    isTestSellerText(s.name, 80) &&
     s.name.endsWith(TEST_BUSINESS_SUFFIX) &&
     s.name.length > TEST_BUSINESS_SUFFIX.length
-  const offersFit = s.offers.every(
-    (o) => o.supplier === s.businessId && o.item.name.startsWith(TEST_ITEM_PREFIX),
+  return (
+    named &&
+    s.offers.every(
+      (o) =>
+        o.supplier === s.businessId &&
+        o.item.name.startsWith(TEST_ITEM_PREFIX) &&
+        isTestSellerText(o.item.name, SERVICE_NAME_MAX) &&
+        isTestSellerText(o.item.summary, SERVICE_TEXT_MAX) &&
+        isTestSellerText(o.rules.evidence, SERVICE_TEXT_MAX),
+    )
   )
-  const words = [s.name, ...s.offers.flatMap((o) => [o.item.name, o.item.summary])]
-  return named && offersFit && !words.some(callsVerified)
 }
 
 /**

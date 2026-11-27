@@ -29,7 +29,7 @@ describe("the sandbox's test sellers", () => {
     const unlabelled = [{ ...testSellersList[0], name: 'Seller One' }]
     await expect(
       sandboxTestSellers({ fetch: sandbox({ testSellers: unlabelled }) }),
-    ).rejects.toThrow('labelled as a test business')
+    ).rejects.toThrow("The SDK can't read the sandbox's list of test sellers")
   })
 
   it('are read only from a deployment on a factory the SDK trusts', async () => {
