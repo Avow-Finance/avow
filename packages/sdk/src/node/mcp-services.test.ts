@@ -7,10 +7,12 @@ import {
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
   serviceQuoteProblem,
+  toWire,
 } from '@avow-finance/spec'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
+import { testPing, testSellersList } from '../test/test-sellers.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
 import { readSharedOffer } from './services.js'
 
@@ -357,5 +359,38 @@ describe("the MCP server's tools for services", () => {
     const answer = await buyer.call('sell', { order: 'ab'.repeat(16) })
     expect(answer.isError).toBe(true)
     expect(answer.text).toMatch(/--sell/)
+  })
+
+  it('list the test sellers as test businesses with their offers whole, and say when there are none', async () => {
+    const sandbox = (extra: Record<string, unknown>) =>
+      (async () => json({ ...wire(deployment), ...extra })) as unknown as typeof fetch
+    // Listing needs no connection, so a folder with no agent in it lists them too.
+    const dir = mkdtempSync(join(tmpdir(), 'avow-mcp-services-'))
+    const listed = await mcpAgent(dir, { fetch: sandbox({ testSellers: testSellersList }) }).call(
+      'test_sellers',
+      {},
+    )
+    expect(listed.isError).toBe(false)
+    expect(listed.structured.sellers).toEqual([
+      {
+        businessId: testPing.supplier,
+        name: 'Test Seller One (test business)',
+        label: 'test business',
+        offers: [{ id: offerVersionId(testPing), offer: wire(testPing) }],
+      },
+    ])
+    expect(listed.text).toContain('Test Seller One (test business), the test business sandbox-')
+    expect(listed.text).toContain('Nothing it sells is delivered or billed.')
+    expect(listed.text).toContain(JSON.stringify(toWire(testPing)))
+    expect(listed.text).not.toMatch(/verified/i)
+    // The offer as listed is one the order tool reads.
+    const [first] = listed.structured.sellers as { offers: { offer: unknown }[] }[]
+    expect(readSharedOffer(first?.offers[0]?.offer)).toEqual(testPing)
+    const none = await mcpAgent(dir, { fetch: sandbox({}) }).call('test_sellers', {})
+    expect(none).toEqual({
+      text: expect.stringMatching(/^The sandbox lists no test sellers/),
+      structured: { sellers: [] },
+      isError: false,
+    })
   })
 })

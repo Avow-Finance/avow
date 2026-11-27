@@ -46,6 +46,7 @@ describe('avow-sandbox-mcp', () => {
       'request_status',
       'publish_offer',
       'offers',
+      'test_sellers',
       'order',
       'orders',
       'sell',

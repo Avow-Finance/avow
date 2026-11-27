@@ -21,6 +21,7 @@ import {
   type SandboxTool,
   type ServiceOrder,
   serviceOfferQuote,
+  TEST_BUSINESS_LABEL,
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
@@ -43,6 +44,7 @@ import {
 import { sessionUrl, verifyUrl } from '../sandbox/session.js'
 import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
 import { toDollars } from '../sandbox/terms.js'
+import { sandboxTestSellers } from '../sandbox/test-sellers.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { addToClient, isMcpClient, MCP_CLIENTS, mcpServersJson } from './mcp-clients.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
@@ -87,10 +89,11 @@ const usd = (dollars: number | null) =>
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 
 /**
- * The tools that need no authority: setting the agent up, and checking a commitment someone else
- * shared, which any agent can do without connecting.
+ * The tools that need no authority: setting the agent up, checking a commitment someone else
+ * shared, and reading the test sellers the sandbox lists, which any agent can do without
+ * connecting.
  */
-type FreeTool = 'connect' | 'status' | 'verify'
+type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
@@ -441,6 +444,19 @@ export const MCP_TOOLS = [
     },
     description:
       "Lists the offers your business has published from this folder, each with its id, its rules in words and the offer itself to hand a buyer's agent.",
+    inputSchema: noInput,
+  },
+  {
+    name: 'test_sellers',
+    title: 'List the test sellers',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Lists Avow's test sellers, labelled test businesses that sell simple services through the sandbox at any hour, each with its business ID and its offers, whole. Nothing a test seller sells is delivered or billed, and no test business is verified, so call each one a test business. Order from one by giving order one of its offers as it is, after check says it would pass. Your mandate has to name the seller's business, so when check says it isn't allowed, ask your person with request_change to name it. It needs no connection.",
     inputSchema: noInput,
   },
   {
@@ -1122,6 +1138,45 @@ export function mcpAgent(
   }
 
   /**
+   * The test sellers the sandbox lists, each as a test business with its offers whole, for the
+   * model to order from. A sandbox that lists none says so.
+   */
+  async function testSellers(): Promise<ToolAnswer> {
+    const found = await sandboxTestSellers(options.fetch ? { fetch: options.fetch } : {})
+    if (!found.listed) {
+      return {
+        text: 'The sandbox lists no test sellers, so there is none to order from here. Order from an offer another business gave you instead.',
+        structured: { sellers: [] },
+        isError: false,
+      }
+    }
+    return {
+      text: [
+        ...found.sellers.map((s) =>
+          [
+            `${s.name}, the ${TEST_BUSINESS_LABEL} ${s.businessId}. Nothing it sells is delivered or billed.`,
+            ...s.offers.map((v) =>
+              [`Offer ${offerVersionId(v)}.`, ...offerSentences(v), JSON.stringify(toWire(v))].join(
+                ' ',
+              ),
+            ),
+          ].join('\n'),
+        ),
+        "To order, call check with one of these offers, whole, and a quantity, then order with the same two once it would pass. Your mandate has to name the seller's business. When check says it isn't allowed, ask your person with request_change to name it.",
+      ].join('\n\n'),
+      structured: {
+        sellers: found.sellers.map((s) => ({
+          businessId: s.businessId,
+          name: s.name,
+          label: TEST_BUSINESS_LABEL,
+          offers: s.offers.map(shared),
+        })),
+      },
+      isError: false,
+    }
+  }
+
+  /**
    * The orders this server is seeing through, by id. Buying waits on another agent, so it runs
    * past the tool call that started it, and a later call reads how it ended. An order outlives
    * the server in the folder, where the next call picks it up again.
@@ -1334,6 +1389,7 @@ export function mcpAgent(
         if (name === 'connect') return await connect(args)
         if (name === 'status') return connectionAnswer(await connection.status())
         if (name === 'verify') return await verify(args)
+        if (name === 'test_sellers') return await testSellers()
         if (
           !SANDBOX_TOOLS.includes(name as SandboxTool) &&
           !isServiceTool(name) &&
