@@ -118,8 +118,9 @@ export function createParentSigner(deps: ParentSignerDeps) {
   const agreed = new Map<string, Agreed>()
   const offerValidity = deps.offerValidity ?? 600n
   // One signer serves one agent, so this holds every check and the signature that follows it to
-  // one at a time across the agent's whole tree of slices, and two asks can't both pass on room
-  // only one of them fits.
+  // one at a time across the agent's whole tree of slices. Room is held at funding: an agreement
+  // takes none, since Avow counts a reserve once it approves it, so two agreements can be signed on
+  // room only one fits, and Avow approves one and this check funds no more than fits.
   const exclusive = serial()
 
   const forget = (now: bigint) => {
