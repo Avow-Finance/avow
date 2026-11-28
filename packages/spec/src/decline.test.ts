@@ -124,7 +124,7 @@ describe("a supplier's decline of a mailbox order", () => {
   })
 
   it('holds back approval.human_required until a buyer may hear it', () => {
-    expect(ORDER_DECLINES.service).toContain('approval.human_required')
+    expect(ORDER_DECLINES.service).not.toContain('approval.human_required')
     expect(orderDeclineProblem(decline({ reason: 'approval.human_required' }), service)).toBe(
       'message.invalid',
     )

@@ -198,7 +198,8 @@ export interface OrderDecline extends OrderDeclineRequest {
 /**
  * The reasons a supplier's agent can decline a mailbox order with. A job order books no offer
  * version, so nothing about an offer applies to one. Neither kind is open to bargaining, so
- * neither takes a reason about a term or a round of proposals.
+ * neither takes a reason about a term or a round of proposals. `approval.human_required` joins a
+ * list once `BUYER_HEARS` does, since a buyer told to wait would otherwise wait for nothing.
  */
 export const ORDER_DECLINES = {
   job: [
@@ -214,7 +215,6 @@ export const ORDER_DECLINES = {
     'quantity.out_of_range',
     'proposal.unacceptable',
     'counterparty.not_eligible',
-    'approval.human_required',
     'supplier.not_authorized',
   ],
 } as const satisfies Record<string, readonly DeclineReason[]>

@@ -64,6 +64,12 @@ import { termsAgreementJson } from './wire.js'
  * ended the thread. A thread that ran out of time shows only that no move followed, and never
  * whose fault that was.
  *
+ * A move signs at `MESSAGE_VERSIONS.NegotiationMove`. Its typed data and canonical form are fixed,
+ * and which declines a reader takes is read from `decline.ts`. Nothing carried a move before Avow
+ * stored threads, so the decline rules could change without a new version. Once Avow keeps
+ * threads, a change that narrows what a reader takes, such as a reason refused that was taken,
+ * bumps that version, so a thread signed under the old rules is never read under the new ones.
+ *
  * This module holds the moves and what makes each one valid where it stands. It reads no lock and
  * checks no signature, so a caller establishes who signed a move before it asks whether the move
  * fits. Nothing here says a move is within either side's authority, which is the mandates' part.
