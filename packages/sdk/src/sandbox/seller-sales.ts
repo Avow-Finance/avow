@@ -125,9 +125,18 @@ export async function holdToMandate(
   )
 }
 
-/** What a job past its offer's capacity for the day throws, before anything is booked or quoted. */
-const capacityTaken = () =>
-  new Error("The offer's capacity for the day is taken, so the order is left to lapse.")
+/**
+ * What a job past its offer's capacity for the day throws, before anything is booked or quoted,
+ * with when the soonest place it counted frees.
+ */
+export class CapacityTaken extends Error {
+  readonly freesAt: bigint
+  constructor(freesAt: bigint) {
+    super("The offer's capacity for the day is taken, so the order is declined.")
+    this.name = 'CapacityTaken'
+    this.freesAt = freesAt
+  }
+}
 
 /**
  * Throws when a job of this kind of work would take more places in a day than its offer's
@@ -146,7 +155,11 @@ async function holdToCapacity(
   const taken = Object.values(sales).filter(
     (s) => s.item === job.item && (s.accepted ? s.at > now - DAY : s.until > now),
   )
-  if (taken.length >= job.capacity) throw capacityTaken()
+  if (taken.length >= job.capacity) {
+    // An accepted job holds its place for a day, and a quoted one until it can't be accepted.
+    const frees = taken.map((t) => (t.accepted ? t.at + DAY : t.until))
+    throw new CapacityTaken(frees.reduce((a, b) => (a < b ? a : b)))
+  }
 }
 
 /** The kind of work of a job's terms, which its offer's capacity counts by. */

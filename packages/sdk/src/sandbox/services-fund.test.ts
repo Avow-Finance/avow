@@ -93,6 +93,7 @@ async function twoAgents() {
   let quote: unknown = null
   let status = 'requested'
   const reported: { path: string; body: Record<string, unknown> }[] = []
+  const declines: { orderId: string; reason: string; retryAt: string | null }[] = []
   const reserve = () => ({
     fundedIn: reported.find((r) => r.path.endsWith('/reserved'))?.body.fundedIn ?? null,
     amount: String(dollars(50)),
@@ -117,6 +118,13 @@ async function twoAgents() {
     } else if (path.endsWith('/quote')) {
       quote = body
       status = 'quoted'
+    } else if (path.endsWith('/decline')) {
+      declines.push({
+        orderId: path.split('/').at(-2) ?? '',
+        reason: body.reason,
+        retryAt: body.retryAt,
+      })
+      return json(order())
     } else if (path.endsWith('/reserved')) {
       reported.push({ path, body })
       // The supplier accepts as soon as the reserve is reported, which the next read shows.
@@ -132,6 +140,11 @@ async function twoAgents() {
     store: buyer.store,
     order,
     reported,
+    /** The declines the seller sent, in order. */
+    declines,
+    /** The reason the seller's last decline of an order gave, or null for none. */
+    declinedAs: (orderId: string) =>
+      declines.findLast((d) => d.orderId === orderId)?.reason ?? null,
     /** Changes the order as the mailbox holds it, as a faulty mailbox could. */
     tamper(change: (request: Record<string, unknown>) => Record<string, unknown>) {
       request = change(request)
@@ -334,9 +347,8 @@ describe('the terms of an order the seller has quoted', () => {
     expect(accepts).toHaveBeenCalledTimes(1)
     expect(accepts.mock.calls[0]?.[1]).toEqual(quote)
     // A new order for the version it took down is another matter, and isn't quoted.
-    await expect(two.selling.sell({ ...waiting, orderId: 'ef'.repeat(16) })).rejects.toThrow(
-      "hasn't published",
-    )
+    await two.selling.sell({ ...waiting, orderId: 'ef'.repeat(16) })
+    expect(two.declinedAs('ef'.repeat(16))).toBe('offer.withdrawn')
   })
 })
 
@@ -363,8 +375,11 @@ describe('what a folder keeps', () => {
       { ...first, orderId: 'e1'.repeat(16) },
       { ...first, orderId: 'e2'.repeat(16) },
     ]
-    const sold = await Promise.allSettled(three.map((o) => two.selling.sell(o)))
-    expect(sold.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected', 'rejected'])
+    const steps: string[] = []
+    await Promise.all(three.map((o) => two.selling.sell(o, (step) => steps.push(step.step))))
+    // One order takes the last place, and the seller declines the other two, so their buyers hear why.
+    expect(steps.sort()).toEqual(['declined', 'declined', 'quoted'])
+    expect(two.declines.map((d) => d.reason)).toEqual(['capacity.exhausted', 'capacity.exhausted'])
   })
 
   it('drops an order that lapsed unfunded once Avow refuses it, so it blocks nothing after', async () => {
@@ -410,7 +425,10 @@ describe("an offer's bookings for the day", () => {
       const builtAt = BigInt(Math.floor(Date.now() / 1000))
       return { ...first, orderId: id.repeat(16), builtAt, expiry: builtAt + 600n }
     }
-    await expect(two.selling.sell(next('a1'))).rejects.toThrow('capacity for the day')
+    await two.selling.sell(next('a1'))
+    expect(two.declinedAs('a1'.repeat(16))).toBe('capacity.exhausted')
+    // The decline says when the first order's place frees, as advice the buyer can act on.
+    expect(BigInt(two.declines.at(-1)?.retryAt ?? 0)).toBe(first.builtAt + 15n * 60n)
     // Nobody funded the first order, and the supplier's time to accept it has passed.
     later(16 * 60)
     const second = next('a2')
@@ -431,9 +449,11 @@ describe("an offer's bookings for the day", () => {
     if (!funded) throw new Error("the funded order didn't parse")
     await two.selling.sell(funded)
     later(32 * 60)
-    await expect(two.selling.sell(next('a3'))).rejects.toThrow('capacity for the day')
+    await two.selling.sell(next('a3'))
+    expect(two.declinedAs('a3'.repeat(16))).toBe('capacity.exhausted')
     later(25 * 60 * 60)
     await two.selling.sell(next('a4'))
+    expect(two.declinedAs('a4'.repeat(16))).toBeNull()
   })
 
   it('are counted by the seller as it quotes, once an order, and refused past the capacity', async () => {
@@ -448,9 +468,12 @@ describe("an offer's bookings for the day", () => {
     // Quoting the same order again, after a send that failed, takes no second place.
     await two.selling.sell(first)
     const second = { ...first, orderId: 'ef'.repeat(16) }
-    await expect(two.selling.sell(second)).rejects.toThrow('capacity for the day')
+    await two.selling.sell(second)
+    expect(two.declinedAs(second.orderId)).toBe('capacity.exhausted')
     // Another item's bookings are its own.
     const other = await two.selling.publish({ ...draft, item: { ...draft.item, name: 'Summary' } })
-    await two.selling.sell({ ...second, offer: other.version })
+    const third = { ...second, orderId: 'e3'.repeat(16), offer: other.version }
+    await two.selling.sell(third)
+    expect(two.declinedAs(third.orderId)).toBeNull()
   })
 })

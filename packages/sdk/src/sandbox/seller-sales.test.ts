@@ -120,7 +120,7 @@ const mandateFor = (account: Address, signingKey: Address, change: Partial<Selle
 async function sellingJobs(
   orderIds: string[],
   change?: Partial<SellerMandate> | null,
-  o: { booked?: boolean } = {},
+  o: { booked?: boolean; refuseQuotes?: boolean } = {},
 ) {
   const { store, root } = await folderWithAgent(SELLER, {
     sells: true,
@@ -179,6 +179,10 @@ async function sellingJobs(
       status: 'requested',
     }))
     if (path === SANDBOX_PATHS.mailboxInbox) return json({ orders: held })
+    // Avow refusing the quote under the seller's mandate, which only a seller's agent hears.
+    if (o.refuseQuotes && path.endsWith('/quote')) {
+      return json({ error: { reason: 'seller_mandate.over_outstanding', message: 'Refused' } }, 403)
+    }
     return json(held.find((o) => path.includes(o.orderId)) ?? held[0])
   }) as typeof globalThis.fetch
   const mailbox = await sandboxMailbox({ store, fetch })
@@ -186,7 +190,20 @@ async function sellingJobs(
     const sent = posted.find((p) => p.path === SANDBOX_PATHS.mailboxQuote(orderId))
     return sent ? parseQuoteRequest(sent.body) : null
   }
-  return { mailbox, mandate, signingKey, quoted, store, posted, serve }
+  /** The reason the seller declined an order with, as it reached the mailbox, or null. */
+  const declinedWith = (orderId: string) =>
+    (posted.find((p) => p.path === SANDBOX_PATHS.mailboxDecline(orderId))?.body.reason as
+      | string
+      | undefined) ?? null
+  /** Sells an order and answers with the seller's own reason for declining it, or null. */
+  const refusedFor = async (order: Parameters<typeof mailbox.sell>[0]) => {
+    let refusal: string | null = null
+    await mailbox.sell(order, (step) => {
+      if (step.step === 'declined') refusal = step.refusal
+    })
+    return refusal
+  }
+  return { mailbox, mandate, signingKey, quoted, store, posted, serve, declinedWith, refusedFor }
 }
 
 describe('a job sold through the mailbox', () => {
@@ -229,7 +246,7 @@ describe('a job sold through the mailbox', () => {
   })
 
   it('refuses a job under the mandate’s price floor, and sends no quote', async () => {
-    const { mailbox, quoted } = await sellingJobs(['a3'.repeat(16)], {
+    const { mailbox, quoted, declinedWith, refusedFor } = await sellingJobs(['a3'.repeat(16)], {
       limits: [
         {
           category: JOB_CATEGORY,
@@ -242,17 +259,20 @@ describe('a job sold through the mailbox', () => {
     })
     const [order] = await mailbox.inbox()
     if (!order) throw new Error('the inbox read no order')
-    const sold = mailbox.sell(order)
-    await expect(sold).rejects.toBeInstanceOf(SellerMandateRefusal)
-    await expect(sold).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
+    // The seller hears its own floor, and the buyer hears only that it isn't authorized.
+    expect(await refusedFor(order)).toBe('seller_mandate.under_price_floor')
+    expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(order.orderId)).toBeNull()
   })
 
   it('counts the services it sold toward what it may have outstanding for a job', async () => {
-    const { mailbox, quoted, store } = await sellingJobs(['c1'.repeat(16)], {
-      maxOutstanding: PRICE + 1n,
-      maxOrderValue: PRICE + 1n,
-    })
+    const { mailbox, quoted, store, declinedWith, refusedFor } = await sellingJobs(
+      ['c1'.repeat(16)],
+      {
+        maxOutstanding: PRICE + 1n,
+        maxOrderValue: PRICE + 1n,
+      },
+    )
     // A service accepted an hour ago and due tomorrow, which the same mandate counts.
     await store.write(
       'services',
@@ -272,10 +292,26 @@ describe('a job sold through the mailbox', () => {
     )
     const [order] = await mailbox.inbox()
     if (!order) throw new Error('the inbox read no order')
-    await expect(mailbox.sell(order)).rejects.toMatchObject({
-      reason: 'seller_mandate.over_outstanding',
-    })
+    expect(await refusedFor(order)).toBe('seller_mandate.over_outstanding')
+    expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(order.orderId)).toBeNull()
+  })
+
+  it('declines a job Avow refuses at the quote, and keeps nothing of it against the mandate', async () => {
+    const { mailbox, quoted, store, declinedWith, refusedFor } = await sellingJobs(
+      ['c4'.repeat(16)],
+      undefined,
+      { refuseQuotes: true },
+    )
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    expect(await refusedFor(order)).toBe('seller_mandate.over_outstanding')
+    expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
+    expect(quoted(order.orderId)).not.toBeNull()
+    // The job was held before its quote went out, and the decline gives back its record, which is
+    // the place its offer's capacity and the seller's mandate count.
+    const kept = JSON.parse((await store.read('job-sales')) ?? '{}')
+    expect(Object.keys(kept.sales ?? {})).not.toContain(order.orderId)
   })
 
   it('doesn’t accept a job whose agreement names a mandate replaced since the quote', async () => {
@@ -298,7 +334,7 @@ describe('a job sold through the mailbox', () => {
 
   it('refuses a job the mandate doesn’t allow before it books any compute for it', async () => {
     bookings.mockReset()
-    const { mailbox, quoted } = await sellingJobs(
+    const { mailbox, quoted, declinedWith, refusedFor } = await sellingJobs(
       ['e1'.repeat(16)],
       {
         limits: [
@@ -315,9 +351,8 @@ describe('a job sold through the mailbox', () => {
     )
     const [order] = await mailbox.inbox()
     if (!order) throw new Error('the inbox read no order')
-    await expect(mailbox.sell(order)).rejects.toMatchObject({
-      reason: 'seller_mandate.under_price_floor',
-    })
+    expect(await refusedFor(order)).toBe('seller_mandate.under_price_floor')
+    expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
     expect(bookings).not.toHaveBeenCalled()
     expect(quoted(order.orderId)).toBeNull()
   })
@@ -333,7 +368,7 @@ describe('a job sold through the mailbox', () => {
 
   it('counts the jobs it quoted today, and refuses one past the day’s units', async () => {
     const ids = ['b1', 'b2', 'b3'].map((p) => p.repeat(16))
-    const { mailbox, quoted } = await sellingJobs(ids)
+    const { mailbox, quoted, declinedWith, refusedFor } = await sellingJobs(ids)
     const orders = await mailbox.inbox()
     for (const order of orders.slice(0, 2)) {
       await mailbox.sell(order)
@@ -341,9 +376,8 @@ describe('a job sold through the mailbox', () => {
     }
     const [, , past] = orders
     if (!past) throw new Error('three orders')
-    await expect(mailbox.sell(past)).rejects.toMatchObject({
-      reason: 'seller_mandate.over_daily_units',
-    })
+    expect(await refusedFor(past)).toBe('seller_mandate.over_daily_units')
+    expect(declinedWith(past.orderId)).toBe('supplier.not_authorized')
     expect(quoted(past.orderId)).toBeNull()
     // Quoting the same order again keeps its one place.
     const [first] = orders

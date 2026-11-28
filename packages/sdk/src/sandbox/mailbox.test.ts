@@ -93,6 +93,46 @@ const settlement = {
 }
 
 describe('the sandbox mailbox', () => {
+  it('stops waiting on a job the seller declined, with its reason, and lets the buyer withdraw one', async () => {
+    const { store } = await agentFolder(BUYER)
+    const paths: string[] = []
+    let sent: Record<string, unknown> = {}
+    let status = 'declined'
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      paths.push(path)
+      if (path === '/config.json') return json(wire(deployment))
+      if (path === SANDBOX_PATHS.mailboxOrders) {
+        sent = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))
+        return json(answered(sent, 'requested'))
+      }
+      if (path.endsWith('/withdraw')) status = 'withdrawn'
+      return json(
+        status === 'declined'
+          ? answered(sent, status, {
+              quote: null,
+              decline: {
+                reason: 'supplier.not_authorized',
+                retryAt: null,
+                available: null,
+                current: null,
+                declinedAt: '1800000060',
+              },
+            })
+          : answered(sent, status, { quote: null, withdrawnAt: '1800000060' }),
+      )
+    }) as typeof globalThis.fetch
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const outcome = await mailbox.buy({ supplier: SELLER, pollEvery: 1 })
+    expect(outcome).toMatchObject({ ok: false, reason: 'supplier.not_authorized' })
+    expect(await mailbox.unfinished()).toEqual([])
+    status = 'requested'
+    const placed = await mailbox.order({ supplier: SELLER })
+    expect((await mailbox.withdrawOrder(placed.orderId)).status).toBe('withdrawn')
+    expect(paths).toContain(SANDBOX_PATHS.mailboxWithdraw(placed.orderId))
+    expect(await mailbox.unfinished()).toEqual([])
+  })
+
   it('lets an order nobody quotes lapse, and reserves nothing for it', async () => {
     const { store } = await agentFolder(BUYER)
     const paths: string[] = []
@@ -339,11 +379,15 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
     if (o.computeKept) {
       await write(store, 'mailbox', { sales: { [order.orderId]: { compute: keptCompute(now()) } } })
     }
-    const fetch = (async (input: string | URL | Request) => {
+    const declines: Record<string, unknown>[] = []
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(input)).pathname
       if (path === '/config.json') return json(wire(deployment))
       if (path === SANDBOX_PATHS.sellerMandates) {
         return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+      }
+      if (path === SANDBOX_PATHS.mailboxDecline(order.orderId)) {
+        declines.push(JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)))
       }
       const held = answered(wire(order), 'requested')
       return json(path === SANDBOX_PATHS.mailboxInbox ? { orders: [held] } : held)
@@ -351,7 +395,7 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
     const mailbox = await sandboxMailbox({ store, fetch })
     const [held] = await mailbox.inbox()
     if (!held) throw new Error('The inbox read no order')
-    return { mailbox, held, store }
+    return { mailbox, held, store, declines }
   }
 
   it('quotes nothing, and books nothing, for an order built from a moment ahead of its clock', async () => {
@@ -363,7 +407,7 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
     expect(quotes).not.toHaveBeenCalled()
   })
 
-  it("quotes nothing, and books nothing, once the offer's capacity for the day is taken", async () => {
+  it("declines, and books nothing, once the offer's capacity for the day is taken", async () => {
     const t = now()
     const order = { ...anOrder(t + 600n), terms: jobOfferTerms(jobOffer, t, settlement) }
     const place = (accepted: boolean, at: bigint, until: bigint) => ({
@@ -381,13 +425,21 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
       b: place(true, t - 3_600n, t - 3_000n),
       c: place(true, t - 7_200n, t - 6_000n),
     }
-    const { mailbox, held } = await sellerSelling(order, { jobSales: full })
-    await expect(mailbox.sell(held)).rejects.toThrow(/capacity for the day is taken/)
+    const { mailbox, held, declines } = await sellerSelling(order, { jobSales: full })
+    const steps: string[] = []
+    await mailbox.sell(held, (step) => steps.push(step.step))
+    expect(steps).toEqual(['declined'])
+    // The buyer hears the day is full, and when the soonest place frees: the quoted job's, once it
+    // can no longer be accepted, ahead of the accepted ones' a day after they were taken.
+    expect(declines).toEqual([
+      { reason: 'capacity.exhausted', retryAt: String(t + 600n), available: null, current: null },
+    ])
     expect(bookings).not.toHaveBeenCalled()
     expect(quotes).not.toHaveBeenCalled()
-    // With the compute already booked, the quote counts the places again and still refuses.
+    // With the compute already booked, the quote counts the places again and declines too.
     const booked = await sellerSelling(order, { jobSales: full, computeKept: true })
-    await expect(booked.mailbox.sell(booked.held)).rejects.toThrow(/capacity for the day is taken/)
+    await booked.mailbox.sell(booked.held)
+    expect(booked.declines.map((d) => d.reason)).toEqual(['capacity.exhausted'])
     expect(quotes).not.toHaveBeenCalled()
     // A quote that lapsed unaccepted, and a job of another kind, take no place.
     const room = {

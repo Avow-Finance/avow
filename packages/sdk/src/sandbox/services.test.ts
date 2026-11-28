@@ -9,6 +9,7 @@ import {
   offerItemOf,
   offerListingOf,
   offerVersionId,
+  openingProposal,
   parseServiceQuote,
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
@@ -291,6 +292,53 @@ describe("a supplier's listings with Avow", () => {
     await expect(services.listedWithAvow()).rejects.toThrow(/another business/)
   })
 
+  it('reads a thread order and replays it before trusting it', async () => {
+    const { store } = await folder(BUYER)
+    const builtAt = BigInt(Math.floor(Date.now() / 1000))
+    const proposal = openingProposal({
+      thread: `0x${'aa'.repeat(32)}`,
+      commitmentId: `0x${'56'.repeat(32)}`,
+      base: offer,
+      quantity: 2,
+      builtAt,
+      expiry: builtAt + 120n,
+    })
+    const thread = {
+      base: offer,
+      buyer: { businessId: BUYER, mandateHash: `0x${'cd'.repeat(32)}` },
+      settlement: {
+        arbiter: deployment.arbiter,
+        day90SupplierShareBps: deployment.day90SupplierShareBps,
+      },
+      moves: [{ move: proposal, signature: '0x01', quote: null, current: null }],
+    }
+    const answer = (moves: unknown[]) => ({
+      orderId: 'ab'.repeat(16),
+      thread: { ...thread, moves },
+      buyer: {
+        businessId: BUYER,
+        account: LOCK.toLowerCase(),
+        lock: LOCK.toLowerCase(),
+        chainId: deployment.chainId,
+        mandateHash: `0x${'cd'.repeat(32)}`,
+      },
+      requestedAt: builtAt,
+      status: 'open',
+    })
+    let served = answer(thread.moves)
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.threadOrder('ab'.repeat(16)) ? json(wire(served)) : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    const read = await services.readThread('ab'.repeat(16))
+    expect(read).toMatchObject({ problem: null, order: { status: 'open' } })
+    // A copy whose first move isn't the buyer's proposal is refused before anything trusts it.
+    served = answer([
+      { move: { ...proposal, side: 'supplier' }, signature: '0x01', quote: null, current: null },
+    ])
+    expect((await services.readThread('ab'.repeat(16))).problem).not.toBeNull()
+  })
+
   it('needs a signing key, which an agent connected only to buy has none of', async () => {
     const { store } = await folder(BUYER)
     const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
@@ -427,11 +475,18 @@ describe('selling a service', () => {
     })
   })
 
-  it('quotes nothing for an offer it never published, which a buyer could have written', async () => {
+  it('quotes nothing for an offer it never published, and names the version it publishes', async () => {
     const { store } = await folder(SELLER, true)
-    const { fetch, paths } = avow(() => json({}))
+    const declines: Record<string, unknown>[] = []
+    let order: Record<string, unknown> = {}
+    const { fetch, paths } = avow((path, body) => {
+      if (!path.endsWith('/decline')) return null
+      declines.push(body)
+      const declinedAt = String(Math.floor(Date.now() / 1000))
+      return json({ ...order, status: 'declined', quote: null, decline: { ...body, declinedAt } })
+    })
     const services = await sandboxServices({ store, fetch })
-    await services.publish(draft)
+    const { version } = await services.publish(draft)
     const builtAt = BigInt(Math.floor(Date.now() / 1000))
     const forged = {
       orderId: 'ab'.repeat(16),
@@ -450,8 +505,71 @@ describe('selling a service', () => {
       requestedAt: builtAt,
       status: 'requested',
     } as const
-    await expect(services.sell(forged)).rejects.toThrow("hasn't published")
+    order = wire(forged) as Record<string, unknown>
+    const steps: string[] = []
+    await services.sell(forged, (step) => steps.push(step.step))
+    expect(steps).toEqual(['declined'])
     expect(paths.some((p) => p.endsWith('/quote'))).toBe(false)
+    // The buyer's copy names the item this folder publishes, so the decline names the current
+    // version, whole, for the buyer to check as a new offer.
+    expect(declines).toEqual([
+      { reason: 'offer.superseded', retryAt: null, available: null, current: wire(version) },
+    ])
+    // An item this folder doesn't publish at all is withdrawn.
+    const other = {
+      ...forged,
+      orderId: 'cd'.repeat(16),
+      offer: { ...offer, item: { ...offer.item, name: 'Poem' } },
+    }
+    order = wire(other) as Record<string, unknown>
+    await services.sell(other)
+    expect(declines.at(-1)).toMatchObject({ reason: 'offer.withdrawn', current: null })
+  })
+
+  it('tells the buyer why its order was declined, and lets it withdraw one', async () => {
+    const { store } = await folder(BUYER)
+    let status: 'requested' | 'declined' | 'withdrawn' = 'requested'
+    const decline = { reason: 'capacity.exhausted', retryAt: null, available: '1', declinedAt: '1' }
+    const { fetch, paths } = avow((path, body) => {
+      if (path.endsWith('/withdraw')) status = 'withdrawn'
+      const request = path === SANDBOX_PATHS.serviceOrders ? body : held
+      held = request
+      const order = {
+        ...request,
+        buyer: buyerOf,
+        requestedAt: String(Math.floor(Date.now() / 1000)),
+      }
+      if (status === 'declined') {
+        return json({
+          ...order,
+          status,
+          quote: null,
+          decline: { ...decline, available: 1, current: null },
+        })
+      }
+      if (status === 'withdrawn') return json({ ...order, status, quote: null, withdrawnAt: '1' })
+      return json({ ...order, status })
+    })
+    let held: Record<string, unknown> = {}
+    const buyerOf = {
+      businessId: BUYER,
+      account: LOCK.toLowerCase(),
+      lock: LOCK.toLowerCase(),
+      chainId: deployment.chainId,
+      mandateHash: `0x${'cd'.repeat(32)}`,
+    }
+    const services = await sandboxServices({ store, fetch })
+    const placed = await services.order({ offer, quantity: 1 })
+    status = 'declined'
+    const outcome = await services.buy({ resume: placed.orderId, pollEvery: 1 })
+    expect(outcome).toMatchObject({ ok: false, reason: 'capacity.exhausted' })
+    expect(await services.unfinished()).toEqual([])
+    // A withdrawal is the buyer's own, and stops it waiting on the order.
+    status = 'requested'
+    const again = await services.order({ offer, quantity: 1 })
+    expect((await services.withdrawOrder(again.orderId)).status).toBe('withdrawn')
+    expect(paths).toContain(SANDBOX_PATHS.serviceWithdraw(again.orderId))
+    expect(await services.unfinished()).toEqual([])
   })
 
   it('needs a signing key, which an agent connected only to buy has none of', async () => {
