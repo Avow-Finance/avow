@@ -46,6 +46,13 @@ export const JOB_OFFER_START_MIN = 15n * 60n
 /** How long after a job's delivery deadline its supplier can report a charge, in seconds. */
 export const JOB_OFFER_CHARGE_AFTER = 24n * 60n * 60n
 
+/**
+ * The latest moment a job can be built from an offer, in unix seconds, 2^40, which is tens of
+ * thousands of years away. A version's lengths leave room for it, so the times of a job built at
+ * any moment up to it count in a uint64 of seconds.
+ */
+export const JOB_OFFER_BUILT_BY_MAX = 2n ** 40n
+
 /** The contest window of a job built from an offer on the testnet, in seconds. */
 const JOB_OFFER_CONTEST_WINDOW = 10n * 60n
 
@@ -105,8 +112,8 @@ export interface JobOfferVersion {
  * `JOB_OFFER_START_MIN` after the order and is delivered some time after it starts, the grace
  * period ends by delivery, capacity is at least one job a day, each charge is a share from 0 to
  * 100%, and at least one is above zero, since a reserve with nothing to charge backs nothing.
- * The start, the turnaround and the charge window after delivery add up to a uint64 of seconds,
- * and the price times 10,000 basis points fits a uint256, so a share of it can be worked out.
+ * The start, the turnaround and the charge window after delivery, counted from any moment up to
+ * `JOB_OFFER_BUILT_BY_MAX`, add up to a uint64 of seconds, and the price times 10,000 basis points fits a uint256, so a share of it can be worked out.
  * Every field has its declared type, so a version that passes hashes one way only.
  */
 export function jobOfferProblem(v: JobOfferVersion): string | null {
@@ -138,7 +145,7 @@ export function jobOfferProblem(v: JobOfferVersion): string | null {
   if (typeof r.turnaround !== 'bigint' || r.turnaround <= 0n) {
     return 'Delivery comes some time after work starts.'
   }
-  if (r.startAfter + r.turnaround + JOB_OFFER_CHARGE_AFTER > maxUint64) {
+  if (JOB_OFFER_BUILT_BY_MAX + r.startAfter + r.turnaround + JOB_OFFER_CHARGE_AFTER > maxUint64) {
     return 'Work starts and is delivered too far ahead to count in seconds.'
   }
   if (typeof r.gracePeriod !== 'bigint' || r.gracePeriod < 0n || r.gracePeriod > r.turnaround) {
@@ -270,7 +277,8 @@ export function jobOfferQuote(v: JobOfferVersion): JobOfferQuote {
  * the price. Charges can be reported until `JOB_OFFER_CHARGE_AFTER` past the delivery deadline,
  * when the reserve comes back, and the contest window is ten minutes. The arbiter and the day-90
  * share are the deployment's. The supplier's quote adds the compute booking the job relies on, as
- * version 3 terms. Throws for a version `jobOfferProblem` refuses.
+ * version 3 terms. Throws for a version `jobOfferProblem` refuses, or a moment before 0 or after
+ * `JOB_OFFER_BUILT_BY_MAX`, so every time it builds counts in a uint64 of seconds.
  */
 export function jobOfferTerms(
   v: JobOfferVersion,
@@ -278,6 +286,9 @@ export function jobOfferTerms(
   settlement: { arbiter: Address; day90SupplierShareBps: number },
 ): JobTerms {
   const { lateCancellation, noShow } = jobOfferQuote(v)
+  if (typeof now !== 'bigint' || now < 0n || now > JOB_OFFER_BUILT_BY_MAX) {
+    throw new RangeError('A job is built from an offer at a moment from 0 to 2^40 seconds')
+  }
   const startsAt = now + v.rules.startAfter
   const deliverBy = startsAt + v.rules.turnaround
   const chargeDeadline = deliverBy + JOB_OFFER_CHARGE_AFTER
