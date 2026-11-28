@@ -56,7 +56,7 @@ Both sides build the terms for themselves with `serviceOfferTerms`, from the ord
 
 The buyer's agent checks the agreement's expiry and its own authority when it commits, and Avow checks your signature when it approves the reserve.
 
-You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced isn't quoted. The reason code `offer.superseded` names that refusal, and the mailbox carries no refusal yet, so the order lapses.
+You accept within 15 minutes of the moment the terms are built from, so an order lapses five minutes before then. A version you've since replaced isn't quoted. Your agent declines the order instead, as [Declines and withdrawals](#declines-and-withdrawals) sets out, so the buyer's agent learns why.
 
 A service order has paths of its own under `SANDBOX_PATHS`, apart from a job order's, so a reader that knows only jobs never meets one. Avow's testnet sandbox serves those paths. Against a sandbox that doesn't, `order`, `orders` and `sell` answer that it doesn't carry service orders, and `listen` says so once and listens for jobs only.
 
@@ -85,6 +85,9 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 | Order from an offer and see it through | `order --offer` | `order` | `buy({ offer, quantity })` |
 | See what waits on you | | `orders` | `inbox()` and `unfinished()` |
 | Quote, then accept | `listen` | `sell` | `sell(order)` or `listen()` |
+| Decline an order to you | `decline <order> --reason <code>` | `decline` | `decline(orderId, decline)` |
+| Withdraw an order your business sent | `withdraw <order>` | `withdraw_order` | `withdrawOrder(orderId)` |
+| Read a thread order | `thread <order>` | `thread` | `readThread(orderId)` |
 
 `sandboxServices()` in `@avow-finance/sdk` gives the calls in the last column, and `sandboxAgent()` gives `checkOrder`.
 
@@ -94,14 +97,44 @@ Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere, 
 
 The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has the agent's signing key and the rules below, which its own agent keeps. When Avow serves a [seller's mandate](/docs/reference/seller-mandate) for the agent's key, the agent also holds itself to it before it publishes, quotes or accepts. Avow serves none yet, so today an agent sells as it did before and says that no seller's mandate is in force and that Avow doesn't enforce seller limits yet. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
 
-- It quotes only an offer found among the ones it published, with `publishedOffer`. An order for any other offer, a replaced version included, is left to lapse with nothing reserved. The mailbox carries no refusal yet, so the buyer's agent sees the order lapse and not the reason.
-- It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. The count is by item name and lives in the folder, so run one seller on a folder at a time.
+- It quotes only an offer found among the ones it published, with `publishedOffer`. An order for a version you replaced is declined as `offer.superseded`, with the version you publish now. An order for an item you don't publish is declined as `offer.withdrawn`.
+- It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. An order past it is declined as `capacity.exhausted`, with when the soonest place frees. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. A declined order holds none. The count is by item name and lives in the folder, so run one seller on a folder at a time.
 - It quotes the terms the order builds and nothing else, so there is no price to negotiate in an order.
 - It accepts only an order whose quote it signed.
 
 The buyer's agent keeps each order in `.avow` before it sends it, and checks the quote against that copy, whatever the mailbox says the order was. Ordering the same offer and quantity again picks up an order that's still open, and sends a new one once the first has ended. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
 
 A booking's reserve backs the two charges the offer names and nothing else. The price is paid by the offer's payment route, and nothing in the order pays it or shows that it was paid.
+
+## Declines and withdrawals
+
+An order can end before anything is reserved in three ways. Nobody answers and it lapses, the seller's agent declines it with a reason, or the buyer's agent withdraws it. A decline and a withdrawal reach the other side at once, so neither waits for a lapse to learn what happened. Both are mailbox steps for jobs and services alike, on each kind's own paths, and Avow answers either the same when it's sent again.
+
+A decline carries a reason code from a fixed list and only the fields that reason allows, and no free text. `orderDeclineProblem` in `@avow-finance/spec` checks one, and `DECLINE_RULES` gives each reason the next step the buyer's agent takes.
+
+| Reason | Who sends it | Next step | It can also carry |
+| --- | --- | --- | --- |
+| `offer.superseded` | The seller, for a service | `change_order` | The version that replaced the one ordered, whole, which it has to carry |
+| `offer.withdrawn` | The seller, for a service | `choose_another` | |
+| `capacity.exhausted` | The seller | `retry_later` | When to ask again, and for a service how many units are free |
+| `quantity.out_of_range` | The seller, for a service | `change_order` | How many units the seller would take |
+| `proposal.unacceptable` | The seller | `change_order` | |
+| `counterparty.not_eligible` | The seller | `choose_another` | |
+| `supplier.not_authorized` | The seller | `choose_another` | |
+
+- **A seller's own limits stay its own.** When the seller's mandate refuses an order, the agent declines with `supplier.not_authorized`. It does the same where Avow's seller's mandate checks are on and Avow refuses its quote. Those checks are off on the sandbox until a deploy turns them on. The step it reports keeps its own reason, which never leaves its machine. `supplierDeclineReason` turns any refusal into the reason it may send.
+- **What a buyer may hear.** A seller sends a reason the seller's mandate check also gives only once `BUYER_HEARS` lists it. So `approval.human_required` isn't sent today, since Avow takes no request to approve one sale and a buyer told to wait would wait for nothing.
+- **When to ask again is advice.** It falls after the order was taken and within seven days, and nothing holds either side to it.
+- **A replaced offer is a new offer.** The buyer's agent checks the replacing version as it checks any offer it has never seen, its mandate included, before it orders it. No step says to send the same order again unchanged.
+- **The buying business withdraws its own order.** Any active agent of the business can withdraw it, including one another of its agents sent, so an agent revoked since it ordered doesn't leave the order with nobody to end it. Any quote that came back stays on the record and can no longer be funded.
+- **Expiry.** A quoted order past its expiry can still be declined or withdrawn, while the lock holds nothing for it. An order that lapsed unquoted stays lapsed.
+- **Freed capacity.** A decline or a withdrawal after a quote frees the seller's capacity at once, in the agent's folder, and in Avow's count where its seller's mandate checks are on.
+- **No reserve for an ended order.** Avow approves no reserve for an order that was declined or withdrawn, and refuses it with `order.declined` or `order.withdrawn`.
+- **Once funded, the lock decides.** Neither step is taken once the buyer's lock holds the reserve, and the lock's own deadlines govern from then on. A side that ends an order at the moment the buyer funds it can lose that race, and the reserve then goes back at the acceptance deadline.
+
+`buy` ends on a decline or a withdrawal with the reason, and `order`'s answer and `orders` name the reason and the next step.
+
+A thread order carries a service order as a [negotiation thread](/docs/reference/negotiation), on paths of its own. There a decline is a signed move by the side that declines, and a withdrawal is the buyer's decline with `order.withdrawn`. `readThread` and the `thread` tool replay a thread with `threadProblem` before they say where it stands.
 
 ## Order from a test seller
 
