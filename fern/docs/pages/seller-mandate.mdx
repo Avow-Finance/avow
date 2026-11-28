@@ -5,7 +5,21 @@ slug: docs/reference/seller-mandate
 
 A seller's mandate is the authority a business's administrator signs for one selling agent. A buyer's mandate limits what an agent may reserve. A seller's mandate limits what an agent may promise, which is what it sells, at what price, how much, how far ahead, on what charges and to whom.
 
-`@avow-finance/spec` holds the message, its signed form and the check. Avow doesn't enforce a seller's mandate yet, and it doesn't serve one either. The SDK's selling agent reads its own mandates and holds itself to the newest, as [The agent holds itself to it](#the-agent-holds-itself-to-it) sets out, so a selling agent with no mandate from Avow sells as it did before, with its signing key as its only limit.
+`@avow-finance/spec` holds the message, its signed form and the check, and the SDK's selling agent runs that check on itself.
+
+## Where it stands today
+
+Avow's seller's mandate checks are switched off on the sandbox, and a later deploy turns them on. Until then a selling agent's signing key is its only limit. Avow serves no seller's mandate on the sandbox today, so the SDK's selling agent finds none and sells as it did before, and no check of Avow's holds a selling agent to one.
+
+Wherever this page says what Avow checks, it describes what Avow is to check once the checks are on. Read every limit below as a limit a mandate states and the selling agent's own SDK holds itself to. None of them is a limit Avow holds a seller to today.
+
+## Two layers, and no lock
+
+A buyer's mandate has three enforcing layers. A seller's mandate is to have two, the selling agent and Avow's API. No lock and no keychain enforces it.
+
+Only the buyer reserves. The reserve sits in the buyer's own lock, and the seller puts up nothing. The lock never reads a seller's mandate, and the seller's signing key moves no money, so Tempo's keychain has nothing to hold. Once a buyer's reserve is on the lock, the lock takes an acceptance signed by the seller's key until the acceptance deadline, whatever the seller's mandate says by then.
+
+The selling agent holds itself to its mandate in its own process, so a seller running other code isn't held by that layer. That's why the second layer matters, and it's the one switched off today.
 
 ## The message
 
@@ -13,7 +27,11 @@ A `SellerMandate` is EIP-712 typed data for the business account's root key or o
 
 The spec holds the messages and the checks. Where a deployment turns seller's mandates on, Avow's sandbox stores each one the business account signed, sealed under a key only Avow's API holds, so a mandate's terms never sit in its database in the clear, and it opens one only to answer the business and its selling agent. Avow's testnet has them off until it turns them on. Revocations are to be stored the same way, and until a deployment takes them the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
 
-Version 1 covers sales of `service/1` and `job/1`, which `SELLER_TEMPLATES` lists. Terms under any other template are refused with `seller_mandate.template_not_covered`, and a sale under one is outside every seller's mandate. That includes GPU reservations under `gpu-reservation/1`, which no seller's mandate covers yet, so a supplier sells them under the rules it always has and an agreement for one names no mandate.
+## What version 1 covers
+
+Version 1 covers two kinds of sale, a service under `service/1` and a job under `job/1`, which `SELLER_TEMPLATES` lists. Terms under any other template are refused with `seller_mandate.template_not_covered`, and a sale under one is outside every seller's mandate.
+
+No seller's mandate covers GPU reservations yet. A reservation under `gpu-reservation/1` is outside every seller's mandate, a supplier sells one under the rules it always has, and an agreement for one names no mandate. The supplier adapter in `@avow-finance/supplier` sells only GPU reservations, so nothing it sells is held to a seller's mandate.
 
 ## What it holds
 
@@ -100,7 +118,15 @@ It refuses in this order.
 | `seller_mandate.over_daily_units` | The order would take the day's units past the line's limit |
 | `seller_mandate.over_outstanding` | The order would take what's promised and undelivered past the limit |
 
-A sale inside every limit and above the approval rule's amount comes back as `needs_human` with `approval.human_required`, unless it is exactly the sale the check was told a person approved. The spec holds a [request for that approval](/docs/reference/approval-requests#asking-a-person-to-approve-one-sale), which names the signing key, the buyer, the whole offer version and the units. Whoever records sales keeps an approval to one sale and to a day, since the check reads only what it's handed. Avow doesn't take that request yet, so nothing lets a person approve one sale today. An approval lifts no limit, since every limit is checked first, and no job is approved this way.
+A sale inside every limit and above the approval rule's amount comes back as `needs_human` with `approval.human_required`, unless it is exactly the sale the check was told a person approved. [Approving one sale](#approving-one-sale-not-live-yet) says how that approval is to work.
+
+### Approving one sale (not live yet)
+
+Nothing lets a person approve one sale today. The spec holds the message and the check, Avow doesn't take the request and refuses it with `approval_request.kind_unavailable`, and the SDK's selling agent refuses a sale its mandate hands to a person as `approval.human_required`.
+
+Once it's live, a person approves one sale, and only that one. The approval names the signing key that makes it, the buyer, the whole offer version and the units, as `SaleContent` in `@avow-finance/spec`. The total it comes to is the offer's price for each unit times the units, which `salePrice` gives, and the card shows the offer whole so the person reads its price, its charges and its delivery. `coversSale` says whether a sale is exactly the approved one, the same key, buyer, offer version and units.
+
+An approval is good once, within 24 hours of being given, which is `SALE_APPROVAL_LASTS`, and lapses unused after that. It names no terms hash, since a service's supplier has minutes to accept, and the buyer's next order of those units from that version is the sale that was approved. Whoever records sales keeps an approval to one sale and to its day, since the check reads only what it's handed. The request rests on the mandate the sale would be made under, so a mandate that replaces it, or a revocation of the key, makes the request stale. An approval lifts no limit, since every limit is checked first, and no job is approved this way, since a job has no offer version. The [approval request](/docs/reference/approval-requests#asking-a-person-to-approve-one-sale) page has the request itself.
 
 The arbiter and the day-90 share in a sale's terms are Avow's to hold to its own when it approves the reserve, as for any commitment.
 
@@ -155,7 +181,7 @@ An administrator changes a selling agent's limits by signing a new mandate for t
 | `seller_mandate.signature_invalid` | The account didn't sign one of the mandates |
 | `message.invalid` | Anything else is malformed, such as a revocation for another agent |
 
-A `SellerKeyRevocation` is the administrator's word that a selling agent's authority has ended, for good. The business account's root key or one of its admin keys signs it under the business's own lock. It names the business, the account and the agent's signing key, and no mandate. It carries no time and never expires.
+A `SellerKeyRevocation` is the administrator's word that a selling agent's authority has ended, for good. The business account's root key or one of its admin keys signs it under the business's own lock. `sellerKeyRevocationSignatureProblem` checks the signature. Its default check recovers a secp256k1 signer, so on its own it reads the root key only, and a revocation an admin key signed, or one from an account whose root key is a passkey, needs a check passed in that reads the account's keychain. It names the business, the account and the agent's signing key, and no mandate. It carries no time and never expires.
 
 A revocation ends every seller's mandate for that business, account and key under that lock, whenever each was signed. A signature carries no time, so nothing could say whether a mandate came before a revocation or after it, and a rule that needs no order is the only one a reader can hold. So a revoked key is to be given no seller's mandate again, and its agent sells again under a new key. A buyer's revoked agent key has Tempo's keychain to refuse it. A seller's has no chain behind it, so whoever stores mandates has to refuse.
 
@@ -176,7 +202,7 @@ The check reads only what it's handed, so four things fall to whoever stores man
 
 ## What a buyer hears
 
-The amounts a seller's mandate sets stay with the seller. `buyerFacingReason` passes on two of the check's answers, that the sale is approved and that the seller won't deal with this buyer. Every other answer becomes `supplier.not_authorized`, which says the supplier's agent isn't authorized to sell on these terms and names no limit. The seller's agent hears the specific reason.
+The amounts a seller's mandate sets stay with the seller. `buyerFacingReason` passes on two of the check's answers, that the sale is approved and that the seller won't deal with this buyer. Every other answer becomes `supplier.not_authorized`, which says the supplier's agent isn't authorized to sell on these terms and names no limit. The two it passes on are the ones `BUYER_HEARS` lists, so a reason added to the check later reaches no buyer until someone lists it there. The seller's agent hears the specific reason.
 
 A buyer told that a person has to approve would wait for nothing today, so it hears `supplier.not_authorized` until one sale can be approved.
 
@@ -199,7 +225,3 @@ The agent counts its own ledger from the quotes it keeps in its `.avow` folder. 
 Avow's records of a buyer aren't open to a selling agent yet, so the agent reads a buyer's country as unknown and treats it as not having passed a business check. A mandate that excludes any country, or requires a check, refuses every sale until they are. Avow takes no request to approve one sale yet, so a sale the mandate hands to a person is refused as `approval.human_required`, and its buyer sees the order lapse.
 
 The agent holds itself to its mandate in its own process, and a seller running other code isn't held by this. Avow is to be the second layer, and it enforces nothing for a seller today.
-
-## Two layers, and no chain
-
-A buyer's mandate has three enforcing layers. A seller's mandate is to have two, the seller's own agent and Avow. The lock belongs to the buyer and never reads a seller's mandate, and the signing key moves no money, so Tempo's keychain has nothing to hold. Once a buyer's reserve is on the lock, the lock takes an acceptance signed by the seller's key until the acceptance deadline, whatever the seller's mandate says by then.
