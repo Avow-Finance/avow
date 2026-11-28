@@ -55,6 +55,31 @@ async function jobSales(store: SandboxStore, now: bigint): Promise<Record<string
   return sales
 }
 
+/** A job sale the folder keeps, as a listener reports what still waits. */
+export interface KeptJobSale {
+  orderId: string
+  item: string
+  /** The last moment the job can be accepted, in unix seconds. */
+  until: bigint
+  accepted: boolean
+  deliverBy: bigint
+}
+
+/** The job sales the folder keeps, oldest first. It reads the folder only, and takes no turn. */
+export async function keptJobSales(store: SandboxStore, now: bigint): Promise<KeptJobSale[]> {
+  return Object.entries(await jobSales(store, now))
+    .map(([orderId, s]) => ({
+      orderId,
+      item: s.item,
+      until: s.until,
+      accepted: s.accepted,
+      deliverBy: s.deliverBy,
+      at: s.at,
+    }))
+    .sort((x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : 0))
+    .map(({ at: _, ...sale }) => sale)
+}
+
 /** One sale the ledger counts, named by its kind and its order, so the sale it checks is left out. */
 interface Apart {
   category: SellerCategory

@@ -31,6 +31,7 @@ import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
 import {
   awaitAccepted,
+  type InboxRead,
   listenFor,
   type MailboxOptions,
   mailboxContext,
@@ -157,6 +158,8 @@ export interface SandboxMailbox {
     accept?: (order: MailboxOrder) => boolean | Promise<boolean>
     onStep?: (order: MailboxOrder, step: SellStep) => void
     onError?: (order: MailboxOrder, error: unknown) => void
+    /** Each read of the inbox, and why one failed. */
+    onRead?: (read: InboxRead) => void
     every?: number
     signal?: AbortSignal
   }): Promise<void>

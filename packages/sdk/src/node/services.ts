@@ -4,6 +4,7 @@ import {
   formatUsd,
   isJobOfferVersion,
   type JobOfferVersion,
+  type OfferListing,
   type OfferVersion,
   offerIdOf,
   offerVersionId,
@@ -21,6 +22,7 @@ import {
 import type { Hex } from 'viem'
 import { SELLER_LIMITS_UNENFORCED } from '../sandbox/seller-mandate.js'
 import {
+  type Published,
   type SandboxServices,
   type ServiceBuyOutcome,
   type ServiceOfferDraft,
@@ -68,33 +70,57 @@ function amount(v: unknown, most: number, step: number, otherwise: number | null
   return Math.abs(steps - Math.round(steps)) < 1e-6 ? v : null
 }
 
+const CHARGES_ERROR =
+  'Give both charges as percentages of the price from 0 to 100, to two decimals at most, what cancelling late can cost and what not being there to take delivery can cost.'
+
+const textOr = (error: string) => (v: unknown) => {
+  const t = typeof v === 'string' ? v.trim() : ''
+  return t ? t : { error }
+}
+const charge = (v: unknown) => amount(v, 100, 0.01, null) ?? { error: CHARGES_ERROR }
+
+/**
+ * How each input a seller has to give reads, with the limits and the words it refuses an answer
+ * with. `readOfferInput` reads them this way, and so does anything that asks for them one at a time.
+ */
+export const ASKED_INPUTS = {
+  name: textOr('Name what the offer sells.'),
+  summary: textOr('Say in a sentence what the buyer gets.'),
+  evidence: textOr('Say what counts as delivery.'),
+  price: (v: unknown) => {
+    const price = amount(v, MOST.dollars, 0.000001, null)
+    return price === null || price === 0
+      ? {
+          error: `Give the price of one unit in dollars, above zero, up to ${MOST.dollars.toLocaleString('en-US')} and to six decimals at most.`,
+        }
+      : price
+  },
+  late_cancellation_percent: charge,
+  no_show_percent: charge,
+  per_day: (v: unknown) =>
+    amount(v, SERVICE_QUANTITY_MAX, 1, null) || {
+      error: `Bookings a day are a whole number from 1 to ${SERVICE_QUANTITY_MAX}.`,
+    },
+} satisfies Partial<Record<keyof OfferInput, (v: unknown) => string | number | { error: string }>>
+
 /**
  * An offer as its supplier sets it, in dollars, percentages, hours and days, turned into the draft
  * the template takes. Both charges are asked for, since they set the reserve a booking takes, and
  * nothing else has to be given. The template's own rules are checked when it's published.
  */
 export function readOfferInput(input: OfferInput): ServiceOfferDraft | { error: string } {
-  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-  const name = text(input.name)
-  const summary = text(input.summary)
-  const evidence = text(input.evidence)
-  if (!name) return { error: 'Name what the offer sells.' }
-  if (!summary) return { error: 'Say in a sentence what the buyer gets.' }
-  if (!evidence) return { error: 'Say what counts as delivery.' }
-  const price = amount(input.price, MOST.dollars, 0.000001, null)
-  if (price === null || price === 0) {
-    return {
-      error: 'Give the price of one unit in dollars, above zero and to six decimals at most.',
-    }
-  }
-  const late = amount(input.late_cancellation_percent, 100, 0.01, null)
-  const noShow = amount(input.no_show_percent, 100, 0.01, null)
-  if (late === null || noShow === null) {
-    return {
-      error:
-        'Give both charges as percentages of the price from 0 to 100, to two decimals at most, what cancelling late can cost and what not being there to take delivery can cost.',
-    }
-  }
+  const name = ASKED_INPUTS.name(input.name)
+  if (typeof name !== 'string') return name
+  const summary = ASKED_INPUTS.summary(input.summary)
+  if (typeof summary !== 'string') return summary
+  const evidence = ASKED_INPUTS.evidence(input.evidence)
+  if (typeof evidence !== 'string') return evidence
+  const price = ASKED_INPUTS.price(input.price)
+  if (typeof price !== 'number') return price
+  const late = ASKED_INPUTS.late_cancellation_percent(input.late_cancellation_percent)
+  if (typeof late !== 'number') return late
+  const noShow = ASKED_INPUTS.no_show_percent(input.no_show_percent)
+  if (typeof noShow !== 'number') return noShow
   const lead = amount(input.lead_hours, MOST.hours, 1 / 3600, 24)
   const free = amount(input.free_cancel_hours, MOST.hours, 1 / 3600, 0)
   const due = amount(input.payment_due_days, MOST.days, 1 / 86_400, 7)
@@ -102,10 +128,10 @@ export function readOfferInput(input: OfferInput): ServiceOfferDraft | { error: 
     return { error: 'Hours run from zero to a year, and days to pay from zero to 365.' }
   }
   const most = amount(input.max_per_booking, SERVICE_QUANTITY_MAX, 1, 1)
-  const perDay = amount(input.per_day, SERVICE_QUANTITY_MAX, 1, 10)
-  if (!most || !perDay) {
-    return { error: 'Units a booking and bookings a day are whole numbers from 1 up.' }
-  }
+  if (!most)
+    return { error: `Units a booking are a whole number from 1 to ${SERVICE_QUANTITY_MAX}.` }
+  const perDay = input.per_day === undefined ? 10 : ASKED_INPUTS.per_day(input.per_day)
+  if (typeof perDay !== 'number') return perDay
   const route = input.payment === undefined ? 'transfer' : input.payment
   if (!(PAYMENT_ROUTES as readonly unknown[]).includes(route)) {
     return { error: `Payment is ${PAYMENT_ROUTES.join(' or ')}.` }
@@ -350,15 +376,7 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
   if (ask.verb === 'list-with-avow') {
     const listed = await services.listWithAvow(ask.id)
     if (!listed.ok) return fail(listed.notice)
-    console.log(
-      [
-        `Listed offer ${listed.listing.id} with Avow, checked against seller's mandate ${listed.listing.sellerMandate}.`,
-        ...(listed.listing.replaced
-          ? [`It replaces ${listed.listing.replaced}, which Avow no longer lists.`]
-          : []),
-        "Avow holds it as the item's current listing. A listing grants nothing, and every order is checked again.",
-      ].join('\n'),
-    )
+    console.log(listedLines(listed.listing).join('\n'))
     return
   }
   if (ask.verb === 'withdraw-from-avow') {
@@ -386,19 +404,44 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     return
   }
   if (ask.verb !== 'publish') return
-  const { version, id, standing } = await services.publish(ask.draft)
-  const file = resolve(fileName(version.item.name))
-  writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
+  const published = await services.publish(ask.draft)
   console.log(
     [
-      `Published offer ${id}.`,
-      ...(standing ? [standing.notice] : []),
-      ...offerSentences(version),
-      `The offer is in ${file}. Give that file to a buyer's agent, which orders with`,
-      `  npx avow-sandbox order --offer ${fileName(version.item.name)} --quantity 1`,
+      ...publishedLines(published, writeOfferFile(published.version)),
       'Run npx avow-sandbox listen here to quote and accept the orders that come.',
     ].join('\n'),
   )
+}
+
+/** What listing a version with Avow says, once Avow has taken it. */
+export function listedLines(listing: OfferListing): string[] {
+  return [
+    `Listed offer ${listing.id} with Avow, checked against seller's mandate ${listing.sellerMandate}.`,
+    ...(listing.replaced ? [`It replaces ${listing.replaced}, which Avow no longer lists.`] : []),
+    "Avow holds it as the item's current listing. A listing grants nothing, and every order is checked again.",
+  ]
+}
+
+/**
+ * Writes a published offer to the file a buyer's agent orders from, in the working folder beside
+ * `.avow`, and answers with where it went.
+ */
+export function writeOfferFile(version: ServiceOfferVersion): string {
+  const file = resolve(fileName(version.item.name))
+  writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
+  return file
+}
+
+/** What publishing an offer says: its id, where the seller stands, the offer and how to order it. */
+export function publishedLines(published: Published<ServiceOfferVersion>, file: string): string[] {
+  const { version, id, standing } = published
+  return [
+    `Published offer ${id}.`,
+    ...(standing ? [standing.notice] : []),
+    ...offerSentences(version),
+    `The offer is in ${file}. Give that file to a buyer's agent, which orders with`,
+    `  npx avow-sandbox order --offer ${fileName(version.item.name)} --quantity 1`,
+  ]
 }
 
 /** What `order --offer` takes, read from its arguments, or why it can't run. */

@@ -1,6 +1,5 @@
-import { type MailboxOrder, mailboxStatusAt, offerItemOf } from '@avow-finance/spec'
+import { type MailboxOrder, mailboxStatusAt } from '@avow-finance/spec'
 import { MAILBOX_ORDER_SECONDS, sandboxMailbox } from '../sandbox/mailbox.js'
-import { SERVICE_ORDERS_UNSERVED, sandboxServices } from '../sandbox/services.js'
 import { fileStore } from './platform.js'
 
 /** What `avow-sandbox order` takes, read from its arguments, or why it can't run. */
@@ -60,60 +59,4 @@ export async function orderCommand(args: readonly string[]): Promise<void> {
     console.error(`Stopped at ${describe(outcome.order)}: ${outcome.reason}`)
     process.exit(1)
   }
-}
-
-/**
- * `avow-sandbox listen`. Reads this business's inboxes every few seconds and takes each order's
- * next step, until stopped. It quotes a job order, and a service order for an offer this business
- * published. Orders that arrive while it isn't running wait in the inbox until they lapse.
- */
-export async function listenCommand(): Promise<void> {
-  const stop = new AbortController()
-  process.once('SIGINT', () => stop.abort())
-  const store = fileStore()
-  const [mailbox, services] = await Promise.all([
-    sandboxMailbox({ store }),
-    sandboxServices({ store }),
-  ])
-  const offers = await services.published()
-  // Asked once up front, so a sandbox that can't carry service orders is said and not polled.
-  const unserved = services.sells
-    ? await services.inbox().then(
-        () => null,
-        (error: unknown) =>
-          error instanceof Error && error.message === SERVICE_ORDERS_UNSERVED
-            ? error.message
-            : null,
-      )
-    : null
-  const selling = unserved
-    ? `not for services. ${unserved}`
-    : offers.length === 0
-      ? 'for no services yet, since it has published no offers'
-      : `for ${offers.map((v) => offerItemOf(v).name).join(', ')}`
-  console.log(`Listening for orders to ${mailbox.businessId}, for jobs and ${selling}`)
-  // Said once up front, and read again before every quote and acceptance.
-  if (services.sells && !unserved) {
-    console.log(
-      await services.sellerStanding().then(
-        (standing) => standing.notice,
-        (error: unknown) => (error instanceof Error ? error.message : String(error)),
-      ),
-    )
-  }
-  console.log('Stop with Ctrl+C.')
-  // A step that fails is tried again on every read, so its reason is said once an order.
-  const said = new Set<string>()
-  const told = {
-    signal: stop.signal,
-    onStep: (order: { orderId: string }, step: { step: string }) =>
-      console.log(`${order.orderId}: ${step.step}`),
-    onError: (order: { orderId: string }, error: unknown) => {
-      const line = `${order.orderId}: ${error instanceof Error ? error.message : String(error)}`
-      if (!said.has(line)) console.error(line)
-      said.add(line)
-    },
-  }
-  if (unserved) return mailbox.listen(told)
-  await Promise.all([mailbox.listen(told), services.listen(told)])
 }

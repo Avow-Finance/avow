@@ -211,7 +211,8 @@ export async function addCommitment(store: SandboxStore, c: StoredCommitment): P
  * it back, so two at once would lose one, and a check that reads every sale before recording one
  * would let two pass the same limit. Stores over the same place share a turn, so every way the SDK
  * opens a folder takes its changes in one line. Another process on the same folder isn't held back
- * by this, so run one seller on a folder at a time.
+ * by this. `avow-sandbox listen` takes a lock so a second listener won't start, but the MCP server's
+ * `sell`, the SDK's `sell` and a `start` session take none, so run one seller on a folder at a time.
  */
 const placeTurns = new Map<string, Promise<unknown>>()
 const storeTurns = new WeakMap<SandboxStore, Promise<unknown>>()
