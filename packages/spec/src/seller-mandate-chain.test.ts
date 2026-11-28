@@ -463,7 +463,7 @@ describe("reading a key's seller's mandates from JSON", () => {
     expect(read({ ...json, current: { ...json.current, lock: OTHER_LOCK } })).toBe(
       'message.wrong_contract',
     )
-    expect(read({ ...json, earlier: [{ ...json.earlier[0], schemaVersion: '2' }] })).toBe(
+    expect(read({ ...json, earlier: [{ ...json.earlier[0], schemaVersion: '3' }] })).toBe(
       'message.schema_unknown',
     )
     expect(read({ ...json, earlier: [null] })).toBe('message.invalid')
