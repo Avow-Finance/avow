@@ -10,7 +10,7 @@ import {
 } from './dependencies.js'
 import { CHARGE_KINDS, type ChargeKind, RELEASE_REASONS, type ReleaseReason } from './eip712.js'
 import type { JobSubject } from './job.js'
-import { bytes32, u64, u256 } from './json-fields.js'
+import { businessIdJson, bytes32, u64, u256 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import {
   type CommitmentReference,
@@ -297,7 +297,7 @@ export const JOB_EVENT_SCHEMAS = [
     ...base,
     type: z.literal('job_compute_secured'),
     reference: commitmentReferenceJson,
-    supplier: z.string().min(1).max(100),
+    supplier: businessIdJson,
     amount: u256,
     freeCancelBy: u64,
     releaseDate: u64,

@@ -14,7 +14,7 @@ import type { TermsAgreement } from './eip712.js'
 import { type FactBody, factBodyShape } from './facts.js'
 import { GPU_RESERVATION } from './gpu-reservation.js'
 import type { ChainedJobTerms, JobTerms } from './job.js'
-import { address, bytes32, hexBytes, u64, u256 } from './json-fields.js'
+import { address, businessIdJson, bytes32, hexBytes, u64, u256 } from './json-fields.js'
 import type { ReasonCode } from './reasons.js'
 import {
   type CommitmentReference,
@@ -338,7 +338,7 @@ export const orderIdJson = z.string().regex(ORDER_ID)
 /** The customer as JSON, labelled as Avow's test customer and nothing else. */
 export const jobCustomerJson = z.strictObject({
   label: z.literal(TEST_CUSTOMER_LABEL),
-  businessId: z.string().min(1).max(100),
+  businessId: businessIdJson,
 })
 
 export const testCustomerProfileJson = z.strictObject({
@@ -365,8 +365,6 @@ export const jobRequirementJson = z.strictObject({
   condition: z.literal('accepted'),
   disclosed: z.literal('subject'),
 })
-
-const businessIdJson = z.string().min(1).max(100)
 
 export const jobOfferJson = z.strictObject({
   orderId: orderIdJson,

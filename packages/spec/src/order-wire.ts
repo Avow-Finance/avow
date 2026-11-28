@@ -1,15 +1,13 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import { type OrderDecline, orderDeclineJson } from './decline.js'
-import { bytes32, u64, u256 } from './json-fields.js'
+import { businessIdJson, bytes32, u64, u256 } from './json-fields.js'
 
 /**
  * What every kind of order the sandbox mailbox carries shares on the wire: how a business is
  * named, how a funded reserve is reported, and the states an order passes through. A job order and
  * a service order each add their own request and quote.
  */
-
-export const businessIdJson = z.string().min(1).max(100)
 
 /**
  * The reserve the buyer funded, as Avow read it from the buyer's lock. Avow reads the lock itself,

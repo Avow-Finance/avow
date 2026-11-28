@@ -1,14 +1,8 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import type { JobTerms } from './job.js'
-import { address, bytes32, u64 } from './json-fields.js'
-import {
-  businessIdJson,
-  type MailboxReserve,
-  type OrderStage,
-  orderStagesJson,
-  readOrNull,
-} from './order-wire.js'
+import { address, businessIdJson, bytes32, u64 } from './json-fields.js'
+import { type MailboxReserve, type OrderStage, orderStagesJson, readOrNull } from './order-wire.js'
 import {
   type JobRequirement,
   jobRequirementJson,

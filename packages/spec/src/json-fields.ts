@@ -18,6 +18,8 @@ const uint = (bits: number) =>
 export const u64 = uint(64)
 /** Amounts and nonces. */
 export const u256 = uint(256)
+/** A business id as every message names one. */
+export const businessIdJson = z.string().min(1).max(100)
 export const address = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/)

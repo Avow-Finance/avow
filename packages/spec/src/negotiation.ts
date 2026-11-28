@@ -18,8 +18,17 @@ import {
   negotiationMoveTypedData,
   type TermsAgreement,
 } from './eip712.js'
-import { address, bytes32, hexBytes, sameHex as same, side, u64, u256 } from './json-fields.js'
-import { businessIdJson, readOrNull } from './order-wire.js'
+import {
+  address,
+  businessIdJson,
+  bytes32,
+  hexBytes,
+  sameHex as same,
+  side,
+  u64,
+  u256,
+} from './json-fields.js'
+import { readOrNull } from './order-wire.js'
 import type { ReasonCode } from './reasons.js'
 import {
   offerVersionId,
