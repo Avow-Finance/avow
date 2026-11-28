@@ -54,6 +54,9 @@ describe('avow-sandbox-mcp', () => {
       'order',
       'orders',
       'sell',
+      'decline',
+      'withdraw_order',
+      'thread',
     ])
     // An agent can ask without knowing its business.
     expect(tools.find((t) => t.name === 'verify')?.inputSchema.required).toEqual(['link'])
@@ -62,11 +65,13 @@ describe('avow-sandbox-mcp', () => {
     // Every tool has a title and says how it acts. Booking, ordering and selling change
     // something beyond the agent's own request, publishing changes its own folder, and nothing
     // destroys. A supplier's offers stay in its folder, so the two tools for them reach nowhere.
-    // Withdrawing a listing is the one change that can't be undone, since Avow never lists a
-    // withdrawn version again.
+    // Withdrawing a listing, declining an order and withdrawing one are the changes that can't be
+    // undone, since Avow never lists a withdrawn version again and an ended order takes no step.
     for (const t of tools) expect(t.title).toBeTruthy()
     expect(tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name)).toEqual([
       'withdraw_listing',
+      'decline',
+      'withdraw_order',
     ])
     expect(tools.filter((t) => !t.annotations?.openWorldHint).map((t) => t.name)).toEqual([
       'publish_offer',
@@ -83,6 +88,8 @@ describe('avow-sandbox-mcp', () => {
       'withdraw_listing',
       'order',
       'sell',
+      'decline',
+      'withdraw_order',
     ])
     // A change names its kind and values, and nothing an agent writes in its own words.
     expect(tools.find((t) => t.name === 'request_change')?.inputSchema.required).toEqual(['kind'])

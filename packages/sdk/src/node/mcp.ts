@@ -655,7 +655,7 @@ export const MCP_TOOLS = [
     title: 'Decline an order',
     annotations: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -690,7 +690,7 @@ export const MCP_TOOLS = [
     title: 'Withdraw an order',
     annotations: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -731,9 +731,10 @@ export const MCP_TOOLS = [
   title: string
   /**
    * How the tool acts, for clients that ask before running one. Booking and ordering add a
-   * commitment and move money into a reserve, so they're neither read-only nor idempotent, and
-   * nothing destroys. Every tool reaches Avow or the chain, so each is open-world, but the two
-   * that only read and keep a supplier's offers in its folder.
+   * commitment and move money into a reserve, so they're neither read-only nor idempotent.
+   * Withdrawing a listing, declining an order and withdrawing one can't be undone, so those are
+   * destructive, and nothing else is. Every tool reaches Avow or the chain, so each is open-world,
+   * but the two that only read and keep a supplier's offers in its folder.
    */
   annotations: {
     readOnlyHint: boolean
