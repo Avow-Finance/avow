@@ -351,14 +351,22 @@ describe('booking with a supplier', () => {
     })
     expect(elsewhere).toEqual({ ok: false, reason: 'mandate.supplier_not_allowed' })
 
-    const s = await setup()
+    const s = await setup({ mandate: { categories: ['service'] } })
     expect(
       await s.agent.book({
         supplier: s.connection,
         terms: gpuReservationTerms(gpuBooking()),
-        category: 'storage',
+        category: 'compute',
       }),
     ).toEqual({ ok: false, reason: 'mandate.category_not_allowed' })
+    // A GPU reservation filed as a service is refused, so a services-only mandate books no GPUs.
+    expect(
+      await s.agent.book({
+        supplier: s.connection,
+        terms: gpuReservationTerms(gpuBooking()),
+        category: 'service',
+      }),
+    ).toEqual({ ok: false, reason: 'terms.category_mismatch' })
     const short = await setup({ mandate: { expiry: START + 60n } })
     expect(await book(short)).toEqual({ ok: false, reason: 'mandate.ends_before_window' })
     const capped = await setup({ mandate: { capPerCommitment: dollars(400) } })

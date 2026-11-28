@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
+import { COMPUTE_CATEGORY } from './gpu-reservation.js'
 import {
   checkMandate,
   handsToPerson,
@@ -8,6 +9,7 @@ import {
   validateMandate,
 } from './mandate.js'
 import { PRODUCTION_PROFILE, TESTNET_DEMO_PROFILE } from './profiles.js'
+import { SERVICE_CATEGORY } from './service.js'
 import { enforceableTerms } from './terms.js'
 import { demoMandate, demoRequest, NOW, newKey, START, TOKEN } from './test-helpers.js'
 import type { Mandate } from './types.js'
@@ -64,9 +66,23 @@ describe('checkMandate', () => {
     expect(checkMandate(input({}, { supplier: 'biz_other' }))).toEqual(
       denied('mandate.supplier_not_allowed'),
     )
-    expect(checkMandate(input({}, { category: 'storage' }))).toEqual(
+    expect(checkMandate(input({ categories: [SERVICE_CATEGORY] }))).toEqual(
       denied('mandate.category_not_allowed'),
     )
+  })
+
+  it('refuses a GPU reservation filed under any category but compute, whatever the mandate allows', () => {
+    // A mandate that allows only services can't be used to book GPU capacity by calling it one.
+    expect(
+      checkMandate(input({ categories: [SERVICE_CATEGORY] }, { category: SERVICE_CATEGORY })),
+    ).toEqual(denied('terms.category_mismatch'))
+    expect(checkMandate(input({ categories: [] }, { category: 'storage' }))).toEqual(
+      denied('terms.category_mismatch'),
+    )
+    expect(checkMandate(input({}, { category: COMPUTE_CATEGORY }))).toEqual({
+      result: 'approved',
+      reason: 'approved',
+    })
   })
 
   it('treats an empty supplier or category list as no limit on it', () => {
@@ -74,7 +90,7 @@ describe('checkMandate', () => {
       result: 'approved',
       reason: 'approved',
     })
-    expect(checkMandate(input({ categories: [] }, { category: 'storage' }))).toEqual({
+    expect(checkMandate(input({ categories: [] }))).toEqual({
       result: 'approved',
       reason: 'approved',
     })

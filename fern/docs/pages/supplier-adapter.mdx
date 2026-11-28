@@ -12,6 +12,8 @@ Everything here runs on testnet with test dollars. Nothing moves real money.
 
 The adapter takes GPU bookings and nothing else. It signs only terms built with the GPU reservation template, `gpu-reservation/1`, that meet Avow's `testnet-demo` profile on chain 42431, and it refuses any other template with a 422 that says `this supplier doesn't sell <template>`.
 
+Every GPU reservation falls under the mandate category `compute`, which `COMPUTE_CATEGORY` names, so a buyer's mandate allows GPU bookings by naming it. GPU reservation terms under any other category are refused as `terms.category_mismatch`, so an agent whose mandate allows only services can't book capacity by filing it as a service.
+
 That leaves out several things a supplier may want, so plan around them.
 
 - **No service orders.** It doesn't sell `service/1` offers. [Services sold by quantity](/docs/reference/services) covers those, sold through the `avow-sandbox` package.

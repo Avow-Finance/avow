@@ -17,6 +17,13 @@ import {
  */
 export const GPU_RESERVATION = 'gpu-reservation/1' as const
 
+/**
+ * The mandate category every GPU reservation falls under, which its terms agreement and reserve
+ * request name. A mandate allows GPU reservations by naming it, and GPU reservation terms under any
+ * other category are refused as `terms.category_mismatch`.
+ */
+export const COMPUTE_CATEGORY = 'compute' as const
+
 /** The unit a GPU reservation's rate is charged per. */
 export const GPU_HOUR = 'gpu-hour'
 
