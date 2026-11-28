@@ -12,7 +12,6 @@ import { isKeySignature } from './keychain.js'
 import { MAX_MANDATE_CHAIN, type MandateChain } from './mandate-chain.js'
 import type { ReasonCode } from './reasons.js'
 import {
-  type AuthorityLimits,
   MAX_SLICE_DEPTH,
   parseSlice,
   parseSliceRevocation,
@@ -149,7 +148,9 @@ export async function sliceRevocationProblem(
  *   it divides the one above and was handed out by that level's worker key.
  * - A level's versions form one line. Its first version replaces none and fits inside its parent,
  *   the current mandate for a slice handed out under it, or any version of the slice above. Every
- *   version after it passes `sliceReplacementProblem` against the one before.
+ *   version after it passes `sliceReplacementProblem` against the one before, and a version the
+ *   account signed fits inside its parent the same way. A parent narrowed since locks no slice
+ *   under it out, since `checkSlicedMandate` holds every level to its parent's current limits.
  * - The issuer's key or the account signed every version. A key's signature is checked here, and
  *   the account's with `check`, which defaults to recovering a secp256k1 signer, so a caller
  *   whose account signs with a passkey passes its own, as Avow's API does with its chain reader.
@@ -179,9 +180,8 @@ export async function sliceChainProblem(
   const keys: Address[] = [mandate.agentKey]
   const ids = new Set<string>()
   const levels: { slice: Slice; hash: Hex; earlier: Hex[] }[] = []
-  // The parent's versions, oldest first, and its current limits.
+  // The parent's versions, oldest first.
   let parentVersions: readonly Slice[] = []
-  let parentLimits: AuthorityLimits = mandate
   let parentId: Hex = zeroHash
   for (const level of served.levels) {
     const head = level.current.message
@@ -212,21 +212,28 @@ export async function sliceChainProblem(
     const line = [...versions].reverse()
     const first = (line[0] as Signed<Slice>).message
     if (first.replaces !== undefined) return no('slice.replaces_mismatch')
-    const fits =
+    // What a version may fit inside: any version of the slice above, or the current mandate for
+    // a version handed out under it. A version under an earlier mandate, or wider than a parent
+    // narrowed since, is held to the parent's current limits when it's used, by
+    // `checkSlicedMandate`, so narrowing a parent never locks the slices under it out.
+    const insideParent = (v: Slice) =>
       parentVersions.length === 0
-        ? // A slice handed out under an earlier mandate is held to the current one when used.
-          first.mandateHash.toLowerCase() !== currentMandate ||
-          sliceWidensProblem(first, mandate) === null
-        : parentVersions.some((p) => sliceWidensProblem(first, p) === null)
-    if (!fits) return no('slice.widens')
+        ? v.mandateHash.toLowerCase() !== currentMandate || sliceWidensProblem(v, mandate) === null
+        : parentVersions.some((p) => sliceWidensProblem(v, p) === null)
+    if (!insideParent(first)) return no('slice.widens')
     for (let i = 1; i < line.length; i++) {
+      const next = (line[i] as Signed<Slice>).message
+      const current = (line[i - 1] as Signed<Slice>).message
+      // The parent's bound is read by `insideParent` here, so the replacement check gets the
+      // version itself as its bound, which holds an account-signed version to nothing more.
       const problem = sliceReplacementProblem(
-        (line[i] as Signed<Slice>).message,
-        (line[i - 1] as Signed<Slice>).message,
-        parentLimits,
+        next,
+        current,
+        isAddressEqual(next.by, next.issuerKey) ? current : next,
         d,
       )
       if (problem) return no(problem)
+      if (!isAddressEqual(next.by, next.issuerKey) && !insideParent(next)) return no('slice.widens')
     }
     for (const v of line) {
       const s = v.message
@@ -240,7 +247,6 @@ export async function sliceChainProblem(
     levels.push({ slice: head, hash: hashes[0] as Hex, earlier: hashes.slice(1) })
     keys.push(head.subKey)
     parentVersions = line.map((v) => v.message)
-    parentLimits = head
     parentId = head.sliceId
   }
   if (!isAddressEqual(keys[keys.length - 1] as Address, expected.subKey)) {

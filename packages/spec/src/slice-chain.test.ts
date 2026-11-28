@@ -254,6 +254,25 @@ describe("a worker's chain of slices", () => {
       ).toEqual({ ok: false, reason: 'slice.widens' })
     })
 
+    it("keeps a child's account-signed version standing when its parent is narrowed after", async () => {
+      // The parent's $1,200 at once is narrowed to $800 after the administrator gave the child $1,000.
+      const child = under(top, key().address)
+      const raised = next(child, { capOpenReserves: dollars(1000) }, admin.address)
+      const narrowed = next(top, { capOpenReserves: dollars(800) })
+      const served = {
+        levels: [await level(narrowed, top), await level(raised, child)],
+        revocations: [],
+      }
+      expect((await sliceChainProblem(served, expected(child.subKey))).ok).toBe(true)
+      // An account-signed version past every version of its parent is still refused.
+      const beyond = next(child, { capOpenReserves: dollars(1300) }, admin.address)
+      const wide = { ...served, levels: [served.levels[0], await level(beyond, child)] }
+      expect(await sliceChainProblem(wide as WorkerSlices, expected(child.subKey))).toEqual({
+        ok: false,
+        reason: 'slice.widens',
+      })
+    })
+
     it('naming the version before it, and none for the first', async () => {
       const unlinked = {
         ...next(top, { capOpenReserves: dollars(800) }),
