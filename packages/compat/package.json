@@ -1,0 +1,28 @@
+{
+  "name": "@avow-finance/compat",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runs Avow's agent scenarios against any model behind an OpenAI-compatible endpoint, through the MCP server, and grades each in code",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Avow-Finance/avow.git",
+    "directory": "packages/compat"
+  },
+  "dependencies": {
+    "@avow-finance/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}
