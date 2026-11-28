@@ -361,7 +361,7 @@ describe("a job's place in its offer's capacity", () => {
     terms: testnetDemoJobTerms(acceptBy, deployment.arbiter),
     offer: null,
     buyer: BUYER,
-    signingKey: supplier.signing.address,
+    signingKey: `0x${'11'.repeat(20)}` as Address,
   })
 
   it('is taken before compute is booked, so a second job finds the last place gone', async () => {
