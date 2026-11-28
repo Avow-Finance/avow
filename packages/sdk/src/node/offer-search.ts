@@ -3,6 +3,7 @@ import {
   OFFER_QUERY_MAX,
   type OfferMatch,
   type OfferNeedingApproval,
+  quotedText,
   SERVICE_QUANTITY_MAX,
 } from '@avow-finance/spec'
 import type { OfferSearchInput, OfferSearchOutcome } from '../sandbox/offer-search.js'
@@ -112,12 +113,14 @@ const iso = (seconds: bigint) => new Date(Number(seconds) * 1000).toISOString()
 
 /**
  * One offer as a line. The item's and the supplier's names are what the supplier wrote, so each
- * shows in quotes after a label, and the supplier is always called a sandbox business.
+ * shows in quotes after a label by the spec's `quotedText`, which writes any character that could
+ * end the quotes, break the line or reorder it as its code point, even in an answer that skipped
+ * the parser. The supplier is always called a sandbox business.
  */
 function offerLine(m: OfferMatch | OfferNeedingApproval, quantity: number): string {
   const units = `${quantity} unit${quantity === 1 ? '' : 's'}`
   return [
-    `${m.id}, item "${m.version.item.name}" from sandbox business "${m.supplier.name}" (${m.version.supplier}), which no check has verified.`,
+    `${m.id}, item ${quotedText(m.version.item.name)} from sandbox business ${quotedText(m.supplier.name)} (${m.version.supplier}), which no check has verified.`,
     `${units} cost ${formatUsd(m.quote.total)} and reserve ${formatUsd(m.quote.reserve)}, with delivery due by ${iso(m.deliverBy)} if booked when Avow checked.`,
     ...('need' in m ? [`Your mandate refuses it now with ${m.need}.`] : []),
   ].join(' ')
