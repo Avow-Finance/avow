@@ -13,7 +13,7 @@ import {
   serviceOfferQuote,
   serviceOfferVersionJson,
 } from './service.js'
-import { isFilled } from './text.js'
+import { isPlainText } from './text.js'
 import { CURRENCIES, type Currency } from './types.js'
 import type { Parsed } from './wire.js'
 
@@ -88,9 +88,10 @@ export interface OfferMatch {
   /** The version Avow would book, whose `supplier` is the supplier's business id. */
   version: ServiceOfferVersion
   /**
-   * The name the supplier's business registered with Avow, up to `BUSINESS_NAME_MAX` characters.
-   * A business that registered a longer name before names were capped shows it shortened by
-   * `shownBusinessName`. Every supplier listed today is a sandbox business that no check has
+   * The name the supplier's business registered with Avow, as plain text of up to
+   * `BUSINESS_NAME_MAX` characters. A business that registered before names were capped shows its
+   * name as `shownBusinessName` writes it, with any character that isn't plain marked and a longer
+   * name shortened. Every supplier listed today is a sandbox business that no check has
    * verified, and the result says so on each one.
    */
   supplier: { name: string; sandbox: true }
@@ -156,8 +157,8 @@ export function offerFits(search: OfferSearch, version: ServiceOfferVersion, now
 
 /**
  * An offer priced for a search, as Avow lists it, under the supplier's registered name as
- * `shownBusinessName` shortens it. Throws for a version that doesn't fit the search at
- * `checkedAt`, or a supplier name that's blank.
+ * `shownBusinessName` writes it. Throws for a version that doesn't fit the search at `checkedAt`,
+ * or a supplier name that's blank.
  */
 export function offerMatch(
   search: OfferSearch,
@@ -168,7 +169,7 @@ export function offerMatch(
   if (!offerFits(search, version, checkedAt))
     throw new RangeError("The offer doesn't fit the search")
   const name = shownBusinessName(supplierName)
-  if (!isFilled(name, BUSINESS_NAME_MAX)) throw new RangeError("The supplier's name is blank")
+  if (!isPlainText(name, BUSINESS_NAME_MAX)) throw new RangeError("The supplier's name is blank")
   return {
     id: offerVersionId(version),
     version,
@@ -226,7 +227,7 @@ const sameMatch = (search: OfferSearch, checkedAt: bigint, m: OfferMatch) => {
     m.quote.lateCancellation === quote.lateCancellation &&
     m.quote.noShow === quote.noShow &&
     m.quote.reserve === quote.reserve &&
-    isFilled(m.supplier.name, BUSINESS_NAME_MAX)
+    isPlainText(m.supplier.name, BUSINESS_NAME_MAX)
   )
 }
 
@@ -330,7 +331,11 @@ const offerMatchJson = z.strictObject({
   id: bytes32,
   version: serviceOfferVersionJson,
   supplier: z.strictObject({
-    name: z.string().min(1).max(BUSINESS_NAME_MAX),
+    name: z
+      .string()
+      .min(1)
+      .max(BUSINESS_NAME_MAX)
+      .refine((v) => isPlainText(v, BUSINESS_NAME_MAX), 'plain text on one line'),
     sandbox: z.literal(true),
   }),
   quote: z.strictObject({ total: u256, lateCancellation: u256, noShow: u256, reserve: u256 }),
