@@ -207,7 +207,10 @@ export const SANDBOX_PATHS = {
    *
    * A revocation is for good. Avow is to record no seller's mandate for the key after it, to
    * approve no new reserve for an agreement the key signed, to take no new quote the key signs and
-   * to refuse the key wherever a supplier registers one, for any business. It stops new approvals
+   * to refuse the key wherever a supplier registers one, for any business. The seller's side hears
+   * each of those refusals as `seller_mandate.revoked`. A buyer whose reserve is refused for an
+   * agreement the key signed is to hear `supplier.not_authorized`, as `buyerFacingReason` gives,
+   * and Avow is to keep `seller_mandate.revoked` in the decision's evidence. It stops new approvals
    * and new quotes only. A commitment already made stays in force, and a revocation can't
    * invalidate an approval already issued on-chain, which a lock goes on taking until its own
    * deadline.
