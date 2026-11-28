@@ -3,7 +3,7 @@ import { isChainedTerms } from './dependencies.js'
 import { BPS, COUNTRY_CODE } from './fields.js'
 import { JOB, JOB_CATEGORY } from './job.js'
 import { type JobOfferVersion, jobOfferTerms } from './job-offer.js'
-import type { MandateCheck } from './mandate.js'
+import { handsToPerson, type MandateCheck } from './mandate.js'
 import { isJobOfferVersion, type OfferVersion, offerVersionProblem } from './offer-version.js'
 import type { TermsProfile } from './profiles.js'
 import type { ReasonCode } from './reasons.js'
@@ -346,8 +346,7 @@ function readSale(input: SellerMandateCheckInput): MandateCheck {
     return deny('seller_mandate.over_outstanding')
   }
 
-  const rule = m.approvalRule
-  if (rule.kind === 'always' || (rule.kind === 'above' && sale.price > rule.amount)) {
+  if (handsToPerson(m.approvalRule, sale.price)) {
     // A person decides this sale, and it passes only as the exact sale a person approved. Every
     // limit above held it first, so an approval never lifts one.
     // The terms are exactly the ones this offer version builds, so the version and the units are
@@ -466,10 +465,7 @@ function readJobOffer(m: SellerMandate, v: JobOfferVersion, now: bigint): Reason
   if (past) return past
   if (job.price > m.maxOrderValue) return 'seller_mandate.over_order_value'
   // The check hands such a sale to a person, and nothing lets a person approve a job's sale yet.
-  const rule = m.approvalRule
-  if (rule.kind === 'always' || (rule.kind === 'above' && job.price > rule.amount)) {
-    return 'seller_mandate.job_approval_unavailable'
-  }
+  if (handsToPerson(m.approvalRule, job.price)) return 'seller_mandate.job_approval_unavailable'
   return null
 }
 
