@@ -19,7 +19,7 @@ import { type Address, type Hex, keccak256, recoverAddress, stringToHex } from '
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, domain, LOCK, supplier } from '../test/sandbox-business.js'
-import { write } from './store.js'
+import { memoryStore, write } from './store.js'
 
 // Tempo's verifier is asked whether the business account signed a digest, which for a secp256k1
 // root key is whether the signature recovers to the account.
@@ -43,6 +43,7 @@ vi.mock('../moderato.js', async (original) => ({
 
 const { sandboxMailbox } = await import('./mailbox.js')
 const { NAMED_MANDATE_CHANGED, SellerMandateRefusal } = await import('./seller-mandate.js')
+const { holdJobInTurn, holdJobQuote, releaseJob } = await import('./seller-sales.js')
 
 const id = (word: string): Hex => keccak256(stringToHex(word))
 const SELLER = 'sandbox-seller'
@@ -348,5 +349,52 @@ describe('a job sold through the mailbox', () => {
     const [first] = orders
     if (!first) throw new Error('three orders')
     await expect(mailbox.sell(first)).resolves.toBeUndefined()
+  })
+})
+
+describe("a job's place in its offer's capacity", () => {
+  const none = { inForce: false as const, notice: 'No seller mandate is in force.' }
+  const DAY = 86_400n
+  /** A job held to its place, accepted by `acceptBy`, which the demo job starts at. */
+  const held = (orderId: string, acceptBy = NOW + 1_200n) => ({
+    orderId,
+    terms: testnetDemoJobTerms(acceptBy, deployment.arbiter),
+    offer: null,
+    buyer: BUYER,
+    signingKey: supplier.signing.address,
+  })
+
+  it('is taken before compute is booked, so a second job finds the last place gone', async () => {
+    const store = memoryStore()
+    await holdJobInTurn(store, none, held('first'), 1, NOW)
+    await expect(holdJobInTurn(store, none, held('second'), 1, NOW)).rejects.toThrow(
+      /capacity for the day is taken/,
+    )
+    // The job that took the place keeps it through its quote.
+    await expect(holdJobQuote(store, none, held('first'), NOW, 1)).resolves.toBeNull()
+  })
+
+  it('is given back when the compute behind it is never booked', async () => {
+    const store = memoryStore()
+    await holdJobInTurn(store, none, held('first'), 1, NOW)
+    await releaseJob(store, 'first', NOW)
+    await expect(holdJobInTurn(store, none, held('second'), 1, NOW)).resolves.toBeUndefined()
+  })
+
+  it('stays taken by a quote until its acceptance deadline, however far ahead the job starts', async () => {
+    const store = memoryStore()
+    const acceptBy = NOW + 3n * DAY
+    expect(held('first', acceptBy).terms.remedies.acceptBy).toBe(acceptBy)
+    await holdJobQuote(store, none, held('first', acceptBy), NOW, 1)
+    // Two days on, the quote is older than a day and can still be accepted, so it holds its place.
+    const later = NOW + 2n * DAY
+    await expect(holdJobInTurn(store, none, held('second', later + DAY), 1, later)).rejects.toThrow(
+      /capacity/,
+    )
+    // Past its deadline it holds nothing.
+    const after = acceptBy + 1n
+    await expect(
+      holdJobInTurn(store, none, held('third', after + DAY), 1, after),
+    ).resolves.toBeUndefined()
   })
 })
