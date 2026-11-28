@@ -1,5 +1,13 @@
 import {
   dollars,
+  JOB,
+  type JobOfferVersion,
+  jobOfferVersionId,
+  OFFER_LISTING_JOB_VERSION,
+  type OfferVersion,
+  offerIdOf,
+  offerItemOf,
+  offerListingOf,
   offerVersionId,
   parseServiceQuote,
   SANDBOX_PATHS,
@@ -8,6 +16,7 @@ import {
   serviceOfferTerms,
   serviceQuoteProblem,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
@@ -44,6 +53,24 @@ const draft = {
   },
 } as const
 const offer: ServiceOfferVersion = { ...draft, supplier: SELLER }
+
+/** Fine-tuning on one H100 at $120 a job, as its supplier writes it. */
+const jobDraft = {
+  template: JOB,
+  work: { kind: 'Transcript', summary: 'Fine-tune a small model on the dataset the buyer sends' },
+  compute: { gpu: 'H100', count: 1, region: 'demo' },
+  currency: 'USD',
+  price: dollars(120),
+  rules: {
+    startAfter: HOUR,
+    turnaround: 2n * HOUR,
+    gracePeriod: 600n,
+    dailyCapacity: 3,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+  },
+} as const
+const jobOffer: JobOfferVersion = { ...jobDraft, supplier: SELLER }
 
 const folder = (businessId: string, sells = false) =>
   folderWithAgent(businessId, { sells, suppliers: [SELLER], categories: [SERVICE_CATEGORY] })
@@ -99,13 +126,36 @@ describe("a supplier's offers", () => {
     await services.publish({ ...draft, item: { ...draft.item, name: 'Summary' } })
     // Another run of the agent reads the same offers from the folder.
     const again = await sandboxServices({ store, fetch })
-    expect((await again.published()).map((v) => [v.item.name, v.unitPrice])).toEqual([
-      ['Transcript', dollars(60)],
-      ['Summary', dollars(50)],
+    expect(await again.published()).toMatchObject([
+      { item: { name: 'Transcript' }, unitPrice: dollars(60) },
+      { item: { name: 'Summary' }, unitPrice: dollars(50) },
     ])
     expect(await again.withdraw(dearer.id)).toBe(true)
     expect(await again.withdraw(dearer.id)).toBe(false)
-    expect((await again.published()).map((v) => v.item.name)).toEqual(['Summary'])
+    expect((await again.published()).map((v) => offerItemOf(v).name)).toEqual(['Summary'])
+  })
+
+  it('take a job offer beside a service of the same name, as two items, each replaced by its own', async () => {
+    const { store } = await folder(SELLER, true)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    const service = await services.publish(draft)
+    const job = await services.publish(jobDraft)
+    expect(job.version).toEqual(jobOffer)
+    expect(job.id).toBe(jobOfferVersionId(jobOffer))
+    expect(await services.published()).toEqual([offer, jobOffer])
+    // A new price for the job replaces only the job, under the job offer's own id.
+    const dearer = await services.publish({ ...jobDraft, price: dollars(150) })
+    expect((await services.published()).map((v) => offerIdOf(v))).toEqual([service.id, dearer.id])
+    expect(await services.withdraw(dearer.id)).toBe(true)
+    expect(await services.published()).toEqual([offer])
+  })
+
+  it("don't publish a job offer its own rules refuse", async () => {
+    const { store } = await folder(SELLER, true)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    const early = { ...jobDraft, rules: { ...jobDraft.rules, startAfter: 60n } }
+    await expect(services.publish(early)).rejects.toThrow(RangeError)
+    expect(await services.published()).toEqual([])
   })
 
   it("aren't published when the template's rules refuse them", async () => {
@@ -118,14 +168,18 @@ describe("a supplier's offers", () => {
 })
 
 describe("a supplier's listings with Avow", () => {
-  const listingOf = (version: ServiceOfferVersion, replaced: string | null = null) =>
-    wire({
-      id: offerVersionId(version),
-      version,
-      listedAt: 1_800_000_000n,
-      sellerMandate: `0x${'ab'.repeat(32)}`,
-      replaced,
-    })
+  const listingOf = (version: OfferVersion, replaced: Hex | null = null) =>
+    wire(
+      offerListingOf(
+        {
+          id: offerIdOf(version),
+          listedAt: 1_800_000_000n,
+          sellerMandate: `0x${'ab'.repeat(32)}`,
+          replaced,
+        },
+        version,
+      ),
+    )
 
   it('sends a version published here, signed with the signing key, and answers the listing Avow holds', async () => {
     const { store } = await folder(SELLER, true)
@@ -143,6 +197,23 @@ describe("a supplier's listings with Avow", () => {
     expect(outcome.listing.version).toEqual(offer)
     expect(outcome.standing.inForce).toBe(false)
     expect(sent).toEqual([{ version: wire(offer) }])
+  })
+
+  it("sends a job offer published here, and answers Avow's listing of it under the job's id", async () => {
+    const { store } = await folder(SELLER, true)
+    const sent: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.offerListings) return null
+      sent.push(body)
+      return json(listingOf(jobOffer))
+    })
+    const services = await sandboxServices({ store, fetch })
+    await services.publish(draft)
+    const { id } = await services.publish(jobDraft)
+    const outcome = await services.listWithAvow(id)
+    if (!outcome.ok) throw new Error('the job offer was listed')
+    expect(outcome.listing).toMatchObject({ id: jobOfferVersionId(jobOffer), version: jobOffer })
+    expect(sent).toEqual([{ schemaVersion: OFFER_LISTING_JOB_VERSION, version: wire(jobOffer) }])
   })
 
   it('lists nothing it never published here, and sends nothing for it', async () => {

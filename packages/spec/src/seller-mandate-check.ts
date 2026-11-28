@@ -1,8 +1,10 @@
-import { type Address, isAddress, isAddressEqual } from 'viem'
+import { type Address, isAddress, isAddressEqual, zeroAddress } from 'viem'
 import { isChainedTerms } from './dependencies.js'
 import { BPS, COUNTRY_CODE } from './fields.js'
 import { JOB, JOB_CATEGORY } from './job.js'
+import { type JobOfferVersion, jobOfferTerms } from './job-offer.js'
 import { handsToPerson, type MandateCheck } from './mandate.js'
+import { isJobOfferVersion, type OfferVersion, offerVersionProblem } from './offer-version.js'
 import type { TermsProfile } from './profiles.js'
 import type { ReasonCode } from './reasons.js'
 import { coversSale, type SaleContent, saleContentProblem } from './sale-approval.js'
@@ -398,17 +400,22 @@ export function saleContentOf(
   }
 }
 
+/** What `sellerOfferProblem` reads: who lists, under which mandate, when, and the version. */
+export type SellerOfferInput = Standing & { mandate: SellerMandate; version: OfferVersion }
+
 /**
  * Why a seller's mandate doesn't let its agent list an offer version, or null when it does. The
  * offer is the mandate's business's, in its currency, for an item it may sell, and within the
- * limits `checkSellerMandate` holds an offer to. Its largest booking is within the units and the
- * value one order may come to. So every booking the offer invites is one the check would pass on
- * these counts, before it reads the buyer, the ledger or the approval rule. An offer binds nobody,
- * and this refuses early what the check would refuse at the sale.
+ * limits `checkSellerMandate` holds a sale of it to. A service's largest booking is within the
+ * units and the value one order may come to. A job is one unit, and the job its version builds is
+ * held to the job's limits, with its start and turnaround leaving `SERVICE_ORDER_CLOCK_SKEW` of
+ * the delivery horizon to spare, since a buyer builds the job on its own clock. So every order the
+ * offer invites is one the check would pass on these counts, before it reads the buyer or the
+ * ledger. A person can't approve a job's sale yet, so a job offer priced where the mandate's
+ * approval rule asks a person is refused as `seller_mandate.job_approval_unavailable`. An offer
+ * binds nobody, and this refuses early what the check would refuse at the sale.
  */
-export function sellerOfferProblem(
-  input: Standing & { mandate: SellerMandate; version: ServiceOfferVersion },
-): ReasonCode | null {
+export function sellerOfferProblem(input: SellerOfferInput): ReasonCode | null {
   try {
     return readOffer(input)
   } catch {
@@ -416,17 +423,19 @@ export function sellerOfferProblem(
   }
 }
 
-function readOffer(
-  input: Standing & { mandate: SellerMandate; version: ServiceOfferVersion },
-): ReasonCode | null {
+function readOffer(input: SellerOfferInput): ReasonCode | null {
   if (!isObject(input)) return 'message.invalid'
   const { mandate: m, version: v } = input
   const standing = standingProblem(m, input)
   if (standing) return standing
   // An offer that names another business isn't this mandate's to judge.
-  if (!isObject(v) || serviceOfferProblem(v) !== null || v.supplier !== m.businessId) {
+  if (!isObject(v) || offerVersionProblem(v) !== null || v.supplier !== m.businessId) {
     return 'message.invalid'
   }
+  return isJobOfferVersion(v) ? readJobOffer(m, v, input.now) : readServiceOffer(m, v)
+}
+
+function readServiceOffer(m: SellerMandate, v: ServiceOfferVersion): ReasonCode | null {
   // A price so small that one unit's charges round to nothing builds no terms, and this throws.
   serviceOfferQuote(v, 1)
   if (v.currency !== m.currency) return 'seller_mandate.currency_not_allowed'
@@ -438,6 +447,31 @@ function readOffer(
   if (v.unitPrice * BigInt(v.rules.maxPerBooking) > m.maxOrderValue) {
     return 'seller_mandate.over_order_value'
   }
+  return null
+}
+
+/**
+ * A job offer read as the one job `jobOfferTerms` builds from it at `now`, by the same rule
+ * `checkSellerMandate` holds that job to, so the check sees the deadlines and charges a sale would
+ * carry. The arbiter and the day-90 share are no part of a seller's limits, so any stand in.
+ */
+function readJobOffer(m: SellerMandate, v: JobOfferVersion, now: bigint): ReasonCode | null {
+  if (v.currency !== m.currency) return 'seller_mandate.currency_not_allowed'
+  // A buyer builds the job on its own clock, which may run up to the skew ahead of the seller's, so
+  // a job that fits the horizon only exactly would be refused at every such sale.
+  if (v.rules.startAfter + v.rules.turnaround + SERVICE_ORDER_CLOCK_SKEW > m.maxDeliveryHorizon) {
+    return 'seller_mandate.over_delivery_horizon'
+  }
+  const terms = jobOfferTerms(v, now, { arbiter: zeroAddress, day90SupplierShareBps: 0 })
+  const job = saleFacts(terms)
+  if (!job) return 'message.invalid'
+  const limit = sellingLimitFor(m, job.category, job.item)
+  if (!limit) return 'seller_mandate.item_not_allowed'
+  const past = jobLimitProblem(m, limit, job, terms.remedies.charges, now)
+  if (past) return past
+  if (job.price > m.maxOrderValue) return 'seller_mandate.over_order_value'
+  // The check hands such a sale to a person, and nothing lets a person approve a job's sale yet.
+  if (handsToPerson(m.approvalRule, job.price)) return 'seller_mandate.job_approval_unavailable'
   return null
 }
 
