@@ -153,4 +153,8 @@ export {
 export * from './send.js'
 export * from './service/quote.js'
 export * from './sign.js'
+export * from './slices/hand-out.js'
+export * from './slices/parent-signer.js'
+export * from './slices/worker-request.js'
+export * from './slices/worker-wire.js'
 export * from './supplier.js'

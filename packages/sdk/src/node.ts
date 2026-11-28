@@ -9,3 +9,9 @@ setSandboxPlatform(nodePlatform)
 
 export * from './index.js'
 export { fileStore } from './node/platform.js'
+export {
+  serveWorkers,
+  WorkerRefused,
+  workerSigner,
+  workerSocketPath,
+} from './node/worker-socket.js'
