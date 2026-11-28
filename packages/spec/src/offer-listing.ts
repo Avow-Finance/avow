@@ -20,8 +20,8 @@ import type { Parsed } from './wire.js'
  * nothing lets a person approve a job's sale yet.
  *
  * An item has one current version, named by `offerItemOf` as its category and name, so a service
- * and a job that share a name are two items. A new version of an item replaces
- * the one Avow held for it, and the agent withdraws an item's current version at
+ * and a job that share a name are two items. A new version of an item replaces the one Avow held
+ * for it, and the agent withdraws an item's current version at
  * `SANDBOX_PATHS.offerWithdrawals`. Versions only move forward, so a version once replaced or
  * withdrawn is never current again. Listing it again is refused by name as `offer.superseded` or
  * `offer.withdrawn`, the same reasons a booking of it hears, so a buyer told a version was
@@ -126,7 +126,8 @@ function reading<T>(read: () => Parsed<T>): Parsed<T> {
 
 /**
  * Parses the body that lists an offer version of either kind. The version has to be one
- * `offerVersionProblem` passes. Whether it names the listing agent's business is the caller's to check. It never throws.
+ * `offerVersionProblem` passes. Whether it names the listing agent's business is the caller's to
+ * check. It never throws.
  */
 export function parseOfferListingRequest(json: unknown): Parsed<OfferListingRequest> {
   return reading(() => {
