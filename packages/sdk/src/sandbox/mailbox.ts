@@ -41,7 +41,14 @@ import {
 import { jobOfferFor, publishedOffers } from './published-offers.js'
 import { holdToNamedMandate, SellerMandateRefusal, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
-import { holdInTurn, holdJobInTurn, holdJobQuote, jobAccepted, releaseJob } from './seller-sales.js'
+import {
+  CapacityTaken,
+  holdInTurn,
+  holdJobInTurn,
+  holdJobQuote,
+  jobAccepted,
+  releaseJob,
+} from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -166,8 +173,9 @@ export interface SandboxMailbox {
    * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one. An
    * order for a kind of work this business published a job offer of has to be exactly the job its
    * current version builds, or this throws before any compute is booked and nothing is quoted. A
-   * new job its seller's mandate or Avow refuses at the quote it declines, so the buyer hears
-   * `supplier.not_authorized` and never the seller's own reason.
+   * job past its offer's capacity for the day it declines as `capacity.exhausted`, with when the
+   * soonest place frees. A new job its seller's mandate or Avow refuses at the quote it declines,
+   * so the buyer hears `supplier.not_authorized` and never the seller's own reason.
    */
   sell(order: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void>
   /**
@@ -449,6 +457,18 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     try {
       await take(job, onStep)
     } catch (error) {
+      // A day already full says when its soonest place frees, as advice the buyer can act on.
+      if (error instanceof CapacityTaken) {
+        const sent: OrderDeclineRequest = {
+          reason: 'capacity.exhausted',
+          retryAt: error.freesAt,
+          available: null,
+          current: null,
+        }
+        await decline(job.orderId, sent)
+        onStep?.({ step: 'declined', decline: sent, refusal: null })
+        return
+      }
       const refusal =
         error instanceof SellerMandateRefusal
           ? error.reason
