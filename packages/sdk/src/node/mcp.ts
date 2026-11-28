@@ -12,13 +12,17 @@ import {
   describeReason,
   formatUsd,
   isApprovalRequestId,
+  isJobOfferVersion,
   isSessionId,
+  type OfferVersion,
+  offerIdOf,
   offerVersionId,
   publishedOffer,
   quotedLabel,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
+  type ServiceOfferVersion,
   type ServiceOrder,
   sellerMandateTermsJson,
   serviceOfferQuote,
@@ -1283,8 +1287,8 @@ export function mcpAgent(
   const services = (): Promise<SandboxServices> =>
     sandboxServices({ store, ...(options.fetch ? { fetch: options.fetch } : {}) })
 
-  const shared = (version: Parameters<typeof offerVersionId>[0]) => ({
-    id: offerVersionId(version),
+  const shared = (version: OfferVersion) => ({
+    id: offerIdOf(version),
     offer: toWire(version),
   })
 
@@ -1313,11 +1317,9 @@ export function mcpAgent(
           ? 'Your business has published no offers from this folder. Call publish_offer to make one.'
           : published
               .map((v) =>
-                [
-                  `Offer ${offerVersionId(v)}.`,
-                  ...offerSentences(v),
-                  JSON.stringify(toWire(v)),
-                ].join(' '),
+                [`Offer ${offerIdOf(v)}.`, ...offerSentences(v), JSON.stringify(toWire(v))].join(
+                  ' ',
+                ),
               )
               .join('\n'),
       structured: { offers: published.map(shared) },
@@ -1531,7 +1533,10 @@ export function mcpAgent(
     const mine = await services()
     // An agent connected only to buy has no inbox. One connected to sell hears why a read failed.
     const selling = mine.sells ? await mine.inbox() : null
-    const offered = selling ? await mine.published() : []
+    // A service order is quoted only from a service this business published.
+    const offered = selling
+      ? (await mine.published()).filter((v): v is ServiceOfferVersion => !isJobOfferVersion(v))
+      : []
     // One order that can't be read doesn't hide the rest.
     const kept = await mine.unfinished()
     const read = await Promise.allSettled(kept.map((r) => mine.read(r.orderId)))

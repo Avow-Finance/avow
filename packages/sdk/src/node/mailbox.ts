@@ -1,4 +1,4 @@
-import { type MailboxOrder, mailboxStatusAt } from '@avow-finance/spec'
+import { type MailboxOrder, mailboxStatusAt, offerItemOf } from '@avow-finance/spec'
 import { MAILBOX_ORDER_SECONDS, sandboxMailbox } from '../sandbox/mailbox.js'
 import { SERVICE_ORDERS_UNSERVED, sandboxServices } from '../sandbox/services.js'
 import { fileStore } from './platform.js'
@@ -90,7 +90,7 @@ export async function listenCommand(): Promise<void> {
     ? `not for services. ${unserved}`
     : offers.length === 0
       ? 'for no services yet, since it has published no offers'
-      : `for ${offers.map((v) => v.item.name).join(', ')}`
+      : `for ${offers.map((v) => offerItemOf(v).name).join(', ')}`
   console.log(`Listening for orders to ${mailbox.businessId}, for jobs and ${selling}`)
   // Said once up front, and read again before every quote and acceptance.
   if (services.sells && !unserved) {

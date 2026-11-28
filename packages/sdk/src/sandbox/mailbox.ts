@@ -9,6 +9,8 @@ import {
   type GpuReservationTerms,
   isChainedTerms,
   isFirmOffer,
+  type JobOfferVersion,
+  jobOfferTerms,
   type MailboxOrder,
   type MailboxOrderRequest,
   offerTakes,
@@ -34,6 +36,7 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
+import { jobOfferFor, publishedOffers } from './published-offers.js'
 import { holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
 import { holdInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
@@ -112,10 +115,13 @@ function readSales(json: Record<string, unknown>): Record<string, SaleRecord> {
 export interface SandboxMailbox {
   readonly businessId: string
   /**
-   * Sends an order for the demo job to another business, with nothing reserved. The order is kept
-   * in the store before it's sent, so `buy` can pick it up after a restart.
+   * Sends an order for a job to another business, with nothing reserved. With `offer`, a job offer
+   * version the supplier published, the job is the one `jobOfferTerms` builds from it now, and the
+   * order lapses by the time the offer gives the supplier to accept before work starts. Without
+   * one, it's the demo job. The order is kept in the store before it's sent, so `buy` can pick it
+   * up after a restart.
    */
-  order(o: { supplier: string; expiresIn?: bigint }): Promise<MailboxOrder>
+  order(o: { supplier: string; offer?: JobOfferVersion; expiresIn?: bigint }): Promise<MailboxOrder>
   /** The orders this agent sent and hasn't seen through, oldest first, for `buy` to resume. */
   unfinished(): Promise<MailboxOrderRequest[]>
   /** Reads one order, as either side. */
@@ -128,6 +134,7 @@ export interface SandboxMailbox {
    */
   buy(o: {
     supplier: string
+    offer?: JobOfferVersion
     resume?: string
     expiresIn?: bigint
     onStep?: (step: BuyStep) => void
@@ -136,7 +143,11 @@ export interface SandboxMailbox {
   }): Promise<BuyOutcome>
   /** The orders waiting on this business as supplier: new ones to quote, funded ones to accept. */
   inbox(): Promise<MailboxOrder[]>
-  /** Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one. */
+  /**
+   * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one. An
+   * order for a kind of work this business published a job offer of has to be exactly the job its
+   * current version builds, or this throws before any compute is booked and nothing is quoted.
+   */
   sell(order: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void>
   /**
    * Reads the inbox every few seconds and takes each order's next step, until the signal stops it.
@@ -193,13 +204,35 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
   const place = (request: MailboxOrderRequest) =>
     asAgent({ domain, path: SANDBOX_PATHS.mailboxOrders, body: request, read: orderReader })
 
-  async function order(p: { supplier: string; expiresIn?: bigint }): Promise<MailboxOrder> {
-    const expiry = systemClock() + (p.expiresIn ?? MAILBOX_ORDER_SECONDS)
+  /** The job an order offers and when it lapses, from a job offer version or the demo job. */
+  function jobOf(p: { supplier: string; offer?: JobOfferVersion; expiresIn?: bigint }) {
+    const now = systemClock()
+    const asked = now + (p.expiresIn ?? MAILBOX_ORDER_SECONDS)
+    if (!p.offer) {
+      return {
+        terms: testnetDemoJobTerms(asked + DEMO_JOB_TIMING.accept, deployment.arbiter),
+        expiry: asked,
+      }
+    }
+    if (p.offer.supplier !== p.supplier) {
+      throw new RangeError('The job offer names another supplier than the one ordered from.')
+    }
+    const terms = jobOfferTerms(p.offer, now, {
+      arbiter: deployment.arbiter,
+      day90SupplierShareBps: deployment.day90SupplierShareBps,
+    })
+    // The supplier accepts by the start, so the order lapses early enough to leave it that time.
+    const latest = terms.subject.startsAt - DEMO_JOB_TIMING.accept
+    return { terms, expiry: asked < latest ? asked : latest }
+  }
+
+  async function order(p: Parameters<SandboxMailbox['order']>[0]): Promise<MailboxOrder> {
+    const { terms, expiry } = jobOf(p)
     const request: MailboxOrderRequest = {
       orderId: random(16).slice(2),
       commitmentId: random(32),
       supplierBusinessId: p.supplier,
-      terms: testnetDemoJobTerms(expiry + DEMO_JOB_TIMING.accept, deployment.arbiter),
+      terms,
       requirement: { template: GPU_RESERVATION, condition: 'accepted', disclosed: 'subject' },
       expiry,
     }
@@ -338,6 +371,9 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
   async function sell(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = needSupplier()
     if (job.status === 'requested') {
+      // An order for a kind of work this business offers has to be the job its current offer
+      // builds, checked before anything is booked, since the terms name no offer of their own.
+      jobOfferFor(job.terms, await publishedOffers(store))
       let compute = (await kept()).sales[job.orderId]?.compute ?? null
       if (!compute) {
         // The job is held to the seller's mandate before any compute is booked for it, so a job the
