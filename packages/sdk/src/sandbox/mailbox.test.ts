@@ -1,6 +1,11 @@
 import {
+  dollars,
   GPU_RESERVATION,
+  JOB,
   JOB_CATEGORY,
+  type JobOfferVersion,
+  jobOfferTerms,
+  jobTermsMatchOffer,
   SANDBOX_PATHS,
   testnetDemoJobTerms,
   testnetDemoTerms,
@@ -64,6 +69,28 @@ const anOrder = (expiry: bigint) => ({
   requirement: { template: GPU_RESERVATION, condition: 'accepted', disclosed: 'subject' },
   expiry,
 })
+
+/** A seller's offer of fine-tuning, the demo job's kind of work, at $120 a job. */
+const jobOffer: JobOfferVersion = {
+  template: JOB,
+  supplier: SELLER,
+  work: { kind: 'fine-tuning', summary: 'Fine-tune a small model on the dataset the buyer sends' },
+  compute: { gpu: 'H100', count: 1, region: 'demo' },
+  currency: 'USD',
+  price: dollars(120),
+  rules: {
+    startAfter: 3600n,
+    turnaround: 7200n,
+    gracePeriod: 600n,
+    dailyCapacity: 3,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+  },
+}
+const settlement = {
+  arbiter: deployment.arbiter,
+  day90SupplierShareBps: deployment.day90SupplierShareBps,
+}
 
 describe('the sandbox mailbox', () => {
   it('lets an order nobody quotes lapse, and reserves nothing for it', async () => {
@@ -203,6 +230,94 @@ describe('the sandbox mailbox', () => {
       SANDBOX_PATHS.sellerMandates,
       SANDBOX_PATHS.mailboxQuote(order.orderId),
     ])
+  })
+})
+
+describe('a job ordered from a job offer', () => {
+  it("builds the order's terms from the offer, and lapses it before work starts", async () => {
+    const { store } = await agentFolder(BUYER)
+    let sent: Record<string, unknown> = {}
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
+      if (path === SANDBOX_PATHS.mailboxOrders) {
+        sent = body
+        return json(answered(body, 'requested'))
+      }
+      return json({ error: { reason: 'request.invalid' } }, 404)
+    }) as typeof globalThis.fetch
+
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const order = await mailbox.order({ supplier: SELLER, offer: jobOffer, expiresIn: 86_400n })
+    expect(jobTermsMatchOffer(order.terms, jobOffer)).toBe(true)
+    expect(sent.terms).toEqual(wire(order.terms))
+    // Asked to wait a day, the order lapses a minute before work starts instead.
+    expect(order.expiry).toBe(order.terms.subject.startsAt - 60n)
+    await expect(mailbox.order({ supplier: 'sandbox-other', offer: jobOffer })).rejects.toThrow(
+      /another supplier/,
+    )
+  })
+
+  it("quotes nothing, and books nothing, for an order that isn't the job its current offer builds", async () => {
+    bookings.mockReset()
+    quotes.mockReset().mockResolvedValue({ quoted: true })
+    const { store } = await agentFolder(SELLER, true)
+    await write(store, 'services', { published: [wire(jobOffer)] })
+    // The demo job is fine-tuning too, at another price and on another clock.
+    const order = anOrder(1_800_000_600n)
+    const posted: string[] = []
+    const fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      posted.push(path)
+      return json({ orders: [answered(wire(order), 'requested')] })
+    }) as typeof globalThis.fetch
+
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const [held] = await mailbox.inbox()
+    if (!held) throw new Error('The inbox read no order')
+    await expect(mailbox.sell(held)).rejects.toThrow(/current offer of fine-tuning/)
+    expect(bookings).not.toHaveBeenCalled()
+    expect(quotes).not.toHaveBeenCalled()
+    expect(posted).toEqual([SANDBOX_PATHS.mailboxInbox])
+  })
+
+  it('quotes an order that is exactly the job its current offer builds', async () => {
+    bookings.mockReset()
+    quotes.mockReset().mockResolvedValue({ quoted: true })
+    const { store } = await agentFolder(SELLER, true)
+    await write(store, 'services', { published: [wire(jobOffer)] })
+    const now = BigInt(Math.floor(Date.now() / 1000))
+    const order = { ...anOrder(now + 600n), terms: jobOfferTerms(jobOffer, now, settlement) }
+    const compute = {
+      reference: {
+        kind: 'commitment',
+        chainId: deployment.chainId,
+        lock: LOCK.toLowerCase(),
+        commitmentId: `0x${'34'.repeat(32)}`,
+        side: 'buyer',
+        termsHash: `0x${'78'.repeat(32)}`,
+      },
+      terms: testnetDemoTerms(now, deployment.arbiter),
+      salt: `0x${'56'.repeat(32)}`,
+    }
+    await write(store, 'mailbox', { sales: { [order.orderId]: { compute } } })
+    const fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      if (path === SANDBOX_PATHS.sellerMandates) {
+        return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+      }
+      const held = answered(wire(order), 'requested')
+      return json(path === SANDBOX_PATHS.mailboxInbox ? { orders: [held] } : held)
+    }) as typeof globalThis.fetch
+
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const [held] = await mailbox.inbox()
+    if (!held) throw new Error('The inbox read no order')
+    await mailbox.sell(held)
+    expect(quotes).toHaveBeenCalledOnce()
   })
 })
 

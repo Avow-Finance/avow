@@ -2,6 +2,8 @@ import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { API_PATH_PATTERN } from './api-request.js'
 import { dollars } from './demo.js'
+import { JOB } from './job.js'
+import { type JobOfferVersion, jobOfferVersionId } from './job-offer.js'
 import {
   OFFER_LISTINGS_MAX,
   type OfferListing,
@@ -12,6 +14,7 @@ import {
   parseOfferWithdrawal,
   parseOfferWithdrawalRequest,
 } from './offer-listing.js'
+import { type OfferVersion, offerIdOf } from './offer-version.js'
 import { REASON_CODES } from './reasons.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 import { offerVersionId, type ServiceOfferVersion } from './service.js'
@@ -43,8 +46,31 @@ const named = (name: string, unitPrice = transcript.unitPrice): ServiceOfferVers
   unitPrice,
 })
 
-const listingOf = (version: ServiceOfferVersion, replaced: Hex | null = null): OfferListing => ({
-  id: offerVersionId(version),
+/** A job offer of fine-tuning on one H100, for $120 a job. */
+const fineTuning: JobOfferVersion = {
+  template: JOB,
+  supplier: 'acme-transcripts',
+  work: { kind: 'fine-tuning', summary: 'Fine-tune a small model on the dataset the buyer sends' },
+  compute: { gpu: 'H100', count: 1, region: 'demo' },
+  currency: 'USD',
+  price: dollars(120),
+  rules: {
+    startAfter: HOUR,
+    turnaround: 2n * HOUR,
+    gracePeriod: 600n,
+    dailyCapacity: 3,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+  },
+}
+const jobNamed = (kind: string, price = fineTuning.price): JobOfferVersion => ({
+  ...fineTuning,
+  work: { ...fineTuning.work, kind },
+  price,
+})
+
+const listingOf = (version: OfferVersion, replaced: Hex | null = null): OfferListing => ({
+  id: offerIdOf(version),
   version,
   listedAt: NOW,
   sellerMandate: MANDATE,
@@ -84,6 +110,18 @@ describe('a listing request', () => {
   it('reads a version that round-trips as JSON', () => {
     const read = parseOfferListingRequest(wire({ version: transcript }))
     expect(read).toEqual({ ok: true, value: { version: transcript } })
+  })
+
+  it('reads a job offer version, apart from a service', () => {
+    const read = parseOfferListingRequest(wire({ version: fineTuning }))
+    expect(read).toEqual({ ok: true, value: { version: fineTuning } })
+  })
+
+  it('refuses a job offer its own rules refuse, or one with a field of the other kind', () => {
+    const early = { ...fineTuning, rules: { ...fineTuning.rules, startAfter: 60n } }
+    expect(parseOfferListingRequest(wire({ version: early })).ok).toBe(false)
+    const mixed = { ...fineTuning, item: transcript.item }
+    expect(parseOfferListingRequest(wire({ version: mixed })).ok).toBe(false)
   })
 
   it('refuses a version the offer rules refuse, an extra field, or no version', () => {
@@ -138,6 +176,13 @@ describe("Avow's answers", () => {
     expect(parseOfferListing(wire(itself)).ok).toBe(false)
   })
 
+  it("read a job's listing only under the job offer's own id", () => {
+    const listing = listingOf(fineTuning, jobOfferVersionId(jobNamed('fine-tuning', dollars(100))))
+    expect(parseOfferListing(wire(listing))).toEqual({ ok: true, value: listing })
+    const asService = { ...listing, id: offerVersionId(transcript) }
+    expect(parseOfferListing(wire(asService)).ok).toBe(false)
+  })
+
   it('read a withdrawal', () => {
     const withdrawal = { id: offerVersionId(transcript), withdrawnAt: NOW }
     expect(parseOfferWithdrawal(wire(withdrawal))).toEqual({ ok: true, value: withdrawal })
@@ -148,6 +193,18 @@ describe("Avow's answers", () => {
     const listed = [listingOf(transcript), listingOf(named('Captions'))]
     expect(parseOfferListings(wire({ listed }))).toEqual({ ok: true, value: { listed } })
     expect(parseOfferListings({ listed: [] })).toEqual({ ok: true, value: { listed: [] } })
+  })
+
+  it('read a service and a job that share a name as two items', () => {
+    const listed = [listingOf(named('fine-tuning')), listingOf(fineTuning)]
+    expect(parseOfferListings(wire({ listed }))).toEqual({ ok: true, value: { listed } })
+  })
+
+  it('refuse two versions of one kind of job', () => {
+    const twoOfOne = [listingOf(fineTuning), listingOf(jobNamed('fine-tuning', dollars(90)))]
+    expect(parseOfferListings(wire({ listed: twoOfOne })).ok).toBe(false)
+    const two = [listingOf(fineTuning), listingOf(jobNamed('inference'))]
+    expect(parseOfferListings(wire({ listed: two })).ok).toBe(true)
   })
 
   it('refuse two versions of one item, the same version twice, or more than a business keeps', () => {

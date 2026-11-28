@@ -1,6 +1,7 @@
 import {
   type ChainedTerms,
   checkSellerMandate,
+  type OfferVersion,
   type ReasonCode,
   type SaleCounterparty,
   type SellerCategory,
@@ -63,10 +64,14 @@ export class SellerMandateRefusal extends Error {
   }
 }
 
-/** Throws a refusal when the mandate in force doesn't let the agent list this offer version. */
+/**
+ * Throws a refusal when the mandate in force doesn't let the agent list this offer version, a
+ * service's or a job's. A job priced where the mandate asks a person to decide is refused, since
+ * nothing lets a person approve a job's sale yet.
+ */
 export function holdOffer(
   standing: SellerStanding,
-  version: ServiceOfferVersion,
+  version: OfferVersion,
   signingKey: Address,
   now: bigint,
 ): void {

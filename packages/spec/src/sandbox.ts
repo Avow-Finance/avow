@@ -90,8 +90,8 @@ export const SANDBOX_PATHS = {
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**
-   * Where a selling agent lists an offer version with Avow, as an `OfferListingRequest`, signed by
-   * its signing key under its business's lock. Avow answers with the `OfferListing` it holds, and
+   * Where a selling agent lists an offer version with Avow, a service's or a job's, as an
+   * `OfferListingRequest`, signed by its signing key under its business's lock. Avow answers with the `OfferListing` it holds, and
    * the version becomes its item's current version, replacing the one held for the item before.
    * Listing the current version again checks it against the newest mandate again, and answers the
    * listing Avow already holds or the refusal, which leaves the listing in place.
@@ -110,7 +110,9 @@ export const SANDBOX_PATHS = {
    * business account signed. A key with no mandate is `seller_mandate.missing`, a chain that
    * doesn't read as one is refused with the reason `sellerMandateChainProblem` gives, and a
    * version the mandate doesn't allow is refused with the reason `sellerOfferProblem` gives, each
-   * with status 403. A business that already lists `OFFER_LISTINGS_MAX` items and lists a new one
+   * with status 403. A job offer priced where the mandate asks a person to decide is
+   * `seller_mandate.job_approval_unavailable`, since nothing lets a person approve a job's sale yet.
+   * A business that already lists `OFFER_LISTINGS_MAX` items and lists a new one
    * is `offer.listings_full`, with status 409. When Avow can't read its records or the chain it
    * answers `service.unavailable` and lists nothing.
    */
