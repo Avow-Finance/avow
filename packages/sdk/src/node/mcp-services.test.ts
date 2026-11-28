@@ -269,6 +269,15 @@ describe("the MCP server's tools for services", () => {
     const { fetch } = avow((path, body) => {
       posted.push({ path, body })
       if (path === SANDBOX_PATHS.serviceInbox) return json({ orders: inbox })
+      if (path.endsWith('/decline')) {
+        const { quote: _, ...order } = inbox[0] as Record<string, unknown>
+        return json({
+          ...order,
+          status: 'declined',
+          quote: null,
+          decline: { ...body, declinedAt: '1' },
+        })
+      }
       return path.endsWith('/quote') ? json(inbox[0]) : null
     })
     const seller = mcpAgent(await folder(SELLER, true), { fetch })
@@ -315,10 +324,29 @@ describe("the MCP server's tools for services", () => {
       ),
     ]
     posted.length = 0
+    // It's declined as a replaced offer, naming the version this business publishes now.
     const forged = await seller.call('sell', { order: request.orderId })
-    expect(forged.isError).toBe(true)
-    expect(forged.text).toMatch(/hasn't published/)
+    expect(forged.isError).toBe(false)
+    expect(forged.structured).toMatchObject({ step: 'declined', reason: 'offer.superseded' })
+    expect(forged.text).toMatch(/Check that version as a new offer/)
     expect(posted.some((p) => p.path.endsWith('/quote'))).toBe(false)
+    // The seller can decline an order for its own reason, with only the fields that reason takes.
+    posted.length = 0
+    inbox = [held(request, 'requested')]
+    const full = await seller.call('decline', {
+      order: request.orderId,
+      reason: 'capacity.exhausted',
+      retry_minutes: 60,
+    })
+    expect(full.isError).toBe(false)
+    expect(posted.find((p) => p.path.endsWith('/decline'))?.body).toMatchObject({
+      reason: 'capacity.exhausted',
+      available: null,
+      current: null,
+    })
+    await expect(
+      seller.call('decline', { order: request.orderId, reason: 'approval.human_required' }),
+    ).resolves.toMatchObject({ isError: true })
     const gone = await seller.call('sell', { order: 'cd'.repeat(16) })
     expect(gone.isError).toBe(true)
     expect(gone.text).toMatch(/No order cdcd/)

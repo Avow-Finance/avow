@@ -7,6 +7,7 @@ import {
   bookingSentence,
   offerSentences,
   readAskToSellArgs,
+  readDeclineArgs,
   readOfferArgs,
   readOfferInput,
   readPublishArgs,
@@ -300,5 +301,27 @@ describe('avow-sandbox ask-to-sell', () => {
     ])
     expect(r.said.at(-1)).toMatch(/in force/)
     expect(r.said.at(-1)).toMatch(/Avow doesn't enforce seller limits yet/)
+  })
+})
+
+describe('the decline command', () => {
+  it('takes an order, a reason a buyer may hear and the fields it takes', () => {
+    expect(
+      readDeclineArgs(['ab'.repeat(16), '--reason', 'capacity.exhausted', '--retry-minutes', '30']),
+    ).toEqual({
+      order: 'ab'.repeat(16),
+      reason: 'capacity.exhausted',
+      retryMinutes: 30,
+      available: null,
+    })
+    expect(readDeclineArgs(['ab', '--reason', 'approval.human_required'])).toHaveProperty('error')
+    expect(readDeclineArgs(['ab', '--reason', 'order.withdrawn'])).toHaveProperty('error')
+    expect(
+      readDeclineArgs(['ab', '--reason', 'capacity.exhausted', '--note', 'hi']),
+    ).toHaveProperty('error')
+    expect(
+      readDeclineArgs(['ab', '--reason', 'capacity.exhausted', '--retry-minutes', '-1']),
+    ).toHaveProperty('error')
+    expect(readDeclineArgs(['--reason', 'capacity.exhausted'])).toHaveProperty('error')
   })
 })

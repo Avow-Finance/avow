@@ -39,7 +39,14 @@ import {
   terminalPrompts,
 } from './runner.js'
 import { keepSession, sessionForNextRun } from './runner-session.js'
-import { askToSellCommand, offerCommand, orderServiceCommand } from './services.js'
+import {
+  askToSellCommand,
+  declineCommand,
+  offerCommand,
+  orderServiceCommand,
+  threadCommand,
+  withdrawCommand,
+} from './services.js'
 import { terminalInput } from './session-input.js'
 import { topUpCommand } from './top-up.js'
 import { verifyCommand } from './verify.js'
@@ -82,7 +89,11 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            job from another business with --supplier <id>. Either way it checks the quote, funds
            it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it. A
-           service order is quoted only for an offer this business published
+           service order it won't quote it declines with a reason the buyer hears
+  decline  declines a service order to this business with <order> --reason <code>, and
+           --retry-minutes <n> or --available <n> where the reason takes them
+  withdraw takes back a service order this agent sent, with <order>, before it's funded
+  thread   reads a thread order with <order> and replays its moves before saying where it stands
   ask-to-sell  asks the business's administrator for a seller's mandate with --terms <file>,
            prints the link to decide it, and waits for the decision. Avow doesn't take these
            requests yet, and says so
@@ -138,6 +149,9 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === 'order' && args.includes('--offer')) return orderServiceCommand(args.slice(1))
   if (args[0] === 'order') return orderCommand(args.slice(1))
   if (args[0] === 'listen') return listenCommand()
+  if (args[0] === 'decline') return declineCommand(args.slice(1))
+  if (args[0] === 'withdraw') return withdrawCommand(args.slice(1))
+  if (args[0] === 'thread') return threadCommand(args.slice(1))
   if (args[0] === 'ask-to-sell') return askToSellCommand(args.slice(1))
   // The MCP server, so a model in Claude can connect the folder's agent and commit with it.
   if (args[0] === 'mcp') return mcpCommand(args.slice(1))

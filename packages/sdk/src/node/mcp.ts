@@ -9,10 +9,12 @@ import {
   type ApprovalRequest,
   agentLabelOf,
   agentLabelProblem,
+  type DeclineReason,
   describeReason,
   formatUsd,
   isApprovalRequestId,
   isSessionId,
+  type OrderDeclineRequest,
   offerVersionId,
   publishedOffer,
   quotedLabel,
@@ -23,6 +25,7 @@ import {
   sellerMandateTermsJson,
   serviceOfferQuote,
   TEST_BUSINESS_LABEL,
+  threadStateAt,
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
@@ -55,12 +58,15 @@ import { type Connection, mcpConnection } from './mcp-connection.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   bookingSentence,
+  declineSentence,
+  declineWaiting,
   type OfferInput,
   offerSentences,
   orderSentence,
   outcomeSentence,
   readOfferInput,
   readSharedOffer,
+  SELLER_DECLINE_REASONS,
   unfinishedFor,
 } from './services.js'
 
@@ -100,8 +106,9 @@ const noInput = { type: 'object', properties: {}, additionalProperties: false } 
 type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 
 /**
- * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
- * mandate like any other commitment. The first four and `sell` are a supplier's, for an agent
+ * The tools for services between two agents. `order` and `withdraw_order` are a buyer's, and
+ * `order` funds under the agent's mandate like any other commitment. The first four, `sell` and
+ * `decline` are a supplier's, and `thread` reads a thread order for either side, for an agent
  * connected to sell. A supplier's agent is held by its signing key, the offers in its folder and,
  * once Avow serves one, the seller's mandate its own SDK holds it to, and the tools say which
  * stand. `list_offer` and `withdraw_listing` reach Avow, which lists an offer only where it holds
@@ -116,6 +123,9 @@ const SERVICE_TOOLS = [
   'order',
   'orders',
   'sell',
+  'decline',
+  'withdraw_order',
+  'thread',
 ] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
 
@@ -630,11 +640,86 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. When Avow serves a seller's mandate for your signing key, it also refuses a quote or an acceptance the mandate doesn't allow, with the reason. Avow serves none and enforces no seller limit yet, and the answer says which applies. To decline an order, leave it, and it lapses with nothing reserved.",
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. When Avow serves a seller's mandate for your signing key, it also refuses a quote or an acceptance the mandate doesn't allow, with the reason. Avow serves none and enforces no seller limit yet, and the answer says which applies. An order it won't quote it declines with a reason the buyer hears: a version you replaced, an item you don't publish, a day already full, or a sale your seller's mandate or Avow refuses, which the buyer hears only as supplier.not_authorized. Call decline to turn an order away for another reason.",
     inputSchema: {
       type: 'object',
       properties: {
         order: { type: 'string', description: 'The id of the order, from orders' },
+      },
+      required: ['order'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'decline',
+    title: 'Decline an order',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Declines a service order to your business before the buyer funds it, for an agent connected to sell, so the buyer's agent learns why instead of waiting for the order to lapse. Give a reason code from the list, and only the fields it allows. Use supplier.not_authorized when your seller's mandate refuses the order, since a buyer never hears a seller's limits. offer.superseded names the version of the item you publish now, which this server reads from your folder. A time to ask again is advice to the buyer, and nothing holds either side to it. Nothing is reserved, and a declined order takes no quote.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order: { type: 'string', description: 'The id of the order, from orders' },
+        reason: {
+          type: 'string',
+          enum: [...SELLER_DECLINE_REASONS],
+          description: 'Why you decline it',
+        },
+        retry_minutes: {
+          type: 'integer',
+          description:
+            'For capacity.exhausted, in how many minutes the buyer could ask again, at most a week',
+        },
+        available: {
+          type: 'integer',
+          description:
+            'For capacity.exhausted or quantity.out_of_range, how many units you would take',
+        },
+      },
+      required: ['order', 'reason'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'withdraw_order',
+    title: 'Withdraw an order',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Withdraws a service order you sent, before it's funded, so the supplier stops working on it. Nothing is reserved, and a quote that came back can no longer be funded. Once the lock holds the reserve, the lock decides the order and it can't be withdrawn here.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order: { type: 'string', description: 'The id of the order you sent' },
+      },
+      required: ['order'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'thread',
+    title: 'Read a thread order',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Reads a thread order, a service order carried as a signed record of moves, as either side. It replays every move with the open spec's threadProblem before saying where the thread stands, and says so when the record doesn't replay. No offer opens a term to bargaining, so a thread is a proposal the supplier accepts or declines. An agreed thread is no commitment until the supplier's acceptance is on the buyer's lock.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order: { type: 'string', description: 'The id of the thread order' },
       },
       required: ['order'],
       additionalProperties: false,
@@ -1594,10 +1679,12 @@ export function mcpAgent(
     }
     let acceptedIn: string | null = null
     let notice = ''
+    let declined: OrderDeclineRequest | null = null
     try {
       await mine.sell(waiting, (step) => {
-        notice = step.standing.notice
+        notice = step.standing?.notice ?? ''
         if (step.step === 'accepted') acceptedIn = step.acceptedIn
+        if (step.step === 'declined') declined = step.decline
       })
     } catch (error) {
       if (!(error instanceof SellerMandateRefusal)) throw error
@@ -1610,6 +1697,14 @@ export function mcpAgent(
         isError: true,
       }
     }
+    if (declined) {
+      const sent: OrderDeclineRequest = declined
+      return {
+        text: `Declined order ${orderId}, so the buyer's agent hears why and nothing is reserved. ${declineSentence(sent)} ${notice}`.trim(),
+        structured: { ...orderFacts(waiting), step: 'declined', reason: sent.reason },
+        isError: false,
+      }
+    }
     const quoted = waiting.status === 'requested'
     return {
       text: `${
@@ -1618,6 +1713,86 @@ export function mcpAgent(
           : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`
       } ${notice}`.trim(),
       structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
+      isError: false,
+    }
+  }
+
+  async function declineTool(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const orderId = typeof args.order === 'string' ? args.order.trim() : ''
+    if (orderId === '') throw new RangeError('Give the id of the order, from orders')
+    const reason = args.reason
+    if (
+      typeof reason !== 'string' ||
+      !(SELLER_DECLINE_REASONS as readonly string[]).includes(reason)
+    ) {
+      throw new RangeError(`Give one of these reasons: ${SELLER_DECLINE_REASONS.join(', ')}`)
+    }
+    const whole = (v: unknown, most: number) =>
+      v === undefined
+        ? null
+        : Number.isSafeInteger(v) && (v as number) >= 0 && (v as number) <= most
+          ? (v as number)
+          : NaN
+    const minutes = whole(args.retry_minutes, 7 * 24 * 60)
+    const available = whole(args.available, 1_000_000)
+    if (Number.isNaN(minutes))
+      throw new RangeError('retry_minutes is a whole number of minutes, at most a week')
+    if (Number.isNaN(available)) throw new RangeError('available is a whole number of units')
+    const declined = await declineWaiting(await services(), {
+      order: orderId,
+      reason: reason as DeclineReason,
+      retryMinutes: minutes,
+      available,
+    })
+    if (!declined.ok) {
+      return { text: declined.why, structured: { order: orderId, step: null }, isError: true }
+    }
+    return {
+      text: `Declined order ${orderId}, so the buyer's agent hears why and nothing is reserved. ${declineSentence(declined.sent)}`,
+      structured: { ...orderFacts(declined.order), step: 'declined', reason },
+      isError: false,
+    }
+  }
+
+  async function withdrawTool(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const orderId = typeof args.order === 'string' ? args.order.trim() : ''
+    if (orderId === '') throw new RangeError('Give the id of the order you sent')
+    const order = await (await services()).withdrawOrder(orderId)
+    return {
+      text: `Withdrew order ${orderId}. Nothing is reserved, and the supplier can no longer be funded for it.`,
+      structured: orderFacts(order),
+      isError: false,
+    }
+  }
+
+  async function threadTool(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const orderId = typeof args.order === 'string' ? args.order.trim() : ''
+    if (orderId === '') throw new RangeError('Give the id of the thread order')
+    const { order, problem } = await (await services()).readThread(orderId)
+    const moves = order.thread.moves.map((m) =>
+      m.move.kind === 'decline'
+        ? `${m.move.side} declined with ${m.move.reason}`
+        : `${m.move.side} ${m.move.kind === 'propose' ? 'proposed' : `${m.move.kind}ed`} ${m.move.quantity} at ${formatUsd(m.move.unitPrice)} a unit`,
+    )
+    if (problem) {
+      return {
+        text: `Thread ${orderId} doesn't replay (${problem}), so don't act on it. Its moves: ${moves.join('; ')}.`,
+        structured: { order: orderId, status: order.status, problem },
+        isError: true,
+      }
+    }
+    const state =
+      order.status === 'reserved' || order.status === 'accepted'
+        ? order.status
+        : threadStateAt(order.thread, BigInt(Math.floor(Date.now() / 1000))).status
+    return {
+      text: `Thread ${orderId} on ${order.thread.base.item.name} from ${order.thread.base.supplier} stands ${state}. Its moves: ${moves.join('; ')}. An agreed thread is no commitment until the supplier's acceptance is on the lock.`,
+      structured: {
+        order: orderId,
+        status: state,
+        moves: order.thread.moves.length,
+        problem: null,
+      },
       isError: false,
     }
   }
@@ -1661,6 +1836,9 @@ export function mcpAgent(
         if (name === 'order') return await order(args)
         if (name === 'orders') return await orders()
         if (name === 'sell') return await sell(args)
+        if (name === 'decline') return await declineTool(args)
+        if (name === 'withdraw_order') return await withdrawTool(args)
+        if (name === 'thread') return await threadTool(args)
         if (name === 'authority') return await authority()
         if (name === 'check') return await check(args)
         if (name === 'book') return await book(args)

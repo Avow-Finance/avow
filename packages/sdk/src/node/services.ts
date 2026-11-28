@@ -1,7 +1,12 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  DECLINE_RULES,
+  type DeclineNext,
+  type DeclineReason,
   formatUsd,
+  ORDER_DECLINES,
+  type OrderDeclineRequest,
   offerVersionId,
   PAYMENT_ROUTES,
   type PaymentRoute,
@@ -12,6 +17,7 @@ import {
   type ServiceOrder,
   sellerMandateTermsJson,
   serviceOfferQuote,
+  supplierMayDecline,
   toWire,
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
@@ -169,6 +175,11 @@ export function orderSentence(order: ServiceOrder): string {
     return `${what}, waits for the supplier's quote until ${new Date(Number(order.expiry) * 1000).toISOString()}. Nothing is reserved.`
   }
   if (order.status === 'expired') return `${what}, lapsed with nothing reserved.`
+  if (order.status === 'declined') {
+    return `${what}, was declined by the supplier with nothing reserved. ${declineSentence(order.decline)}`
+  }
+  if (order.status === 'withdrawn')
+    return `${what}, was withdrawn by the buyer with nothing reserved.`
   if (order.status === 'quoted') return `${what}, is quoted and waits for the buyer to fund it.`
   if (order.status === 'reserved') {
     return `${what}, is funded and waits for the supplier to accept by ${new Date(Number(order.reserve.acceptBy) * 1000).toISOString()}.`
@@ -176,9 +187,46 @@ export function orderSentence(order: ServiceOrder): string {
   return `${what}, is accepted.`
 }
 
+/** What a decline's next step tells the agent that reads it to do. */
+const NEXT_WORDS: Record<DeclineNext, string> = {
+  retry_later: 'Send the order again later.',
+  change_order:
+    'This order as it stands won’t be taken, so send a different one. Never send the same one again unchanged.',
+  choose_another: 'This business won’t take the order, so look for another one.',
+  none: 'There is nothing to answer.',
+}
+
+/**
+ * What a decline says, from its reason code and typed fields alone, since it carries no words the
+ * other side wrote. A replaced offer's current version is named by its id and price, and the agent
+ * reads and checks it as any offer it has never seen before it orders it. A time to ask again is
+ * advice, and nothing holds either side to it.
+ */
+export function declineSentence(decline: OrderDeclineRequest): string {
+  const parts = [`Reason code ${decline.reason}.`, NEXT_WORDS[DECLINE_RULES[decline.reason].next]]
+  if (decline.retryAt !== null) {
+    parts.push(
+      `The supplier suggests asking again after ${new Date(Number(decline.retryAt) * 1000).toISOString()}.`,
+    )
+  }
+  if (decline.available !== null)
+    parts.push(`The supplier would take ${count(decline.available, 'unit')}.`)
+  if (decline.current) {
+    parts.push(
+      `The offer was replaced by version ${offerVersionId(decline.current)} at ${formatUsd(decline.current.unitPrice)} a unit. Check that version as a new offer before ordering it.`,
+    )
+  }
+  return parts.join(' ')
+}
+
 /** How buying ended, in a sentence. */
 export function outcomeSentence(outcome: ServiceBuyOutcome): string {
   if (outcome.ok) return 'The supplier accepted, so the commitment stands.'
+  if (outcome.order.status === 'declined') {
+    return `The supplier declined the order, and nothing was reserved. ${declineSentence(outcome.order.decline)}`
+  }
+  if (outcome.order.status === 'withdrawn')
+    return 'You withdrew the order, and nothing was reserved.'
   if (outcome.reason === 'order.expired') return 'The order lapsed, and nothing was reserved.'
   if (outcome.reason === 'acceptance.missed') {
     return "The supplier didn't accept in time, so the reserve goes back to the business."
@@ -526,4 +574,126 @@ function defaultAskDeps(): AskToSellDeps {
     fail,
     signal: stop.signal,
   }
+}
+
+/**
+ * What `decline` is asked: the order, a reason code and the fields that reason takes, or what's
+ * wrong with its arguments. A time to ask again is given in minutes from now, at most a week.
+ */
+export function readDeclineArgs(
+  args: readonly string[],
+):
+  | { order: string; reason: DeclineReason; retryMinutes: number | null; available: number | null }
+  | { error: string } {
+  const usage = `decline takes <order> --reason <code>, with --retry-minutes <n> or --available <n> where the reason takes them. The codes are ${SELLER_DECLINE_REASONS.join(', ')}`
+  const [order, ...rest] = args
+  const flags = new Map<string, string>()
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i]
+    const value = rest[i + 1]
+    if (!flag?.startsWith('--') || value === undefined || flags.has(flag)) return { error: usage }
+    flags.set(flag, value)
+  }
+  const reason = flags.get('--reason')
+  const known = ['--reason', '--retry-minutes', '--available']
+  if (
+    !order ||
+    order.startsWith('--') ||
+    !reason ||
+    [...flags.keys()].some((f) => !known.includes(f))
+  ) {
+    return { error: usage }
+  }
+  if (!(SELLER_DECLINE_REASONS as readonly string[]).includes(reason)) return { error: usage }
+  const whole = (v: string | undefined, most: number) =>
+    v === undefined ? null : /^\d+$/.test(v) && Number(v) <= most ? Number(v) : Number.NaN
+  const retryMinutes = whole(flags.get('--retry-minutes'), 7 * 24 * 60)
+  const available = whole(flags.get('--available'), SERVICE_QUANTITY_MAX)
+  if (Number.isNaN(retryMinutes) || Number.isNaN(available)) return { error: usage }
+  return { order, reason: reason as DeclineReason, retryMinutes, available }
+}
+
+/** The reasons a supplier's agent can decline a service order with, so its buyer hears them. */
+export const SELLER_DECLINE_REASONS = ORDER_DECLINES.service.filter(supplierMayDecline)
+
+/** What declining an order came to: the order as Avow now holds it, or why it wasn't sent. */
+export type Declined =
+  | { ok: true; order: ServiceOrder; sent: OrderDeclineRequest }
+  | { ok: false; why: string }
+
+/**
+ * Declines a service order waiting on this business, for the command line and the MCP server
+ * alike. A replaced offer's decline names the version of the item this folder publishes now, and
+ * a time to ask again is that many minutes from now.
+ */
+export async function declineWaiting(
+  services: SandboxServices,
+  ask: {
+    order: string
+    reason: DeclineReason
+    retryMinutes: number | null
+    available: number | null
+  },
+): Promise<Declined> {
+  const waiting = (await services.inbox()).find((o) => o.orderId === ask.order)
+  if (!waiting) {
+    return {
+      ok: false,
+      why: `No order ${ask.order} is waiting on this business, so there's nothing to decline. It may have lapsed, or the buyer may have funded or withdrawn it.`,
+    }
+  }
+  const current =
+    ask.reason === 'offer.superseded'
+      ? ((await services.published()).find((o) => o.item.name === waiting.offer.item.name) ?? null)
+      : null
+  if (ask.reason === 'offer.superseded' && !current) {
+    return {
+      ok: false,
+      why: 'This folder publishes no version of that item, so decline it as offer.withdrawn.',
+    }
+  }
+  const sent: OrderDeclineRequest = {
+    reason: ask.reason,
+    retryAt:
+      ask.retryMinutes === null
+        ? null
+        : BigInt(Math.floor(Date.now() / 1000) + ask.retryMinutes * 60),
+    available: ask.available,
+    current,
+  }
+  return { ok: true, order: await services.decline(ask.order, sent), sent }
+}
+
+/** Declines a service order to this folder's business, from a terminal. */
+export async function declineCommand(args: readonly string[]): Promise<void> {
+  const read = readDeclineArgs(args)
+  if ('error' in read) return fail(read.error)
+  const declined = await declineWaiting(await sandboxServices({ store: fileStore() }), read)
+  if (!declined.ok) return fail(declined.why)
+  console.log(orderSentence(declined.order))
+}
+
+/** Withdraws a service order this folder's agent sent, from a terminal. */
+export async function withdrawCommand(args: readonly string[]): Promise<void> {
+  const [order, ...rest] = args
+  if (!order || rest.length > 0) return fail('withdraw takes <order>')
+  const services = await sandboxServices({ store: fileStore() })
+  console.log(orderSentence(await services.withdrawOrder(order)))
+}
+
+/** Reads a thread order and replays its moves, from a terminal. */
+export async function threadCommand(args: readonly string[]): Promise<void> {
+  const [order, ...rest] = args
+  if (!order || rest.length > 0) return fail('thread takes <order>')
+  const services = await sandboxServices({ store: fileStore() })
+  const { order: read, problem } = await services.readThread(order)
+  for (const { move } of read.thread.moves) {
+    console.log(
+      move.kind === 'decline'
+        ? `${move.seq}. The ${move.side} declined with ${move.reason}.`
+        : `${move.seq}. The ${move.side} ${move.kind === 'propose' ? 'proposed' : `${move.kind}ed`} ${count(move.quantity, 'unit')} at ${formatUsd(move.unitPrice)} a unit.`,
+    )
+  }
+  if (problem) return fail(`The thread doesn't replay (${problem}), so don't act on it.`)
+  console.log(`It stands ${read.status}.`)
 }

@@ -1,7 +1,9 @@
 import {
   type CommitmentReference,
+  type DeclineReason,
   type OfferListing,
   type OfferWithdrawal,
+  type OrderDeclineRequest,
   offerVersionId,
   parseOfferListing,
   parseOfferListings,
@@ -10,6 +12,7 @@ import {
   parseServiceOfferVersion,
   parseServiceOrder,
   parseServiceOrderRequest,
+  parseThreadOrder,
   publishedOffer,
   type ReasonCode,
   SANDBOX_PATHS,
@@ -25,6 +28,9 @@ import {
   serviceOfferTerms,
   serviceOrderProblem,
   serviceQuoteProblem,
+  supplierDeclineReason,
+  type ThreadOrder,
+  threadProblem,
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual, toHex } from 'viem'
@@ -47,7 +53,13 @@ import {
   readOwnRequest,
   sellerMandateAsk,
 } from './requests.js'
-import { DAY, holdOffer, holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
+import {
+  DAY,
+  holdOffer,
+  holdToNamedMandate,
+  SellerMandateRefusal,
+  type SellerStanding,
+} from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
 import { type HeldSale, holdInTurn, holdToMandate } from './seller-sales.js'
 import { type Quoted, readQuoted } from './service-quoted.js'
@@ -105,6 +117,25 @@ export type ServiceBuyOutcome =
 export type ServiceSellStep =
   | { step: 'quoted'; standing: SellerStanding }
   | { step: 'accepted'; acceptedIn: Hex | null; standing: SellerStanding }
+  /**
+   * The agent declined the order with a reason its buyer may hear: for a version it replaced or
+   * never published, past the offer's capacity for the day, or refused by its own seller's mandate
+   * or by Avow, which reaches the buyer only as `supplier.not_authorized`. `refusal` is the agent's
+   * own reason when it differs from the one the buyer hears, for the agent and nobody else.
+   */
+  | {
+      step: 'declined'
+      decline: OrderDeclineRequest
+      refusal: ReasonCode | null
+      standing: SellerStanding | null
+    }
+
+/** A thread order read from Avow, with what its replay found, or null when it replays. */
+export interface ReadThread {
+  order: ThreadOrder
+  /** Why the thread isn't one its moves could have made, or null when it is. */
+  problem: ReasonCode | null
+}
 
 /** What Avow said to an agent's ask for a seller's mandate. */
 export type SellAskOutcome =
@@ -235,22 +266,44 @@ export interface SandboxServices {
       signal?: AbortSignal
     },
   ): Promise<ServiceBuyOutcome>
+  /**
+   * Withdraws an order this agent sent, before it funds it, and answers with the order as it now
+   * stands. Nothing is reserved, and a quote that came back can no longer be funded. It stops
+   * `buy` waiting on the order.
+   */
+  withdrawOrder(orderId: string): Promise<ServiceOrder>
+  /**
+   * Reads a thread order, as either side, and replays its moves with the spec's `threadProblem`
+   * before anything trusts them.
+   */
+  readThread(orderId: string): Promise<ReadThread>
   /** The orders waiting on this business as supplier: new ones to quote, funded ones to accept. */
   inbox(): Promise<ServiceOrder[]>
   /**
+   * Declines an order to this business before the buyer funds it, with a reason code and only the
+   * fields that reason allows, and answers with the order as it now stands. A reason the seller's
+   * mandate check gives reaches the buyer only once the spec's `BUYER_HEARS` lists it, so give
+   * `supplier.not_authorized` when the mandate refuses. A replaced offer's decline names the
+   * version this folder publishes now, whole.
+   */
+  decline(orderId: string, decline: OrderDeclineRequest): Promise<ServiceOrder>
+  /**
    * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one.
-   * It throws for an order whose offer this business never published, and for one past the offer's
-   * capacity for the day, and quotes nothing for either. A quote holds its place while the order
-   * can still be accepted, and an accepted order holds it for the day. It accepts only an order
-   * whose quote it signed. Under a seller's mandate it checks the sale against the newest mandate
-   * before it quotes and again before it accepts, and throws a `SellerMandateRefusal` with the
-   * spec's reason for a sale the mandate doesn't allow, so the order lapses.
+   * A new order it won't quote it declines, so the buyer hears why. An order for a version this
+   * folder replaced is declined as `offer.superseded` with the current version, one for an item it
+   * doesn't publish as `offer.withdrawn`, and one past the offer's capacity for the day as
+   * `capacity.exhausted` with when a place frees. A quote holds its place while the order can
+   * still be accepted, and an accepted order holds it for the day. Under a seller's mandate it
+   * checks the sale against the newest mandate before it quotes and again before it accepts. A
+   * sale the mandate or Avow refuses at the quote is declined as `supplier.not_authorized`, and
+   * the step carries the agent's own reason. It accepts only an order whose quote it signed, and
+   * throws a `SellerMandateRefusal` for an acceptance the mandate no longer allows.
    */
   sell(order: ServiceOrder, onStep?: (step: ServiceSellStep) => void): Promise<void>
   /**
    * Reads the inbox every few seconds and takes each order's next step, until the signal stops it.
-   * An order the handler declines is left to lapse, as is one for an offer this business never
-   * published. Nothing wakes this when it isn't running.
+   * An order the handler turns away is left to lapse, and `sell` declines the ones it won't quote.
+   * Nothing wakes this when it isn't running.
    */
   listen(o?: {
     accept?: (order: ServiceOrder) => boolean | Promise<boolean>
@@ -525,6 +578,37 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       asAgent({ domain, path: SANDBOX_PATHS.serviceOrder(orderId), body: {}, read: orderReader }),
     )
 
+  async function withdrawOrder(orderId: string): Promise<ServiceOrder> {
+    const withdrawn = await carried(
+      asAgent({
+        domain,
+        path: SANDBOX_PATHS.serviceWithdraw(orderId),
+        body: {},
+        read: orderReader,
+      }),
+    )
+    await finish(orderId)
+    return withdrawn
+  }
+
+  async function readThread(orderId: string): Promise<ReadThread> {
+    const read = (json: unknown) => {
+      const order = parseThreadOrder(json)
+      return order
+        ? { ok: true as const, value: order }
+        : { ok: false as const, reason: 'message.invalid' as const }
+    }
+    const path = SANDBOX_PATHS.threadOrder(orderId)
+    // The buyer's agent reads with its own key, and a seller with its signing key.
+    const order = await asAgent({ domain, path, body: {}, read }).catch((error: unknown) => {
+      const unknown = error instanceof AvowApiError && error.status === 404
+      if (!unknown || !sells) throw error
+      return context.needSupplier().asSupplier({ domain, path, body: {}, read })
+    })
+    const threadDomain = { chainId: order.buyer.chainId, verifyingContract: order.buyer.lock }
+    return { order, problem: threadProblem(order.thread, threadDomain) }
+  }
+
   async function buy(p: Parameters<SandboxServices['buy']>[0]): Promise<ServiceBuyOutcome> {
     const every = p.pollEvery ?? 3000
     // The request this agent kept is what every later check is made against. The mailbox's copy
@@ -560,6 +644,13 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     }
     if (current.status === 'expired')
       return end({ ok: false, reason: 'order.expired', order: current })
+    // A decline or a withdrawal ends the order with nothing reserved, and says why.
+    if (current.status === 'declined') {
+      return end({ ok: false, reason: current.decline.reason, order: current })
+    }
+    if (current.status === 'withdrawn') {
+      return end({ ok: false, reason: 'order.withdrawn', order: current })
+    }
     if (current.status === 'quoted') {
       const funded = await fund(mine, current, p)
       if ('reason' in funded) return end(funded)
@@ -664,12 +755,61 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   const change = (orderId: string, to: (q: Quoted) => Quoted) =>
     keep((k) => ({ quoted: k.quoted.map((q) => (q.orderId === orderId ? to(q) : q)) }))
 
+  async function decline(orderId: string, d: OrderDeclineRequest): Promise<ServiceOrder> {
+    const { asSupplier } = context.needSupplier()
+    const declined = await carried(
+      asSupplier({
+        domain,
+        path: SANDBOX_PATHS.serviceDecline(orderId),
+        body: d,
+        read: orderReader,
+      }),
+    )
+    // A declined order is never accepted, so it holds no place against the day's capacity.
+    await keep((k) => ({ quoted: k.quoted.filter((q) => q.orderId !== orderId) }))
+    return declined
+  }
+
+  /** Declines an order this agent won't quote, and reports the step. */
+  async function turnAway(
+    sale: ServiceOrder,
+    d: Pick<OrderDeclineRequest, 'reason'> & Partial<OrderDeclineRequest>,
+    refusal: ReasonCode | null,
+    standing: SellerStanding | null,
+    onStep?: (step: ServiceSellStep) => void,
+  ) {
+    const sent: OrderDeclineRequest = {
+      reason: d.reason,
+      retryAt: d.retryAt ?? null,
+      available: d.available ?? null,
+      current: d.current ?? null,
+    }
+    await decline(sale.orderId, sent)
+    onStep?.({ step: 'declined', decline: sent, refusal, standing })
+  }
+
+  /** The reason a seller's own refusal reaches its buyer as, with the refusal kept when it differs. */
+  const refusedAs = (
+    refusal: ReasonCode,
+  ): { reason: DeclineReason; refusal: ReasonCode | null } => {
+    const reason = supplierDeclineReason(refusal)
+    return { reason, refusal: reason === refusal ? null : refusal }
+  }
+
   async function sell(sale: ServiceOrder, onStep?: (step: ServiceSellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = context.needSupplier()
     if (sale.status === 'requested') {
       // The offer in an order is the buyer's copy, so only a version published here is quoted.
-      const version = publishedOffer(sale, await published())
-      if (!version) throw new Error("The order is for an offer this business hasn't published.")
+      const offers = await published()
+      const version = publishedOffer(sale, offers)
+      if (!version) {
+        // A version this folder replaced names the current one, and any other offer is withdrawn.
+        const current = offers.find((o) => o.item.name === sale.offer.item.name) ?? null
+        const d = current
+          ? { reason: 'offer.superseded' as const, current }
+          : { reason: 'offer.withdrawn' as const }
+        return turnAway(sale, d, null, null, onStep)
+      }
       const early = serviceOrderProblem(sale, systemClock())
       if (early) throw new Error(`The order can't be quoted: ${early}`)
       // The mandate in force is read first, so nothing below waits on Avow inside a change.
@@ -689,28 +829,46 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       // are one change, so two orders at once can't share the last place or both pass a limit. An
       // order already quoted is checked again and keeps its place either way.
       const name = version.item.name
-      await keep(async (k) => {
-        await holdToMandate(store, standing, heldSale(sale, terms, version), now)
-        if (k.quoted.some((q) => q.orderId === sale.orderId)) return {}
-        const taken = k.quoted.filter(
-          (q) => q.item === name && (q.accepted ? q.at > now - DAY : q.until > now),
-        )
-        if (taken.length >= version.rules.dailyCapacity) {
-          throw new Error(
-            "The offer's capacity for the day is taken, so the order is left to lapse.",
+      // When the day's places are all taken, the soonest one frees, which the decline suggests.
+      let full: bigint | null = null
+      try {
+        await keep(async (k) => {
+          await holdToMandate(store, standing, heldSale(sale, terms, version), now)
+          if (k.quoted.some((q) => q.orderId === sale.orderId)) return {}
+          const taken = k.quoted.filter(
+            (q) => q.item === name && (q.accepted ? q.at > now - DAY : q.until > now),
           )
-        }
-        const place: Quoted = {
-          orderId: sale.orderId,
-          item: name,
-          at: now,
-          until: sale.builtAt + SERVICE_ACCEPT_WITHIN,
-          accepted: false,
-          hashes: [],
-          sale: counts,
-        }
-        return { quoted: [...k.quoted, place] }
-      })
+          if (taken.length >= version.rules.dailyCapacity) {
+            full = taken
+              .map((q) => (q.accepted ? q.at + DAY : q.until))
+              .reduce((a, b) => (a < b ? a : b))
+            return {}
+          }
+          const place: Quoted = {
+            orderId: sale.orderId,
+            item: name,
+            at: now,
+            until: sale.builtAt + SERVICE_ACCEPT_WITHIN,
+            accepted: false,
+            hashes: [],
+            sale: counts,
+          }
+          return { quoted: [...k.quoted, place] }
+        })
+      } catch (error) {
+        if (!(error instanceof SellerMandateRefusal)) throw error
+        const as = refusedAs(error.reason)
+        return turnAway(sale, { reason: as.reason }, as.refusal, standing, onStep)
+      }
+      if (full !== null) {
+        return turnAway(
+          sale,
+          { reason: 'capacity.exhausted', retryAt: full },
+          null,
+          standing,
+          onStep,
+        )
+      }
       const quote = await quoteService({
         order: { ...sale, offer: version },
         buyer: sale.buyer,
@@ -728,12 +886,20 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       // Kept before it's sent, so the agent knows every agreement it signed when one comes back.
       const signed = quote.agreement.termsHash.toLowerCase() as Hex
       await change(sale.orderId, (q) => ({ ...q, hashes: [...q.hashes, signed] }))
-      await asSupplier({
-        domain,
-        path: SANDBOX_PATHS.serviceQuote(sale.orderId),
-        body: quote,
-        read: orderReader,
-      })
+      try {
+        await asSupplier({
+          domain,
+          path: SANDBOX_PATHS.serviceQuote(sale.orderId),
+          body: quote,
+          read: orderReader,
+        })
+      } catch (error) {
+        // Avow refused the sale under the seller's mandate, which the agent hears and the buyer
+        // doesn't. Any other failure is for the caller.
+        if (!(error instanceof AvowApiError) || error.status !== 403 || !error.reason) throw error
+        const as = refusedAs(error.reason)
+        return turnAway(sale, { reason: as.reason }, as.refusal, standing, onStep)
+      }
       onStep?.({ step: 'quoted', standing })
       return
     }
@@ -789,7 +955,10 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     unfinished,
     read,
     buy,
+    withdrawOrder,
+    readThread,
     inbox,
+    decline,
     sell,
     listen,
   }

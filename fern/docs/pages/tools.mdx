@@ -31,7 +31,10 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `test_sellers` | No | Avow's test sellers, labelled test businesses that sell simple services through the sandbox at any hour, each with its business ID and its offers whole. Nothing they sell is delivered or billed. It needs no connection |
 | `order` | Reserves money | Orders units from an offer a supplier's agent handed over, checks the quote against the order, funds the commitment and waits for the acceptance |
 | `orders` | No | The service orders waiting on the agent, as a supplier to quote or accept and as a buyer to see through |
-| `sell` | Signs an agreement, or accepts on the lock | Takes the next step on an order to the business. It quotes a new order for an offer the business published, and accepts a funded one |
+| `sell` | Signs an agreement, accepts on the lock, or declines | Takes the next step on an order to the business. It quotes a new order for an offer the business published, and accepts a funded one. An order it won't quote it declines with a reason the buyer hears |
+| `decline` | Declines an order | Declines an order to the business before it's funded, with a reason code and only the fields that reason takes. A refusal by the seller's mandate goes as `supplier.not_authorized` |
+| `withdraw_order` | Withdraws an order | Takes back an order the agent sent, before it's funded. Nothing is reserved |
+| `thread` | No | Reads a thread order as either side and replays its moves with `threadProblem` before saying where it stands |
 
 ### Inputs
 
@@ -68,7 +71,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 `order` takes `offer`, the offer whole as the supplier's agent gave it, and `quantity`, `1` when left out. Each step waits on the other agent, so it answers with where the order stands after 45 seconds and the server keeps seeing the order through. Call it again with `order`, the order's id, to read where it got to. Asking again with the same offer and quantity carries on an order that's still open, and sends a new one once the first has ended.
 
-`sell` takes `order`, the id of an order from `orders`. To decline an order, leave it, and it lapses with nothing reserved.
+`sell` takes `order`, the id of an order from `orders`. `decline` takes `order`, `reason` and, where the reason takes them, `retry_minutes` and `available`. `withdraw_order` and `thread` take `order`.
 
 ### Answers and refusals
 
@@ -88,7 +91,10 @@ Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
 | `mcp add <client>` | Adds this folder's agent as an MCP server to `claude-code`, `claude-desktop`, `cursor`, `vscode` or `codex`. `mcp add config` prints the `mcpServers` block any other client reads |
 | `offer publish` | Publishes an offer of a service from `--name`, `--summary`, `--price`, `--evidence`, `--late-cancellation` and `--no-show`, and writes the file a buyer's agent orders from. `--lead-hours`, `--max`, `--per-day`, `--free-cancel-hours`, `--payment` and `--due-days` set the rest. `offer list` shows what's published, and `offer withdraw <id>` takes one back. `offer list-with-avow <id>` lists a published offer with Avow, `offer withdraw-from-avow <id>` takes the listing away, and `offer listed-with-avow` shows what Avow lists |
 | `order` | Orders units of a supplier's offer with `--offer <file>` and `--quantity`, or the demo job from another business with `--supplier <id>`. Either way it checks the quote, funds it and waits for the acceptance |
-| `listen` | Reads the business's inbox and quotes and accepts each order until you stop it. A service order is quoted only for an offer the business published |
+| `listen` | Reads the business's inbox and quotes and accepts each order until you stop it. A service order it won't quote, for a version the business replaced, an item it doesn't publish, a day already full or a sale its seller's mandate refuses, it declines with a reason the buyer hears |
+| `decline <order>` | Declines a service order to the business with `--reason <code>`, and `--retry-minutes` or `--available` where the reason takes them |
+| `withdraw <order>` | Takes back a service order the agent sent, before it's funded |
+| `thread <order>` | Reads a thread order, replays its moves and says where it stands, and exits with 1 when it doesn't replay |
 | `ask-to-sell` | Asks the business's administrator for a seller's mandate with `--terms <file>`, prints the link to decide it and waits for the decision. Avow doesn't take these requests yet, and it says so |
 | `start` | In a folder made by the sample agent, sets up its business, opens its screen and runs its agent |
 | `job` | In the same folder, runs one job with no input |

@@ -23,6 +23,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json } from '../test/agent-folder.js'
 import { deployment, domain, LOCK } from '../test/sandbox-business.js'
+import type { ServiceSellStep } from './services.js'
 
 // Tempo's verifier is asked whether the business account signed a digest, which for a secp256k1
 // root key is whether the signature recovers to the account.
@@ -184,6 +185,24 @@ const orderFor = (version: ServiceOfferVersion, quantity: number, buyer = BUYER)
 const quoted = (posted: { path: string; body: Record<string, unknown> }[], orderId: string) =>
   parseServiceQuote(posted.find((p) => p.path === SANDBOX_PATHS.serviceQuote(orderId))?.body)
 
+/** The reason the seller declined an order with, as it reached the mailbox, or null for none. */
+const declinedWith = (posted: { path: string; body: Record<string, unknown> }[], orderId: string) =>
+  (posted.find((p) => p.path === SANDBOX_PATHS.serviceDecline(orderId))?.body.reason as string) ??
+  null
+
+/**
+ * Sells one order and answers with the last step it reported. The quote this fake mailbox has no
+ * route for still fails, and the declines each test checks are read from what was posted.
+ */
+async function lastStep(
+  services: Awaited<ReturnType<typeof sandboxServices>>,
+  order: Parameters<Awaited<ReturnType<typeof sandboxServices>>['sell']>[0],
+) {
+  const steps: ServiceSellStep[] = []
+  await services.sell(order, (step) => steps.push(step)).catch(() => {})
+  return steps.at(-1) ?? null
+}
+
 describe('a selling agent with no seller’s mandate', () => {
   it('says plainly that none is in force and Avow enforces no seller limits, and sells as before', async () => {
     const { store } = await seller()
@@ -232,12 +251,31 @@ describe('a selling agent under a seller’s mandate', () => {
     const s = await seller()
     const mandate = mandateFor(s.root.address, s.signingKey, change)
     let current: SellerMandate | null = mandate
-    const api = avow(null, async () =>
-      current
-        ? json(toWire({ current: await signed(current, s.root), earlier: [], revocation: null }))
-        : json({ error: { reason: 'seller_mandate.missing', message: 'No mandate' } }, 404),
+    // The orders sold here, so a decline is answered with the order it ends, as the mailbox does.
+    const seen = new Map<string, unknown>()
+    const api = avow(
+      null,
+      async () =>
+        current
+          ? json(toWire({ current: await signed(current, s.root), earlier: [], revocation: null }))
+          : json({ error: { reason: 'seller_mandate.missing', message: 'No mandate' } }, 404),
+      (path, body) => {
+        const orderId = /service-orders\/([0-9a-f]{32})\/decline$/.exec(path)?.[1]
+        const order = orderId ? seen.get(orderId) : undefined
+        if (!order) return null
+        const declinedAt = String(Math.floor(Date.now() / 1000))
+        const { quote: _, ...rest } = toWire(order) as Record<string, unknown>
+        return json({ ...rest, status: 'declined', quote: null, decline: { ...body, declinedAt } })
+      },
     )
-    const services = await sandboxServices({ store: s.store, fetch: api.fetch })
+    const opened = await sandboxServices({ store: s.store, fetch: api.fetch })
+    const services: typeof opened = {
+      ...opened,
+      sell: (order, onStep) => {
+        seen.set(order.orderId, order)
+        return opened.sell(order, onStep)
+      },
+    }
     /** Serves a mandate with these changes in place of the first, as an administrator's new one. */
     const changeTo = (next: Partial<SellerMandate>) => {
       current = mandateFor(s.root.address, s.signingKey, { ...change, ...next })
@@ -303,13 +341,14 @@ describe('a selling agent under a seller’s mandate', () => {
     const { services, posted } = await under()
     const { version } = await services.publish(draft)
     const fine = orderFor(version, 2)
-    const steps: { step: string; standing: { inForce: boolean } }[] = []
+    const steps: { step: string; standing: { inForce: boolean } | null }[] = []
     await services.sell(fine, (s) => steps.push(s)).catch(() => {})
     expect(quoted(posted, fine.orderId)).not.toBeNull()
 
+    // The buyer hears that the seller won't deal with it, which BUYER_HEARS lets through.
     const excluded = orderFor(version, 2, 'sandbox-blocked')
-    const refused = services.sell(excluded)
-    await expect(refused).rejects.toMatchObject({ reason: 'counterparty.not_eligible' })
+    expect(await lastStep(services, excluded)).toMatchObject({ step: 'declined', refusal: null })
+    expect(declinedWith(posted, excluded.orderId)).toBe('counterparty.not_eligible')
     expect(quoted(posted, excluded.orderId)).toBeNull()
   })
 
@@ -347,10 +386,13 @@ describe('a selling agent under a seller’s mandate', () => {
       await services.sell(order).catch(() => {})
       expect(quoted(posted, order.orderId), `order ${i}`).not.toBeNull()
     }
+    // The seller hears its own limit, and the buyer hears only that it isn't authorized.
     const past = { ...orderFor(version, 1), orderId: id('day-past').slice(2, 34) }
-    await expect(services.sell(past)).rejects.toMatchObject({
-      reason: 'seller_mandate.over_daily_units',
+    expect(await lastStep(services, past)).toMatchObject({
+      step: 'declined',
+      refusal: 'seller_mandate.over_daily_units',
     })
+    expect(declinedWith(posted, past.orderId)).toBe('supplier.not_authorized')
     expect(quoted(posted, past.orderId)).toBeNull()
   })
 
@@ -359,8 +401,13 @@ describe('a selling agent under a seller’s mandate', () => {
       approvalRule: { kind: 'above', amount: dollars(100) },
     })
     const { version } = await services.publish(draft)
+    // A buyer told to wait for a person would wait for nothing, so it hears supplier.not_authorized.
     const order = orderFor(version, 4)
-    await expect(services.sell(order)).rejects.toMatchObject({ reason: 'approval.human_required' })
+    expect(await lastStep(services, order)).toMatchObject({
+      step: 'declined',
+      refusal: 'approval.human_required',
+    })
+    expect(declinedWith(posted, order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(posted, order.orderId)).toBeNull()
   })
 
@@ -381,12 +428,9 @@ describe('a selling agent under a seller’s mandate', () => {
       ...orderFor(version, 4),
       orderId: id(`race-${i}`).slice(2, 34),
     }))
-    const results = await Promise.allSettled(orders.map((o) => services.sell(o)))
-    const refused = results.filter(
-      (r) =>
-        r.status === 'rejected' &&
-        r.reason instanceof SellerMandateRefusal &&
-        r.reason.reason === 'seller_mandate.over_daily_units',
+    const steps = await Promise.all(orders.map((o) => lastStep(services, o)))
+    const refused = steps.filter(
+      (step) => step?.step === 'declined' && step.refusal === 'seller_mandate.over_daily_units',
     )
     expect(refused).toHaveLength(1)
     expect(orders.filter((o) => quoted(posted, o.orderId) !== null)).toHaveLength(1)
@@ -411,9 +455,11 @@ describe('a selling agent under a seller’s mandate', () => {
     ]
     await store.write('services', JSON.stringify(kept))
     const order = orderFor(version, 3)
-    await expect(services.sell(order)).rejects.toMatchObject({
-      reason: 'seller_mandate.over_outstanding',
+    expect(await lastStep(services, order)).toMatchObject({
+      step: 'declined',
+      refusal: 'seller_mandate.over_outstanding',
     })
+    expect(declinedWith(posted, order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(posted, order.orderId)).toBeNull()
     // The kept sale is still there once the file is written again.
     const again = JSON.parse((await store.read('services')) ?? '{}')
@@ -443,25 +489,26 @@ describe('a selling agent under a seller’s mandate', () => {
       }),
     )
     const order = orderFor(version, 3)
-    await expect(services.sell(order)).rejects.toMatchObject({
-      reason: 'seller_mandate.over_outstanding',
+    expect(await lastStep(services, order)).toMatchObject({
+      step: 'declined',
+      refusal: 'seller_mandate.over_outstanding',
     })
+    expect(declinedWith(posted, order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(posted, order.orderId)).toBeNull()
   })
 
-  it('keeps an earlier quote when quoting the same order again is refused', async () => {
+  it('declines a quoted order its newest mandate refuses, and frees its place once Avow takes the decline', async () => {
     const { services, store, posted, changeTo } = await under()
     const { version } = await services.publish(draft)
     const order = orderFor(version, 2)
     await services.sell(order).catch(() => {})
     expect(quoted(posted, order.orderId)).not.toBeNull()
     changeTo({ excludedBuyers: [BUYER] })
-    await expect(services.sell(order)).rejects.toMatchObject({
-      reason: 'counterparty.not_eligible',
-    })
+    expect(await lastStep(services, order)).toMatchObject({ step: 'declined' })
+    expect(declinedWith(posted, order.orderId)).toBe('counterparty.not_eligible')
+    // A declined order can't be funded, so its quote holds no place against the day.
     const kept = JSON.parse((await store.read('services')) ?? '{}')
-    const record = kept.quoted.find((q: { orderId: string }) => q.orderId === order.orderId)
-    expect(record?.hashes).toHaveLength(1)
+    expect(kept.quoted.some((q: { orderId: string }) => q.orderId === order.orderId)).toBe(false)
   })
 
   /** The order as the mailbox holds it once the buyer has funded the seller's quote. */

@@ -1,7 +1,8 @@
-import { type MailboxOrder, mailboxStatusAt } from '@avow-finance/spec'
+import { type MailboxOrder, mailboxStatusAt, type OrderDeclineRequest } from '@avow-finance/spec'
 import { MAILBOX_ORDER_SECONDS, sandboxMailbox } from '../sandbox/mailbox.js'
 import { SERVICE_ORDERS_UNSERVED, sandboxServices } from '../sandbox/services.js'
 import { fileStore } from './platform.js'
+import { declineSentence } from './services.js'
 
 /** What `avow-sandbox order` takes, read from its arguments, or why it can't run. */
 export function readOrderArgs(
@@ -106,8 +107,12 @@ export async function listenCommand(): Promise<void> {
   const said = new Set<string>()
   const told = {
     signal: stop.signal,
-    onStep: (order: { orderId: string }, step: { step: string }) =>
-      console.log(`${order.orderId}: ${step.step}`),
+    onStep: (order: { orderId: string }, step: { step: string; decline?: OrderDeclineRequest }) =>
+      console.log(
+        step.decline
+          ? `${order.orderId}: declined. ${declineSentence(step.decline)}`
+          : `${order.orderId}: ${step.step}`,
+      ),
     onError: (order: { orderId: string }, error: unknown) => {
       const line = `${order.orderId}: ${error instanceof Error ? error.message : String(error)}`
       if (!said.has(line)) console.error(line)
