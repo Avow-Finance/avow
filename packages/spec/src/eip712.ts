@@ -20,6 +20,14 @@ import type {
   sellerMandateTypedData,
 } from './seller-mandate.js'
 import type {
+  SLICE_REVOCATION_TYPES,
+  SLICE_TYPES,
+  Slice,
+  SliceRevocation,
+  sliceRevocationTypedData,
+  sliceTypedData,
+} from './slice.js'
+import type {
   ApprovalRule,
   Mandate,
   MandateFields,
@@ -1066,6 +1074,8 @@ export type AvowTypedData =
   | ReturnType<typeof approvalDecisionTypedData>
   | ReturnType<typeof sellerMandateTypedData>
   | ReturnType<typeof sellerKeyRevocationTypedData>
+  | ReturnType<typeof sliceTypedData>
+  | ReturnType<typeof sliceRevocationTypedData>
 
 export type MessageType = AvowTypedData['primaryType']
 
@@ -1125,6 +1135,12 @@ interface InterfacesMatchTables {
     keyof SellerKeyRevocation,
     FieldNames<typeof SELLER_KEY_REVOCATION_TYPES.SellerKeyRevocation>
   >
+  Slice: SameFields<keyof Slice | 'approvalAbove', FieldNames<typeof SLICE_TYPES.Slice>>
+  SlicePaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof SLICE_TYPES.PaymentLimit>>
+  SliceRevocation: SameFields<
+    keyof SliceRevocation,
+    FieldNames<typeof SLICE_REVOCATION_TYPES.SliceRevocation>
+  >
   TermsAgreement: SameFields<
     keyof TermsAgreement,
     FieldNames<typeof TERMS_AGREEMENT_SELLER_TYPES.TermsAgreement>
@@ -1171,6 +1187,9 @@ const _interfacesMatchTables: InterfacesMatchTables = {
   SellerMandate: true,
   SellingLimit: true,
   SellerKeyRevocation: true,
+  Slice: true,
+  SlicePaymentLimit: true,
+  SliceRevocation: true,
   TermsAgreement: true,
   Approval: true,
   Charge: true,
@@ -1232,6 +1251,10 @@ export function digestOf(td: AvowTypedData): Hex {
     case 'SellerMandate':
       return hashTypedData(td)
     case 'SellerKeyRevocation':
+      return hashTypedData(td)
+    case 'Slice':
+      return hashTypedData(td)
+    case 'SliceRevocation':
       return hashTypedData(td)
   }
 }

@@ -20,6 +20,7 @@ import { jobVerificationOf } from './job-verification.js'
 import { type LockLogName, lockLogSignature, type ReceiptLog } from './lock-log.js'
 import type { RailToken } from './rail.js'
 import type { SellerMandate } from './seller-mandate.js'
+import type { Slice } from './slice.js'
 import { termsHash } from './terms.js'
 import { SIMULATED_RESULT_LABEL, TEST_CUSTOMER_LABEL } from './test-customer.js'
 import type { Mandate, ReserveRequest } from './types.js'
@@ -68,6 +69,34 @@ export function demoMandate(account: Address, agentKey: Address): Mandate {
     paymentLimits: [{ token: TOKEN.token, amount: dollars(5000), period: 86_400n }],
     approvalRule: { kind: 'above', amount: dollars(800) },
     expiry: START + 30n * 86_400n,
+    nonce: 1n,
+  }
+}
+
+/**
+ * A first slice of `demoMandate` for one worker: compute with its supplier, at most $600 a
+ * commitment and $1,200 at once, a person asked above $550, for ten days.
+ */
+export function demoSlice(mandate: Mandate, mandateHash: Hex, subKey: Address): Slice {
+  return {
+    sliceId: id(`slice-${subKey}`),
+    businessId: mandate.businessId,
+    account: mandate.account,
+    agentId: mandate.agentId,
+    mandateHash,
+    parentSliceId: `0x${'00'.repeat(32)}`,
+    issuerKey: mandate.agentKey,
+    subKey,
+    by: mandate.agentKey,
+    actions: ['reserve', 'cancel'],
+    currency: 'USD',
+    capPerCommitment: dollars(600),
+    capOpenReserves: dollars(1200),
+    suppliers: ['biz_supplier'],
+    categories: ['compute'],
+    paymentLimits: [{ token: TOKEN.token, amount: dollars(3000), period: 86_400n }],
+    approvalRule: { kind: 'above', amount: dollars(550) },
+    expiry: START + 10n * 86_400n,
     nonce: 1n,
   }
 }

@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "domain": {
+    "chainId": 42431,
+    "verifyingContract": "0x00000000000000000000000000000000000000d4"
+  },
+  "slices": [
+    {
+      "name": "a worker's first slice, handed out by the agent key",
+      "message": {
+        "sliceId": "0x72aac6138efefc1700ec7e0a413cacfb64fcc5fb0f0b45df8763aec635625754",
+        "businessId": "biz_buyer",
+        "account": "0x00000000000000000000000000000000000000a1",
+        "agentId": "agt_1",
+        "mandateHash": "0xa30df18790f81dab0defb02f7d06dbd9a6289c33ce3a9025b93060ab30967d49",
+        "parentSliceId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "issuerKey": "0x00000000000000000000000000000000000000b2",
+        "subKey": "0x00000000000000000000000000000000000000c3",
+        "by": "0x00000000000000000000000000000000000000b2",
+        "actions": ["reserve", "cancel"],
+        "currency": "USD",
+        "capPerCommitment": "600000000",
+        "capOpenReserves": "1200000000",
+        "suppliers": ["biz_supplier"],
+        "categories": ["compute"],
+        "paymentLimits": [
+          {
+            "token": "0x20C0000000000000000000000000000000000001",
+            "amount": "3000000000",
+            "period": "86400"
+          }
+        ],
+        "approvalRule": {
+          "kind": "above",
+          "amount": "550000000"
+        },
+        "expiry": "1800864000",
+        "nonce": "1"
+      },
+      "hash": "0x6adab8332dae79348df8d7971c4db8e8d47c73eda88f89557cf422e5b5c0dbae"
+    },
+    {
+      "name": "the same slice narrowed by its issuer, with a price limit",
+      "message": {
+        "sliceId": "0x72aac6138efefc1700ec7e0a413cacfb64fcc5fb0f0b45df8763aec635625754",
+        "businessId": "biz_buyer",
+        "account": "0x00000000000000000000000000000000000000a1",
+        "agentId": "agt_1",
+        "mandateHash": "0xa30df18790f81dab0defb02f7d06dbd9a6289c33ce3a9025b93060ab30967d49",
+        "parentSliceId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "issuerKey": "0x00000000000000000000000000000000000000b2",
+        "subKey": "0x00000000000000000000000000000000000000c3",
+        "by": "0x00000000000000000000000000000000000000b2",
+        "actions": ["reserve", "cancel"],
+        "currency": "USD",
+        "capPerCommitment": "600000000",
+        "capOpenReserves": "800000000",
+        "suppliers": ["biz_supplier"],
+        "categories": ["compute"],
+        "paymentLimits": [
+          {
+            "token": "0x20C0000000000000000000000000000000000001",
+            "amount": "3000000000",
+            "period": "86400"
+          }
+        ],
+        "approvalRule": {
+          "kind": "above",
+          "amount": "550000000"
+        },
+        "expiry": "1800864000",
+        "nonce": "2",
+        "priceCapPerCommitment": "400000000",
+        "replaces": "0x6adab8332dae79348df8d7971c4db8e8d47c73eda88f89557cf422e5b5c0dbae"
+      },
+      "hash": "0x8286a3e2d9831f5abb48d8f14c360755bdc7f1f84640ceed416d0b9f06ea5e42"
+    },
+    {
+      "name": "the same slice changed by the business account",
+      "message": {
+        "sliceId": "0x72aac6138efefc1700ec7e0a413cacfb64fcc5fb0f0b45df8763aec635625754",
+        "businessId": "biz_buyer",
+        "account": "0x00000000000000000000000000000000000000a1",
+        "agentId": "agt_1",
+        "mandateHash": "0xa30df18790f81dab0defb02f7d06dbd9a6289c33ce3a9025b93060ab30967d49",
+        "parentSliceId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "issuerKey": "0x00000000000000000000000000000000000000b2",
+        "subKey": "0x00000000000000000000000000000000000000c3",
+        "by": "0x00000000000000000000000000000000000000a1",
+        "actions": ["reserve", "cancel"],
+        "currency": "USD",
+        "capPerCommitment": "600000000",
+        "capOpenReserves": "1500000000",
+        "suppliers": ["biz_supplier"],
+        "categories": ["compute"],
+        "paymentLimits": [
+          {
+            "token": "0x20C0000000000000000000000000000000000001",
+            "amount": "3000000000",
+            "period": "86400"
+          }
+        ],
+        "approvalRule": {
+          "kind": "always"
+        },
+        "expiry": "1800864000",
+        "nonce": "3",
+        "priceCapPerCommitment": "400000000",
+        "replaces": "0x8286a3e2d9831f5abb48d8f14c360755bdc7f1f84640ceed416d0b9f06ea5e42"
+      },
+      "hash": "0x9d8326c984af820ab0260984af602d94ee4d970dc0193e57a82cb7c9329ab2be"
+    },
+    {
+      "name": "a slice of the worker's slice, with text the encoding has to keep",
+      "message": {
+        "sliceId": "0xd0e09de50b8738edae4422c92b45909ee156fdc4f49bd587d17cac1d98194780",
+        "businessId": "biz_buyer",
+        "account": "0x00000000000000000000000000000000000000a1",
+        "agentId": "agt_1",
+        "mandateHash": "0xa30df18790f81dab0defb02f7d06dbd9a6289c33ce3a9025b93060ab30967d49",
+        "parentSliceId": "0x72aac6138efefc1700ec7e0a413cacfb64fcc5fb0f0b45df8763aec635625754",
+        "issuerKey": "0x00000000000000000000000000000000000000c3",
+        "subKey": "0x00000000000000000000000000000000000000c4",
+        "by": "0x00000000000000000000000000000000000000c3",
+        "actions": ["reserve", "cancel"],
+        "currency": "USD",
+        "capPerCommitment": "600000000",
+        "capOpenReserves": "1200000000",
+        "suppliers": [],
+        "categories": ["compute", "Zürich \"east\""],
+        "paymentLimits": [
+          {
+            "token": "0x20C0000000000000000000000000000000000001",
+            "amount": "3000000000",
+            "period": "86400"
+          }
+        ],
+        "approvalRule": {
+          "kind": "never"
+        },
+        "expiry": "1800864000",
+        "nonce": "1"
+      },
+      "hash": "0x839b7c552a9d3f225473e06d622e8e9f516feea4e0a90acaf2963d5fe533f4e6"
+    }
+  ],
+  "revocations": [
+    {
+      "name": "the agent key revoking its worker's key",
+      "message": {
+        "businessId": "biz_buyer",
+        "account": "0x00000000000000000000000000000000000000a1",
+        "agentId": "agt_1",
+        "subKey": "0x00000000000000000000000000000000000000c3",
+        "by": "0x00000000000000000000000000000000000000b2"
+      },
+      "hash": "0xfaef0673d1b3d36d9c12d29d2e17d085f7c7b2662e51033f424ca6f2ee415474"
+    }
+  ]
+}
