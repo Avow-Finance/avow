@@ -15,6 +15,7 @@ import {
   isSessionId,
   offerVersionId,
   PRICE_LIMIT_ENFORCED_BY,
+  PRICE_LIMIT_LAYERS,
   publishedOffer,
   quotedLabel,
   refusalSentence,
@@ -102,7 +103,7 @@ const priceLimit = (dollars: number | null) =>
 const priceLimitSentence = (dollars: number | null) =>
   dollars === null
     ? 'Its mandate puts no limit on the price of a commitment, so weigh the price against what your person asked for.'
-    : `One commitment's price can come to at most ${usd(dollars)}, a limit the SDK and Avow hold it to, since the lock never reads a price.`
+    : `One commitment's price can come to at most ${usd(dollars)}, a limit ${PRICE_LIMIT_LAYERS} hold it to, since the lock never reads a price.`
 
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 

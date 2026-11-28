@@ -32,7 +32,6 @@ import {
   type SessionEvent,
   serviceOfferTerms,
   serviceOrderProblem,
-  servicePrice,
   TESTNET_DEMO_PROFILE,
   type TopUp,
   tempoKeychainCheck,
@@ -628,23 +627,30 @@ function booker(m: {
   ): Promise<{
     refused: { code: ReasonCode; layer: RefusalLayer } | null
     amounts: RefusalAmounts
+    /** The booking's price, as the mandate check reads it. */
+    price: bigint
   }> {
     const { terms } = ask
     const reserve = terms.backing.amount
     const { mandate } = h
     const cap = capOf(h)
+    const price = termsPrice(terms)
     const [open, dailyLeft] = await Promise.all([openAcross(h), dailyLeftUnder(h)])
     const amounts: RefusalAmounts = {
       needed: reserve,
       left: open >= cap ? 0n : cap - open,
       authority: cap,
       capPerCommitment: mandate.message.capPerCommitment,
-      price: termsPrice(terms),
+      price,
       priceCapPerCommitment: priceCapOf(h),
       dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
-    const no = (code: ReasonCode, layer: RefusalLayer) => ({ refused: { code, layer }, amounts })
+    const no = (code: ReasonCode, layer: RefusalLayer) => ({
+      refused: { code, layer },
+      amounts,
+      price,
+    })
     if (problem) return no('service.unavailable', 'avow')
     if (ask.unreachable) return no('mandate.supplier_not_allowed', 'sdk')
     const allowed = checkMandate({
@@ -673,7 +679,7 @@ function booker(m: {
     if (dailyLeft !== null && toTokenUnits(reserve, token.decimals) > dailyLeft) {
       return no('keychain.over_daily_limit', 'keychain')
     }
-    return { refused: null, amounts }
+    return { refused: null, amounts, price }
   }
 
   /**
@@ -816,10 +822,9 @@ function booker(m: {
         arbiter: deployment.arbiter,
         day90SupplierShareBps: deployment.day90SupplierShareBps,
       })
-      const price = servicePrice(terms)
       const { supplier } = o.offer
       const h = await current()
-      const { refused, amounts } = await limits(h, {
+      const { refused, amounts, price } = await limits(h, {
         supplier,
         category: SERVICE_CATEGORY,
         terms,
@@ -832,6 +837,7 @@ function booker(m: {
           : (await sandboxSupplierProfile(deployment.apiUrl, supplier, send))
             ? null
             : 'supplier.unknown'
+      // The price is the one the mandate check read, so the answer and the check agree.
       if (outright) return { passes: false, code: outright, layer: 'avow', price, amounts }
       return refused
         ? { passes: false, ...refused, price, amounts }

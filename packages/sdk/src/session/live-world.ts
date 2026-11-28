@@ -167,6 +167,8 @@ export async function liveWorld(options: {
               left: BigInt(Math.round(booked.left * 1_000_000)),
               authority: agent.mandate.message.capOpenReserves,
               capPerCommitment: agent.mandate.message.capPerCommitment,
+              price: null,
+              priceCapPerCommitment: agent.mandate.message.priceCapPerCommitment ?? null,
               dailyLimit: null,
               dailyLeft: null,
             },

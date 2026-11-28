@@ -356,6 +356,9 @@ export class Toolbox {
       left: authority.openReservesLeft,
       authority: authority.capOpenReserves,
       capPerCommitment: authority.capPerCommitment,
+      // A refusal of the service's own rules comes before any terms, so it names no price.
+      price: null,
+      priceCapPerCommitment: null,
       dailyLimit: authority.dailyLimit,
       dailyLeft: authority.dailyLeft,
     })

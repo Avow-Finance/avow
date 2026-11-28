@@ -19,7 +19,13 @@ export const json = (body: unknown, status = 200): Response =>
  */
 export async function folderWithAgent(
   businessId: string,
-  o: { sells?: boolean; suppliers: readonly string[]; categories: readonly string[] },
+  o: {
+    sells?: boolean
+    suppliers: readonly string[]
+    categories: readonly string[]
+    /** The mandate's price limit for one commitment, none when left out. */
+    priceCap?: bigint
+  },
 ) {
   const store = memoryStore()
   const root = Account.fromSecp256k1(generatePrivateKey())
@@ -34,6 +40,7 @@ export async function folderWithAgent(
     token: TOKEN,
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(1000),
+    ...(o.priceCap === undefined ? {} : { priceCapPerCommitment: o.priceCap }),
     expiry: 1_900_000_000n,
   })
   const business = { ...deployment, account: root.address, lock: LOCK, businessId }

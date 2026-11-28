@@ -452,6 +452,9 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         left: authority - open,
         authority,
         capPerCommitment: authority,
+        price,
+        // The fixture's mandate has no price limit.
+        priceCapPerCommitment: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(1000),
       }
