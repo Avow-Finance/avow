@@ -80,8 +80,8 @@ export interface OfferSearch {
   budget: bigint
   currency: Currency
   /**
-   * The one kind of offer to list, `SERVICE_CATEGORY` or `JOB_CATEGORY`, or null for both. A search that leaves it
-   * out lists both.
+   * The one kind of offer to list, `SERVICE_CATEGORY` or `JOB_CATEGORY`, or null for both. A
+   * search that leaves it out lists both.
    */
   category: SellerCategory | null
   /** How many units the agent would book. A job is one unit, so only a quantity of 1 finds jobs. */
@@ -153,10 +153,10 @@ const words = (query: string | null) =>
 
 /**
  * Whether an offer version fits a search at `now`, leaving the agent's mandate aside. It's of the
- * kind the search asks for, if it names one, in the search's currency, its item has every word of the query, it takes the quantity, its total for
- * that quantity is within the budget, and booked at `now` it delivers by the search's deadline. An
- * offer whose delivery falls exactly on the deadline fits at `now` and no later, so a search with
- * a deadline is best booked straight away.
+ * kind the search asks for, if it names one, in the search's currency, its item has every word of
+ * the query, it takes the quantity, its total for that quantity is within the budget, and booked
+ * at `now` it delivers by the search's deadline. An offer whose delivery falls exactly on the
+ * deadline fits at `now` and no later, so a search with a deadline is best booked straight away.
  */
 export function offerFits(search: OfferSearch, version: OfferVersion, now: bigint): boolean {
   if (offerVersionProblem(version) !== null || version.currency !== search.currency) return false
