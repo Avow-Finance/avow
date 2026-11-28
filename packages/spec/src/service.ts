@@ -353,14 +353,23 @@ export const serviceOfferVersionJson = z.strictObject({
   }),
 })
 
+/**
+ * An offer version already read by `serviceOfferVersionJson`, or null for one `serviceOfferProblem`
+ * finds anything wrong with. Every reader of a version inside a larger message passes it through
+ * here, so no version the rules refuse reaches anyone.
+ */
+export function soundOfferVersion(
+  data: z.output<typeof serviceOfferVersionJson>,
+): ServiceOfferVersion | null {
+  const version: ServiceOfferVersion = data
+  return serviceOfferProblem(version) === null ? version : null
+}
+
 /** Reads an offer version from JSON, refusing one `serviceOfferProblem` finds anything wrong with. */
 export function parseServiceOfferVersion(json: unknown): Parsed<ServiceOfferVersion> {
   const parsed = serviceOfferVersionJson.safeParse(json)
-  if (!parsed.success) return { ok: false, reason: 'message.invalid' }
-  const version: ServiceOfferVersion = parsed.data
-  return serviceOfferProblem(version) === null
-    ? { ok: true, value: version }
-    : { ok: false, reason: 'message.invalid' }
+  const version = parsed.success ? soundOfferVersion(parsed.data) : null
+  return version ? { ok: true, value: version } : { ok: false, reason: 'message.invalid' }
 }
 
 /** The label an offer version's id is hashed under, so it can't be read as any other hash. */

@@ -102,10 +102,11 @@ type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
  * mandate like any other commitment. The first four and `sell` are a supplier's, for an agent
- * connected to sell. `list_offer` and `withdraw_listing` reach Avow, which lists an offer only
- * after checking it against the agent's newest seller's mandate. Its signing key, the offers in its folder and, once Avow serves one, the
- * seller's mandate its own SDK holds it to are its limits, and the tools say which stand. Avow
- * enforces no seller limit yet. None reports to the runner's screen.
+ * connected to sell. A supplier's agent is held by its signing key, the offers in its folder and,
+ * once Avow serves one, the seller's mandate its own SDK holds it to, and the tools say which
+ * stand. `list_offer` and `withdraw_listing` reach Avow, which lists an offer only where it holds
+ * seller's mandates and only after checking the offer against the agent's newest one. None reports
+ * to the runner's screen.
  */
 const SERVICE_TOOLS = [
   'publish_offer',
@@ -533,7 +534,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Lists an offer your business published from this folder with Avow, for Avow's directory of offers, for an agent connected to sell. Give the id publish_offer or offers answered with. It becomes its item's current listing with Avow, in place of any version of the item listed before, and a version Avow no longer lists can never be listed again, so publish a new one instead. Your agent holds the offer to its newest seller's mandate first, and Avow checks it against the same mandate and lists nothing it doesn't allow, with the reason. A listing grants nothing, and every order is checked again. When Avow holds no seller's mandates it lists nothing, and the answer says so. Buying agents can't search the directory yet.",
+      "Lists an offer your business published from this folder with Avow, for Avow's directory of offers, for an agent connected to sell. Give the id publish_offer or offers answered with. It becomes its item's current listing with Avow, in place of any version of the item listed before, and a version Avow no longer lists can never be listed again, so publish a new one instead. Listing the current version again checks it against the newest mandate again. Your agent holds the offer to its newest seller's mandate first, and Avow checks it against the same mandate and lists nothing it doesn't allow, with the reason. A listing grants nothing, and every order is checked again. When Avow holds no seller's mandates it lists nothing, and the answer says so. Buying agents can't search the directory yet.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -548,7 +549,8 @@ export const MCP_TOOLS = [
     title: "Withdraw an offer from Avow's listing",
     annotations: {
       readOnlyHint: false,
-      destructiveHint: false,
+      // A withdrawn version is never listed again, so the change can't be undone.
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },

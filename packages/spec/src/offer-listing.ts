@@ -4,8 +4,8 @@ import { bytes32, u64 } from './json-fields.js'
 import {
   offerVersionId,
   type ServiceOfferVersion,
-  serviceOfferProblem,
   serviceOfferVersionJson,
+  soundOfferVersion,
 } from './service.js'
 import type { Parsed } from './wire.js'
 
@@ -109,20 +109,13 @@ function reading<T>(read: () => Parsed<T>): Parsed<T> {
 }
 
 /**
- * The version a parsed JSON value holds, or null for one `serviceOfferProblem` refuses, as
- * `parseServiceOfferVersion` reads one, so such a version never reaches a listing.
- */
-const versionOf = (data: z.output<typeof serviceOfferVersionJson>): ServiceOfferVersion | null =>
-  serviceOfferProblem(data) === null ? data : null
-
-/**
  * Parses the body that lists an offer version. The version has to be one `serviceOfferProblem`
  * passes. Whether it names the listing agent's business is the caller's to check. It never throws.
  */
 export function parseOfferListingRequest(json: unknown): Parsed<OfferListingRequest> {
   return reading(() => {
     const parsed = offerListingRequestJson.safeParse(json)
-    const version = parsed.success ? versionOf(parsed.data.version) : null
+    const version = parsed.success ? soundOfferVersion(parsed.data.version) : null
     return version ? { ok: true, value: { version } } : invalid
   })
 }
@@ -144,7 +137,7 @@ export function parseOfferListingsRequest(json: unknown): Parsed<OfferListingsRe
 }
 
 const listingOf = (data: z.output<typeof offerListingJson>): OfferListing | null => {
-  const version = versionOf(data.version)
+  const version = soundOfferVersion(data.version)
   if (!version || offerVersionId(version) !== data.id) return null
   // A listing that replaced none says null, so naming itself would say a thing no listing can.
   if (data.replaced === data.id) return null

@@ -74,7 +74,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 Every tool answers in text a model can read and in structured JSON with the same facts. A refusal names its reason code and its layer, with the amounts behind it where they apply. The layer is `sdk` for the agent's own mandate check, `avow` for Avow's API, `supplier` when the supplier declines, `relay` for the service that sends the transaction, `lock` for the lock and `keychain` for Tempo's keychain. When a tool refuses, tell the person the reason code and what would change it, and don't work around the limit.
 
-Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order` and `sell` are the ones that change anything, and none deletes anything.
+Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order` and `sell` are the ones that change anything. `withdraw_listing` is marked destructive, since Avow never lists a withdrawn version again, and nothing else is.
 
 ## Terminal commands
 

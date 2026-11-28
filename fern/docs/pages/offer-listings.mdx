@@ -27,7 +27,7 @@ const listed = await services.listWithAvow(id)
 if (!listed.ok) console.log(listed.notice)
 ```
 
-Each call signs with the agent's signing key under its business's lock. They're sandbox routes, and every business that lists is a sandbox business, labelled as one wherever a listing shows. Passing a business check doesn't change that, and nothing about a listing says the business is verified.
+Each call signs with the agent's signing key under its business's lock. Only a sandbox business lists, and a search result is to say so on each supplier, as `OfferMatch` does with `sandbox: true`. Passing a business check doesn't change that, and nothing about a listing says the business is verified. A business reads and withdraws its own listings whatever its standing, so one that leaves the sandbox can still take them down.
 
 | Route | Body | Answer |
 | --- | --- | --- |
@@ -52,21 +52,21 @@ The selling agent runs the same `sellerOfferProblem` before it sends anything, s
 
 ## One current version for each item
 
-An item is named by its `item.name`, as the seller's mandate reads it. Listing a version of an item Avow already lists replaces the one it held, and the answer names the version replaced. Listing the current version again answers the listing Avow already holds.
+An item is named by its `item.name`, as the seller's mandate reads it. Listing a version of an item Avow already lists replaces the one it held, and the answer names the version replaced. Listing the current version again checks it against the newest mandate again. It answers the listing Avow holds, which names the mandate it was first listed under, or the reason the newest mandate refuses it. A refusal leaves the listing in place, since a search holds every listing to the mandate in force anyway, and the seller withdraws it to take it down.
 
 Versions only move forward. A version once replaced or withdrawn is never current again, and listing it is refused by name as `offer.superseded` or `offer.withdrawn`, the same reasons a booking of it is to hear. A buyer told a version was replaced will never find it current later. To offer the same terms again after a withdrawal, publish a new version, which can differ in its summary alone.
 
-Withdrawing needs no seller's mandate, since it only takes an offer away, and it works on a deployment with seller's mandates off. The item lists nothing until a new version of it is listed. Withdrawing from Avow leaves the version published in the folder, and withdrawing it from the folder leaves Avow's listing in place, so do both to stop selling an item.
+Withdrawing needs no seller's mandate, since it only takes an offer away, and it works on a deployment with seller's mandates off. When a business registers a new signing key, Avow ends every current listing of the old key in the same step, so a key the business stopped using lists nothing. The item lists nothing until a new version of it is listed. Withdrawing from Avow leaves the version published in the folder, and withdrawing it from the folder leaves Avow's listing in place, so do both to stop selling an item.
 
 ## What a listing claims
 
-A listing says Avow found the version within the seller's mandate named in it, at the moment it was listed. It says nothing about later. The administrator can replace the mandate, it can end, and the key can be revoked, so a search is to check each listing again before showing it and a sale is checked again when it's quoted and when its reserve is approved. A listing grants no buyer anything, and an order from a listed offer goes through the buyer's own mandate check, Avow's approval and the keychain like any other.
+A listing says Avow found the version within the seller's mandate named in it, at the moment it was listed. It says nothing about later. The administrator can replace the mandate, it can end, and the key is to be revocable, so a search is to check each listing again before showing it and a sale is checked again when it's quoted and when its reserve is approved. A listing grants no buyer anything, and an order from a listed offer goes through the buyer's own mandate check, Avow's approval and the keychain like any other.
 
 ## Refusals
 
 | Reason | Status | Meaning |
 | --- | --- | --- |
-| `request.signer_unknown` | 401 | The signer isn't the signing key of a sandbox business |
+| `request.signer_unknown` | 401 | The signer isn't a business's registered signing key, or for a listing, a sandbox business's |
 | `message.wrong_contract` | 400 | The request wasn't signed under the business's own lock |
 | `message.invalid` | 400 | The body doesn't parse, or the version names another business |
 | `offer.listing_unavailable` | 409 | The deployment holds no seller's mandates, so it lists nothing |
