@@ -22,7 +22,10 @@ vi.mock('./agent.js', async (original) => ({
   ...(await original<typeof import('./agent.js')>()),
   sandboxAgent: async () => ({ bookTerms: bookings }),
 }))
-vi.mock('../job/quote.js', () => ({ quoteJob: quotes }))
+vi.mock('../job/quote.js', async (original) => ({
+  ...(await original<typeof import('../job/quote.js')>()),
+  quoteJob: quotes,
+}))
 
 const { sandboxMailbox } = await import('./mailbox.js')
 const { readOrderArgs } = await import('../node/mailbox.js')
@@ -179,6 +182,10 @@ describe('the sandbox mailbox', () => {
       if (path === '/config.json') return json(wire(deployment))
       const body = init?.body ? JSON.parse(new TextDecoder().decode(init.body as Uint8Array)) : {}
       posted.push({ path, body })
+      // A sandbox that serves no seller's mandate, so none is in force.
+      if (path === SANDBOX_PATHS.sellerMandates) {
+        return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+      }
       const held = answered(wire(order), 'requested')
       return json(path === SANDBOX_PATHS.mailboxInbox ? { orders: [held] } : held)
     }) as typeof globalThis.fetch
@@ -190,9 +197,10 @@ describe('the sandbox mailbox', () => {
     expect(bookings).not.toHaveBeenCalled()
     expect(quotes).toHaveBeenCalledOnce()
     // The booking comes back as it was booked, its terms as numbers again.
-    expect(quotes.mock.calls[0]?.[0]).toMatchObject({ compute })
+    expect(quotes.mock.calls[0]?.[0]).toMatchObject({ compute, sellerMandate: null })
     expect(posted.map((p) => p.path)).toEqual([
       SANDBOX_PATHS.mailboxInbox,
+      SANDBOX_PATHS.sellerMandates,
       SANDBOX_PATHS.mailboxQuote(order.orderId),
     ])
   })
