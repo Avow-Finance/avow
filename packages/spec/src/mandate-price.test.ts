@@ -127,6 +127,44 @@ describe('a mandate with a price limit', () => {
     )
   })
 
+  it('keeps the hash of a replacement at version 2 and at version 3', () => {
+    const first: Mandate = {
+      mandateId: `0x${'0a'.repeat(32)}`,
+      businessId: 'biz_golden',
+      agentId: 'agent-golden',
+      account: '0x00000000000000000000000000000000000000a1',
+      agentKey: '0x00000000000000000000000000000000000000b2',
+      actions: ['reserve', 'start', 'cancel'],
+      currency: 'USD',
+      capPerCommitment: 50_000_000n,
+      capOpenReserves: 200_000_000n,
+      suppliers: ['biz_supplier'],
+      categories: ['compute'],
+      paymentLimits: [
+        {
+          token: '0x20C0000000000000000000000000000000000001',
+          amount: 100_000_000n,
+          period: 86400n,
+        },
+      ],
+      approvalRule: { kind: 'never' },
+      expiry: 1_900_000_000n,
+      nonce: 1n,
+    }
+    const replaces = `0x${'0b'.repeat(32)}` as const
+    const v2: Mandate = { ...first, nonce: 2n, replaces }
+    const v3: Mandate = { ...v2, priceCapPerCommitment: 200_000_000n }
+    expect(mandateVersion(v2)).toBe('2')
+    expect(mandateVersion(v3)).toBe('3')
+    // The version 2 hash is the one the code gave before price limits existed.
+    expect(mandateHash(v2, DOMAIN)).toBe(
+      '0x90feb88d1b283ba71fa1fdfb0459813e6a368a786a5bd495256c48656b0500d9',
+    )
+    expect(mandateHash(v3, DOMAIN)).toBe(
+      '0xfa62676de840976adc81d99dce241f1a24de068219d387d5984356a64881013d',
+    )
+  })
+
   it('refuses a replacement that names the zero hash, which would sign as a first mandate', () => {
     expect(() => mandateTypedData({ ...priced, replaces: ZERO }, DOMAIN)).toThrow(RangeError)
     expect(

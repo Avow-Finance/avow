@@ -9,7 +9,7 @@ A buyer's mandate can limit the price of one commitment. Every other money limit
 
 Two layers hold an agent to its price limit, the SDK and Avow's API. The lock never reads a price, so no chain holds an agent to it, and wherever a price limit is shown it's labelled with those two layers. A mandate's reserve limits have a third layer in the lock.
 
-- The SDK runs `checkMandate` before the agent signs terms, and refuses a booking over the limit with nothing signed.
+- The SDK refuses a booking over the limit before the agent signs anything. It runs `checkMandate` on version 2 terms, and for version 3 terms, such as every job, it compares the price with `priceLimitProblem`, which reads no lock, and runs the whole check once Avow's approval names the owner of each booking they rely on.
 - Avow's API runs the same check before it approves a reserve. The lock takes no reserve without Avow's approval, so an agent that skips its own check still can't reserve a booking over its limit.
 
 A supplier's verifier runs the same function on the buyer's mandate, so it gives the same answer. It reads the limit to check the buyer, and its refusal adds no layer the buyer's administrator relies on.
@@ -29,7 +29,7 @@ Version 3 terms count as the plain booking they make. A booking they rely on is 
 
 ## The message
 
-A mandate with a price limit signs at version 3, whether it's an agent's first mandate or one that replaces another. Its fields are version 1's, then `priceCapPerCommitment` as a `uint256`, then `replaces` as a `bytes32`, which is the zero hash for a first mandate. A replacement that names the zero hash is refused, since it would sign as a first mandate.
+A mandate with a price limit signs at version 3, whether it's an agent's first mandate or one that replaces another. Its fields are version 1's, then `priceCapPerCommitment` as a `uint256`, then `replaces` as a `bytes32`. A first mandate leaves `replaces` out on the wire, and its typed data carries the zero hash in that field. A replacement that names the zero hash is refused, since it would sign as a first mandate.
 
 A mandate with no price limit signs at version 1 or 2, byte for byte as before, and reads as one with no limit on the price. Every agent enrolled before the limit existed keeps working, and its administrator adds a limit by signing a replacement. A limit of zero is malformed and refused as `mandate.invalid`.
 
