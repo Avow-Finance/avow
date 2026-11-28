@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import { MODERATO_RPC_URL, trustedFactory } from '@avow-finance/sdk'
-import { TEMPO_MODERATO } from '@avow-finance/spec'
+import { dollars, TEMPO_MODERATO } from '@avow-finance/spec'
 import { type Address, getAddress, type Hex, isAddress } from 'viem'
 import { isWebhookSecret } from './signature.js'
 import type { WebhookTarget } from './webhook.js'
@@ -168,7 +168,7 @@ export function serveSettings(env: Record<string, string | undefined>): Supplier
     approvalKeys: approvalKeys.map((k) => getAddress(k)),
     businessId,
     port: port as number,
-    maxReserve: BigInt(maxReserve as number) * 1_000_000n,
+    maxReserve: dollars(maxReserve as number),
     pollSeconds: pollSeconds as number,
     maxOpenPerBuyer: maxOpenPerBuyer as number,
     maxOpenBookings: maxOpenBookings as number,
