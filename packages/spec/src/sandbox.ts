@@ -7,8 +7,9 @@ import {
 } from './agent-session.js'
 import { isApiAudience } from './api-request.js'
 import { isApprovalRequestId } from './approval-request.js'
+import { BUSINESS_ID } from './fields.js'
 import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
-import { address, bytes32, u256 } from './json-fields.js'
+import { address, businessIdJson, bytes32, u256 } from './json-fields.js'
 import { isTestnetChain } from './networks.js'
 import { describeReason, type ReasonCode } from './reasons.js'
 import type { CommitmentReference } from './references.js'
@@ -79,7 +80,7 @@ export const SANDBOX_PATHS = {
   suppliers: '/v1/sandbox/suppliers',
   /** The profile Avow registered for a sandbox business, which anyone may read. */
   supplier: (businessId: string) => {
-    if (!/^[A-Za-z0-9_-]{1,100}$/.test(businessId)) {
+    if (!BUSINESS_ID.test(businessId)) {
       throw new RangeError(`${businessId} isn't a business id`)
     }
     return `/v1/sandbox/suppliers/${businessId}`
@@ -558,8 +559,6 @@ export interface SessionEventAnswer {
   sequence: number
 }
 
-const businessId = z.string().min(1).max(100)
-
 const sandboxEventJson = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('run_started'),
@@ -573,7 +572,7 @@ const sandboxEventJson = z.discriminatedUnion('type', [
     source: z.literal('business'),
     authority: u256,
     previous: u256.nullable(),
-    suppliers: z.array(businessId).min(1).max(20),
+    suppliers: z.array(businessIdJson).min(1).max(20),
     mandateHash: bytes32,
   }),
   z.strictObject({
