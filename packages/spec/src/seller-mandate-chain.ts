@@ -17,6 +17,7 @@ import {
   sellerMandateHash,
   sellerMandateProblem,
   sellerMandateTypedData,
+  sellerMandateVersion,
 } from './seller-mandate.js'
 import { heldEnvelopeProblem, type Parsed } from './wire.js'
 
@@ -178,6 +179,8 @@ function linkedMandates(
     const m = signed.message
     const problem = sellerMandateProblem(m)
     if (problem) return no(problem)
+    // The envelope says the version the mandate signs at, which its content decides.
+    if (signed.schemaVersion !== sellerMandateVersion(m)) return no('message.invalid')
     if (!isAddressEqual(m.signingKey, expected.signingKey)) return no('seller_mandate.key_mismatch')
     if (m.businessId !== expected.businessId || !isAddressEqual(m.account, expected.account)) {
       return no('seller_mandate.chain_mismatch')

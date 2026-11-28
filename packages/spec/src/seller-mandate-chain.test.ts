@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { digestOf, type Signed } from './eip712.js'
 import { MAX_MANDATE_CHAIN } from './mandate-chain.js'
 import { type SellerKeyRevocation, sellerKeyRevocationTypedData } from './seller-key-revocation.js'
-import { type SellerMandate, sellerMandateHash, sellerMandateTypedData } from './seller-mandate.js'
+import {
+  type SellerMandate,
+  sellerMandateHash,
+  sellerMandateTypedData,
+  sellerMandateVersion,
+} from './seller-mandate.js'
 import {
   parseSellerMandates,
   type SellerMandates,
@@ -35,8 +40,14 @@ const envelope = <T>(type: Signed<T>['type'], message: T, signature: Hex): Signe
   message,
   signature,
 })
-const signMandate = async (m: SellerMandate, by = admin) =>
-  envelope('SellerMandate', m, await by.sign({ hash: digestOf(sellerMandateTypedData(m, DOMAIN)) }))
+const signMandate = async (m: SellerMandate, by = admin) => ({
+  ...envelope(
+    'SellerMandate',
+    m,
+    await by.sign({ hash: digestOf(sellerMandateTypedData(m, DOMAIN)) }),
+  ),
+  schemaVersion: sellerMandateVersion(m),
+})
 const signRevocation = async (r: SellerKeyRevocation, by = admin) =>
   envelope(
     'SellerKeyRevocation',
@@ -81,6 +92,24 @@ describe("a chain of seller's mandates", () => {
       ok: true,
       value: { current: { signed: alone.current, hash: hashOf(first) }, earlier: [] },
     })
+  })
+
+  it('reads a mandate that lets its agent bargain, in the envelope of its own version', async () => {
+    const bargaining: SellerMandate = {
+      ...second,
+      negotiable: ['unitPrice'],
+      replaces: hashOf(first),
+    }
+    const mandates = await chainOf([bargaining, first])
+    expect(mandates.current.schemaVersion).toBe('2')
+    expect(await reason(mandates)).toBeNull()
+    expect(
+      await reason({ ...mandates, current: { ...mandates.current, schemaVersion: '1' } }),
+    ).toBe('message.invalid')
+    const plain = await chainOf([first])
+    expect(await reason({ ...plain, current: { ...plain.current, schemaVersion: '2' } })).toBe(
+      'message.invalid',
+    )
   })
 
   it('reads the expected addresses in either case', async () => {

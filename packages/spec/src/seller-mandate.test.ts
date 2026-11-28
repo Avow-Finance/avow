@@ -1,7 +1,7 @@
-import type { Address } from 'viem'
+import { type Address, hashTypedData } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
-import type { Signed } from './eip712.js'
+import { domain, type Signed } from './eip712.js'
 import {
   carriesSellerMandateTerms,
   parseSellerMandate,
@@ -13,6 +13,8 @@ import {
   sellerMandateProblem,
   sellerMandateTermsOf,
   sellerMandateTermsProblem,
+  sellerMandateTypedData,
+  sellerMandateVersion,
   sellingLimitFor,
 } from './seller-mandate.js'
 import {
@@ -24,6 +26,7 @@ import {
   newKey,
   OTHER_LOCK,
 } from './test-helpers.js'
+import { SELLER_MANDATE_NEGOTIABLE_VERSION } from './version.js'
 import { toWire } from './wire.js'
 
 const ACCOUNT: Address = '0x00000000000000000000000000000000000a11ce'
@@ -73,8 +76,10 @@ describe("a well-formed seller's mandate", () => {
       { minLateCancellationBps: 10_001 },
       { minNoShowBps: -1 },
       { minNoShowBps: 0.5 },
-      // No term is open to bargaining in version 1.
-      { negotiable: ['unitPrice'] },
+      // A term open to bargaining is named once, in the order the terms are listed.
+      { negotiable: ['unitPrice', 'unitPrice'] },
+      { negotiable: ['leadTime', 'unitPrice'] },
+      { negotiable: ['delivery' as never] },
       // `always` already says every sale, and `never` says none.
       { approvalRule: { kind: 'above', amount: 0n } },
       { approvalRule: { kind: 'above', amount: mandate.maxOrderValue } },
@@ -263,6 +268,8 @@ describe("the signed form of a seller's mandate", () => {
       { expiry: mandate.expiry + 1n },
       { nonce: 2n },
       { replaces: id('the mandate before') },
+      { negotiable: ['unitPrice'] },
+      { negotiable: ['unitPrice', 'quantity', 'leadTime'] },
     ]
     for (const change of changes) expect(sellerMandateProblem(withMandate(change))).toBeNull()
     const hash = sellerMandateHash(mandate, DOMAIN)
@@ -297,16 +304,37 @@ describe("the signed form of a seller's mandate", () => {
     expect(reason({ ...wire(), chainId: CHAIN_ID + 1 })).toBe('message.wrong_chain')
     expect(reason({ ...wire(), lock: OTHER_LOCK })).toBe('message.wrong_contract')
     expect(reason({ ...wire(), type: 'Mandate' })).toBe('message.schema_unknown')
-    expect(reason({ ...wire(), schemaVersion: '2' })).toBe('message.schema_unknown')
+    expect(reason({ ...wire(), schemaVersion: '3' })).toBe('message.schema_unknown')
     expect(reason({ ...wire(), message: { ...wire().message, weeklyBudget: '1' } })).toBe(
       'message.invalid',
     )
     expect(reason(null)).toBe('message.invalid')
   })
 
+  it('signs at version 2 when it lets its agent bargain, and version 1 byte for byte when not', () => {
+    const bargaining = withMandate({ negotiable: ['unitPrice', 'leadTime'] })
+    expect(sellerMandateVersion(mandate)).toBe('1')
+    expect(sellerMandateVersion(bargaining)).toBe(SELLER_MANDATE_NEGOTIABLE_VERSION)
+    expect(sellerMandateTypedData(mandate, DOMAIN).domain.version).toBe('1')
+    expect(sellerMandateTypedData(bargaining, DOMAIN).domain.version).toBe('2')
+    // Version 1 is the table and domain it always was.
+    expect(sellerMandateHash(mandate, DOMAIN)).toBe(
+      hashTypedData({ ...sellerMandateTypedData(mandate, DOMAIN), domain: domain(DOMAIN, '1') }),
+    )
+    const signedBargaining = { ...signed, schemaVersion: '2', message: bargaining }
+    expect(parseSellerMandate(wire(signedBargaining), expected)).toEqual({
+      ok: true,
+      value: signedBargaining,
+    })
+    // The envelope's version is the one the content signs at.
+    expect(reason({ ...wire(signedBargaining), schemaVersion: '1' })).toBe('message.invalid')
+    expect(reason({ ...wire(), schemaVersion: '2' })).toBe('message.invalid')
+    expect(reason({ ...wire(), schemaVersion: '3' })).toBe('message.schema_unknown')
+  })
+
   it('refuses a mandate that reads as JSON and is not well formed', () => {
     const message = (change: object) => ({ ...wire(), message: { ...wire().message, ...change } })
-    expect(reason(message({ negotiable: ['unitPrice'] }))).toBe(invalid)
+    expect(reason(message({ negotiable: ['leadTime', 'unitPrice'] }))).toBe(invalid)
     expect(reason(message({ excludedBuyers: ['biz_b', 'biz_a'] }))).toBe(invalid)
     expect(reason(message({ limits: [] }))).toBe(invalid)
     expect(reason(message({ businessId: '' }))).toBe(invalid)
@@ -329,7 +357,10 @@ describe("a seller's mandate's terms", () => {
 
   it('are held to the rules a mandate is, and hold nothing else', () => {
     expect(sellerMandateTermsProblem({ ...terms, limits: [] })).toBe(invalid)
-    expect(sellerMandateTermsProblem({ ...terms, negotiable: ['unitPrice'] })).toBe(invalid)
+    expect(sellerMandateTermsProblem({ ...terms, negotiable: ['quantity', 'quantity'] })).toBe(
+      invalid,
+    )
+    expect(sellerMandateTermsProblem({ ...terms, negotiable: ['unitPrice'] })).toBeNull()
     expect(sellerMandateTermsProblem({ ...terms, expiry: 2n ** 64n })).toBe(invalid)
     expect(sellerMandateTermsProblem({ ...terms, signingKey: '0xnope' as never })).toBe(invalid)
     expect(sellerMandateTermsProblem(mandate)).toBe(invalid)
