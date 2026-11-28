@@ -275,10 +275,14 @@ export async function awaitAccepted<Order extends Staged>(
   return { ok: true, order: current, acceptedIn: current.acceptedIn }
 }
 
+/** How one read of an inbox went, so whoever listens can say when Avow last answered. */
+export type InboxRead = { ok: true; orders: number } | { ok: false; error: unknown }
+
 /**
  * Reads an inbox every few seconds and takes each order's next step, until the signal stops it. An
  * order the handler declines is left to lapse, and a step that throws goes to `onError` and is
- * tried again on the next read. Nothing wakes this when it isn't running.
+ * tried again on the next read. A read that fails goes to `onRead` and is tried again too. Nothing
+ * wakes this when it isn't running.
  */
 export async function listenFor<Order extends Staged, Step>(p: {
   inbox: () => Promise<Order[]>
@@ -286,12 +290,22 @@ export async function listenFor<Order extends Staged, Step>(p: {
   accept?: ((order: Order) => boolean | Promise<boolean>) | undefined
   onStep?: ((order: Order, step: Step) => void) | undefined
   onError?: ((order: Order, error: unknown) => void) | undefined
+  onRead?: ((read: InboxRead) => void) | undefined
   every?: number | undefined
   signal?: AbortSignal | undefined
 }): Promise<void> {
   for (;;) {
     if (p.signal?.aborted) return
-    const orders = await p.inbox().catch(() => [])
+    const orders = await p.inbox().then(
+      (read) => {
+        p.onRead?.({ ok: true, orders: read.length })
+        return read
+      },
+      (error: unknown) => {
+        p.onRead?.({ ok: false, error })
+        return []
+      },
+    )
     for (const order of orders) {
       if (order.status === 'requested' && p.accept && !(await p.accept(order))) continue
       await p

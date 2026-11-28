@@ -28,8 +28,9 @@ import { MIN_PASSPHRASE } from '../sandbox/vault.js'
 import { connectCommand } from './connect.js'
 import { FIRST_RUN_STEPS } from './first-run.js'
 import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
+import { listenCommand } from './listen.js'
 import { loopCommand } from './loop.js'
-import { listenCommand, orderCommand } from './mailbox.js'
+import { orderCommand } from './mailbox.js'
 import { mcpCommand } from './mcp.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
 import {
@@ -40,6 +41,7 @@ import {
   terminalPrompts,
 } from './runner.js'
 import { keepSession, sessionForNextRun } from './runner-session.js'
+import { sellCommand } from './sell-setup.js'
 import { askToSellCommand, offerCommand, orderServiceCommand } from './services.js'
 import { terminalInput } from './session-input.js'
 import { topUpCommand } from './top-up.js'
@@ -83,7 +85,12 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            job from another business with --supplier <id>. Either way it checks the quote, funds
            it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it. A
-           service order is quoted only for an offer this business published
+           service order is quoted only for an offer this business published. It keeps a status
+           line, runs once a folder, and when it stops says why, what still waits and how to resume
+  sell     setup asks for the item, its price, both charges and orders a day, publishes the offer,
+           lists it with Avow with --list-with-avow, and starts listen. Flags answer the questions
+           where nobody can type. keep-running pm2|systemd|launchd prints what a process manager
+           needs to keep listen running unattended
   ask-to-sell  asks the business's administrator for a seller's mandate with --terms <file>,
            prints the link to decide it, and waits for the decision. Avow doesn't take these
            requests yet, and says so
@@ -143,6 +150,7 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === 'order' && args.includes('--offer')) return orderServiceCommand(args.slice(1))
   if (args[0] === 'order') return orderCommand(args.slice(1))
   if (args[0] === 'listen') return listenCommand()
+  if (args[0] === 'sell') return sellCommand(args.slice(1))
   if (args[0] === 'ask-to-sell') return askToSellCommand(args.slice(1))
   // The MCP server, so a model in Claude can connect the folder's agent and commit with it.
   if (args[0] === 'mcp') return mcpCommand(args.slice(1))

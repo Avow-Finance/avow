@@ -38,6 +38,7 @@ import { quoteService } from '../service/quote.js'
 import { pause } from './connect.js'
 import {
   awaitAccepted,
+  type InboxRead,
   listenFor,
   type MailboxOptions,
   mailboxContext,
@@ -258,6 +259,11 @@ export interface SandboxServices {
   /** The orders waiting on this business as supplier: new ones to quote, funded ones to accept. */
   inbox(): Promise<ServiceOrder[]>
   /**
+   * The orders this agent quoted as supplier and still keeps, newest last: each one quoted in the
+   * last day, and each accepted one not yet due. It reads the folder only, and sends nothing.
+   */
+  quotes(): Promise<readonly Quoted[]>
+  /**
    * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one.
    * It throws for an order whose offer this business never published, and for one past the offer's
    * capacity for the day, and quotes nothing for either. A quote holds its place while the order
@@ -276,6 +282,8 @@ export interface SandboxServices {
     accept?: (order: ServiceOrder) => boolean | Promise<boolean>
     onStep?: (order: ServiceOrder, step: ServiceSellStep) => void
     onError?: (order: ServiceOrder, error: unknown) => void
+    /** Each read of the inbox, and why one failed. */
+    onRead?: (read: InboxRead) => void
     every?: number
     signal?: AbortSignal
   }): Promise<void>
@@ -789,6 +797,8 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     }
   }
 
+  const quotes = async () => (await kept()).quoted
+
   const listen = (p: Parameters<SandboxServices['listen']>[0] = {}) =>
     listenFor<ServiceOrder, ServiceSellStep>({ ...p, inbox, sell })
 
@@ -811,6 +821,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     read,
     buy,
     inbox,
+    quotes,
     sell,
     listen,
   }

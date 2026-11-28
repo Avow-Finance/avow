@@ -4,6 +4,7 @@ import {
   formatUsd,
   isJobOfferVersion,
   type JobOfferVersion,
+  type OfferListing,
   type OfferVersion,
   offerIdOf,
   offerVersionId,
@@ -350,15 +351,7 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
   if (ask.verb === 'list-with-avow') {
     const listed = await services.listWithAvow(ask.id)
     if (!listed.ok) return fail(listed.notice)
-    console.log(
-      [
-        `Listed offer ${listed.listing.id} with Avow, checked against seller's mandate ${listed.listing.sellerMandate}.`,
-        ...(listed.listing.replaced
-          ? [`It replaces ${listed.listing.replaced}, which Avow no longer lists.`]
-          : []),
-        "Avow holds it as the item's current listing. A listing grants nothing, and every order is checked again.",
-      ].join('\n'),
-    )
+    console.log(listedLines(listed.listing).join('\n'))
     return
   }
   if (ask.verb === 'withdraw-from-avow') {
@@ -386,19 +379,47 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     return
   }
   if (ask.verb !== 'publish') return
-  const { version, id, standing } = await services.publish(ask.draft)
-  const file = resolve(fileName(version.item.name))
-  writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
+  const published = await services.publish(ask.draft)
   console.log(
     [
-      `Published offer ${id}.`,
-      ...(standing ? [standing.notice] : []),
-      ...offerSentences(version),
-      `The offer is in ${file}. Give that file to a buyer's agent, which orders with`,
-      `  npx avow-sandbox order --offer ${fileName(version.item.name)} --quantity 1`,
+      ...publishedLines(published, writeOfferFile(published.version)),
       'Run npx avow-sandbox listen here to quote and accept the orders that come.',
     ].join('\n'),
   )
+}
+
+/** What listing a version with Avow says, once Avow has taken it. */
+export function listedLines(listing: OfferListing): string[] {
+  return [
+    `Listed offer ${listing.id} with Avow, checked against seller's mandate ${listing.sellerMandate}.`,
+    ...(listing.replaced ? [`It replaces ${listing.replaced}, which Avow no longer lists.`] : []),
+    "Avow holds it as the item's current listing. A listing grants nothing, and every order is checked again.",
+  ]
+}
+
+/**
+ * Writes a published offer to the file a buyer's agent orders from, in the working folder beside
+ * `.avow`, and answers with where it went.
+ */
+export function writeOfferFile(version: ServiceOfferVersion): string {
+  const file = resolve(fileName(version.item.name))
+  writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
+  return file
+}
+
+/** What publishing an offer says: its id, where the seller stands, the offer and how to order it. */
+export function publishedLines(
+  published: Awaited<ReturnType<SandboxServices['publish']>>,
+  file: string,
+): string[] {
+  const { version, id, standing } = published
+  return [
+    `Published offer ${id}.`,
+    ...(standing ? [standing.notice] : []),
+    ...offerSentences(version),
+    `The offer is in ${file}. Give that file to a buyer's agent, which orders with`,
+    `  npx avow-sandbox order --offer ${fileName(version.item.name)} --quantity 1`,
+  ]
 }
 
 /** What `order --offer` takes, read from its arguments, or why it can't run. */
