@@ -32,7 +32,7 @@ export function micros(amount: number, what: string): bigint {
   if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - cents) > 1e-6) {
     throw new RangeError(`The ${what} has to be a positive amount of dollars, such as 200 or 12.50`)
   }
-  return fromDollars(cents / 100)
+  return BigInt(cents) * 10_000n
 }
 
 /** Micros as dollars, the unit a sandbox booking is written in. */

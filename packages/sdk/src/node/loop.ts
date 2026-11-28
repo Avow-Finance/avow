@@ -93,10 +93,15 @@ export function outcomeLines(o: LoopOutcome): string[] {
 export function stoppedLines(stop: LoopStopped): string[] {
   const held = (h: LoopHeld) => {
     const which = h.role === 'kept' ? 'the booking it was to keep' : 'the booking it was to cancel'
-    const charge = h.chargeAsked
-      ? ', less the late-cancellation charge the run asked the supplier for if Avow confirms it'
+    const id = h.reference.commitmentId
+    const holds =
+      h.landed === 'unknown'
+        ? `Your business's lock may hold ${formatUsd(h.reserve)} for ${which}, ${id}, since its reserve's transaction went out and the chain didn't show whether it landed. If it did, it comes back whole by its release date, ${at(h.releaseDate)}.`
+        : `Your business's lock holds ${formatUsd(h.reserve)} for ${which}, ${id}. It comes back whole by its release date, ${at(h.releaseDate)}${h.chargeAsked ? ', less the late-cancellation charge the run asked the supplier for if Avow confirms it' : ''}.`
+    const ruling = h.chargeAsked
+      ? ' If Avow refers that charge to a ruling instead, the lock keeps it until someone rules, which can be after the release date.'
       : ''
-    return `Your business's lock holds ${formatUsd(h.reserve)} for ${which}, ${h.reference.commitmentId}. It comes back whole by its release date, ${at(h.releaseDate)}${charge}. Check it at ${h.link}`
+    return `${holds}${ruling} Check it at ${h.link}`
   }
   return [
     stop.message,

@@ -87,6 +87,7 @@ describe('avow-sandbox loop', () => {
             reserve: 10_000_000n,
             releaseDate: 1_800_000_480n,
             chargeAsked: true,
+            landed: 'yes',
           },
           {
             role: 'kept',
@@ -95,6 +96,7 @@ describe('avow-sandbox loop', () => {
             reserve: 10_000_000n,
             releaseDate: 1_800_000_500n,
             chargeAsked: false,
+            landed: 'yes',
           },
         ],
       },
@@ -114,5 +116,37 @@ describe('avow-sandbox loop', () => {
       'No supplier',
       'The run booked nothing, so nothing is held.',
     ])
+  })
+
+  it('says a reserve whose landing is unknown may be held, and that a referred charge can outlast the release', () => {
+    const [, maybe, asked] = stoppedLines(
+      new LoopStopped('The run stopped', null, {
+        held: [
+          {
+            role: 'kept',
+            link: 'https://try.testnet.avow.finance/#verify=maybe',
+            reference: ref(3),
+            reserve: 10_000_000n,
+            releaseDate: 1_800_000_480n,
+            chargeAsked: false,
+            landed: 'unknown',
+          },
+          {
+            role: 'cancelled',
+            link: 'https://try.testnet.avow.finance/#verify=late',
+            reference: ref(1),
+            reserve: 10_000_000n,
+            releaseDate: 1_800_000_480n,
+            chargeAsked: true,
+            landed: 'yes',
+          },
+        ],
+      }),
+    )
+    expect(maybe).toContain('may hold $10')
+    expect(maybe).toContain("didn't show whether it landed")
+    expect(maybe).toContain('#verify=maybe')
+    expect(asked).toContain('If Avow refers that charge to a ruling instead')
+    expect(asked).toContain('can be after the release date')
   })
 })

@@ -3,7 +3,12 @@ import type { LockedBacking } from '@avow-finance/verifier'
 import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { AvowApiError } from '../http.js'
-import { Refusal, type SandboxCommitment, type SandboxPreflight } from './agent.js'
+import {
+  Refusal,
+  type SandboxCommitment,
+  type SandboxPreflight,
+  UnsettledCommitment,
+} from './agent.js'
 import type { LateChargeReport } from './late-charge.js'
 import { type LoopDeps, type LoopStep, LoopStopped, runLoop } from './loop.js'
 
@@ -298,6 +303,31 @@ describe('runLoop', () => {
       ])
     })
 
+    it.each([
+      ['its outcome on the chain is unknown', 'unknown'],
+      ['the folder failed to save it after funding', 'yes'],
+    ] as const)('when the second booking was sent but %s', async (_, landed) => {
+      const unsettled = new UnsettledCommitment('the booking did not finish', {
+        reference: { commitmentId: idOf(9) } as CommitmentReference,
+        link: 'https://try.testnet.avow.finance/#verify=9',
+        amount: 10_000_000n,
+        releaseDate: START + 500n,
+        landed,
+        cause: new Error('cut short'),
+      })
+      const stop = await stopOf(world({ bookFails: { nth: 2, error: unsettled } }))
+      expect(stop.held).toEqual([
+        expect.objectContaining({ role: 'cancelled', landed: 'yes' }),
+        expect.objectContaining({
+          role: 'kept',
+          landed,
+          reference: expect.objectContaining({ commitmentId: idOf(9) }),
+          link: 'https://try.testnet.avow.finance/#verify=9',
+          releaseDate: START + 500n,
+        }),
+      ])
+    })
+
     it('when a crash ends it between the bookings', async () => {
       const stop = await stopOf(
         world({ bookFails: { nth: 2, error: new Error('socket hang up') } }),
@@ -369,5 +399,14 @@ describe('runLoop', () => {
     expect((error as LoopStopped).message).toContain('clock margin')
     expect(w.asked).toEqual([])
     expect((error as LoopStopped).held.every((h) => !h.chargeAsked)).toBe(true)
+  })
+
+  it('books nothing when the published clock margin leaves no room in the late window', async () => {
+    const w = world()
+    const error = await runLoop({ ...w.deps, clockMargin: 120n }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(LoopStopped)
+    expect((error as LoopStopped).message).toContain('120 seconds')
+    expect((error as LoopStopped).held).toEqual([])
+    expect(w.booked()).toBe(0)
   })
 })

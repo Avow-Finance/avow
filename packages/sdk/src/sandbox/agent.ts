@@ -257,6 +257,40 @@ export interface SandboxCommitmentRecord {
   releaseDate: bigint | null
 }
 
+/**
+ * A booking whose reserve went out but which the agent couldn't see through. `landed` is `unknown`
+ * when the funding transaction was sent and the chain didn't show whether it landed, and `yes` when
+ * it landed and the agent's folder couldn't save the commitment. Either way the business's lock may
+ * hold the reserve, which it gives back by the release date when nothing is charged.
+ */
+export class UnsettledCommitment extends Error {
+  readonly reference: CommitmentReference
+  readonly link: string
+  /** The reserve, in micros. */
+  readonly amount: bigint
+  readonly releaseDate: bigint
+  readonly landed: 'yes' | 'unknown'
+  constructor(
+    message: string,
+    o: {
+      reference: CommitmentReference
+      link: string
+      amount: bigint
+      releaseDate: bigint
+      landed: 'yes' | 'unknown'
+      cause: unknown
+    },
+  ) {
+    super(message, { cause: o.cause })
+    this.name = 'UnsettledCommitment'
+    this.reference = o.reference
+    this.link = o.link
+    this.amount = o.amount
+    this.releaseDate = o.releaseDate
+    this.landed = o.landed
+  }
+}
+
 /** An agent with authority to commit a sandbox business, within the mandate it holds. */
 export interface SandboxAgent {
   /** The most the agent can hold in bookings at once, in dollars. */
@@ -827,6 +861,18 @@ function booker(m: {
     },
   }
 
+  /** Where a commitment's backing sits in the business's lock, which anyone can check. */
+  function referenceOf(c: { commitmentId: Hex; termsHash: Hex }): CommitmentReference {
+    return {
+      kind: 'commitment',
+      chainId: deployment.chainId,
+      lock,
+      commitmentId: c.commitmentId,
+      side: 'buyer',
+      termsHash: c.termsHash,
+    }
+  }
+
   async function bookOn(
     supplierId: string,
     terms: GpuReservationTerms,
@@ -896,6 +942,17 @@ function booker(m: {
             { cause: error },
           )
         }
+        if (error instanceof BookingError) {
+          const reference = referenceOf(error.commitment)
+          throw new UnsettledCommitment(error.message, {
+            reference,
+            link: verifyUrl(reference, m.screenUrl),
+            amount: reserve,
+            releaseDate: terms.backing.releaseDate,
+            landed: 'unknown',
+            cause: error,
+          })
+        }
         throw error
       }
       if (!booked.ok) {
@@ -907,20 +964,25 @@ function booker(m: {
         )
       }
       const commitment = booked.commitment
-      const reference: CommitmentReference = {
-        kind: 'commitment',
-        chainId: deployment.chainId,
-        lock,
-        commitmentId: commitment.commitmentId,
-        side: 'buyer',
-        termsHash: commitment.termsHash,
-      }
+      const reference = referenceOf(commitment)
       await addCommitment(m.store, {
         reference,
         amount: reserve,
         supplier: supplier.id,
         mandateHash,
         madeAt: systemClock(),
+      }).catch((error: unknown) => {
+        throw new UnsettledCommitment(
+          `The reserve is funded, and saving the commitment in the agent's folder failed: ${describe(error)}`,
+          {
+            reference,
+            link: verifyUrl(reference, m.screenUrl),
+            amount: reserve,
+            releaseDate: terms.backing.releaseDate,
+            landed: 'yes',
+            cause: error,
+          },
+        )
       })
       const open = await openAcross(h).catch(() => null)
       const left =

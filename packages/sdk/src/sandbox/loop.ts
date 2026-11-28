@@ -5,9 +5,10 @@ import {
   type RailState,
   type ReasonCode,
   TEST_BUSINESS_SUFFIX,
+  type Terms,
 } from '@avow-finance/spec'
 import { type LockedBacking, readBacking } from '@avow-finance/verifier'
-import type { Hex } from 'viem'
+import { type Hex, zeroAddress } from 'viem'
 import { AvowApiError, agentRequestKey, httpAvowApi } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
@@ -19,9 +20,10 @@ import {
   type SandboxBooking,
   type SandboxCommitment,
   sandboxAgent,
+  UnsettledCommitment,
 } from './agent.js'
 import { askForLateCharge, type LateChargeOutcome, type LateChargeReport } from './late-charge.js'
-import { fromDollars, micros } from './terms.js'
+import { fromDollars, micros, sandboxTerms } from './terms.js'
 
 /**
  * One run of the whole loop on testnet, from an agent its business already approved. The agent
@@ -97,6 +99,11 @@ export interface LoopHeld {
   releaseDate: bigint
   /** Whether the run asked the supplier to report a late-cancellation charge on it. */
   chargeAsked: boolean
+  /**
+   * `unknown` when the reserve's transaction went out and the chain didn't show whether it landed,
+   * so the lock may hold nothing for it.
+   */
+  landed: 'yes' | 'unknown'
 }
 
 /**
@@ -157,6 +164,24 @@ export interface LoopDeps {
   onStep(step: LoopStep): void
 }
 
+/**
+ * When the late window opens and closes for terms: free cancellation ends, and a no-show can be
+ * reported, or the charge deadline passes when the terms set no no-show charge.
+ */
+function lateWindowOf(terms: Pick<Terms, 'remedies'>): { opens: bigint; closes: bigint } {
+  const noShow = terms.remedies.charges.find((c) => c.kind === 'noShow')
+  return {
+    opens: terms.remedies.freeCancelBy,
+    closes: noShow ? noShow.earliest : terms.remedies.chargeDeadline,
+  }
+}
+
+/** Resolution fields the late window doesn't depend on, for reading a booking's window ahead. */
+const NO_RESOLUTION = { arbiter: zeroAddress, day90SupplierShareBps: 0 }
+
+/** Seconds the run keeps inside the late window for the cancellation request itself. */
+const CANCEL_ROOM = 30n
+
 const POLL_MS = 5000
 /** Seconds past a deadline the run waits for Avow's clock, or its settlement service, to act. */
 const SLACK = 10n
@@ -177,6 +202,15 @@ export async function runLoop(d: LoopDeps): Promise<LoopOutcome> {
 
   // Everything that would stop the run part way is read first, so nothing is booked for a run
   // that can't finish.
+  const window = lateWindowOf(
+    sandboxTerms({ deployment: NO_RESOLUTION, resource: LOOP_RESOURCE, reserve, now: 0n }),
+  )
+  if (window.closes - window.opens < 2n * (d.clockMargin + SLACK) + CANCEL_ROOM) {
+    throw new LoopStopped(
+      `The testnet keeps a clock margin of ${d.clockMargin} seconds, too wide for Avow to confirm a late cancellation inside the run's ${window.closes - window.opens}-second late window, so the run books nothing.`,
+      null,
+    )
+  }
   if (!agent.suppliers.some((s) => s.id === supplier.id)) {
     throw new LoopStopped(
       `Your agent's mandate doesn't name ${supplier.name}, ${supplier.id}, so it can't book there. Ask your administrator to add it to the agent's suppliers in the console, then run this again.`,
@@ -311,12 +345,24 @@ async function bookAndFollow(
 /** One booking, with the mandate it was made under and the times its terms set. */
 async function book(d: LoopDeps, role: LoopRole, booking: SandboxBooking, held: LoopHeld[]) {
   d.onStep({ type: 'booking', role })
-  const commitment: SandboxCommitment = await d.agent.book(booking)
+  const commitment: SandboxCommitment = await d.agent.book(booking).catch((error: unknown) => {
+    // A reserve that may sit in the lock is reported as held, though the booking didn't finish.
+    if (error instanceof UnsettledCommitment) {
+      held.push({
+        role,
+        link: error.link,
+        reference: error.reference,
+        reserve: error.amount,
+        releaseDate: error.releaseDate,
+        chargeAsked: false,
+        landed: error.landed,
+      })
+    }
+    throw error
+  })
   const { terms, agreement } = commitment.commitment
   const mandate = d.agent.mandate
-  const freeCancelBy = terms.remedies.freeCancelBy
-  const noShow = terms.remedies.charges.find((c) => c.kind === 'noShow')
-  const noShowFrom = noShow ? noShow.earliest : terms.remedies.chargeDeadline
+  const { opens: freeCancelBy, closes: noShowFrom } = lateWindowOf(terms)
   const releaseDate = terms.backing.releaseDate
   d.onStep({
     type: 'booked',
@@ -334,6 +380,7 @@ async function book(d: LoopDeps, role: LoopRole, booking: SandboxBooking, held: 
     reserve: terms.backing.amount,
     releaseDate,
     chargeAsked: false,
+    landed: 'yes',
   })
   // The supplier takes a request about a booking only with the mandate its agreement names.
   if (agreement.message.mandateHash.toLowerCase() !== d.agent.mandateHash.toLowerCase()) {
