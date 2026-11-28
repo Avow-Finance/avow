@@ -26,6 +26,7 @@ import {
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import { setRequestClient } from '../http.js'
 import {
   agentRequest,
@@ -36,6 +37,7 @@ import {
   SERVICE_PREFLIGHT_UNCHECKED,
   sandboxAgent,
 } from '../sandbox/agent.js'
+import { sandboxCommitmentEvents } from '../sandbox/commitment-events.js'
 import { type AskedChange, changeWords } from '../sandbox/requests.js'
 import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
 import {
@@ -120,6 +122,13 @@ type FundsTool = (typeof FUNDS_TOOLS)[number]
  */
 const REQUEST_TOOLS = ['request_change', 'request_seller_mandate', 'request_status'] as const
 type RequestTool = (typeof REQUEST_TOOLS)[number]
+
+/**
+ * The tools that read what a lock logged, from the chain alone. They open no key, sign nothing and
+ * report nothing to the runner's screen.
+ */
+const EVENT_TOOLS = ['commitment_events'] as const
+type EventTool = (typeof EVENT_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -287,6 +296,34 @@ export const MCP_TOOLS = [
     description:
       'Lists every commitment your agent made, with its state on the lock, whether the current authority made it, and a link anyone can open to check it.',
     inputSchema: noInput,
+  },
+  {
+    name: 'commitment_events',
+    title: "Read a commitment's events",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Reads what your business's lock logged for one of the commitments `commitments` lists, from Tempo's final blocks, oldest first: the reserve landing, the supplier's acceptance, each charge and its outcome, and the release. It reads the lock and never Avow, so Avow's own records, such as its approval, aren't in it. An event is a notice that grants nothing and proves nothing on its own, so before you act on one, check the commitment with `verify`, which reads the lock. One call reads a bounded run of blocks, and when it stops short of the latest final block it gives `next`, the block to read from on the next call.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commitmentId: {
+          type: 'string',
+          description: "The commitment's id, from its reference in `commitments`",
+        },
+        from: {
+          type: 'string',
+          description:
+            'The block to read from, as the last call gave it in next. Left out, the read starts where the commitment did',
+        },
+      },
+      required: ['commitmentId'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'top_up',
@@ -553,7 +590,7 @@ export const MCP_TOOLS = [
     },
   },
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool
+  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool | EventTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -958,6 +995,47 @@ export function mcpAgent(
     return {
       text: sharedSentences(checked).join(' '),
       structured: sharedJson(checked),
+      isError: false,
+    }
+  }
+
+  async function commitmentEvents(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const id = typeof args.commitmentId === 'string' ? args.commitmentId.trim() : ''
+    if (!/^0x[0-9a-fA-F]{64}$/.test(id)) {
+      throw new RangeError("The read needs a commitment's id, 0x and 64 hex characters")
+    }
+    const from = typeof args.from === 'string' ? args.from.trim() : ''
+    if (from !== '' && !/^[0-9]{1,20}$/.test(from))
+      throw new RangeError(`${from} isn't a block number`)
+    const read = await sandboxCommitmentEvents(id as Hex, {
+      store,
+      ...(from !== '' ? { from: BigInt(from) } : {}),
+    })
+    const lines = read.events.map(
+      (e) =>
+        `${e.code} at ${new Date(Number(e.at) * 1000).toISOString()}, block ${e.blockNumber}, transaction ${e.transactionHash}.`,
+    )
+    const more =
+      read.next === null
+        ? 'That reads up to the latest final block.'
+        : `The read stopped at block ${read.readTo}. Call again with from ${read.next} for later blocks.`
+    const unread =
+      read.unread.length === 0
+        ? ''
+        : ` The lock also logged ${read.unread.length} step${read.unread.length === 1 ? '' : 's'} for it that this SDK can't state.`
+    return {
+      text: `${
+        lines.length === 0
+          ? 'The lock logged nothing for that commitment in the blocks read.'
+          : lines.join('\n')
+      }\n${more}${unread} These are notices of what the lock logged. They grant nothing and prove nothing on their own, so check the commitment with verify before you act on one.`,
+      structured: {
+        reference: toWire(read.reference),
+        events: toWire(read.events),
+        readTo: read.readTo.toString(),
+        next: read.next === null ? null : read.next.toString(),
+        unread: read.unread,
+      },
       isError: false,
     }
   }
@@ -1451,6 +1529,8 @@ export function mcpAgent(
     }
   }
 
+  const isEventTool = (name: string): name is EventTool =>
+    (EVENT_TOOLS as readonly string[]).includes(name)
   const isFundsTool = (name: string): name is FundsTool =>
     (FUNDS_TOOLS as readonly string[]).includes(name)
   const isRequestTool = (name: string): name is RequestTool =>
@@ -1469,13 +1549,15 @@ export function mcpAgent(
           !SANDBOX_TOOLS.includes(name as SandboxTool) &&
           !isServiceTool(name) &&
           !isFundsTool(name) &&
-          !isRequestTool(name)
+          !isRequestTool(name) &&
+          !isEventTool(name)
         ) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
         if (name === 'top_up') return await topUp()
+        if (name === 'commitment_events') return await commitmentEvents(args)
         if (name === 'request_change') return await requestChange(args)
         if (name === 'request_seller_mandate') return await requestSellerMandate(args)
         if (name === 'request_status') return await requestStatus(args)

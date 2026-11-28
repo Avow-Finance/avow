@@ -1811,8 +1811,13 @@ describe('the reference page for commitment events', () => {
     expect(page).toContain('`message.schema_unknown`')
   })
 
-  it('says plainly that nothing stores, sends, signs or subscribes to events yet', () => {
-    expect(page).toContain('Nothing stores, sends, signs or subscribes to events yet.')
+  it('says a read gives what the lock logged and nothing of Avow, and a delivery grants nothing', () => {
+    const reading = between('## Reading events from the lock', '## Receiving events from Avow')
+    expect(reading).toContain('**It reads the lock and nothing else.**')
+    expect(reading).toContain("Avow's own records")
+    const receiving = between('## Receiving events from Avow', '## Reading, checking and hashing')
+    expect(receiving).toContain("isn't on testnet yet")
+    expect(receiving).toContain('It grants nothing, so read the lock before you act on it.')
   })
 
   it('names no business id and promises nothing about reorganizations', () => {

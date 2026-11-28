@@ -21,6 +21,7 @@ export * from './agent.js'
 export * from './agent-key.js'
 export * from './avow-api.js'
 export * from './contest.js'
+export * from './event-delivery.js'
 export * from './http.js'
 export * from './job/accept.js'
 export * from './job/customer.js'
@@ -53,6 +54,14 @@ export {
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
 export * from './sandbox/business-check.js'
+export {
+  readCommitmentEvents,
+  type SandboxCommitmentEvents,
+  sandboxCommitmentEvents,
+  trustedEventChain,
+  UnknownCommitment,
+  UntrustedLock,
+} from './sandbox/commitment-events.js'
 export {
   approvalLink,
   approvalRequestLink,
