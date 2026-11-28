@@ -355,8 +355,8 @@ export const serviceOfferVersionJson = z.strictObject({
 
 /**
  * An offer version already read by `serviceOfferVersionJson`, or null for one `serviceOfferProblem`
- * finds anything wrong with. Every reader of a version inside a larger message passes it through
- * here, so no version the rules refuse reaches anyone.
+ * finds anything wrong with. An order, a thread's base, a listing and a sale's content each pass
+ * their version through here, so none of them is read with a version the rules refuse.
  */
 export function soundOfferVersion(
   data: z.output<typeof serviceOfferVersionJson>,

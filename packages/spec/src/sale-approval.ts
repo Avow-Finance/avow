@@ -9,9 +9,9 @@ import {
   SERVICE_NAME_MAX,
   SERVICE_TEXT_MAX,
   type ServiceOfferVersion,
-  serviceOfferProblem,
   serviceOfferQuote,
   serviceOfferVersionJson,
+  soundOfferVersion,
 } from './service.js'
 import { isPlainText } from './text.js'
 
@@ -61,7 +61,7 @@ function isSaleContent(v: unknown): v is SaleContent {
   const offer = c.offer as ServiceOfferVersion
   if (typeof signingKey !== 'string' || !LOWER_ADDRESS.test(signingKey)) return false
   if (typeof buyer !== 'string' || !BUSINESS_ID.test(buyer)) return false
-  if (serviceOfferProblem(offer) !== null) return false
+  if (soundOfferVersion(offer) === null) return false
   // The offer holds its own fields and nothing else, so what a person reads is all there is.
   if (canonicalJson(offer) !== canonicalJson(offerVersionFields(offer))) return false
   // A business is named by its id, and no business approves a sale to itself.

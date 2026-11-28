@@ -125,10 +125,10 @@ export const SANDBOX_PATHS = {
    * Where a selling agent withdraws an item's current version from the directory, as an
    * `OfferWithdrawalRequest` signed the same way, and Avow answers with an `OfferWithdrawal`.
    * Withdrawing needs no seller's mandate, since it only takes an offer away. The item lists
-   * nothing until a new version of it is listed. When a business registers a new
-   * signing key, Avow ends every current listing of the old one as withdrawn. A version Avow holds for the business but that
-   * isn't current is `offer.superseded` or `offer.withdrawn`, with status 409, and an id Avow
-   * holds no listing of for the business is `offer.unknown`, with status 404.
+   * nothing until a new version of it is listed. When a business registers a new signing key,
+   * Avow ends every current listing of the old one as withdrawn. A version Avow holds for the
+   * business but that isn't current is `offer.superseded` or `offer.withdrawn`, with status 409,
+   * and an id Avow holds no listing of for the business is `offer.unknown`, with status 404.
    */
   offerWithdrawals: '/v1/sandbox/offers/withdrawals',
   /** Where an agent asks a business for authority, and asks again to hear the answer. */
