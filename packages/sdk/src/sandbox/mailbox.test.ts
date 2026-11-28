@@ -66,6 +66,46 @@ const anOrder = (expiry: bigint) => ({
 })
 
 describe('the sandbox mailbox', () => {
+  it('stops waiting on a job the seller declined, with its reason, and lets the buyer withdraw one', async () => {
+    const { store } = await agentFolder(BUYER)
+    const paths: string[] = []
+    let sent: Record<string, unknown> = {}
+    let status = 'declined'
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      paths.push(path)
+      if (path === '/config.json') return json(wire(deployment))
+      if (path === SANDBOX_PATHS.mailboxOrders) {
+        sent = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array))
+        return json(answered(sent, 'requested'))
+      }
+      if (path.endsWith('/withdraw')) status = 'withdrawn'
+      return json(
+        status === 'declined'
+          ? answered(sent, status, {
+              quote: null,
+              decline: {
+                reason: 'supplier.not_authorized',
+                retryAt: null,
+                available: null,
+                current: null,
+                declinedAt: '1800000060',
+              },
+            })
+          : answered(sent, status, { quote: null, withdrawnAt: '1800000060' }),
+      )
+    }) as typeof globalThis.fetch
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const outcome = await mailbox.buy({ supplier: SELLER, pollEvery: 1 })
+    expect(outcome).toMatchObject({ ok: false, reason: 'supplier.not_authorized' })
+    expect(await mailbox.unfinished()).toEqual([])
+    status = 'requested'
+    const placed = await mailbox.order({ supplier: SELLER })
+    expect((await mailbox.withdrawOrder(placed.orderId)).status).toBe('withdrawn')
+    expect(paths).toContain(SANDBOX_PATHS.mailboxWithdraw(placed.orderId))
+    expect(await mailbox.unfinished()).toEqual([])
+  })
+
   it('lets an order nobody quotes lapse, and reserves nothing for it', async () => {
     const { store } = await agentFolder(BUYER)
     const paths: string[] = []

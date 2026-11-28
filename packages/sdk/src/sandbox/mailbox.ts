@@ -11,6 +11,7 @@ import {
   isFirmOffer,
   type MailboxOrder,
   type MailboxOrderRequest,
+  type OrderDeclineRequest,
   offerTakes,
   parseComputeOffers,
   parseMailboxInbox,
@@ -20,10 +21,11 @@ import {
   quoteTermsProblem,
   type ReasonCode,
   SANDBOX_PATHS,
+  supplierDeclineReason,
   testnetDemoJobTerms,
 } from '@avow-finance/spec'
 import { type Hex, toHex } from 'viem'
-import { signingRequestKey } from '../http.js'
+import { AvowApiError, signingRequestKey } from '../http.js'
 import { type ComputeBooking, jobQuoteTerms, quoteJob, standInBooking } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
@@ -34,7 +36,7 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
-import { holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
+import { holdToNamedMandate, SellerMandateRefusal, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
 import { holdInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
@@ -75,6 +77,12 @@ export type SellStep =
   | { step: 'compute'; reservedIn: Hex | null }
   | { step: 'quoted'; standing: SellerStanding }
   | { step: 'accepted'; acceptedIn: Hex | null; standing: SellerStanding }
+  /**
+   * The agent declined the job because its own seller's mandate or Avow refused it. The buyer
+   * hears `supplier.not_authorized`, or a reason the spec lets it hear as it is, and `refusal` is
+   * the agent's own reason when that differs, for the agent and nobody else.
+   */
+  | { step: 'declined'; decline: OrderDeclineRequest; refusal: ReasonCode | null }
 
 /** The compute a seller booked for one order, kept so a restart never books it twice. */
 interface SaleRecord {
@@ -134,9 +142,23 @@ export interface SandboxMailbox {
     pollEvery?: number
     signal?: AbortSignal
   }): Promise<BuyOutcome>
+  /**
+   * Withdraws a job order this agent sent, before it funds it, and answers with the order as it
+   * now stands. Nothing is reserved.
+   */
+  withdrawOrder(orderId: string): Promise<MailboxOrder>
   /** The orders waiting on this business as supplier: new ones to quote, funded ones to accept. */
   inbox(): Promise<MailboxOrder[]>
-  /** Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one. */
+  /**
+   * Declines a job order to this business before the buyer funds it, with a reason code a job
+   * takes and only the fields that reason allows.
+   */
+  decline(orderId: string, decline: OrderDeclineRequest): Promise<MailboxOrder>
+  /**
+   * Takes the next step on one order from the inbox: quotes a new one, or accepts a funded one. A
+   * new job its seller's mandate or Avow refuses at the quote it declines, so the buyer hears
+   * `supplier.not_authorized` and never the seller's own reason.
+   */
   sell(order: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void>
   /**
    * Reads the inbox every few seconds and takes each order's next step, until the signal stops it.
@@ -229,6 +251,13 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     }
     if (current.status === 'expired')
       return end({ ok: false, reason: 'order.expired', order: current })
+    // A decline or a withdrawal ends the order with nothing reserved, and says why.
+    if (current.status === 'declined') {
+      return end({ ok: false, reason: current.decline.reason, order: current })
+    }
+    if (current.status === 'withdrawn') {
+      return end({ ok: false, reason: 'order.withdrawn', order: current })
+    }
     if (current.status === 'quoted') {
       const funded = await fund(current, p)
       if ('reason' in funded) return end(funded)
@@ -335,7 +364,49 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     signing: () => needSupplier().signing,
   })
 
+  async function withdrawOrder(orderId: string): Promise<MailboxOrder> {
+    const withdrawn = await asAgent({
+      domain,
+      path: SANDBOX_PATHS.mailboxWithdraw(orderId),
+      body: {},
+      read: orderReader,
+    })
+    await finish(orderId)
+    return withdrawn
+  }
+
+  const decline = (orderId: string, d: OrderDeclineRequest) =>
+    needSupplier().asSupplier({
+      domain,
+      path: SANDBOX_PATHS.mailboxDecline(orderId),
+      body: d,
+      read: orderReader,
+    })
+
+  /**
+   * Quotes a new job, or declines it when the seller's mandate or Avow refuses it, so its buyer
+   * hears why. Any other failure is the caller's.
+   */
   async function sell(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
+    if (job.status !== 'requested') return take(job, onStep)
+    try {
+      await take(job, onStep)
+    } catch (error) {
+      const refusal =
+        error instanceof SellerMandateRefusal
+          ? error.reason
+          : error instanceof AvowApiError && error.status === 403 && error.reason
+            ? error.reason
+            : null
+      if (refusal === null) throw error
+      const reason = supplierDeclineReason(refusal)
+      const sent: OrderDeclineRequest = { reason, retryAt: null, available: null, current: null }
+      await decline(job.orderId, sent)
+      onStep?.({ step: 'declined', decline: sent, refusal: reason === refusal ? null : refusal })
+    }
+  }
+
+  async function take(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = needSupplier()
     if (job.status === 'requested') {
       let compute = (await kept()).sales[job.orderId]?.compute ?? null
@@ -437,7 +508,18 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
   const listen = (p: Parameters<SandboxMailbox['listen']>[0] = {}) =>
     listenFor<MailboxOrder, SellStep>({ ...p, inbox, sell })
 
-  return { businessId: business.businessId, order, unfinished, read, buy, inbox, sell, listen }
+  return {
+    businessId: business.businessId,
+    order,
+    unfinished,
+    read,
+    buy,
+    withdrawOrder,
+    inbox,
+    decline,
+    sell,
+    listen,
+  }
 }
 
 export type { MailboxOptions }
