@@ -7,6 +7,7 @@ import {
 } from './agent-session.js'
 import { isApiAudience } from './api-request.js'
 import { isApprovalRequestId } from './approval-request.js'
+import { BUSINESS_ID } from './fields.js'
 import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
 import { address, businessIdJson, bytes32, u256 } from './json-fields.js'
 import { isTestnetChain } from './networks.js'
@@ -79,7 +80,7 @@ export const SANDBOX_PATHS = {
   suppliers: '/v1/sandbox/suppliers',
   /** The profile Avow registered for a sandbox business, which anyone may read. */
   supplier: (businessId: string) => {
-    if (!/^[A-Za-z0-9_-]{1,100}$/.test(businessId)) {
+    if (!BUSINESS_ID.test(businessId)) {
       throw new RangeError(`${businessId} isn't a business id`)
     }
     return `/v1/sandbox/suppliers/${businessId}`
