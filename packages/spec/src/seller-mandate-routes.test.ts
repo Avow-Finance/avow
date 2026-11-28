@@ -13,9 +13,12 @@ import {
   sellerMandatesJson,
 } from './seller-mandate-chain.js'
 import {
+  parseSellerKeyRevocationPost,
+  parseSellerKeyRevocationReceipt,
   parseSellerMandatePost,
   parseSellerMandateReceipt,
   parseSellerMandatesRequest,
+  type SellerKeyRevocationReceipt,
   type SellerMandateReceipt,
 } from './seller-mandate-routes.js'
 import {
@@ -368,5 +371,112 @@ describe("the seller's mandates served to an agent", () => {
     const longest = { ...json, earlier: Array(MAX_MANDATE_CHAIN - 1).fill(json.current) }
     expect(sellerMandatesJson.safeParse(longest).success).toBe(true)
     expect(parseSellerMandates(longest, where).ok).toBe(true)
+  })
+})
+
+describe("the path a revocation of a selling agent's key is posted to", () => {
+  it('names the signing key in lower case, beside the path its mandate is posted to', () => {
+    expect(SANDBOX_PATHS.sellerKeyRevocation(KEY)).toBe(`/v1/sandbox/sellers/${KEY}/revocation`)
+    expect(SANDBOX_PATHS.sellerKeyRevocation(getAddress(KEY))).toBe(
+      SANDBOX_PATHS.sellerKeyRevocation(KEY),
+    )
+  })
+
+  it("refuses a signing key that isn't an address", () => {
+    for (const bad of ['', 'mandates', '../agents', KEY.slice(2), `${KEY}/revocation`]) {
+      expect(() => SANDBOX_PATHS.sellerKeyRevocation(bad as Address), bad).toThrow(RangeError)
+    }
+  })
+})
+
+describe("the body that posts a revocation of a selling agent's key", () => {
+  const revocation: SellerKeyRevocation = {
+    businessId: first.businessId,
+    account: ACCOUNT,
+    signingKey: KEY,
+  }
+
+  it('reads back as written, with the lock known or not yet', async () => {
+    const post = { revocation: await signRevocation(revocation) }
+    expect(parseSellerKeyRevocationPost(overJson(post), where)).toEqual({ ok: true, value: post })
+    // The route is unsigned, so a reader may not know the lock before it reads the business.
+    expect(parseSellerKeyRevocationPost(overJson(post), { chainId: CHAIN_ID })).toEqual({
+      ok: true,
+      value: post,
+    })
+  })
+
+  it('refuses a field it does not know, a missing revocation and junk, without throwing', async () => {
+    const json = overJson({ revocation: await signRevocation(revocation) })
+    const reason = (value: unknown) => {
+      const parsed = parseSellerKeyRevocationPost(value, where)
+      return parsed.ok ? null : parsed.reason
+    }
+    expect(reason(json)).toBeNull()
+    for (const value of [...JUNK, {}, throwing('revocation')]) {
+      expect(reason(value)).toBe('message.invalid')
+    }
+    expect(reason({ ...json, signingKey: KEY })).toBe('message.invalid')
+    expect(reason({ revocation: null })).toBe('message.invalid')
+    expect(reason({ revocation: json.revocation.message })).toBe('message.invalid')
+    // A mandate is no revocation, though both are signed under the same lock.
+    expect(reason({ revocation: overJson(await signMandate(first)) })).toBe(
+      'message.schema_unknown',
+    )
+  })
+
+  it("keeps the reason a revocation that doesn't parse is refused for", async () => {
+    const { revocation: signed } = overJson({ revocation: await signRevocation(revocation) })
+    const reason = (changed: object, message: object = {}) => {
+      const parsed = parseSellerKeyRevocationPost(
+        { revocation: { ...signed, ...changed, message: { ...signed.message, ...message } } },
+        where,
+      )
+      return parsed.ok ? null : parsed.reason
+    }
+    expect(reason({})).toBeNull()
+    expect(reason({ chainId: CHAIN_ID + 1 })).toBe('message.wrong_chain')
+    expect(reason({ lock: OTHER_LOCK })).toBe('message.wrong_contract')
+    expect(reason({ schemaVersion: '2' })).toBe('message.schema_unknown')
+    expect(reason({}, { mandateHash: zeroHash })).toBe('message.invalid')
+    expect(reason({}, { businessId: '' })).toBe('message.invalid')
+  })
+
+  it('reads its addresses in either case, as a signed message does on the wire', async () => {
+    const post = { revocation: await signRevocation(revocation) }
+    const json = overJson(post)
+    json.revocation.message.signingKey = getAddress(KEY)
+    json.revocation.message.account = upper(ACCOUNT)
+    expect(parseSellerKeyRevocationPost(json, where)).toEqual({ ok: true, value: post })
+  })
+})
+
+describe("the receipt for a posted revocation of a selling agent's key", () => {
+  const receipt: SellerKeyRevocationReceipt = { signingKey: KEY, recordedAt: 1_800_000_000n }
+
+  it('reads back as written, with its time as a decimal string', () => {
+    const json = overJson(receipt)
+    expect(json).toEqual({ signingKey: KEY, recordedAt: '1800000000' })
+    expect(parseSellerKeyRevocationReceipt(json)).toEqual({ ok: true, value: receipt })
+  })
+
+  it('reads the key in any case and gives it back in lower case', () => {
+    const json = { signingKey: getAddress(KEY), recordedAt: '1800000000' }
+    expect(parseSellerKeyRevocationReceipt(json)).toEqual({ ok: true, value: receipt })
+  })
+
+  it('refuses a field it does not know, a missing field and junk, without throwing', () => {
+    const json = overJson(receipt)
+    const reason = (value: unknown) => {
+      const parsed = parseSellerKeyRevocationReceipt(value)
+      return parsed.ok ? null : parsed.reason
+    }
+    for (const value of [...JUNK, {}, throwing('signingKey')]) {
+      expect(reason(value)).toBe('message.invalid')
+    }
+    expect(reason({ ...json, current: true })).toBe('message.invalid')
+    expect(reason({ signingKey: KEY })).toBe('message.invalid')
+    expect(reason({ ...json, recordedAt: 1_800_000_000 })).toBe('message.invalid')
+    expect(reason({ ...json, signingKey: 'key' })).toBe('message.invalid')
   })
 })

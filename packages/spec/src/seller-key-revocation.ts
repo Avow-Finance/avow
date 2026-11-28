@@ -21,11 +21,12 @@ import { heldEnvelopeProblem, type Parsed, parseSigned } from './wire.js'
  * it, so whoever stores mandates has to refuse.
  *
  * It carries no time and never expires. Whoever records one notes when it arrived. It ends the
- * authority to make new promises. It takes no key off a lock, and a commitment already made stays
- * in force.
+ * authority to make new promises, so it stops new approvals and new quotes under the key. It takes
+ * no key off a lock, a commitment already made stays in force, and it can't invalidate an approval
+ * already issued on-chain.
  *
- * This module holds the message. Nothing in this package stores one, and no call an agent can
- * reach signs one.
+ * This module holds the message, and `SANDBOX_PATHS.sellerKeyRevocation` is where a console posts
+ * one. Nothing in this package stores one, and no call an agent can reach signs one.
  */
 export interface SellerKeyRevocation {
   businessId: string
