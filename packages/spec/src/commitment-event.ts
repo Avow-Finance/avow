@@ -3,6 +3,12 @@ import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
 import { CONTEST_REASON_NAMES, contestReasonOf } from './contest.js'
 import {
+  DECLINE_RULES,
+  type DeclineReason,
+  type DeclineRule,
+  supplierMayDecline,
+} from './decline.js'
+import {
   CHARGE_KINDS,
   type ChargeKind,
   MAX_REPORTS,
@@ -23,6 +29,7 @@ import {
 } from './lock-log.js'
 import type { ReasonCode } from './reasons.js'
 import { commitmentReferenceJson } from './references.js'
+import { SERVICE_QUANTITY_MAX } from './service.js'
 import { COMMITMENT_EVENT_VERSION } from './version.js'
 import type { Parsed } from './wire.js'
 
@@ -99,6 +106,18 @@ const evidenceNumber = field(z.number().int().min(1).max(EVIDENCE_NUMBER_MAX), (
   isCount(v, EVIDENCE_NUMBER_MAX),
 )
 const party = oneOf(namesOf<LockParty>(LOCK_PARTIES))
+
+/**
+ * The reasons a side ends an order with a decline, which are every reason to decline but the
+ * buyer's taking back its own order. That one is a `booking.withdrawn`, which carries no reason.
+ */
+export const DECLINED_REASONS = namesOf<DeclineReason>(DECLINE_RULES).filter(
+  (r) => r !== 'order.withdrawn',
+) as [Exclude<DeclineReason, 'order.withdrawn'>, ...Exclude<DeclineReason, 'order.withdrawn'>[]]
+/** How many units a supplier says it would take, as a decline allows it to. */
+const units = field(z.number().int().min(0).max(SERVICE_QUANTITY_MAX), (v) =>
+  isIndex(v, SERVICE_QUANTITY_MAX),
+)
 
 /**
  * An amount the lock sent out of a reserve, which is never zero, and what became of it, as
@@ -194,8 +213,10 @@ const agreement = { ...terms, reserve: positive, agreementExpiry: time } as cons
 
 /**
  * What a receiver checks when two statements of one step differ and neither source outranks the
- * other. `lock` is the lock's own state and logs, read with the verifier. The rest are signed
- * messages, each of which anyone holding it can hash and check without asking Avow.
+ * other. `lock` is the lock's own state and logs, read with the verifier. `avow_record` is Avow's
+ * own record of an order before anything reaches the chain, which only Avow holds whole, so a
+ * receiver reads it from Avow and checks it against nothing else. The rest are signed messages,
+ * each of which anyone holding it can hash and check without asking Avow.
  */
 export const COMMITMENT_EVENT_CHECKS = {
   lock: "The lock's state and its logs",
@@ -206,6 +227,8 @@ export const COMMITMENT_EVENT_CHECKS = {
   timestamped_request:
     "The business's signed request, with Avow's signed timestamp over its digest, which `requestHash` names",
   start_receipt: "The supplier's signed start receipt, which `receiptHash` names",
+  avow_record:
+    "Avow's record of the order or the thread, which either side reads from Avow's API. Nothing on the chain states it",
 } as const
 export type CommitmentEventCheck = keyof typeof COMMITMENT_EVENT_CHECKS
 
@@ -216,7 +239,8 @@ export type CommitmentEventCheck = keyof typeof COMMITMENT_EVENT_CHECKS
  * happens at most once for a commitment.
  *
  * `booking` codes are changes off the lock, to the agreement and to what Avow records beside it.
- * `reserve` codes follow the money the business reserved. `charge` codes follow a charge the
+ * The first of them are an order's life in Avow's mailbox before anything is agreed or reserved,
+ * which only Avow states, as its own record and never as a fact of the chain. `reserve` codes follow the money the business reserved. `charge` codes follow a charge the
  * supplier reported, through to its payment or its ruling.
  *
  * A code stated from a block is written from three things and nothing else: the arguments of the
@@ -228,12 +252,47 @@ export type CommitmentEventCheck = keyof typeof COMMITMENT_EVENT_CHECKS
  * outranks the other: the lock, or a signed message, as `COMMITMENT_EVENT_CHECKS` describes.
  */
 const CODES = {
+  /**
+   * The buyer's agent ordered, in an order Avow's mailbox carries, and the commitment it names
+   * waits for the supplier's answer. Nothing is agreed or reserved. `offerVersion` is the id of
+   * the offer version ordered, or null for an order that books none, such as a job.
+   * `orderExpiry` is when the order lapses unanswered.
+   */
+  'booking.proposed': {
+    checks: ['avow_record'],
+    key: [],
+    by: { avow: { offerVersion: orNull(hash), orderExpiry: time } },
+  },
   /** Both sides signed the terms agreement. Nothing is reserved yet. */
   'booking.agreed': {
     checks: ['terms_agreement'],
     key: [],
     by: { avow: agreement, supplier: agreement },
   },
+  /**
+   * A side declined the order before the lock held a reserve for it, and the order ended there.
+   * `declinedBy` is `supplier` or `business`, the buyer. The decline carries what its buyer may
+   * hear and nothing more. `reason` is the reason the side sent, which from a supplier is one its
+   * buyer may hear as it is, so a seller's own limits never reach an event. `retryAt`, `available`
+   * and `currentOffer` are the fields the reason allows, and null where it allows none or the side
+   * gave none. `currentOffer` is the id of the version that replaced the one ordered, on a
+   * decline for a replaced offer and on no other.
+   */
+  'booking.declined': {
+    checks: ['avow_record'],
+    key: [],
+    by: {
+      avow: {
+        declinedBy: party,
+        reason: oneOf(DECLINED_REASONS),
+        retryAt: orNull(time),
+        available: orNull(units),
+        currentOffer: orNull(hash),
+      },
+    },
+  },
+  /** The buyer took its own order back before the lock held a reserve for it. */
+  'booking.withdrawn': { checks: ['avow_record'], key: [], by: { avow: {} } },
   /**
    * Avow's reserve check passed and Avow signed its approval, which the lock needs before it takes
    * the reserve. Avow can approve one commitment more than once, so each approval is told apart by
@@ -492,6 +551,20 @@ type Plain = Record<string, unknown>
  * takes.
  */
 const FITS: { readonly [C in CommitmentEventCode]?: (v: Plain) => boolean } = {
+  // A decline holds to the rule of its reason: the side that may give it, a supplier's only when its
+  // buyer may hear it, and only the fields the reason allows.
+  'booking.declined': (v) => {
+    const reason = v.reason as DeclineReason
+    const rule: DeclineRule = DECLINE_RULES[reason]
+    const side = v.declinedBy === 'business' ? 'buyer' : 'supplier'
+    return (
+      (rule.by === 'either' || rule.by === side) &&
+      (side === 'buyer' || supplierMayDecline(reason)) &&
+      (v.retryAt === null || rule.retryAt) &&
+      (v.available === null || rule.available) &&
+      (v.currentOffer !== null) === (reason === 'offer.superseded')
+    )
+  },
   'charge.reported': (v) => v.kind === chargeKindOf(v.kindCode as number),
   'charge.contested': (v) => v.reason === contestReasonOf(v.reasonCode as number),
   // A lock resolves a charge only while it holds some of the reserve, so one share is never nothing.
@@ -733,6 +806,8 @@ export function commitmentEventStatementHash(event: CommitmentEvent): Hex {
  * - `read_the_lock`: they differ, neither outranks the other, and the lock settles the step.
  * - `check_signed_message`: they differ, neither outranks the other, and a signed message settles
  *   the step. `COMMITMENT_EVENT_CHECKED_BY` names which.
+ * - `read_avow_record`: two statements from Avow of a step only Avow records differ, and Avow's
+ *   record of the order or the thread, read from Avow, settles the step.
  */
 export type SameSlot =
   | 'other_slot'
@@ -743,13 +818,15 @@ export type SameSlot =
   | 'held_stands'
   | 'read_the_lock'
   | 'check_signed_message'
+  | 'read_avow_record'
 
 /**
  * Settles two events of one slot by the receiver's rules. Only a repeat is dropped. A block's
  * statement replaces a clock's, which happens only for a step the lock logs. Avow's clock and a
  * supplier's clock outrank neither each other, so when they differ, and when two statements from
  * one source differ in more than their time, the receiver checks what settles the step: the lock,
- * or the signed message `COMMITMENT_EVENT_CHECKED_BY` names. Two block statements that differ at
+ * the signed message `COMMITMENT_EVENT_CHECKED_BY` names, or for a step only Avow records, Avow's
+ * record of the order. Two block statements that differ at
  * all send it to the lock, since a block's time is part of what the chain says. It throws on an
  * event `commitmentEventProblem` refuses.
  *
@@ -776,9 +853,9 @@ export function sameSlot(heldEvent: CommitmentEvent, arrivedEvent: CommitmentEve
     }
     if (said(held) === said(arrived)) return 'agree'
   }
-  return COMMITMENT_EVENT_CHECKED_BY[held.code].includes('lock')
-    ? 'read_the_lock'
-    : 'check_signed_message'
+  const checks: readonly CommitmentEventCheck[] = COMMITMENT_EVENT_CHECKED_BY[held.code]
+  if (checks.includes('lock')) return 'read_the_lock'
+  return checks.includes('avow_record') ? 'read_avow_record' : 'check_signed_message'
 }
 
 /** Where a log sits, which every event from a block carries: its lock, its block and its index. */
