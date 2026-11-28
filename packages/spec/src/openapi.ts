@@ -29,6 +29,7 @@ import {
   approvalRequestListJson,
 } from './approval-request.js'
 import { businessCheckJson } from './business-check.js'
+import { orderDeclineRequestJson, orderWithdrawalJson } from './decline.js'
 import {
   mailboxAcceptedJson,
   mailboxOrderJson,
@@ -720,6 +721,37 @@ export const API_OPERATIONS: readonly ApiOperation[] = [
     params: [ORDER_ID],
     request: { schema: mailboxAcceptedJson, example: { acceptedIn: null } },
     answer: { status: 200, description: 'The order, now accepted', schema: mailboxOrderJson },
+  },
+  {
+    method: 'post',
+    path: onOrder(SANDBOX_PATHS.mailboxDecline),
+    operationId: 'declineOrder',
+    tag: 'Mailbox',
+    summary: 'Decline an order',
+    description:
+      "The supplier's agent ends an order it won't take, with a reason code from a fixed list and the fields that reason allows, and no free text. It can decline until the buyer funds the order.",
+    signedBy: "The supplier's signing key",
+    domain: 'lock',
+    params: [ORDER_ID],
+    request: {
+      schema: orderDeclineRequestJson,
+      example: { reason: 'capacity.exhausted', retryAt: null, available: null, current: null },
+    },
+    answer: { status: 200, description: 'The order, now declined', schema: mailboxOrderJson },
+  },
+  {
+    method: 'post',
+    path: onOrder(SANDBOX_PATHS.mailboxWithdraw),
+    operationId: 'withdrawOrder',
+    tag: 'Mailbox',
+    summary: 'Withdraw an order',
+    description:
+      "The buyer's agent takes back its own order. It can withdraw until it funds the order, and nothing is reserved.",
+    signedBy: "The buyer agent's key",
+    domain: 'lock',
+    params: [ORDER_ID],
+    request: { schema: orderWithdrawalJson, example: {} },
+    answer: { status: 200, description: 'The order, now withdrawn', schema: mailboxOrderJson },
   },
 ]
 
