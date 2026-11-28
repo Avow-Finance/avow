@@ -50,19 +50,33 @@ export async function prepareWorld(log: (line: string) => void): Promise<string>
   return dir
 }
 
+/**
+ * The environment the server starts with: this process's, as a client passes its own, so a proxy the
+ * machine needs reaches it too, without the variables named, such as the one holding the model's key.
+ */
+export function serverEnv(
+  env: NodeJS.ProcessEnv,
+  withheld: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      (e): e is [string, string] => e[1] !== undefined && !withheld.includes(e[0]),
+    ),
+  )
+}
+
 /** The MCP server for the folder's agent, started as a client starts it, through the SDK's command. */
-export async function mcpToolbox(dir: string): Promise<Toolbox & { close(): Promise<void> }> {
+export async function mcpToolbox(
+  dir: string,
+  withheld: readonly string[],
+): Promise<Toolbox & { close(): Promise<void> }> {
   const cli = fileURLToPath(import.meta.resolve('@avow-finance/sdk/cli'))
   const client = new Client({ name: 'avow-compat', version: '0.0.0' })
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
       args: [cli, 'mcp', '--dir', dir],
-      // The server gets this process's environment, as a client passes its own, so a proxy the
-      // machine needs reaches it too.
-      env: Object.fromEntries(
-        Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
-      ),
+      env: serverEnv(process.env, withheld),
       stderr: 'ignore',
     }),
   )

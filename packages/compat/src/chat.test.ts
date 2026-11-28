@@ -159,6 +159,11 @@ describe('the run flags', () => {
       baseUrl: 'https://openrouter.ai/api/v1',
       keyEnv: 'OPENROUTER_API_KEY',
       out: 'here',
+      trials: 3,
+    })
+    expect(readArgs(['--model', 'm', '--trials', '5'])).toMatchObject({ trials: 5 })
+    expect(readArgs(['--model', 'm', '--trials', '0'])).toEqual({
+      error: '--trials is a whole number from 1 to 10',
     })
     expect(
       readArgs([

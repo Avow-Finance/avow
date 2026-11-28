@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { SKILL_PATH, systemPrompt, WORLD } from './world.js'
+import { SKILL_PATH, serverEnv, systemPrompt, WORLD } from './world.js'
 
 describe('the world each model runs in', () => {
   it('labels the business it makes as a test business', () => {
@@ -16,5 +16,23 @@ describe('the world each model runs in', () => {
     expect(prompt.startsWith('The server says this.\n\n# Avow commitments')).toBe(true)
     expect(prompt).not.toContain('name: avow-commitments')
     expect(prompt).toContain('split a booking to fit under one')
+  })
+
+  it("starts the server without the model's key, and with the proxy the machine needs", () => {
+    const env = serverEnv(
+      {
+        OPENROUTER_API_KEY: 'sk-made-for-this-test',
+        HTTPS_PROXY: 'http://proxy:8080',
+        NODE_EXTRA_CA_CERTS: '/ca.crt',
+        PATH: '/bin',
+        UNSET: undefined,
+      },
+      ['OPENROUTER_API_KEY'],
+    )
+    expect(env).toEqual({
+      HTTPS_PROXY: 'http://proxy:8080',
+      NODE_EXTRA_CA_CERTS: '/ca.crt',
+      PATH: '/bin',
+    })
   })
 })

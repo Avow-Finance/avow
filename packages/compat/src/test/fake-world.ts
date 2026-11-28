@@ -142,8 +142,8 @@ export function scriptedModel(habits: Habits = {}): ChatModel & { seen: Message[
       if (ask.includes('Only check')) {
         if (since.length === 0)
           return habits.booksOnCheck
-            ? call('book', { reserve: 200 })
-            : call('check', { reserve: 200 })
+            ? call('book', { reserve: dollars(ask) })
+            : call('check', { reserve: dollars(ask) })
         return say('Yes, it would pass, and nothing was booked.')
       }
       if (ask.startsWith('Then split')) {

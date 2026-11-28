@@ -1,4 +1,5 @@
 import { OPENROUTER_URL } from './chat.js'
+import { DEFAULT_TRIALS } from './run.js'
 
 /** The run's flags, read where they enter. */
 export interface CompatArgs {
@@ -6,6 +7,7 @@ export interface CompatArgs {
   baseUrl: string
   keyEnv: string
   out: string
+  trials: number
 }
 
 export function readArgs(argv: readonly string[]): CompatArgs | { error: string } {
@@ -14,6 +16,7 @@ export function readArgs(argv: readonly string[]): CompatArgs | { error: string 
     baseUrl: OPENROUTER_URL,
     keyEnv: 'OPENROUTER_API_KEY',
     out: 'compat-results',
+    trials: DEFAULT_TRIALS,
   }
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i]
@@ -29,7 +32,12 @@ export function readArgs(argv: readonly string[]): CompatArgs | { error: string 
     else if (flag === '--base-url') args.baseUrl = value
     else if (flag === '--key-env') args.keyEnv = value
     else if (flag === '--out') args.out = value
-    else return { error: `Unknown flag ${flag}` }
+    else if (flag === '--trials') {
+      const n = Number(value)
+      if (!Number.isInteger(n) || n < 1 || n > 10)
+        return { error: '--trials is a whole number from 1 to 10' }
+      args.trials = n
+    } else return { error: `Unknown flag ${flag}` }
   }
   if (args.models.length === 0) return { error: 'Name at least one model with --model' }
   try {
