@@ -1,4 +1,10 @@
-import { checkMandate, dollars, TEMPO_MODERATO, TESTNET_DEMO_PROFILE } from '@avow-finance/spec'
+import {
+  checkMandate,
+  dollars,
+  mandateVersion,
+  TEMPO_MODERATO,
+  TESTNET_DEMO_PROFILE,
+} from '@avow-finance/spec'
 import { describe, expect, it } from 'vitest'
 import { moderatoUsdToken } from '../moderato.js'
 import { sandboxMandate } from './mandate.js'
@@ -59,6 +65,25 @@ describe('sandboxMandate', () => {
       approvalRule: { kind: 'never' },
     })
     expect(moderatoUsdToken(TOKEN).chainId).toBe(TEMPO_MODERATO)
+  })
+
+  it('puts no limit on the price unless the business names one, which signs at version 3', () => {
+    expect('priceCapPerCommitment' in mandate).toBe(false)
+    expect(mandateVersion(mandate)).toBe('1')
+    const priced = sandboxMandate({
+      businessId: 'sandbox-business',
+      agentId: 'agt_test',
+      account: '0x00000000000000000000000000000000000000a1',
+      agentKey: AGENT,
+      suppliers: ['avow-demo-gpu'],
+      token: TOKEN,
+      capPerCommitment: dollars(500),
+      capOpenReserves: dollars(500),
+      priceCapPerCommitment: dollars(200),
+      expiry: NOW + 7n * 86_400n,
+    })
+    expect(priced.priceCapPerCommitment).toBe(dollars(200))
+    expect(mandateVersion(priced)).toBe('3')
   })
 
   it("passes the starter's loop as Avow checks it against what the lock holds", () => {

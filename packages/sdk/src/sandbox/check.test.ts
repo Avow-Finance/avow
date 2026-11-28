@@ -39,7 +39,9 @@ const STRANGER = 'sandbox-00000000000000000000000000000000000000d4'
  * An agent enrolled with $500 a commitment, $1,000 held at once and $1,000 a day, for the example
  * supplier's compute unless `o` names other suppliers and categories.
  */
-async function enrolled(o: { suppliers?: string[]; categories?: string[]; days?: bigint } = {}) {
+async function enrolled(
+  o: { suppliers?: string[]; categories?: string[]; days?: bigint; priceCap?: bigint } = {},
+) {
   const root = Account.fromSecp256k1(generatePrivateKey())
   const agentKey = generatePrivateKey()
   const agent = Account.fromSecp256k1(agentKey, { access: root.address })
@@ -53,6 +55,7 @@ async function enrolled(o: { suppliers?: string[]; categories?: string[]; days?:
     token: TOKEN,
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(1000),
+    ...(o.priceCap === undefined ? {} : { priceCapPerCommitment: o.priceCap }),
     dailyLimit: dollars(1000),
     expiry: BigInt(Math.floor(Date.now() / 1000)) + (o.days ?? 300n) * 86_400n,
   })
@@ -120,10 +123,28 @@ describe("checking a booking before it's made", () => {
         left: dollars(800),
         authority: dollars(1000),
         capPerCommitment: dollars(500),
+        price: dollars(24),
+        priceCapPerCommitment: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(800),
       },
     })
+    expect(chain.sent).toBe(0)
+  })
+
+  it('holds a booking to the price limit, which only the SDK and Avow read', async () => {
+    // Eight H100s for an hour at the example supplier's rate come to $24.
+    const agent = await enrolled({ priceCap: dollars(23) })
+    expect(agent.priceCapPerCommitment).toBe(23)
+    expect(await agent.check(booking(300))).toMatchObject({
+      passes: false,
+      code: 'mandate.over_price_limit',
+      layer: 'sdk',
+      amounts: { price: dollars(24), priceCapPerCommitment: dollars(23) },
+    })
+    const roomy = await enrolled({ priceCap: dollars(24) })
+    expect(await roomy.check(booking(300))).toMatchObject({ passes: true })
+    expect((await enrolled()).priceCapPerCommitment).toBeNull()
     expect(chain.sent).toBe(0)
   })
 
@@ -182,7 +203,9 @@ const transcripts = (from = SELLER): ServiceOfferVersion => ({
 })
 
 /** A buyer whose mandate names the seller and the categories an order between businesses needs. */
-const buyer = (o: { suppliers?: string[]; categories?: string[]; days?: bigint } = {}) =>
+const buyer = (
+  o: { suppliers?: string[]; categories?: string[]; days?: bigint; priceCap?: bigint } = {},
+) =>
   enrolled({
     suppliers: [SELLER, STRANGER, 'sandbox-business'],
     categories: ['compute', JOB_CATEGORY, SERVICE_CATEGORY],
@@ -202,6 +225,8 @@ describe("checking a service order before it's sent", () => {
         left: dollars(800),
         authority: dollars(1000),
         capPerCommitment: dollars(500),
+        price: dollars(200),
+        priceCapPerCommitment: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(1000),
       },
@@ -209,6 +234,19 @@ describe("checking a service order before it's sent", () => {
     // It asked Avow whether it knows the seller, and nothing else left the machine.
     expect(chain.toSeller).toBe(1)
     expect(chain.sent).toBe(0)
+  })
+
+  it("refuses an order whose price is over the mandate's price limit", async () => {
+    const agent = await buyer({ priceCap: dollars(150) })
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 4 })).toMatchObject({
+      passes: false,
+      code: 'mandate.over_price_limit',
+      layer: 'sdk',
+      price: dollars(200),
+    })
+    expect(await agent.checkOrder({ offer: transcripts(), quantity: 3 })).toMatchObject({
+      passes: true,
+    })
   })
 
   it("refuses an offer that can't be priced in that quantity, before anything is read", async () => {

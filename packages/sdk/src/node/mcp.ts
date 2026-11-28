@@ -14,6 +14,8 @@ import {
   isApprovalRequestId,
   isSessionId,
   offerVersionId,
+  PRICE_LIMIT_ENFORCED_BY,
+  PRICE_LIMIT_LAYERS,
   publishedOffer,
   quotedLabel,
   refusalSentence,
@@ -89,6 +91,19 @@ const ORDER_WAIT_MS = 45_000
 
 const usd = (dollars: number | null) =>
   dollars === null ? 'no limit' : formatUsd(BigInt(Math.round(dollars * 1_000_000)))
+
+/**
+ * A mandate's price limit as a tool's structured answer gives it, in dollars, with the two layers
+ * that hold the agent to it, or null when the mandate has none.
+ */
+const priceLimit = (dollars: number | null) =>
+  dollars === null ? null : { limit: dollars, enforcedBy: [...PRICE_LIMIT_ENFORCED_BY] }
+
+/** What a mandate's price limit means for the agent, in a sentence, or that it has none. */
+const priceLimitSentence = (dollars: number | null) =>
+  dollars === null
+    ? 'Its mandate puts no limit on the price of a commitment, so weigh the price against what your person asked for.'
+    : `One commitment's price can come to at most ${usd(dollars)}, a limit ${PRICE_LIMIT_LAYERS} hold it to, since the lock never reads a price.`
 
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 
@@ -202,7 +217,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "What your agent can commit right now. It has two limits. It holds at most so much in bookings at once, which Avow refuses past and the lock checks against Avow's approval. Its key moves at most so much a day, a limit the business set on chain. It names the suppliers the agent may book too.",
+      "What your agent can commit right now. It holds at most so much in bookings at once, which Avow refuses past and the lock checks against Avow's approval. Its key moves at most so much a day, a limit the business set on chain. When its mandate limits the price of one commitment, it gives that limit too, which the SDK and Avow hold the agent to, since the lock never reads a price. It names the suppliers the agent may book too.",
     inputSchema: noInput,
   },
   {
@@ -215,7 +230,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Says whether a GPU booking or a service order would pass right now, without booking, ordering or moving any money. Give a reserve to check a GPU booking, or an offer to check an order for a service. Either way it runs the mandate check Avow runs, under the mandate your agent holds now, against what the lock holds under it and what the key can still move today. For an order it also prices the offer in that quantity and asks Avow whether it knows the seller. The mandate's limits count the reserve. A service's price is paid outside the lock and no limit counts it, so the answer gives the price for you to weigh. A check that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. It can't know Avow's relay budget or the other side's answer, and for an order it can't know whether the seller still publishes that offer or has capacity left.",
+      "Says whether a GPU booking or a service order would pass right now, without booking, ordering or moving any money. Give a reserve to check a GPU booking, or an offer to check an order for a service. Either way it runs the mandate check Avow runs, under the mandate your agent holds now, against what the lock holds under it and what the key can still move today. For an order it also prices the offer in that quantity and asks Avow whether it knows the seller. The mandate's reserve limits count the reserve. A price is paid outside the lock, and only a price limit in the mandate counts it, which the SDK and Avow hold the agent to. The answer gives the price, and says when no limit counts it, so you weigh it against what your person asked for. A check that wouldn't pass comes back with the reason code, the layer that would refuse it, the amounts and when it could pass. It can't know Avow's relay budget or the other side's answer, and for an order it can't know whether the seller still publishes that offer or has capacity left.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -819,12 +834,14 @@ export function mcpAgent(
         `Your agent can commit up to ${usd(now)} more right now.`,
         `It holds at most ${usd(agent.authority)} in bookings at once, which Avow refuses past and the lock checks against Avow's approval, and ${usd(left)} of that is free.`,
         `Its key moves at most ${usd(agent.dailyLimit)} a day, a limit your business set on chain, and ${usd(dailyLeft)} of today's is left.`,
+        priceLimitSentence(agent.priceCapPerCommitment),
         `It may book with ${agent.suppliers.map((s) => s.id).join(', ')} only.`,
       ].join(' '),
       structured: {
         canCommitNow: now,
         heldAtOnce: { limit: agent.authority, left },
         movedPerDay: { limit: agent.dailyLimit, left: dailyLeft },
+        pricePerCommitment: priceLimit(agent.priceCapPerCommitment),
         suppliers: agent.suppliers,
         business: agent.business,
         mandateHash: agent.mandateHash,
@@ -850,6 +867,8 @@ export function mcpAgent(
       perCommitment: dollars(answer.amounts.capPerCommitment),
       movedPerDay: dollars(answer.amounts.dailyLimit),
       movedTodayLeft: dollars(answer.amounts.dailyLeft),
+      price: dollars(answer.amounts.price ?? null),
+      pricePerCommitment: priceLimit(dollars(answer.amounts.priceCapPerCommitment ?? null)),
     }
     const what = `${quantity} of ${offer.item.name} from ${offer.supplier}`
     const price = dollars(answer.price)
@@ -859,7 +878,8 @@ export function mcpAgent(
       return {
         text: [
           `Ordering ${what} would pass now, and nothing was ordered.`,
-          `It would reserve ${usd(amounts?.needed ?? null)}, which is what your mandate's limits count. The price is ${usd(price)}, paid outside the lock, and no limit in your mandate counts it.`,
+          `It would reserve ${usd(amounts?.needed ?? null)}, which is what your mandate's reserve limits count. The price is ${usd(price)}, paid outside the lock.`,
+          priceLimitSentence(amounts?.pricePerCommitment?.limit ?? null),
           `Your agent has ${usd(amounts?.heldAtOnceLeft ?? null)} left of its ${usd(amounts?.heldAtOnce ?? null)} held at once, and its key ${usd(amounts?.movedTodayLeft ?? null)} of today's ${usd(amounts?.movedPerDay ?? null)}.`,
           unchecked,
         ].join(' '),
@@ -923,6 +943,8 @@ export function mcpAgent(
       perCommitment: dollars(answer.amounts.capPerCommitment),
       movedPerDay: dollars(answer.amounts.dailyLimit),
       movedTodayLeft: dollars(answer.amounts.dailyLeft),
+      price: dollars(answer.amounts.price ?? null),
+      pricePerCommitment: priceLimit(dollars(answer.amounts.priceCapPerCommitment ?? null)),
     }
     const unchecked = `It doesn't check ${PREFLIGHT_UNCHECKED.join(' or ')}, so booking can still be refused there.`
     if (answer.passes) {
@@ -930,6 +952,8 @@ export function mcpAgent(
         text: [
           `Booking ${usd(reserve)} with ${supplier} for ${count} ${gpu} for ${hours} hour${hours === 1 ? '' : 's'} would pass now, and nothing was booked.`,
           `Your agent has ${usd(amounts.heldAtOnceLeft)} left of its ${usd(amounts.heldAtOnce)} held at once, and its key ${usd(amounts.movedTodayLeft)} of today's ${usd(amounts.movedPerDay)}.`,
+          `Its price comes to ${usd(amounts.price)} at the supplier's rate, paid outside the lock.`,
+          priceLimitSentence(amounts.pricePerCommitment?.limit ?? null),
           unchecked,
         ].join(' '),
         structured: {
@@ -1028,6 +1052,8 @@ export function mcpAgent(
             perCommitment: dollars(error.amounts.capPerCommitment),
             movedPerDay: dollars(error.amounts.dailyLimit),
             movedToday: dollars(error.amounts.dailyLeft),
+            price: dollars(error.amounts.price ?? null),
+            pricePerCommitment: priceLimit(dollars(error.amounts.priceCapPerCommitment ?? null)),
           },
           screen: screen(),
         },

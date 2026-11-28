@@ -54,6 +54,8 @@ const events: SessionEvent[] = [
       left: dollars(300),
       authority: dollars(500),
       capPerCommitment: dollars(500),
+      price: null,
+      priceCapPerCommitment: null,
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     },
@@ -126,6 +128,8 @@ describe('session events', () => {
           left: '0',
           authority: '0',
           capPerCommitment: '0',
+          price: null,
+          priceCapPerCommitment: null,
           dailyLimit: null,
           dailyLeft: null,
         },
@@ -188,6 +192,8 @@ describe('refusalSentence', () => {
       left: dollars(300),
       authority: dollars(500),
       capPerCommitment: dollars(500),
+      price: null,
+      priceCapPerCommitment: null,
       dailyLimit: dollars(1000),
       dailyLeft: dollars(800),
     }
@@ -228,6 +234,8 @@ describe('refusalReason', () => {
     left: dollars(300),
     authority: dollars(500),
     capPerCommitment: dollars(350),
+    price: null,
+    priceCapPerCommitment: null,
     dailyLimit: dollars(500),
     dailyLeft: dollars(300),
   }
@@ -250,6 +258,18 @@ describe('refusalReason', () => {
       }),
     ).toBe(
       "This booking needs $400 and your agent has $300 left of its $500 held at once, so Avow refused the reserve and no money moved. The lock takes no reserve without Avow's approval.",
+    )
+  })
+
+  it('says what the price came to against the price limit, and that the lock never reads it', () => {
+    const priced = { ...amounts, price: dollars(240), priceCapPerCommitment: dollars(200) }
+    expect(
+      refusalReason({ code: 'mandate.over_price_limit', layer: 'avow', amounts: priced }),
+    ).toBe(
+      "This booking's price is $240, more than the $200 your mandate allows for one commitment, so Avow refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
+    )
+    expect(refusalReason({ code: 'mandate.over_price_limit', layer: 'sdk', amounts })).toBe(
+      "This booking's price is more than your mandate allows for one commitment, so the SDK refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
     )
   })
 

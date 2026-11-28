@@ -330,6 +330,8 @@ describe("a first setup's try past the limit", () => {
     left: authority,
     authority,
     capPerCommitment: authority,
+    price: null,
+    priceCapPerCommitment: null,
     dailyLimit: null,
     dailyLeft: null,
   }

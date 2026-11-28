@@ -50,9 +50,10 @@ const asked = {
 }
 
 /** A folder on disk with a connected agent, as the MCP server finds one. */
-async function folder(businessId: string, sells = false) {
+async function folder(businessId: string, sells = false, priceCap?: bigint) {
   const made = await folderWithAgent(businessId, {
     sells,
+    ...(priceCap === undefined ? {} : { priceCap }),
     suppliers: [SELLER],
     categories: [SERVICE_CATEGORY],
   })
@@ -125,6 +126,47 @@ describe("the MCP server's tools for services", () => {
     expect((await seller.call('offers', {})).structured.offers).toHaveLength(1)
     // Publishing reaches Avow for nothing but the deployment and the agent's seller's mandates.
     expect(new Set(paths)).toEqual(new Set(['/config.json', SANDBOX_PATHS.sellerMandates]))
+  })
+
+  it('give the price limit with the two layers that hold the agent to it, or say there is none', async () => {
+    const sellerSide = mcpAgent(await folder(SELLER, true), { fetch: avow(() => null).fetch })
+    const { structured } = await sellerSide.call('publish_offer', asked)
+    const account = '0x00000000000000000000000000000000000000c3'
+    const answering = () =>
+      avow((path) =>
+        path === SANDBOX_PATHS.supplier(SELLER)
+          ? json({ businessId: SELLER, account, payee: account, signingKey: account })
+          : null,
+      ).fetch
+    const limited = mcpAgent(await folder(BUYER, false, 150_000_000n), { fetch: answering() })
+    const authority = await limited.call('authority', {})
+    expect(authority.structured).toMatchObject({
+      pricePerCommitment: { limit: 150, enforcedBy: ['sdk', 'avow'] },
+    })
+    expect(authority.text).toMatch(
+      /One commitment's price can come to at most \$150, a limit the SDK and Avow hold it to, since the lock never reads a price\./,
+    )
+    // Three units come to $150, at the limit, and four to $200, over it.
+    const fits = await limited.call('check', { offer: structured.offer, quantity: 3 })
+    expect(fits.structured).toMatchObject({
+      status: 'would_pass',
+      price: 150,
+      amounts: { price: 150, pricePerCommitment: { limit: 150, enforcedBy: ['sdk', 'avow'] } },
+    })
+    expect(fits.text).toMatch(/at most \$150, a limit the SDK and Avow hold it to/)
+    const over = await limited.call('check', { offer: structured.offer, quantity: 4 })
+    expect(over.structured).toMatchObject({
+      status: 'would_be_refused',
+      code: 'mandate.over_price_limit',
+      layer: 'sdk',
+    })
+    expect(over.text).toMatch(
+      /price is \$200, more than the \$150 your mandate allows for one commitment, so the SDK refused it/,
+    )
+    const open = mcpAgent(await folder(BUYER), { fetch: answering() })
+    const none = await open.call('authority', {})
+    expect(none.structured).toMatchObject({ pricePerCommitment: null })
+    expect(none.text).toMatch(/Its mandate puts no limit on the price of a commitment/)
   })
 
   it('list a published offer with Avow, withdraw it, and say plainly when Avow lists none', async () => {
