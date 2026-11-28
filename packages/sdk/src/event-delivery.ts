@@ -87,6 +87,12 @@ export interface EventDeliveryVerifierOptions {
   seen?: SeenDeliveries
 }
 
+/**
+ * The least time, in seconds, between two reads of the keys an unknown key id causes, so a flood
+ * of deliveries naming made-up ids can't make the receiver ask Avow for its keys more often.
+ */
+export const EVENT_KEYS_REREAD_GAP = 30n
+
 const decode64 = (text: string): Uint8Array | null => {
   try {
     return Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
@@ -110,8 +116,8 @@ const headerOf = (headers: Headers_, name: string): string | null => {
  * headers, a timestamp inside `EVENT_DELIVERY_TOLERANCE` of this machine's clock, an id not seen
  * inside the window, and a `v1a` Ed25519 signature over `id.timestamp.body` under the key its
  * `avow-key-id` names. The keys are read from Avow's API and cached for at most five minutes. An
- * id that isn't among them has the keys read once more, and a delivery whose key still isn't there
- * is refused. A retired key verifies a delivery only within `RETIRED_KEY_OVERLAP` of retiring.
+ * id that isn't among them has the keys read once more, at most once every
+ * `EVENT_KEYS_REREAD_GAP`, and a delivery whose key still isn't there is refused. A retired key verifies a delivery only within `RETIRED_KEY_OVERLAP` of retiring.
  *
  * Pass the body exactly as it arrived, before any JSON parsing, since the signature covers its
  * bytes. A delivery that verifies is a notice from Avow: it grants nothing, and before acting on
@@ -123,22 +129,38 @@ export function eventDeliveryVerifier(options: EventDeliveryVerifierOptions) {
   const seen = options.seen ?? memorySeenDeliveries()
   let cached: { keys: EventDeliveryKey[]; at: bigint } | null = null
 
-  async function readKeys(): Promise<EventDeliveryKey[]> {
-    const response = await get(`${options.apiUrl}${EVENT_KEYS_PATH}`, {
-      signal: AbortSignal.timeout(10_000),
+  /** When the keys were last asked for, so an unknown id can't make them read more often. */
+  let askedAt: bigint | null = null
+  /** The read under way, which every delivery that needs the keys meanwhile waits on. */
+  let reading: Promise<EventDeliveryKey[]> | null = null
+
+  function readKeys(): Promise<EventDeliveryKey[]> {
+    if (reading) return reading
+    askedAt = now()
+    reading = (async () => {
+      const response = await get(`${options.apiUrl}${EVENT_KEYS_PATH}`, {
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!response.ok) throw new Error(`Avow's keys answered ${response.status}`)
+      const json = (await response.json()) as { keys?: unknown }
+      const keys = Array.isArray(json.keys) ? json.keys.filter(isKey) : []
+      cached = { keys, at: now() }
+      return keys
+    })().finally(() => {
+      reading = null
     })
-    if (!response.ok) throw new Error(`Avow's keys answered ${response.status}`)
-    const json = (await response.json()) as { keys?: unknown }
-    const keys = Array.isArray(json.keys) ? json.keys.filter(isKey) : []
-    cached = { keys, at: now() }
-    return keys
+    return reading
   }
 
   async function keyFor(keyId: string): Promise<EventDeliveryKey | null> {
     const fresh = cached !== null && now() - cached.at < EVENT_KEYS_CACHE
-    const held = fresh ? cached?.keys.find((k) => k.keyId === keyId) : undefined
+    if (!fresh) return (await readKeys()).find((k) => k.keyId === keyId) ?? null
+    const held = cached?.keys.find((k) => k.keyId === keyId)
     if (held) return held
-    // One read again, for a key Avow started using since. Never more, and never a fallback.
+    // One read again, for a key Avow started using since, at most once every
+    // `EVENT_KEYS_REREAD_GAP`. An unknown id in between is refused without asking, and nothing
+    // ever falls back to accepting one.
+    if (askedAt !== null && now() - askedAt < EVENT_KEYS_REREAD_GAP) return null
     return (await readKeys()).find((k) => k.keyId === keyId) ?? null
   }
 

@@ -1010,7 +1010,6 @@ export function mcpAgent(
     const read = await sandboxCommitmentEvents(id as Hex, {
       store,
       ...(from !== '' ? { from: BigInt(from) } : {}),
-      ...(options.fetch ? { fetch: options.fetch } : {}),
     })
     const lines = read.events.map(
       (e) =>

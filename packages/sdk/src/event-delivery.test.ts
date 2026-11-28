@@ -10,7 +10,11 @@ import {
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
-import { type EventDeliveryKey, eventDeliveryVerifier } from './event-delivery.js'
+import {
+  EVENT_KEYS_REREAD_GAP,
+  type EventDeliveryKey,
+  eventDeliveryVerifier,
+} from './event-delivery.js'
 
 const NOW = 1_800_000_000n
 const API = 'https://api.test'
@@ -158,16 +162,51 @@ describe('eventDeliveryVerifier', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it('reads the keys again for a burst of unknown ids at most once, and not again inside the gap', async () => {
+    const k = key()
+    const fetch = keysRoute(() => [k.listed])
+    let clock = NOW
+    const verify = verifierWith(fetch, () => clock)
+    const known = delivery(k)
+    expect((await verify(known.headers, known.body)).ok).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    // Inside the gap after that read, an unknown id is refused without asking Avow.
+    clock = NOW + EVENT_KEYS_REREAD_GAP - 1n
+    const early = delivery(k, eventBody, { keyId: 'eeeeeeeeeeeeeeee', id: h('a0'), at: clock })
+    expect(await verify(early.headers, early.body)).toEqual({
+      ok: false,
+      reason: 'delivery.key_unknown',
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    // Past it, a burst of deliveries naming made-up ids reads the keys once between them.
+    clock = NOW + EVENT_KEYS_REREAD_GAP
+    const burst = Array.from({ length: 20 }, (_, i) =>
+      delivery(k, eventBody, {
+        keyId: i.toString(16).padStart(16, 'f'),
+        id: h((i + 16).toString(16)),
+        at: clock,
+      }),
+    )
+    const answers = await Promise.all(burst.map((d) => verify(d.headers, d.body)))
+    for (const a of answers) expect(a).toEqual({ ok: false, reason: 'delivery.key_unknown' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const after = delivery(k, eventBody, { keyId: 'dddddddddddddddd', id: h('a1'), at: clock })
+    await verify(after.headers, after.body)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('takes a new key once Avow lists it, on the one read again an unknown id gets', async () => {
     const old = key()
     const next = key()
     let listed = [old.listed]
     const fetch = keysRoute(() => listed)
-    const verify = verifierWith(fetch)
+    let clock = NOW
+    const verify = verifierWith(fetch, () => clock)
     const first = delivery(old)
     expect((await verify(first.headers, first.body)).ok).toBe(true)
     listed = [next.listed, { ...old.listed, retiredAt: NOW.toString() }]
-    const rotated = delivery(next, eventBody, { id: h('e2') })
+    clock = NOW + EVENT_KEYS_REREAD_GAP
+    const rotated = delivery(next, eventBody, { id: h('e2'), at: clock })
     expect((await verify(rotated.headers, rotated.body)).ok).toBe(true)
     expect(fetch).toHaveBeenCalledTimes(2)
   })

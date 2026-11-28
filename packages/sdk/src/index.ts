@@ -58,7 +58,9 @@ export {
   readCommitmentEvents,
   type SandboxCommitmentEvents,
   sandboxCommitmentEvents,
+  trustedEventChain,
   UnknownCommitment,
+  UntrustedLock,
 } from './sandbox/commitment-events.js'
 export {
   approvalLink,

@@ -97,11 +97,6 @@ export function bookingEvent(booking: Booking, now: Date): WebhookDelivery | nul
   }
 }
 
-/** How long after the last failed delivery each retry waits, then the last wait over again. */
-const RETRY_AFTER_MS = WEBHOOK_RETRY_SCHEDULE.retryAfterMs
-/** How long after its first attempt the adapter keeps trying an event before it gives it up. */
-const GIVE_UP_AFTER_MS = WEBHOOK_RETRY_SCHEDULE.giveUpAfterMs
-
 const pendingJson = z.strictObject({
   id: z.string().regex(EVENT_ID),
   event: webhookEventJson,
@@ -246,7 +241,8 @@ export class Outbox {
 
   retryLater(p: Pending, nowMs: number, lastError: string) {
     const attempts = p.attempts + 1
-    const wait = RETRY_AFTER_MS[Math.min(attempts - 1, RETRY_AFTER_MS.length - 1)] as number
+    const { retryAfterMs } = WEBHOOK_RETRY_SCHEDULE
+    const wait = retryAfterMs[Math.min(attempts - 1, retryAfterMs.length - 1)] as number
     const next: Pending = {
       ...p,
       attempts,
@@ -430,7 +426,10 @@ export function webhookSender(deps: SenderDeps): () => Promise<void> {
 function settleFailure(deps: SenderDeps, p: Pending, problem: string) {
   const now = deps.nowMs()
   const commitment = p.event.commitment.commitmentId
-  if (p.firstAttemptAt !== undefined && now - p.firstAttemptAt >= GIVE_UP_AFTER_MS) {
+  if (
+    p.firstAttemptAt !== undefined &&
+    now - p.firstAttemptAt >= WEBHOOK_RETRY_SCHEDULE.giveUpAfterMs
+  ) {
     deps.outbox.failed(p, now, problem)
     deps.log(
       `webhook: gave up on ${p.event.code} for ${commitment} after three days (${problem}). Run redeliver to send it again`,
