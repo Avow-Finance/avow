@@ -15,7 +15,7 @@ import {
   ledgerFor,
   type SellerStanding,
 } from './seller-mandate.js'
-import { readQuoted, readSaleCounts } from './service-quoted.js'
+import { isSeconds, readQuoted, readSaleCounts } from './service-quoted.js'
 import { inTurn, isRecord, readJson, type SandboxStore, write } from './store.js'
 
 /**
@@ -25,8 +25,6 @@ import { inTurn, isRecord, readJson, type SandboxStore, write } from './store.js
  * records. Every hold and every record runs in the store's one turn, so a service and a job quoted
  * at once can't both pass the same limit.
  */
-
-const isSeconds = (v: unknown): v is string => typeof v === 'string' && /^[0-9]{1,15}$/.test(v)
 
 /** One job sale as `job-sales` keeps it, or null for one it can't read, which it drops. */
 function readJobSale(v: unknown): Omit<CountedSale, 'category'> | null {

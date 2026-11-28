@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newSessionId } from '@avow-finance/spec'
 import { afterEach, describe, expect, it } from 'vitest'
+import { inTurn } from '../sandbox/store.js'
 import { fileStore, latestRun, nodePlatform, RUNNER_ENV, takeRun } from './platform.js'
 
 describe('takeRun', () => {
@@ -25,6 +26,41 @@ afterEach(() => {
 })
 
 describe('fileStore', () => {
+  it('takes the changes of two stores over the same folder in one turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'avow-turn-'))
+    // Two calls of fileStore, as sandboxServices and sandboxMailbox each make in one process.
+    const a = fileStore(dir)
+    const b = fileStore(join(dir, '.', ''))
+    expect(a).not.toBe(b)
+    const said: string[] = []
+    let release = () => {}
+    const first = inTurn(a, async () => {
+      said.push('first starts')
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      said.push('first ends')
+    })
+    const second = inTurn(b, async () => {
+      said.push('second')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(said).toEqual(['first starts'])
+    release()
+    await Promise.all([first, second])
+    expect(said).toEqual(['first starts', 'first ends', 'second'])
+  })
+
+  it('doesn’t hold a store over another folder back', async () => {
+    const a = fileStore(mkdtempSync(join(tmpdir(), 'avow-turn-')))
+    const b = fileStore(mkdtempSync(join(tmpdir(), 'avow-turn-')))
+    let release = () => {}
+    const first = inTurn(a, () => new Promise<void>((resolve) => (release = resolve)))
+    await expect(inTurn(b, async () => 'done')).resolves.toBe('done')
+    release()
+    await first
+  })
+
   it('keeps each item in a file only its owner reads, in a folder git ignores', async () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'avow-store-')), '.avow')
     const store = fileStore(dir)

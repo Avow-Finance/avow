@@ -22,7 +22,7 @@ import {
   SANDBOX_PATHS,
   testnetDemoJobTerms,
 } from '@avow-finance/spec'
-import { type Hex, toHex } from 'viem'
+import { type Address, type Hex, keccak256, stringToHex, toHex } from 'viem'
 import { signingRequestKey } from '../http.js'
 import { type ComputeBooking, jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
@@ -80,6 +80,21 @@ export type SellStep =
 interface SaleRecord {
   compute: ComputeBooking
 }
+
+/**
+ * A stand-in for the compute a job will rely on, before it's booked, on the business's own lock.
+ * Only the check before booking reads it, and no quote or record carries it.
+ */
+const standInBooking = (chainId: number, lock: Address): Pick<ComputeBooking, 'reference'> => ({
+  reference: {
+    kind: 'commitment',
+    chainId,
+    lock: lock.toLowerCase() as Address,
+    commitmentId: keccak256(stringToHex('avow-compute-stand-in')),
+    side: 'buyer',
+    termsHash: keccak256(stringToHex('avow-compute-stand-in-terms')),
+  },
+})
 
 /** The sales kept in the store, read back to the types they were written from. */
 function readSales(json: Record<string, unknown>): Record<string, SaleRecord> {
@@ -340,6 +355,22 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     if (job.status === 'requested') {
       let compute = (await kept()).sales[job.orderId]?.compute ?? null
       if (!compute) {
+        // The job is held to the seller's mandate before any compute is booked for it, so a job the
+        // mandate refuses leaves nothing booked. Its limits don't read the booking a job relies on,
+        // so this check runs on the job's terms with a stand-in for the booking, and the check
+        // below holds the exact terms the quote signs.
+        await holdInTurn(
+          store,
+          await sellerStanding(),
+          {
+            orderId: job.orderId,
+            terms: jobQuoteTerms(job, standInBooking(deployment.chainId, business.lock)),
+            offer: null,
+            buyer: job.buyer.businessId,
+            signingKey: signing.address,
+          },
+          systemClock(),
+        )
         const agent = await sandboxAgent({
           store,
           deployment,
@@ -360,9 +391,9 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
         await keep((k) => ({ sales: { ...k.sales, [job.orderId]: { compute: booking } } }))
         onStep?.({ step: 'compute', reservedIn: booked.commitment.reservedIn })
       }
-      // The job is held to the seller's mandate on the exact terms the quote signs, and the quote
-      // names the mandate it was held to. The mandate is read after the compute is booked, so a
-      // booking that took a while is checked against the newest one.
+      // The job is held to the seller's mandate again on the exact terms the quote signs, and the
+      // quote names the mandate it was held to. The mandate is read again after the compute is
+      // booked, so a booking that took a while is checked against the newest one.
       const terms = jobQuoteTerms(job, compute)
       const standing = await sellerStanding()
       const now = systemClock()

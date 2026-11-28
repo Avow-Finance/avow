@@ -30,6 +30,12 @@ vi.mock('@avow-finance/spec', async (original) => ({
     async ({ signer, digest, signature }: { signer: Address; digest: Hex; signature: Hex }) =>
       (await recoverAddress({ hash: digest, signature })).toLowerCase() === signer.toLowerCase(),
 }))
+// Booking compute goes through the agent, which a test only watches.
+const bookings = vi.fn()
+vi.mock('./agent.js', async (original) => ({
+  ...(await original<typeof import('./agent.js')>()),
+  sandboxAgent: async () => ({ bookTerms: bookings }),
+}))
 vi.mock('../moderato.js', async (original) => ({
   ...(await original<typeof import('../moderato.js')>()),
   moderatoClient: () => ({ readContract: async () => LOCK }),
@@ -110,7 +116,11 @@ const mandateFor = (account: Address, signingKey: Address, change: Partial<Selle
  * A selling agent's folder with the compute booked for each order, and Avow answering it: the
  * orders in its inbox, the seller's mandate it serves or none, and a record of what was sent.
  */
-async function sellingJobs(orderIds: string[], change?: Partial<SellerMandate> | null) {
+async function sellingJobs(
+  orderIds: string[],
+  change?: Partial<SellerMandate> | null,
+  o: { booked?: boolean } = {},
+) {
   const { store, root } = await folderWithAgent(SELLER, {
     sells: true,
     suppliers: [SELLER, supplier.id],
@@ -122,7 +132,7 @@ async function sellingJobs(orderIds: string[], change?: Partial<SellerMandate> |
   const signingKey = kept.profile.signingKey
   const orders = orderIds.map(anOrder)
   const sales = Object.fromEntries(orders.map((o, i) => [o.orderId, { compute: computeFor(i) }]))
-  await write(store, 'mailbox', { sales })
+  if (o.booked !== false) await write(store, 'mailbox', { sales })
   const mandate = change === null ? null : mandateFor(root.address, signingKey, change)
   const servedFor = async (mandate: SellerMandate | null) =>
     mandate
@@ -283,6 +293,41 @@ describe('a job sold through the mailbox', () => {
     } as unknown as typeof order
     await expect(mailbox.sell(reserved)).rejects.toThrow(NAMED_MANDATE_CHANGED)
     expect(posted.some((p) => p.path === SANDBOX_PATHS.mailboxAccepted(order.orderId))).toBe(false)
+  })
+
+  it('refuses a job the mandate doesn’t allow before it books any compute for it', async () => {
+    bookings.mockReset()
+    const { mailbox, quoted } = await sellingJobs(
+      ['e1'.repeat(16)],
+      {
+        limits: [
+          {
+            category: JOB_CATEGORY,
+            item: 'fine-tuning',
+            minUnitPrice: PRICE + 1n,
+            maxUnitsPerOrder: 1,
+            maxUnitsPerDay: 2,
+          },
+        ],
+      },
+      { booked: false },
+    )
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    await expect(mailbox.sell(order)).rejects.toMatchObject({
+      reason: 'seller_mandate.under_price_floor',
+    })
+    expect(bookings).not.toHaveBeenCalled()
+    expect(quoted(order.orderId)).toBeNull()
+  })
+
+  it('goes on to book compute for a job the mandate allows', async () => {
+    bookings.mockReset()
+    const { mailbox } = await sellingJobs(['e2'.repeat(16)], undefined, { booked: false })
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    // The check before booking passes, and the test serves no compute offers to book from.
+    await expect(mailbox.sell(order)).rejects.toThrow('The compute supplier listed no offers')
   })
 
   it('counts the jobs it quoted today, and refuses one past the day’s units', async () => {

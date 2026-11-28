@@ -28,7 +28,9 @@ export interface Quoted {
   sale: { units: number; price: bigint; deliverBy: bigint } | null
 }
 
-const isSeconds = (v: unknown): v is string => typeof v === 'string' && /^[0-9]{1,15}$/.test(v)
+/** Whether a kept value is a time in unix seconds, as the store writes it. */
+export const isSeconds = (v: unknown): v is string =>
+  typeof v === 'string' && /^[0-9]{1,15}$/.test(v)
 const isHash = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/.test(v)
 
 /** What a sale comes to as a seller's mandate counts it, or null for counts that don't read. */

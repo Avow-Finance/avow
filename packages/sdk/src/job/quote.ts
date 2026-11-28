@@ -54,7 +54,10 @@ export interface JobQuoteInput {
  * The terms a quote for an order signs: the offer's, with the compute booking added as the one
  * booking they rely on, which makes them version 3, or the offer's own with no booking.
  */
-export const jobQuoteTerms = (offer: Pick<JobOffer, 'terms'>, compute: ComputeBooking | null) =>
+export const jobQuoteTerms = (
+  offer: Pick<JobOffer, 'terms'>,
+  compute: Pick<ComputeBooking, 'reference'> | null,
+) =>
   compute
     ? chainedJobTerms(offer.terms, [
         { on: compute.reference, condition: 'accepted', disclosed: 'subject' },
