@@ -314,7 +314,9 @@ export async function prepareSandboxBusiness(
         )
       }
     }
-    if (!businessNameFits(config.name)) throw new RangeError(BUSINESS_NAME_RULE)
+    // A business whose key is already here may have registered before names were capped, so its
+    // setup is sent again under the name it gave, and Avow answers it under the name it holds or
+    // refuses a new registration's name with the rule.
     if (!fresh) log('Your business on Tempo testnet', 'stage')
     const root = await openRoot()
     log("Funding the account's fees", 'wait')

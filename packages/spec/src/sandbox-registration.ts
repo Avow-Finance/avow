@@ -8,7 +8,7 @@ import {
   zeroAddress,
 } from 'viem'
 import { z } from 'zod'
-import { BUSINESS_NAME_MAX, BUSINESS_NAME_RULE, businessNameFits } from './business-name.js'
+import { BUSINESS_NAME_MAX, HELD_BUSINESS_NAME_MAX } from './business-name.js'
 import { COUNTRY_CODE } from './fields.js'
 import type { HashSigner } from './keychain.js'
 import type { Parsed } from './wire.js'
@@ -133,12 +133,16 @@ const common = {
   expiry: u64,
 }
 
-/** The body of a business's registration request, as the API reads it. */
+/**
+ * The body of a business's registration request, as the API reads it. Its name may run to
+ * `HELD_BUSINESS_NAME_MAX`, so a business registered before names were capped can send its setup
+ * again, and Avow holds a new business to `businessNameFits`.
+ */
 export const businessRegistrationBody = z.strictObject({
   registration: z.strictObject({
     ...common,
     lock: address,
-    legalName: z.string().min(1).max(BUSINESS_NAME_MAX),
+    legalName: z.string().min(1).max(HELD_BUSINESS_NAME_MAX),
     country: z.string().regex(COUNTRY_CODE),
   }),
   accountSignature: signature,
@@ -155,7 +159,8 @@ export const supplierRegistrationBody = z.strictObject({
  * A business's registration, signed by its account's root key, as the body of the request that
  * registers it. The request around it has to be signed by the same root key, naming the business's
  * lock. It's valid for `validity` seconds from `now`, which the API holds to at most five minutes.
- * It throws for a name `businessNameFits` refuses, which Avow wouldn't register.
+ * It throws for a name the body can't carry. Avow registers a new business only under a name
+ * `businessNameFits` passes, and answers one it registered already under the name it holds.
  */
 export async function signBusinessRegistration(r: {
   chainId: number
@@ -170,7 +175,11 @@ export async function signBusinessRegistration(r: {
   validity: bigint
   rootKey: HashSigner
 }): Promise<{ registration: BusinessRegistration; accountSignature: Hex }> {
-  if (!businessNameFits(r.legalName)) throw new RangeError(BUSINESS_NAME_RULE)
+  if (r.legalName.length === 0 || r.legalName.length > HELD_BUSINESS_NAME_MAX) {
+    throw new RangeError(
+      `A registration carries a name of 1 to ${HELD_BUSINESS_NAME_MAX} characters, and Avow registers a new business only under one of at most ${BUSINESS_NAME_MAX}.`,
+    )
+  }
   const registration: BusinessRegistration = {
     environment: SANDBOX_ENVIRONMENT,
     audience: r.audience,
