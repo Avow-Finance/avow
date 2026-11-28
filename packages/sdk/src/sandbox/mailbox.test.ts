@@ -351,7 +351,7 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
     const mailbox = await sandboxMailbox({ store, fetch })
     const [held] = await mailbox.inbox()
     if (!held) throw new Error('The inbox read no order')
-    return { mailbox, held }
+    return { mailbox, held, store }
   }
 
   it('quotes nothing, and books nothing, for an order built from a moment ahead of its clock', async () => {
@@ -398,6 +398,17 @@ describe('a job sold from a job offer, held to the clock and the day', () => {
     const again = await sellerSelling(order, { jobSales: room, computeKept: true })
     await again.mailbox.sell(again.held)
     expect(quotes).toHaveBeenCalledOnce()
+  })
+
+  it("gives back the job's place when its compute can't be booked", async () => {
+    const t = now()
+    const order = { ...anOrder(t + 600n), terms: jobOfferTerms(jobOffer, t, settlement) }
+    // The sandbox answers no compute offers, so the booking fails after the place was taken.
+    const { mailbox, held, store } = await sellerSelling(order)
+    await expect(mailbox.sell(held)).rejects.toThrow()
+    expect(quotes).not.toHaveBeenCalled()
+    const kept = JSON.parse((await store.read('job-sales')) ?? '{}')
+    expect(kept.sales ?? {}).not.toHaveProperty(order.orderId)
   })
 })
 
