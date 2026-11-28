@@ -47,6 +47,13 @@ export const MANDATE_REPLACEMENT_VERSION = '2'
  */
 export const TERMS_AGREEMENT_SELLER_VERSION = '2'
 
+/**
+ * The domain version of a seller's mandate that lets its agent move terms when it bargains, which
+ * names at least one in `negotiable`. A mandate that names none keeps version 1 byte for byte, so
+ * every selling agent's limits signed before bargaining read and hash exactly as before.
+ */
+export const SELLER_MANDATE_NEGOTIABLE_VERSION = '2'
+
 type VersionedType = keyof typeof MESSAGE_VERSIONS
 
 /** The domain versions this package reads for each message type. */
@@ -59,7 +66,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   BusinessAction: [MESSAGE_VERSIONS.BusinessAction],
   SupplierAction: [MESSAGE_VERSIONS.SupplierAction],
   Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION],
-  SellerMandate: [MESSAGE_VERSIONS.SellerMandate],
+  SellerMandate: [MESSAGE_VERSIONS.SellerMandate, SELLER_MANDATE_NEGOTIABLE_VERSION],
   SellerKeyRevocation: [MESSAGE_VERSIONS.SellerKeyRevocation],
   TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement, TERMS_AGREEMENT_SELLER_VERSION],
   SupplierAuthorization: [MESSAGE_VERSIONS.SupplierAuthorization],

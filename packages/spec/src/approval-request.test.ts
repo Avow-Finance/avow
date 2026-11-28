@@ -343,7 +343,7 @@ describe("a request for a seller's mandate", () => {
     const refused = (change: object) =>
       parseApprovalRequest(wire({ ...asked, terms: { ...terms, ...change } })).ok
     expect(refused({ limits: [] })).toBe(false)
-    expect(refused({ negotiable: ['unitPrice'] })).toBe(false)
+    expect(refused({ negotiable: ['leadTime', 'unitPrice'] })).toBe(false)
     expect(refused({ maxOutstanding: terms.maxOrderValue - 1n })).toBe(false)
     // Which mandate it is and whose aren't the agent's to ask for.
     expect(refused({ mandateId: MANDATE })).toBe(false)

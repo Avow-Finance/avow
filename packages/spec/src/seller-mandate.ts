@@ -26,7 +26,7 @@ import {
 } from './service.js'
 import { isPlainText, isSoundText } from './text.js'
 import { type ApprovalRule, CURRENCIES, type Currency } from './types.js'
-import { MESSAGE_VERSIONS } from './version.js'
+import { MESSAGE_VERSIONS, SELLER_MANDATE_NEGOTIABLE_VERSION } from './version.js'
 import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
 
 /**
@@ -137,8 +137,9 @@ export interface SellerMandate {
   /** Whether a buyer has to have passed Avow's business check, which is simulated on testnet. */
   requiresBusinessCheck: boolean
   /**
-   * The terms the agent may move when it bargains. Version 1 takes none, so every sale is on the
-   * offer's own terms.
+   * The terms the agent may move from an offer when it bargains, each once, in the order of
+   * `OPEN_TERMS`. A mandate that names none signs at version 1, so every sale is on the offer's
+   * own terms. One that names any signs at `SELLER_MANDATE_NEGOTIABLE_VERSION`.
    */
   negotiable: readonly OpenTerm[]
   /**
@@ -188,6 +189,14 @@ export const SELLER_MANDATE_TYPES = {
 } as const
 
 /**
+ * The domain version a seller's mandate signs at: version 1 when it lets its agent move no term,
+ * and `SELLER_MANDATE_NEGOTIABLE_VERSION` when it names any. The two share one table, so a
+ * mandate's version follows from its content and a reader can check one against the other.
+ */
+export const sellerMandateVersion = (m: Pick<SellerMandate, 'negotiable'>): string =>
+  m.negotiable.length === 0 ? MESSAGE_VERSIONS.SellerMandate : SELLER_MANDATE_NEGOTIABLE_VERSION
+
+/**
  * A seller's mandate's EIP-712 typed data, under the selling business's own lock. A line for every
  * other item signs an empty item name, and a mandate that replaces none signs a zero hash, which
  * `sellerMandateProblem` refuses as values of their own. It takes a mandate `sellerMandateProblem`
@@ -195,7 +204,7 @@ export const SELLER_MANDATE_TYPES = {
  */
 export function sellerMandateTypedData(m: SellerMandate, d: AvowDomain) {
   return {
-    domain: domain(d, MESSAGE_VERSIONS.SellerMandate),
+    domain: domain(d, sellerMandateVersion(m)),
     types: SELLER_MANDATE_TYPES,
     primaryType: 'SellerMandate' as const,
     message: {
@@ -379,6 +388,13 @@ export function sellerMandateTermsProblem(terms: SellerMandateTerms): ReasonCode
   return 'seller_mandate.invalid'
 }
 
+/** Whether a list names terms open to bargaining, each once, in the order of `OPEN_TERMS`. */
+function isNegotiableList(list: unknown): list is readonly OpenTerm[] {
+  if (!Array.isArray(list)) return false
+  const order = list.map((t) => OPEN_TERMS.indexOf(t))
+  return order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] as number)))
+}
+
 /** Whether the terms among a value's fields are well formed, whatever other fields it holds. */
 function termsAreSound(v: Record<string, unknown>): boolean {
   if (typeof v.signingKey !== 'string' || !LOWER_ADDRESS.test(v.signingKey)) return false
@@ -406,7 +422,7 @@ function termsAreSound(v: Record<string, unknown>): boolean {
   if (!ascendingList(v.excludedCountries, SELLER_LIST_MAX, country)) return false
   if (typeof v.requiresBusinessCheck !== 'boolean') return false
   const { negotiable, expiry } = v
-  if (!Array.isArray(negotiable) || negotiable.length > 0) return false
+  if (!isNegotiableList(negotiable)) return false
   if (!isApprovalRule(v.approvalRule, maxOrderValue)) return false
   return isUint(expiry, 64, 1n) && expiry <= SELLER_EXPIRY_MAX
 }
@@ -507,5 +523,11 @@ export function parseSellerMandate(
   const signed = parseSigned(json, 'SellerMandate', sellerMandateJson, expected)
   if (!signed.ok) return signed
   const problem = sellerMandateProblem(signed.value.message)
-  return problem ? { ok: false, reason: problem } : signed
+  if (problem) return { ok: false, reason: problem }
+  // The envelope's version is the one the mandate signs at, so a reader that checks the version
+  // first reads the same terms its account signed.
+  if (signed.value.schemaVersion !== sellerMandateVersion(signed.value.message)) {
+    return { ok: false, reason: 'message.invalid' }
+  }
+  return signed
 }
