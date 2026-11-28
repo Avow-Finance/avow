@@ -14,6 +14,7 @@ import {
   isApprovalRequestId,
   isJobOfferVersion,
   isSessionId,
+  OFFER_QUERY_MAX,
   type OfferVersion,
   offerIdOf,
   offerVersionId,
@@ -56,6 +57,7 @@ import { sandboxTestSellers } from '../sandbox/test-sellers.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { addToClient, isMcpClient, MCP_CLIENTS, mcpServersJson } from './mcp-clients.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
+import { readSearchInput, searchSentences } from './offer-search.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   bookingSentence,
@@ -105,7 +107,8 @@ type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
- * mandate like any other commitment. The first four and `sell` are a supplier's, for an agent
+ * mandate like any other commitment. `search_offers` is a buyer's too, and only reads Avow's
+ * directory under the agent's mandate. The first four and `sell` are a supplier's, for an agent
  * connected to sell. A supplier's agent is held by its signing key, the offers in its folder and,
  * once Avow serves one, the seller's mandate its own SDK holds it to, and the tools say which
  * stand. `list_offer` and `withdraw_listing` reach Avow, which lists an offer only where it holds
@@ -117,6 +120,7 @@ const SERVICE_TOOLS = [
   'offers',
   'list_offer',
   'withdraw_listing',
+  'search_offers',
   'order',
   'orders',
   'sell',
@@ -538,7 +542,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Lists an offer your business published from this folder with Avow, for Avow's directory of offers, for an agent connected to sell. Give the id publish_offer or offers answered with. It becomes its item's current listing with Avow, in place of any version of the item listed before, and a version Avow no longer lists can never be listed again, so publish a new one instead. Listing the current version again checks it against the newest mandate again. Your agent holds the offer to its newest seller's mandate first, and Avow checks it against the same mandate and lists nothing it doesn't allow, with the reason. A listing grants nothing, and every order is checked again. When Avow holds no seller's mandates it lists nothing, and the answer says so. Buying agents can't search the directory yet.",
+      "Lists an offer your business published from this folder with Avow, for Avow's directory of offers, for an agent connected to sell. Give the id publish_offer or offers answered with. It becomes its item's current listing with Avow, in place of any version of the item listed before, and a version Avow no longer lists can never be listed again, so publish a new one instead. Listing the current version again checks it against the newest mandate again. Your agent holds the offer to its newest seller's mandate first, and Avow checks it against the same mandate and lists nothing it doesn't allow, with the reason. A listing grants nothing, and every order is checked again. When Avow holds no seller's mandates it lists nothing, and the answer says so. Buying agents find it with search_offers.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -566,6 +570,45 @@ export const MCP_TOOLS = [
         id: { type: 'string', description: 'The id of the version Avow lists now' },
       },
       required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_offers',
+    title: "Search Avow's offers",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Searches Avow's directory of offers for services other businesses sell, to find a supplier nobody named to you. Give the most you'd pay for the whole booking in dollars, and words, a quantity and a delivery date if they matter. Avow answers with the listed offers that fit, priced for the quantity and checked against your mandate and what your lock holds when it searched, cheapest first, each whole so you can hand it to check and order. With needing_approval, the offers your mandate refuses for a reason your person could change follow, each with that reason, and request_change asks for it. Every supplier listed is a sandbox business no check has verified, so call it that. A result grants nothing. Booking checks your mandate and funds again, and Avow refuses a version replaced or withdrawn since. While Avow holds no seller's mandates it lists nothing, and the answer says so. It reserves and orders nothing.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          maxLength: OFFER_QUERY_MAX,
+          description:
+            "Words every offer's item has to hold in its name or summary. Leave it out to list every offer that fits the rest",
+        },
+        budget: {
+          type: 'number',
+          description: "The most you'd pay for the whole booking, in dollars",
+        },
+        quantity: { type: 'integer', description: 'How many units, 1 when left out' },
+        deliver_by: {
+          type: 'string',
+          description:
+            'The latest delivery will do, as an ISO 8601 date or time. Leave it out when any time will do',
+        },
+        needing_approval: {
+          type: 'boolean',
+          description: "Also list offers your mandate doesn't allow yet, each with why",
+        },
+      },
+      required: ['budget'],
       additionalProperties: false,
     },
   },
@@ -796,8 +839,12 @@ export function mcpAgent(
     }
   }
 
-  async function open(tool: SandboxTool): Promise<SandboxAgent> {
-    const id = runnerSession(dir)
+  /**
+   * The agent for a tool that needs its mandate. A tool the runner's screen shows reports a run to
+   * it, and `null` opens the agent without one.
+   */
+  async function open(tool: SandboxTool | null): Promise<SandboxAgent> {
+    const id = tool === null ? null : runnerSession(dir)
     return sandboxAgent({
       store,
       session: id ? { id, run: takeRun(join(dir, SANDBOX_DIR), id) } : null,
@@ -1370,6 +1417,23 @@ export function mcpAgent(
   }
 
   /**
+   * A search of Avow's directory under the agent's mandate. It opens the agent without the
+   * runner's screen, since a search commits nothing.
+   */
+  async function searchOffers(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const input = readSearchInput(args)
+    if ('error' in input) throw new RangeError(input.error)
+    const outcome = await (await open(null)).searchOffers(input)
+    return {
+      text: searchSentences(outcome).join(' '),
+      structured: outcome.ok
+        ? { listed: true, ...(toWire(outcome.result) as Record<string, unknown>) }
+        : { listed: false, reason: outcome.reason, notice: outcome.notice },
+      isError: false,
+    }
+  }
+
+  /**
    * The test sellers the sandbox lists, each as a test business with its offers whole, for the
    * model to order from. A sandbox that lists none says so.
    */
@@ -1663,6 +1727,7 @@ export function mcpAgent(
         if (name === 'offers') return await offers()
         if (name === 'list_offer') return await listOffer(args)
         if (name === 'withdraw_listing') return await withdrawListing(args)
+        if (name === 'search_offers') return await searchOffers(args)
         if (name === 'order') return await order(args)
         if (name === 'orders') return await orders()
         if (name === 'sell') return await sell(args)

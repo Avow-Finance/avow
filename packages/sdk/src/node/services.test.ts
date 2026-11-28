@@ -152,11 +152,25 @@ describe('avow-sandbox offer', () => {
   })
 
   it('names every verb when given one it has none of', () => {
-    expect(readOfferArgs(['search'])).toEqual({
+    expect(readOfferArgs(['find'])).toEqual({
       error:
-        'offer takes publish, list, withdraw, list-with-avow, withdraw-from-avow or listed-with-avow',
+        'offer takes publish, list, withdraw, list-with-avow, withdraw-from-avow, listed-with-avow or search',
     })
     expect(readOfferArgs([])).toHaveProperty('error')
+  })
+
+  it('reads a search from its flags, before the folder is read', () => {
+    expect(readOfferArgs(['search', '--budget', '200', '--query', 'transcript'])).toEqual({
+      verb: 'search',
+      search: {
+        query: 'transcript',
+        budget: 200_000_000n,
+        quantity: 1,
+        deliverBy: null,
+        needingApproval: false,
+      },
+    })
+    expect(readOfferArgs(['search'])).toEqual({ error: 'offer search needs --budget, in dollars' })
   })
 
   it('reads an offer to publish from its flags', () => {

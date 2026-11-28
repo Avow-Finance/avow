@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   offerVersionId,
+  parseOfferSearch,
   parseServiceQuote,
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
@@ -10,9 +11,12 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import { describe, expect, it, vi } from 'vitest'
+import { OFFER_SEARCH_UNSERVED } from '../sandbox/offer-search.js'
 import { NO_SELLER_MANDATE } from '../sandbox/seller-mandate.js'
 import { SELLER_MANDATE_ASKS_UNTAKEN } from '../sandbox/services.js'
+import { loadAgentItem } from '../sandbox/store.js'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
+import { listedTranscript, searchAnswer } from '../test/offer-search.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
 import { testPing, testSellersList } from '../test/test-sellers.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
@@ -175,6 +179,55 @@ describe("the MCP server's tools for services", () => {
     expect((await seller.call('list_offer', { id: 'x' })).isError).toBe(true)
     expect((await seller.call('list_offer', { id: `0x${'12'.repeat(32)}` })).isError).toBe(true)
     expect(sent.slice(before).some((s) => s.path === SANDBOX_PATHS.offerListings)).toBe(false)
+  })
+
+  it("search Avow's directory under the buyer's mandate, label each supplier a sandbox business, and say when Avow lists none", async () => {
+    const dir = await folder(BUYER)
+    const item = await loadAgentItem(fileStore(join(dir, SANDBOX_DIR)))
+    if (!item) throw new Error('the folder holds an agent')
+    const sent: Record<string, unknown>[] = []
+    let unavailable = false
+    const { fetch, paths } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.offerSearch) return null
+      if (unavailable) {
+        return json({ error: { reason: 'offer.listing_unavailable', message: 'None' } }, 409)
+      }
+      sent.push(body)
+      const search = parseOfferSearch(body)
+      if (!search.ok) throw new Error('the search parses')
+      return json(searchAnswer(search.value, item.mandateHash, [listedTranscript(SELLER)]))
+    })
+    const buyer = mcpAgent(dir, { fetch })
+    const found = await buyer.call('search_offers', {
+      query: 'transcript',
+      budget: 200,
+      quantity: 2,
+    })
+    expect(found.isError).toBe(false)
+    expect(sent).toEqual([
+      {
+        query: 'transcript',
+        budget: '200000000',
+        currency: 'USD',
+        quantity: 2,
+        deliverBy: null,
+        needingApproval: false,
+      },
+    ])
+    expect(found.text).toContain('from sandbox business "Test Transcripts"')
+    expect(found.text).toMatch(/A result grants nothing\./)
+    // Each offer comes back whole, as check and order take it.
+    const offers = (found.structured.eligible as { offers: { version: unknown }[] }).offers
+    expect(found.structured.listed).toBe(true)
+    expect(readSharedOffer(offers[0]?.version)).toEqual(listedTranscript(SELLER))
+    unavailable = true
+    const none = await buyer.call('search_offers', { budget: 200 })
+    expect(none).toMatchObject({ isError: false, structured: { listed: false } })
+    expect(none.text).toBe(OFFER_SEARCH_UNSERVED)
+    // A budget it would have to guess at sends nothing.
+    const before = paths.filter((p) => p === SANDBOX_PATHS.offerSearch).length
+    expect((await buyer.call('search_offers', { budget: 'lots' })).isError).toBe(true)
+    expect(paths.filter((p) => p === SANDBOX_PATHS.offerSearch).length).toBe(before)
   })
 
   it('check an order from the offer without sending it, with the price beside what is reserved', async () => {

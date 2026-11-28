@@ -78,7 +78,8 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            agent orders from. list shows what's published, and withdraw <id> takes one back.
            list-with-avow <id> lists a published offer in Avow's directory, checked against the
            seller's mandate, withdraw-from-avow <id> takes it away, and listed-with-avow shows
-           what Avow lists
+           what Avow lists. search --budget <dollars> finds listed offers your agent's mandate
+           allows, with --query, --quantity, --deliver-by <date> and --needing-approval
   order    orders units of a supplier's offer with --offer <file> and --quantity, or the demo
            job from another business with --supplier <id>. Either way it checks the quote, funds
            it and waits for the acceptance

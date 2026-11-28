@@ -19,6 +19,8 @@ import {
   toWire,
 } from '@avow-finance/spec'
 import type { Hex } from 'viem'
+import { sandboxAgent } from '../sandbox/agent.js'
+import type { OfferSearchInput } from '../sandbox/offer-search.js'
 import { SELLER_LIMITS_UNENFORCED } from '../sandbox/seller-mandate.js'
 import {
   type SandboxServices,
@@ -26,6 +28,7 @@ import {
   type ServiceOfferDraft,
   sandboxServices,
 } from '../sandbox/services.js'
+import { readSearchArgs, searchSentences } from './offer-search.js'
 import { fileStore } from './platform.js'
 
 /**
@@ -296,7 +299,14 @@ const fileName = (name: string) =>
 
 /** The `offer` verbs that act on Avow's listing of one version, named by its id. */
 const AVOW_VERBS = ['list-with-avow', 'withdraw-from-avow'] as const
-const OFFER_VERBS = ['publish', 'list', 'withdraw', ...AVOW_VERBS, 'listed-with-avow'] as const
+const OFFER_VERBS = [
+  'publish',
+  'list',
+  'withdraw',
+  ...AVOW_VERBS,
+  'listed-with-avow',
+  'search',
+] as const
 type OfferVerb = (typeof OFFER_VERBS)[number]
 const isOfferVerb = (v: string | undefined): v is OfferVerb =>
   (OFFER_VERBS as readonly (string | undefined)[]).includes(v)
@@ -306,6 +316,7 @@ export type OfferAsk =
   | { verb: 'publish'; draft: ServiceOfferDraft }
   | { verb: 'list' | 'listed-with-avow' }
   | { verb: 'withdraw' | (typeof AVOW_VERBS)[number]; id: Hex }
+  | { verb: 'search'; search: OfferSearchInput }
 
 /** What `offer` was asked to do, or why it can't run, so a mistyped flag is the first thing said. */
 export function readOfferArgs(args: readonly string[]): OfferAsk | { error: string } {
@@ -318,6 +329,10 @@ export function readOfferArgs(args: readonly string[]): OfferAsk | { error: stri
     if ('error' in input) return input
     const draft = readOfferInput(input)
     return 'error' in draft ? draft : { verb, draft }
+  }
+  if (verb === 'search') {
+    const search = readSearchArgs(rest)
+    return 'error' in search ? search : { verb, search }
   }
   if (verb === 'list' || verb === 'listed-with-avow') {
     return rest.length === 0 ? { verb } : { error: `offer ${verb} takes nothing more` }
@@ -334,10 +349,18 @@ export function readOfferArgs(args: readonly string[]): OfferAsk | { error: stri
  * `list-with-avow <id> | withdraw-from-avow <id> | listed-with-avow`, which list a published
  * version in Avow's directory, take it away and show what Avow lists. Publishing writes the offer
  * to a file beside `.avow`, which is what a buyer's agent orders from, and sends nothing to Avow.
+ * `search` is the buyer's side, which searches Avow's directory under the agent's mandate.
  */
 export async function offerCommand(args: readonly string[]): Promise<void> {
   const ask = readOfferArgs(args)
   if ('error' in ask) return fail(ask.error)
+  if (ask.verb === 'search') {
+    // A search is the buyer's, signed by the agent's key under the mandate it holds.
+    const agent = await sandboxAgent({ store: fileStore(), session: null })
+    const outcome = await agent.searchOffers(ask.search)
+    console.log(searchSentences(outcome).join('\n'))
+    return
+  }
   const services = await sandboxServices({ store: fileStore() })
   if (ask.verb === 'list') {
     const published = await services.published()
