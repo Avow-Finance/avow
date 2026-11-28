@@ -26,8 +26,11 @@
       "default": "./dist/agent-entry.js"
     },
     "./slices": {
+      "node": {
+        "types": "./dist/node-slices.d.ts",
+        "default": "./dist/node-slices.js"
+      },
       "types": "./dist/slices-entry.d.ts",
-      "node": "./dist/node-slices.js",
       "default": "./dist/slices-entry.js"
     },
     "./service": {
