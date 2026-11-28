@@ -358,9 +358,15 @@ describe("the MCP server's tools for services", () => {
     expect(other.text).toMatch(/isn't seeing that order through/)
     expect(other.structured).toMatchObject({ seeingThrough: false, ended: null })
     expect(sent).toHaveLength(1)
-    // Once the first has ended, the same offer and quantity is a new order.
+    // Once the first has ended, the same offer and quantity is a new order. The server sees the
+    // lapse on its own next poll, which a busy machine can put past one call's short wait, so the
+    // test asks until a call reports how the order ended.
     status = 'expired'
-    const ended = await buyer.call('order', { order: first.structured.order })
+    let ended = await buyer.call('order', { order: first.structured.order })
+    for (let tries = 0; ended.structured.ended === null && tries < 200; tries++) {
+      expect(ended.structured).toMatchObject({ status: 'expired', seeingThrough: true })
+      ended = await buyer.call('order', { order: first.structured.order })
+    }
     expect(ended.structured).toMatchObject({ ended: 'order.expired', seeingThrough: false })
     status = 'requested'
     const second = await buyer.call('order', { offer: structured.offer, quantity: 2 })
