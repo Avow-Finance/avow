@@ -7,7 +7,7 @@ Your users work in your agent platform, so Avow's approval card and commitment v
 
 ## Who may frame them
 
-Any site served over https may frame either embed, and so may `localhost` and `127.0.0.1` over plain http while you build. Neither embed grants anything or signs anything, so Avow keeps no list of platforms. Every other Avow page, the console's signing page among them, refuses to be framed by anyone.
+Any site served over https may frame either embed, and so may `localhost` and `127.0.0.1` over plain http while you build. Neither embed grants anything or signs anything, so Avow keeps no list of platforms. Every other page on the console and playground sites, the console's signing page among them, refuses to be framed by anyone.
 
 ## The two embeds
 
@@ -62,9 +62,9 @@ That's all an embed ever tells you. It never sends the passkey, the administrato
 
 The approval card can't sign. When the administrator presses **Review on Avow**, the card opens Avow's console in a window of its own, at Avow's address. They sign in with the business's passkey there, see the exact terms and decide. The window then tells the card, and the card tells you.
 
-We built it this way on purpose. A passkey inside a cross-origin frame works in Chrome and Firefox and not in Safari, so a phone couldn't approve. A frame can also be covered by the page around it, and a passkey prompt names the site but none of the terms. Avow's own window works in every browser, and no page can draw over it. Avow serves each embed with a policy that turns the passkey off inside it, whatever your `allow` attribute says.
+We built it this way on purpose. A frame can be covered by the page around it, and a passkey prompt names the site but none of the terms. Avow's window is a top-level window at Avow's address, where the administrator can see where they are before they sign. Avow serves each embed with a policy that turns the passkey off inside it, whatever your `allow` attribute says.
 
-If the browser blocks the window, the card offers a link that opens the same page.
+If the browser blocks the window, the card offers a link that opens the same page in a new tab. That tab keeps the card as its opener, so the card still hears how the administrator decided, and the platform still gets the outcome.
 
 ## Don't take the embed's word for it
 
