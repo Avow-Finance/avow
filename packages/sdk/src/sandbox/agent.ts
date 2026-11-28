@@ -57,6 +57,12 @@ import { loadSandboxDeployment, madeOn, trustedFactory } from './deployment.js'
 import type { SandboxClient } from './fees.js'
 import { heldMandates } from './mandates.js'
 import {
+  type OfferSearchInput,
+  type OfferSearchOutcome,
+  offerSearchOf,
+  searchOffers,
+} from './offer-search.js'
+import {
   type AskedChange,
   askForChange,
   openModeAsk,
@@ -324,6 +330,21 @@ export interface SandboxAgent {
    * lets the key move today. Nothing is sent to the seller.
    */
   checkOrder(order: { offer: ServiceOfferVersion; quantity: number }): Promise<ServicePreflight>
+  /**
+   * Searches Avow's directory of offers, signed by the agent's key under its business's lock. Avow
+   * answers with the listed offers that fit, each priced for the quantity and checked against the
+   * agent's current mandate and what its lock holds, the ones the mandate allows first. With
+   * `needingApproval`, those it doesn't allow yet follow, each with what the administrator would
+   * have to change. Every supplier listed is a sandbox business no check has verified, and the
+   * result says so on each.
+   *
+   * A result grants nothing. It says each offer passed the agent's mandate when Avow searched, and
+   * booking one checks the mandate and the funds again. Avow refuses a version replaced or
+   * withdrawn since. The answer is taken only once it answers this search under the mandate the
+   * agent holds, checked just now, and anything else throws. A sandbox that holds no seller's
+   * mandates lists nothing, and answers `{ ok: false }` with a notice saying so.
+   */
+  searchOffers(search: OfferSearchInput): Promise<OfferSearchOutcome>
   /**
    * Books with one of the agent's suppliers. It resolves with the commitment once the reserve is
    * funded, and throws a `Refusal` when the booking is refused before any money moves.
@@ -849,6 +870,14 @@ function booker(m: {
         ? { passes: false, ...refused, price, amounts }
         : { passes: true, price, amounts }
     },
+
+    searchOffers: async (input) =>
+      searchOffers({
+        ...asking,
+        search: offerSearchOf(input),
+        heldMandate: async (fresh) => (await current(fresh)).hash,
+        now: systemClock,
+      }),
 
     book(b: SandboxBooking): Promise<SandboxCommitment> {
       const reserve = micros(b.reserve, 'reserve')

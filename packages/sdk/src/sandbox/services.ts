@@ -43,6 +43,7 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
+import { listsNothing } from './offer-search.js'
 import { readPublished, unreadableServices } from './published-offers.js'
 import {
   type AskedChange,
@@ -129,18 +130,6 @@ export type ListOutcome =
 /** What an agent is told when the sandbox it talks to lists no offers. */
 export const OFFER_LISTINGS_UNTAKEN =
   "This Avow sandbox doesn't list offers yet, so nothing was listed. Hand the offer to the buyer's agent yourself, as before."
-
-/**
- * Whether Avow's refusal says the sandbox lists no offers: a deployment that holds no seller's
- * mandates, or one that doesn't serve the listing routes yet.
- */
-const listsNothing = (error: unknown): boolean =>
-  error instanceof AvowApiError &&
-  error.definite &&
-  (error.reason === 'offer.listing_unavailable' ||
-    (error.status === 404 &&
-      error.reason === 'request.invalid' &&
-      /no such route/i.test(error.message)))
 
 /** An offer as its supplier writes it, before its business is named for it. */
 export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>

@@ -6,7 +6,7 @@ subtitle: How a selling agent puts its offers in Avow's directory, checked again
 
 A selling agent publishes an offer in its own `.avow` folder first, a service as [Services sold by quantity](/docs/reference/services) describes or a job as [Jobs that rely on compute](/docs/composable-commitments/jobs#job-offers) describes. Both kinds list the same way. Listing sends a published version to Avow, which checks it against the agent's newest [seller's mandate](/docs/reference/seller-mandate) and holds it as its item's current listing. Avow lists nothing it hasn't checked, so a directory built from listings holds only offers a person's signed limits allowed when they were listed.
 
-Avow's API answers a search from the listings described here, at `SANDBOX_PATHS.offerSearch` with the spec's `OfferSearch` and `OfferSearchResult`, and shows a listing only while its seller's mandate in force allows it and the buyer's mandate passes it when it answers. A seller whose mandate won't deal with the buyer's business, by its buyer lists, excluded countries or business check, is left out, and the result says nothing of why a seller is missing. While a change of the buyer's mandate is pending, booking refuses every offer, so Avow answers the search with `mandate.change_pending`. Each supplier shows under the name its business registered, which is plain text on one line of at most `BUSINESS_NAME_MAX` characters for a business registering now. A business that registered before that rule shows its name as `shownBusinessName` writes it, with each character that isn't plain marked as its code point and a longer name shortened, so it is still listed and its name can't pose as a line of the result. The SDK and the MCP server don't send a search yet.
+A buying agent searches these listings from code, a terminal or any MCP client, as [Search the directory](#search-the-directory) describes. Avow shows a listing only while its seller's mandate in force allows it and the buyer's mandate passes it when it answers. A seller whose mandate won't deal with the buyer's business, by its buyer lists, excluded countries or business check, is left out, and the result says nothing of why a seller is missing. While a change of the buyer's mandate is pending, booking refuses every offer, so Avow answers the search with `mandate.change_pending`. Each supplier shows under the name its business registered, which is plain text on one line of at most `BUSINESS_NAME_MAX` characters for a business registering now. A business that registered before that rule shows its name as `shownBusinessName` writes it, with each character that isn't plain marked as its code point and a longer name shortened, so it is still listed and its name can't pose as a line of the result. The SDK and the MCP server don't send a search yet.
 
 ## List, read and withdraw
 
@@ -77,6 +77,34 @@ Withdrawing needs no seller's mandate, since it only takes an offer away, and it
 ## What a listing proves
 
 A listing says Avow found the version within the seller's mandate named in it, at the moment it was listed. It says nothing about later. The administrator can replace the mandate, it can end, and the key is to be revocable, so a search is to check each listing again before showing it and a sale is checked again when it's quoted and when its reserve is approved. A listing grants no buyer anything, and an order from a listed offer goes through the buyer's own mandate check, Avow's approval and the keychain like any other.
+
+## Search the directory
+
+A buying agent searches Avow's listings to find a supplier its person never named. Avow's always-on test sellers are the first it finds once they list.
+
+| Step | Terminal | MCP tool | SDK |
+| --- | --- | --- | --- |
+| Search listed offers | `offer search --budget <dollars>` | `search_offers` | `searchOffers(search)` on the agent |
+
+```ts
+import { dollars } from '@avow-finance/spec'
+import { sandboxAgent } from '@avow-finance/sdk'
+
+const agent = await sandboxAgent()
+const found = await agent.searchOffers({ query: 'transcript', budget: dollars(200), quantity: 2 })
+if (!found.ok) console.log(found.notice)
+else for (const offer of found.result.eligible.offers) console.log(offer.id, offer.quote.total)
+```
+
+`searchOffers` takes the spec's `OfferSearch` in micros and unix seconds, with the words, quantity, deadline and the group needing approval optional. It signs the search with the agent's enrolled key under its business's lock and sends it to `SANDBOX_PATHS.offerSearch`. It reads the answer with `parseOfferSearchResult` and takes it only once `offerSearchAnswerProblem` finds it answers the search it sent, under the mandate the agent holds now, checked just now. Avow may have read a mandate the administrator signed since the agent last read its own, so a mismatch reads the agent's mandate again once before it throws. The MCP tool and the command take the budget in dollars and the deadline as an ISO 8601 date or time.
+
+Search finds nothing until Avow holds seller's mandates. Avow lists nothing it can't hold to a seller's mandate, so a deployment without them answers `offer.listing_unavailable`, and the SDK answers `{ ok: false, notice }`, with the tool and the command saying the same in words.
+
+Every result passed the buyer's own mandate when Avow searched. Avow ran the spec's `checkMandate` on the terms each offer builds for the quantity, under the agent's current mandate and what its lock holds, and the result names that mandate's hash and when it checked. The offers the mandate allows come first, cheapest for the quantity, then soonest delivery, at most 50. With `needingApproval`, the offers refused for a reason an administrator could lift follow in their own group, each with that reason, and `request_change` asks for it. Every supplier is a sandbox business no check has verified, and each result says so with `sandbox: true`.
+
+A result grants nothing. Booking an offer checks the mandate and the funds again, through the agent's own check, Avow's approval and the keychain, and Avow refuses a version replaced or withdrawn since the search. The search leaves out what only a booking settles, which is what Avow approved within each payment limit's period and how the lock stands toward the supplier. So an offer a search found can still be refused when the agent books it, and the agent says the reason code it hears then.
+
+A search records nothing. Avow refuses a revoked agent as `agent.revoked`, a revoked mandate as `mandate.revoked` and a body that isn't an `OfferSearch` as `message.invalid`, and the SDK throws each with its reason code.
 
 ## Refusals
 

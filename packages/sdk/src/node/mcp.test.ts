@@ -50,6 +50,7 @@ describe('avow-sandbox-mcp', () => {
       'offers',
       'list_offer',
       'withdraw_listing',
+      'search_offers',
       'test_sellers',
       'order',
       'orders',
@@ -86,6 +87,8 @@ describe('avow-sandbox-mcp', () => {
     ])
     // A change names its kind and values, and nothing an agent writes in its own words.
     expect(tools.find((t) => t.name === 'request_change')?.inputSchema.required).toEqual(['kind'])
+    // A search needs only what the agent would pay, and only reads.
+    expect(tools.find((t) => t.name === 'search_offers')?.inputSchema.required).toEqual(['budget'])
     // An offer names both charges, since they set what a booking reserves.
     expect(tools.find((t) => t.name === 'publish_offer')?.inputSchema.required).toEqual([
       'name',
@@ -143,6 +146,7 @@ describe('avow-sandbox-mcp', () => {
       'request_seller_mandate',
       'request_status',
       'offers',
+      'search_offers',
       'orders',
       'order',
     ]) {

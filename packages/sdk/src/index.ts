@@ -98,6 +98,11 @@ export {
 export * from './sandbox/mandate.js'
 export { sandbox } from './sandbox/namespace.js'
 export {
+  OFFER_SEARCH_UNSERVED,
+  type OfferSearchInput,
+  type OfferSearchOutcome,
+} from './sandbox/offer-search.js'
+export {
   type AskedChange,
   type ChangeRow,
   type ChangeWords,
