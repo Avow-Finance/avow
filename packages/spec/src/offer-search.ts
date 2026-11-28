@@ -88,8 +88,9 @@ export interface OfferMatch {
   /** The version Avow would book, whose `supplier` is the supplier's business id. */
   version: ServiceOfferVersion
   /**
-   * The supplier's name as its profile gives it. Every supplier listed today is a sandbox business
-   * that no check has verified, and the result says so on each one.
+   * The name the supplier's business registered with Avow. Every supplier listed today is a
+   * sandbox business that no check has verified, and the result says so on each one. A supplier
+   * whose name is longer than a result carries isn't listed.
    */
   supplier: { name: string; sandbox: true }
   /** What booking the search's quantity costs, with each charge and the reserve it takes. */
