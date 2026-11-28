@@ -36,7 +36,7 @@ Slices can promise more on paper than their parent holds, two workers each with 
 
 A `Slice` signs at version 1 under the business's lock. It names its id, the business, account and agent, the hash of the mandate it was handed out under, the id of the slice it divides, the key that handed it out, the worker's key, who signed it, its limits and the hash of the version it replaces. A slice with no price limit of its own signs zero for it, and a first version signs the zero hash as the one it replaces. A price limit over a period will come as version 2, the same way the mandate's did.
 
-A slice names its parent by id, so the slices under it keep working when the parent is narrowed, and each level is checked against its parent's current limits every time it's used. A slice handed out under a mandate the administrator later replaced stays valid, and the new mandate binds it at once as the top level.
+A slice names its parent by id. Narrowing a parent never invalidates the slices under it, and no version of a child, its current one included, has to fit the parent's narrowed limits. The narrowed parent binds them when they're used instead, since each level is checked against its parent's current limits every time a worker below it books. A child given \$1,000 under a parent narrowed from \$1,200 to \$800 stays valid and can hold no more than the parent's \$800. A slice handed out under a mandate the administrator later replaced stays valid, and the new mandate binds it at once as the top level.
 
 | Who signs a new version | What it may do |
 | --- | --- |
