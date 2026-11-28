@@ -68,4 +68,6 @@ Avow's API holds the slices and the revocations, so it enforces what a reader ca
 - It serves every version of every level and every revocation that counts, so a worker's chain is whole.
 - It runs `checkSlicedMandate` before it approves any reserve a worker asks for, counting what is open and what was approved within each period under every level.
 
+The lock counts what's open under a mandate and knows nothing of slices, so Avow counts what's open under each slice from its own records. It counts every reserve it approved under a slice or below it as open until the approval expired with nothing funded or the lock shows the reserve released. A reserve that may already have closed still counts, so the count can only run high, and a worker can be refused too early but never let past its slice. Before it refuses a worker near its cap, Avow reads the lock for the reserves it's counting and drops those the lock shows closed.
+
 `vectors/slice-v1.json` holds hashes another implementation can check itself against.
