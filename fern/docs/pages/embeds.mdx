@@ -5,9 +5,9 @@ slug: docs/reference/embeds
 
 Your users work in your agent platform, so Avow's approval card and commitment view can sit inside your screens. Each is a page Avow serves at a stable path, which you put in an iframe. Neither needs an Avow session, and opening one grants nothing.
 
-<Note>
-The testnet doesn't let other sites frame these pages yet. Until it does, every Avow page answers with `frame-ancestors 'none'`, and the links below open as ordinary pages.
-</Note>
+## Who may frame them
+
+Any site served over https may frame either embed, and so may `localhost` and `127.0.0.1` over plain http while you build. Neither embed grants anything or signs anything, so Avow keeps no list of platforms. Every other Avow page, the console's signing page among them, refuses to be framed by anyone.
 
 ## The two embeds
 
@@ -18,7 +18,7 @@ The testnet doesn't let other sites frame these pages yet. Until it does, every 
 
 The hash is the one your agent already holds. An approval link from `connect` ends in `#approve-<agent key>`, and a link to one approval request ends in `#sign-<request id>`. A verify link ends in `#verify=<token>`. Copy the hash across as it is.
 
-`origin` is your page's own origin, such as `https://agents.example`. The embed sends messages to that origin and nowhere else. Only `https` origins count, and plain `http` only on `localhost` while you build.
+`origin` is your page's own origin, such as `https://agents.example`. The embed sends messages to that origin and nowhere else. It takes `https` origins, and plain `http` only on `localhost` while you build.
 
 ## Paste this
 
