@@ -27,7 +27,7 @@ import {
   type Charge,
   type SupplierAuthorization,
 } from './eip712.js'
-import { validateGpuReservation } from './gpu-reservation.js'
+import { COMPUTE_CATEGORY, validateGpuReservation } from './gpu-reservation.js'
 import { JOB_CATEGORY, validateJob } from './job.js'
 import type { TermsProfile } from './profiles.js'
 import { toTokenUnits } from './rail.js'
@@ -501,11 +501,12 @@ const TEMPLATE_RULES: {
 }
 
 /**
- * The one mandate category each template's bookings fall under, or null when the request names
- * its own. The build fails when a template is missing here.
+ * The one mandate category each template's bookings fall under. A GPU reservation is a compute
+ * booking, so a request can't file one under another category to pass a mandate that allows
+ * only that one. The build fails when a template is missing here.
  */
-const TEMPLATE_CATEGORIES: { readonly [T in TemplateId]: string | null } = {
-  'gpu-reservation/1': null,
+const TEMPLATE_CATEGORIES: { readonly [T in TemplateId]: string } = {
+  'gpu-reservation/1': COMPUTE_CATEGORY,
   'job/1': JOB_CATEGORY,
   'service/1': SERVICE_CATEGORY,
 }
@@ -521,7 +522,7 @@ export function templateCategoryProblem(
 ): ReasonCode | null {
   if (!Object.hasOwn(TEMPLATE_CATEGORIES, terms.template)) return null
   const fixed = TEMPLATE_CATEGORIES[terms.template as TemplateId]
-  return fixed === null || fixed === category ? null : 'terms.category_mismatch'
+  return fixed === category ? null : 'terms.category_mismatch'
 }
 
 /**
