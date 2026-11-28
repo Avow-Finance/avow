@@ -36,6 +36,7 @@ import {
   TESTNET_DEMO_PROFILE,
   type TopUp,
   tempoKeychainCheck,
+  termsPrice,
   toTokenUnits,
 } from '@avow-finance/spec'
 import {
@@ -263,6 +264,12 @@ export interface SandboxAgent {
   readonly authority: number
   /** The most the agent's key can move in a day, in dollars, or null when it has no daily limit. */
   readonly dailyLimit: number | null
+  /**
+   * The most one commitment's price may come to, in dollars, or null when the agent's mandate has
+   * no price limit. The lock never reads a price, so the SDK and Avow are the two layers that hold
+   * the agent to it.
+   */
+  readonly priceCapPerCommitment: number | null
   readonly suppliers: readonly SandboxSupplier[]
   readonly business: { account: Address; lock: Address; businessId: string }
   /** The mandate the business's root key authorized for the agent. */
@@ -572,6 +579,7 @@ function booker(m: {
     return held
   }
   const capOf = (h: Held) => h.mandate.message.capOpenReserves
+  const priceCapOf = (h: Held) => h.mandate.message.priceCapPerCommitment ?? null
   const dailyLimitOf_ = (h: Held) => dailyLimitOf(h.mandate.message, deployment.token)
 
   /** What the lock holds open under the current mandate and every one it replaced. */
@@ -631,6 +639,8 @@ function booker(m: {
       left: open >= cap ? 0n : cap - open,
       authority: cap,
       capPerCommitment: mandate.message.capPerCommitment,
+      price: termsPrice(terms),
+      priceCapPerCommitment: priceCapOf(h),
       dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
@@ -682,7 +692,13 @@ function booker(m: {
   /** A refusal under the mandate the booking ran under, with what's left now. */
   async function refusal(
     h: Held,
-    r: { code: ReasonCode; layer: RefusalLayer; needed: bigint; leftBefore: bigint },
+    r: {
+      code: ReasonCode
+      layer: RefusalLayer
+      needed: bigint
+      price: bigint
+      leftBefore: bigint
+    },
     extra: { decisionId?: string | null; cause?: unknown },
   ): Promise<Refusal> {
     const open = await openAcross(h).catch(() => null)
@@ -694,6 +710,8 @@ function booker(m: {
       left,
       authority: cap,
       capPerCommitment: h.mandate.message.capPerCommitment,
+      price: r.price,
+      priceCapPerCommitment: priceCapOf(h),
       dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
@@ -711,6 +729,10 @@ function booker(m: {
     get dailyLimit() {
       const limit = dailyLimitOf_(held)
       return limit === null ? null : toDollars(limit)
+    },
+    get priceCapPerCommitment() {
+      const cap = priceCapOf(held)
+      return cap === null ? null : toDollars(cap)
     },
     suppliers: m.suppliers,
     business: m.business,
@@ -838,10 +860,11 @@ function booker(m: {
       const { mandate, hash: mandateHash } = h
       const before = await limits(h, gpuAsk(h, supplierId, terms))
       const leftBefore = before.amounts.left
+      const price = termsPrice(terms)
       // The lock caps each mandate hash on its own, so the agent checks the total itself before
       // it signs anything, whatever cap Avow's approval carries.
       if (before.refused)
-        throw await refusal(h, { ...before.refused, needed: reserve, leftBefore }, {})
+        throw await refusal(h, { ...before.refused, needed: reserve, price, leftBefore }, {})
       const supplier = m.suppliers.find((s) => s.id === supplierId) as SandboxSupplier
       const connection = await connectSupplier(supplier, send)
       const avow = httpAvowApi({
@@ -885,14 +908,14 @@ function booker(m: {
         if (error instanceof SupplierDeclined) {
           throw await refusal(
             h,
-            { code: 'supplier.declined', layer: 'supplier', needed: reserve, leftBefore },
+            { code: 'supplier.declined', layer: 'supplier', needed: reserve, price, leftBefore },
             { cause: error },
           )
         }
         if (error instanceof BookingError && error.outcome === 'failed') {
           throw await refusal(
             h,
-            { ...fundingRefusal(error), needed: reserve, leftBefore },
+            { ...fundingRefusal(error), needed: reserve, price, leftBefore },
             { cause: error },
           )
         }
@@ -902,7 +925,7 @@ function booker(m: {
         const layer: RefusalLayer = avowRefused === booked.reason ? 'avow' : 'sdk'
         throw await refusal(
           h,
-          { code: booked.reason, layer, needed: reserve, leftBefore },
+          { code: booked.reason, layer, needed: reserve, price, leftBefore },
           { decisionId: booked.decisionId ?? null },
         )
       }

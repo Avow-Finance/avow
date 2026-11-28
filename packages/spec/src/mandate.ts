@@ -15,6 +15,12 @@ import {
 } from './terms.js'
 import type { ApprovalRule, ChainedTerms, Mandate, ReserveRequest } from './types.js'
 
+/**
+ * The layers that hold an agent to its mandate's price limit, in the order they check it. The lock
+ * never reads a price, so wherever a price limit shows, it's labelled with these two and no more.
+ */
+export const PRICE_LIMIT_ENFORCED_BY = ['sdk', 'avow'] as const
+
 export interface MandateCheckInput {
   mandate: Mandate
   /**

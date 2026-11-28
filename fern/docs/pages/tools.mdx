@@ -14,7 +14,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | --- | --- | --- |
 | `connect` | Asks for authority | Makes the agent's key, keeps it in `.avow` and asks for authority. It answers with a pairing code and an approval link for the agent's person |
 | `status` | No | Where the request stands: waiting, picking up its authority, connected or not connected |
-| `authority` | No | How much the agent can commit right now, the most it can hold at once and how much of that is free, what its key can still move today, and the suppliers it may book |
+| `authority` | No | How much the agent can commit right now, the most it can hold at once and how much of that is free, what its key can still move today, its price limit for one commitment when its mandate has one, labelled with the SDK and Avow that hold it to that, and the suppliers it may book |
 | `check` | No | Whether a GPU booking or an order from a service offer would pass right now, and which layer would refuse it if not, without booking, ordering or moving money |
 | `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
@@ -37,7 +37,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 `connect` takes `name`, what the administrator sees, such as `"Research agent"`, and refuses a name that breaks [the rule for names](/docs/get-started/connect-your-agent#connect-from-the-terminal), naming the character and where it stands. Add `business` only when the person gave the agent a business ID, since without one whoever approves chooses their business. `sell` asks to quote and accept jobs and service orders for the business too, with a signing key of its own. No limit the administrator sets applies to what that key sells.
 
-`check` and `book` take the same inputs, so a booking that passes `check` is the one `book` makes. `check` also takes the `offer` and `quantity` that `order` takes. It prices the offer, asks Avow whether it knows the seller, and runs the mandate check on the terms the offer builds, under the mandate the agent holds now. The mandate's limits count the reserve. The price is paid outside the lock and no limit counts it, so the answer gives the price for the agent to weigh. It can't know whether the seller still publishes that version or has capacity left, since only the seller knows.
+`check` and `book` take the same inputs, so a booking that passes `check` is the one `book` makes. `check` also takes the `offer` and `quantity` that `order` takes. It prices the offer, asks Avow whether it knows the seller, and runs the mandate check on the terms the offer builds, under the mandate the agent holds now. The mandate's reserve limits count the reserve. The price is paid outside the lock, and only a [price limit](/docs/reference/price-limits) counts it, which the SDK and Avow hold the agent to. The answer gives the price and the limit, or says the mandate has none, so the agent weighs the price either way. It can't know whether the seller still publishes that version or has capacity left, since only the seller knows.
 
 | Input | Required | Meaning |
 | --- | --- | --- |

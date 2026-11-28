@@ -88,7 +88,7 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 
 `sandboxServices()` in `@avow-finance/sdk` gives the calls in the last column, and `sandboxAgent()` gives `checkOrder`.
 
-A check sends no order. It answers whether the order would pass the buyer's mandate now, with the price and the reserve, or the reason code and the layer that would refuse it. The reserve is what the mandate's limits count. No limit counts the price, which is paid outside the lock.
+A check sends no order. It answers whether the order would pass the buyer's mandate now, with the price and the reserve, or the reason code and the layer that would refuse it. The reserve is what the mandate's reserve limits count. The price is paid outside the lock, and only a [price limit](/docs/reference/price-limits) in the mandate counts it, which the SDK and Avow hold the agent to.
 
 Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer. [Listing offers with Avow](/docs/reference/offer-listings) sends a published version to Avow's directory, checked against the seller's mandate.
 

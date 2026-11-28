@@ -1,4 +1,4 @@
-import { dollars, mandateHash } from '@avow-finance/spec'
+import { dollars, mandateHash, parseMandateProof, toWire } from '@avow-finance/spec'
 import { decodeFunctionData } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Abis, Account, Addresses } from 'viem/tempo'
@@ -157,5 +157,35 @@ describe('authorizeSandboxKey', () => {
     })
     expect(authorized.mandate.message.agentKey).toBe(agent.accessKeyAddress)
     expect(authorized.keyAuthorizedIn).toBe(`0x${'ab'.repeat(32)}`)
+  })
+
+  it('labels a first mandate with a price limit at version 3, so it reads back as signed', async () => {
+    const mandate = sandboxMandate({
+      businessId: 'sandbox-customer',
+      agentId: 'agt_test',
+      account: root.address,
+      agentKey: agent.accessKeyAddress,
+      suppliers: [],
+      token: TOKEN,
+      capPerCommitment: dollars(10),
+      capOpenReserves: dollars(30),
+      priceCapPerCommitment: dollars(200),
+      expiry: 1_900_000_000n,
+    })
+    const authorized = await authorizeSandboxKey({
+      deployment: { chainId: 42431 },
+      client: {} as never,
+      root,
+      agent,
+      lock: LOCK,
+      mandate,
+      suppliers: [],
+    })
+    expect(authorized.mandate.schemaVersion).toBe('3')
+    expect(authorized.mandateHash).toBe(
+      mandateHash(mandate, { chainId: 42431, verifyingContract: LOCK }),
+    )
+    const wire = JSON.parse(JSON.stringify(toWire(authorized.mandate)))
+    expect(parseMandateProof(wire, { chainId: 42431, lock: LOCK }).ok).toBe(true)
   })
 })

@@ -43,4 +43,4 @@ An administrator lifts the refusal by signing a mandate with a higher limit, so 
 
 ## Where it stands
 
-The SDK holds an agent to the price limit of any mandate it reads. Avow's API and console take a mandate with a price limit in a later release, and until then no administrator signs one in the console. A mandate holds no limit on what an agent commits over a period yet.
+The SDK holds an agent to the price limit of any mandate it reads, and its `authority` and `check` tools give the limit with the two layers that hold the agent to it. `sandboxMandate` takes `priceCapPerCommitment` for a business that signs its own. Avow's API and console take a mandate with a price limit in a later release, and until then no administrator signs one in the console. A mandate holds no limit on what an agent commits over a period yet.

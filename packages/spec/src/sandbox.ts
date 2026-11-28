@@ -397,6 +397,18 @@ export interface RefusalAmounts {
    */
   capPerCommitment: bigint | null
   /**
+   * The booking's price, as `termsPrice` reads it from its terms, or null when the refusal came
+   * before there were terms, or was posted before refusals recorded it. Left out reads as null.
+   */
+  price?: bigint | null
+  /**
+   * The most the agent's mandate allows one commitment's price to come to, or null when its
+   * mandate has no price limit or the refusal was posted before refusals recorded it. The lock never
+   * reads a price, so the SDK and Avow are the two layers that hold an agent to it. Left out reads
+   * as null.
+   */
+  priceCapPerCommitment?: bigint | null
+  /**
    * The most the agent's key can move in a day, the spending limit the business's root key set on
    * the account's keychain, or null when the key has no daily limit on the lock's token.
    */
@@ -538,6 +550,8 @@ const sandboxEventJson = z.discriminatedUnion('type', [
       left: u256,
       authority: u256,
       capPerCommitment: u256.nullable().default(null),
+      price: u256.nullable().exactOptional(),
+      priceCapPerCommitment: u256.nullable().exactOptional(),
       dailyLimit: u256.nullable(),
       dailyLeft: u256.nullable(),
     }),
@@ -634,6 +648,8 @@ export function refusalSentence(r: Pick<Refused, 'code' | 'layer' | 'amounts'>):
 export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): string {
   const who = REFUSED_BY[r.layer]
   const { needed, left, authority, capPerCommitment, dailyLimit, dailyLeft } = r.amounts
+  const price = r.amounts.price ?? null
+  const priceCap = r.amounts.priceCapPerCommitment ?? null
   const onChain =
     r.layer !== 'sdk' && r.layer !== 'avow'
       ? ''
@@ -654,6 +670,8 @@ export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): s
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
       return `This booking needs ${formatUsd(needed)}, more than ${capPerCommitment === null ? 'your mandate allows' : `the ${formatUsd(capPerCommitment)} your mandate allows`} for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
+    case 'mandate.over_price_limit':
+      return `This booking's price is ${price === null ? 'more than your mandate allows' : `${formatUsd(price)}, more than ${priceCap === null ? 'your mandate allows' : `the ${formatUsd(priceCap)} your mandate allows`}`} for one commitment, so ${who} refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.`
     default:
       return `${who.charAt(0).toUpperCase()}${who.slice(1)} refused this ${formatUsd(needed)} booking and no money moved. ${describeReason(r.code)}.${onChain}`
   }

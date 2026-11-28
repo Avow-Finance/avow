@@ -253,6 +253,18 @@ describe('refusalReason', () => {
     )
   })
 
+  it('says what the price came to against the price limit, and that the lock never reads it', () => {
+    const priced = { ...amounts, price: dollars(240), priceCapPerCommitment: dollars(200) }
+    expect(
+      refusalReason({ code: 'mandate.over_price_limit', layer: 'avow', amounts: priced }),
+    ).toBe(
+      "This booking's price is $240, more than the $200 your mandate allows for one commitment, so Avow refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
+    )
+    expect(refusalReason({ code: 'mandate.over_price_limit', layer: 'sdk', amounts })).toBe(
+      "This booking's price is more than your mandate allows for one commitment, so the SDK refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
+    )
+  })
+
   it("says Avow's relay and the account's keychain refused when they did", () => {
     expect(refusalReason({ code: 'sponsorship.rate_limited', layer: 'relay', amounts })).toMatch(
       /^Avow's relay refused this \$400 booking and no money moved\./,
