@@ -90,3 +90,19 @@ export function unplainMarks(v: string): UnplainMark[] {
   }
   return marks
 }
+
+/** A code point as a person reads its name, such as U+202E. */
+export const codePointName = (c: number) => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`
+
+/**
+ * Text with each character `unplainMarks` finds written as its code point in brackets, so a value
+ * held from before a rule for plain text can neither hide nor reorder what follows it. Text that is
+ * plain already comes back as it is.
+ */
+export function markedUnplain(v: string): string {
+  const marked = new Set(unplainMarks(v).map((m) => m.at))
+  if (marked.size === 0) return v
+  return (Array.from(v) as string[])
+    .map((ch, i) => (marked.has(i + 1) ? `[${codePointName(ch.codePointAt(0) as number)}]` : ch))
+    .join('')
+}
