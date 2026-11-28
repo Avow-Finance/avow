@@ -14,10 +14,11 @@ import {
 } from './fields.js'
 import { JOB, JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import { address, bytes32, u64, u256 } from './json-fields.js'
-import { OPEN_TERMS, type OpenTerm } from './negotiation.js'
 import type { ReasonCode } from './reasons.js'
 import {
   BUSINESS_ID_MAX,
+  OPEN_TERMS,
+  type OpenTerm,
   SERVICE,
   SERVICE_CATEGORY,
   SERVICE_NAME_MAX,
