@@ -23,7 +23,7 @@ import {
   tempoKeychainCheck,
   toWire,
 } from '@avow-finance/spec'
-import { type Hex, isAddressEqual, toHex } from 'viem'
+import { type Address, type Hex, isAddressEqual, toHex } from 'viem'
 import { AvowApiError, signingRequestKey } from '../http.js'
 import { moderatoClient } from '../moderato.js'
 import { quoteService } from '../service/quote.js'
@@ -146,6 +146,11 @@ export interface SandboxServices {
   readonly businessId: string
   /** Whether the folder holds a signing key, so the agent can quote and accept as a supplier. */
   readonly sells: boolean
+  /**
+   * The address of the signing key the agent sells with, which a seller's mandate names, or null
+   * for an agent that only buys. The key itself stays in the folder.
+   */
+  readonly signingKey: Address | null
   /**
    * Publishes an offer under this business, and answers with the version, its id and where the
    * agent stands as a seller. A version of the same item it had published is replaced, since an
@@ -346,14 +351,14 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       await write(store, 'services', toWire({ ...now, ...change(now) }) as object)
     })
 
-  const sells = (() => {
+  const signingKey = (() => {
     try {
-      context.needSupplier()
-      return true
+      return context.needSupplier().signing.address
     } catch {
-      return false
+      return null
     }
   })()
+  const sells = signingKey !== null
 
   // Where the agent stands as a seller.
 
@@ -775,6 +780,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   return {
     businessId: business.businessId,
     sells,
+    signingKey,
     publish,
     sellerStanding,
     askToSell,
