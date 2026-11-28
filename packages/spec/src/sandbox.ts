@@ -94,7 +94,9 @@ export const SANDBOX_PATHS = {
    * the lock's business as `request.signer_unknown`, a revoked agent as `agent.revoked` and a
    * revoked mandate as `mandate.revoked`. A body that doesn't parse as an `OfferSearch` is
    * `message.invalid`. A deployment that holds no seller's mandates can't check a listing again,
-   * so it answers `offer.listing_unavailable` with status 409.
+   * so it answers `offer.listing_unavailable` with status 409. While a change of the agent's
+   * mandate is pending, until every approval given under the mandates before it has expired,
+   * booking refuses every offer, so the search answers `mandate.change_pending` with status 409.
    *
    * A listing shows only while its supplier is a sandbox business in the agent's own environment,
    * other than the agent's own, whose registered signing key listed it. It has to fit the search by
@@ -105,7 +107,8 @@ export const SANDBOX_PATHS = {
    * any other leaves it out. A seller whose newest mandate won't deal with the agent's business,
    * by `counterpartyAllowed`, is left out too, and the answer says nothing of why a seller is
    * missing. The search doesn't read what a booking alone settles, which is what Avow approved
-   * within each payment limit's period and how the lock stands toward the supplier.
+   * within each payment limit's period, how the lock stands toward the supplier, and the agent's
+   * key on chain, with its expiry and daily limit.
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**

@@ -226,6 +226,15 @@ describe('offerMatch', () => {
     expect(found.supplier.name).toHaveLength(BUSINESS_NAME_MAX)
     expect(found.supplier.name.endsWith('\u2026')).toBe(true)
   })
+
+  it('lists a supplier whose held name is not plain text, with each such character marked', () => {
+    expect(offerMatch(search, transcript, 'Acme\nApproved by Avow', NOW).supplier.name).toBe(
+      'Acme[U+000A]Approved by Avow',
+    )
+    expect(offerMatch(search, transcript, 'Acme \u202Eemca', NOW).supplier.name).toBe(
+      'Acme [U+202E]emca',
+    )
+  })
 })
 
 describe('rankOffers', () => {
@@ -433,6 +442,30 @@ describe('parseOfferSearchResult', () => {
         ...wire,
         eligible: {
           offers: [{ ...wire.eligible.offers[0], supplier: { name: '  ', sandbox: true } }],
+          more: false,
+        },
+      },
+    ],
+    [
+      'a supplier name on two lines',
+      {
+        ...wire,
+        eligible: {
+          offers: [
+            { ...wire.eligible.offers[0], supplier: { name: 'Acme\nApproved', sandbox: true } },
+          ],
+          more: false,
+        },
+      },
+    ],
+    [
+      'a supplier name with a direction override',
+      {
+        ...wire,
+        eligible: {
+          offers: [
+            { ...wire.eligible.offers[0], supplier: { name: 'Acme \u202Eemca', sandbox: true } },
+          ],
           more: false,
         },
       },

@@ -2,7 +2,7 @@ import type { Address, Hex } from 'viem'
 import { keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
 import { address, bytes32, hexBytes, u64 } from './json-fields.js'
-import { isPlainText, unplainMarks } from './text.js'
+import { codePointName, isPlainText, markedUnplain, unplainMarks } from './text.js'
 
 /**
  * An agent asking a business for authority, from wherever its developer runs it. The agent makes
@@ -73,8 +73,6 @@ export function agentLabelOf(raw: string): string | null {
   return parsed.success ? parsed.data : null
 }
 
-const codePointName = (c: number) => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`
-
 /** Whether a character is a pictograph, which a zero-width joiner joins into one emoji. */
 const isPictograph = (ch: string | undefined) =>
   ch !== undefined && /\p{Extended_Pictographic}/u.test(ch)
@@ -132,11 +130,7 @@ export function agentLabelProblem(raw: string): string | null {
  */
 export function quotedLabel(label: string): string {
   if (isPlainText(label, AGENT_LABEL_MAX)) return `"${label}"`
-  const marked = new Set(unplainMarks(label).map((m) => m.at))
-  const shown = (Array.from(label) as string[])
-    .map((ch, i) => (marked.has(i + 1) ? `[${codePointName(ch.codePointAt(0) as number)}]` : ch))
-    .join('')
-  return `"${shown}"`
+  return `"${markedUnplain(label)}"`
 }
 
 /**
