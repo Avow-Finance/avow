@@ -290,7 +290,9 @@ The administrator chooses what each address receives.
 | As a supplier | Each event of a commitment Avow recorded with the business as its supplier, which another business's lock logs |
 | Both | Both of those |
 
-A supplier address receives its sales and approves nothing, and it gets no event of a commitment it doesn't supply. An address that takes both tells the sides apart by comparing the event's `commitment.lock` with the business's own lock address, both in lower case. When they match, the business is buying, and any other lock means it's supplying.
+Signing an address approves no transaction. A supplier address gets no event of a commitment its business doesn't supply. An address that takes both tells the sides apart by comparing the event's `commitment.lock` with the business's own lock address, both in lower case. When they match, the business is buying, and any other lock means it's supplying.
+
+An address added before this choice existed gets the buyer's events only.
 
 The choice is part of what the passkey signs, so it can't be changed in place. To change what an address receives, remove it and add it again with the new choice, and it answers a fresh challenge before anything more is posted.
 
