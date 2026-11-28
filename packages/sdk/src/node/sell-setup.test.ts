@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
 import { OFFER_LISTINGS_UNTAKEN, type ServiceOfferDraft } from '../sandbox/services.js'
 import {
+  fromNpxCache,
   keepRunningText,
   missingFlags,
   readKeepRunningArgs,
@@ -10,6 +11,7 @@ import {
   type SellSetupDeps,
   sellSetup,
 } from './sell-setup.js'
+import { ASKED_INPUTS } from './services.js'
 
 const FLAGS = [
   '--name',
@@ -161,6 +163,26 @@ describe('sell setup', () => {
     expect(w.listening()).toBe(false)
   })
 
+  it('asks again for a flag out of range, with the same words the flag would get', async () => {
+    const flags = [...FLAGS]
+    flags[flags.indexOf('--no-show') + 1] = '120'
+    const w = world({ answers: ['50', 'y', 'n'] })
+    const end = await sellSetup(ask([...flags, '--no-listen']), w.deps)
+    expect(end).toEqual({ ok: true, published: true })
+    const refused = w.said.find((l) => l.startsWith('--no-show 120'))
+    const words = ASKED_INPUTS.no_show_percent(120)
+    if (typeof words !== 'object') throw new Error('120% should not read')
+    expect(refused).toContain(words.error)
+    expect(w.published[0]?.rules.noShowBps).toBe(5_000)
+  })
+
+  it('refuses a flag out of range where nobody can answer', async () => {
+    const flags = [...FLAGS]
+    flags[flags.indexOf('--per-day') + 1] = '0'
+    const end = await sellSetup(ask(flags), world({}).deps)
+    expect(end).toMatchObject({ ok: false, exitCode: 1 })
+  })
+
   it('publishes nothing when the answer to publishing is no', async () => {
     const w = world({ answers: ['no'] })
     expect(await sellSetup(ask(FLAGS), w.deps)).toEqual({ ok: true, published: false })
@@ -198,23 +220,61 @@ describe('sell setup', () => {
   })
 })
 
+const runnable = (
+  folder: string,
+  cli = '/srv/seller/node_modules/@avow-finance/sdk/dist/node/cli.js',
+) => ({
+  folder,
+  node: '/usr/local/bin/node',
+  cli,
+  version: '0.12.0',
+})
+
 describe('keeping the listener running', () => {
-  it('leaves pm2 and systemd stopped after a stop a restart cannot fix', () => {
-    const pm2 = keepRunningText('pm2', "/srv/Bob's seller", '/usr/bin').join('\n')
+  it('runs this Node and the installed command directly, so a stop reaches the listener', () => {
+    const pm2 = keepRunningText('pm2', runnable("/srv/Bob's seller")).join('\n')
     expect(pm2).toContain(
-      "--cwd '/srv/Bob'\\''s seller' --stop-exit-codes 0 2 -- avow-sandbox listen",
+      "pm2 start '/srv/seller/node_modules/@avow-finance/sdk/dist/node/cli.js' --interpreter '/usr/local/bin/node'",
+    )
+    expect(pm2).toContain(
+      "--cwd '/srv/Bob'\\''s seller' --kill-timeout 30000 --stop-exit-codes 0 2 -- listen",
     )
     expect(pm2).toContain('avow-seller-bob-s-seller')
-    const systemd = keepRunningText('systemd', '/srv/seller', '/usr/bin').join('\n')
-    expect(systemd).toContain('Restart=on-failure')
-    expect(systemd).toContain('RestartPreventExitStatus=2')
-    expect(systemd).toContain('WorkingDirectory=/srv/seller')
+    expect(pm2).toContain('avow-sandbox 0.12.0')
+    expect(pm2).not.toContain('npx avow-sandbox listen')
+    expect(pm2).not.toMatch(/Windows/)
   })
 
-  it('writes a launchd plist with the folder escaped', () => {
-    const plist = keepRunningText('launchd', '/Users/a&b/seller', '/usr/bin').join('\n')
+  it('leaves systemd stopped after a stop a restart cannot fix, with % and quotes escaped', () => {
+    const systemd = keepRunningText(
+      'systemd',
+      runnable('/srv/100% "seller"', '/opt/a b/cli.js'),
+    ).join('\n')
+    expect(systemd).toContain('Restart=on-failure')
+    expect(systemd).toContain('RestartPreventExitStatus=2')
+    expect(systemd).toContain('TimeoutStopSec=30')
+    expect(systemd).toContain('WorkingDirectory=/srv/100%% "seller"')
+    expect(systemd).toContain('ExecStart="/usr/local/bin/node" "/opt/a b/cli.js" listen')
+    expect(systemd).not.toContain('PATH=')
+  })
+
+  it('writes a launchd plist with every path escaped', () => {
+    const plist = keepRunningText('launchd', runnable('/Users/a&b/seller')).join('\n')
     expect(plist).toContain('<string>/Users/a&amp;b/seller</string>')
+    expect(plist).toContain('<string>/usr/local/bin/node</string>')
     expect(plist).toContain('<key>SuccessfulExit</key><false/>')
+  })
+
+  it("warns when the command runs from npx's cache, which npx can clear", () => {
+    const cached = keepRunningText(
+      'systemd',
+      runnable(
+        '/srv/seller',
+        '/home/me/.npm/_npx/1a2b/node_modules/@avow-finance/sdk/dist/node/cli.js',
+      ),
+    ).join('\n')
+    expect(cached).toContain('npm install avow-sandbox@0.12.0')
+    expect(fromNpxCache('/srv/seller/node_modules/.bin/avow-sandbox')).toBe(false)
   })
 
   it('takes one of the managers it knows', () => {

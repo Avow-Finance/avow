@@ -86,11 +86,12 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            it and waits for the acceptance
   listen   reads the business's inbox and quotes and accepts each order, until you stop it. A
            service order is quoted only for an offer this business published. It keeps a status
-           line, runs once a folder, and when it stops says why, what still waits and how to resume
+           line, keeps a second listener off the folder, and when it stops says why, what still
+           waits and how to resume
   sell     setup asks for the item, its price, both charges and orders a day, publishes the offer,
            lists it with Avow with --list-with-avow, and starts listen. Flags answer the questions
            where nobody can type. keep-running pm2|systemd|launchd prints what a process manager
-           needs to keep listen running unattended
+           needs to keep listen running unattended on macOS or Linux
   ask-to-sell  asks the business's administrator for a seller's mandate with --terms <file>,
            prints the link to decide it, and waits for the decision. Avow doesn't take these
            requests yet, and says so

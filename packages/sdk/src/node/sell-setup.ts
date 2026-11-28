@@ -1,11 +1,19 @@
+import { readFileSync, realpathSync } from 'node:fs'
 import { basename } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { SERVICE_QUANTITY_MAX } from '@avow-finance/spec'
+import { fileURLToPath } from 'node:url'
+import type { ServiceOfferVersion } from '@avow-finance/spec'
 import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
-import { type SandboxServices, sandboxServices } from '../sandbox/services.js'
+import {
+  type Published,
+  type SandboxServices,
+  type ServiceOfferDraft,
+  sandboxServices,
+} from '../sandbox/services.js'
 import { listenCommand } from './listen.js'
 import { fileStore } from './platform.js'
 import {
+  ASKED_INPUTS,
   listedLines,
   type OfferInput,
   offerSentences,
@@ -27,67 +35,53 @@ import {
  * publishes, quotes and accepts, and the agent holds itself to it.
  */
 
-/** The questions setup asks, in order, each with the input it sets and how its answer reads. */
+/** A typed number as a number, and anything else as one no reader takes. */
+const typedNumber = (typed: string) =>
+  /^[0-9]+(\.[0-9]+)?$/.test(typed) ? Number(typed) : Number.NaN
+
+/**
+ * The questions setup asks, in order, each with the input it sets. An answer reads with the same
+ * reader `readOfferInput` uses, so a question takes exactly what the flag takes.
+ */
 const QUESTIONS: readonly {
-  key: keyof OfferInput
+  key: keyof typeof ASKED_INPUTS
   flag: string
   ask: string
-  read: (typed: string) => string | number | { error: string }
+  number: boolean
 }[] = [
-  { key: 'name', flag: '--name', ask: 'What do you sell? Give the item a short name', read: text },
+  {
+    key: 'name',
+    flag: '--name',
+    ask: 'What do you sell? Give the item a short name',
+    number: false,
+  },
   {
     key: 'summary',
     flag: '--summary',
     ask: 'In one sentence, what does the buyer get for one unit',
-    read: text,
+    number: false,
   },
   {
     key: 'evidence',
     flag: '--evidence',
     ask: 'What shows the buyer it was delivered',
-    read: text,
+    number: false,
   },
-  {
-    key: 'price',
-    flag: '--price',
-    ask: 'The price of one unit, in test dollars',
-    read: (t) =>
-      /^[0-9]+(\.[0-9]{1,6})?$/.test(t) && Number(t) > 0
-        ? Number(t)
-        : { error: 'Give a price above zero, to six decimals at most, such as 50 or 12.5.' },
-  },
+  { key: 'price', flag: '--price', ask: 'The price of one unit, in test dollars', number: true },
   {
     key: 'late_cancellation_percent',
     flag: '--late-cancellation',
     ask: 'What cancelling late costs the buyer, as a percentage of the price',
-    read: percent,
+    number: true,
   },
   {
     key: 'no_show_percent',
     flag: '--no-show',
     ask: 'What not being there to take delivery costs the buyer, as a percentage of the price',
-    read: percent,
+    number: true,
   },
-  {
-    key: 'per_day',
-    flag: '--per-day',
-    ask: 'How many orders a day you take',
-    read: (t) =>
-      /^[1-9][0-9]{0,6}$/.test(t) && Number(t) <= SERVICE_QUANTITY_MAX
-        ? Number(t)
-        : { error: `Give a whole number of orders from 1 to ${SERVICE_QUANTITY_MAX}.` },
-  },
+  { key: 'per_day', flag: '--per-day', ask: 'How many orders a day you take', number: true },
 ]
-
-function text(typed: string): string | { error: string } {
-  return typed ? typed : { error: 'Type an answer, or Ctrl+C to stop.' }
-}
-
-function percent(typed: string): number | { error: string } {
-  return /^[0-9]+(\.[0-9]{1,2})?$/.test(typed) && Number(typed) <= 100
-    ? Number(typed)
-    : { error: 'Give a percentage from 0 to 100, to two decimals at most, such as 20.' }
-}
 
 /** What `sell setup` was asked to do, read from its flags. */
 export interface SellSetupAsk {
@@ -132,7 +126,10 @@ export function missingFlags(input: OfferInput): string[] {
 /** What setup uses beyond its own logic, which a test replaces. */
 export interface SellSetupDeps {
   services: () => Promise<
-    Pick<SandboxServices, 'businessId' | 'sells' | 'publish' | 'listWithAvow'>
+    Pick<SandboxServices, 'businessId' | 'sells' | 'listWithAvow'> & {
+      /** Publishing a service, which is all setup publishes. */
+      publish: (draft: ServiceOfferDraft) => Promise<Published<ServiceOfferVersion>>
+    }
   >
   /** Asks a question and answers with what was typed, or null when nobody can type. */
   ask: ((question: string) => Promise<string | null>) | null
@@ -156,7 +153,7 @@ async function askFor(
   for (;;) {
     const typed = await ask(`${q.ask}: `)
     if (typed === null) return null
-    const read = q.read(typed.trim())
+    const read = ASKED_INPUTS[q.key](q.number ? typedNumber(typed.trim()) : typed)
     if (typeof read !== 'object') return read
     log(read.error)
   }
@@ -195,7 +192,14 @@ export async function sellSetup(ask: SellSetupAsk, deps: SellSetupDeps): Promise
     }
   }
   for (const q of QUESTIONS) {
-    if (input[q.key] !== undefined || !deps.ask) continue
+    if (!deps.ask) break
+    const given = input[q.key]
+    if (given !== undefined) {
+      // A flag that doesn't read is asked again, with the reason, while someone's there to answer.
+      const read = ASKED_INPUTS[q.key](given)
+      if (typeof read !== 'object') continue
+      log(`${q.flag} ${String(given)} doesn't read. ${read.error}`)
+    }
     const answer = await askFor(q, deps.ask, log)
     if (answer === null)
       return { ok: false, exitCode: 1, error: 'Setup stopped before the offer was complete.' }
@@ -214,7 +218,7 @@ export async function sellSetup(ask: SellSetupAsk, deps: SellSetupDeps): Promise
     log('Nothing was published.')
     return { ok: true, published: false }
   }
-  let published: Awaited<ReturnType<SandboxServices['publish']>>
+  let published: Published<ServiceOfferVersion>
   try {
     published = await services.publish(draft)
   } catch (error) {
@@ -256,6 +260,21 @@ export async function sellSetup(ask: SellSetupAsk, deps: SellSetupDeps): Promise
 export const MANAGERS = ['pm2', 'systemd', 'launchd'] as const
 export type Manager = (typeof MANAGERS)[number]
 
+/**
+ * What a process manager runs: this Node and the installed command's own file, both by absolute
+ * path. Running them directly, and not through npx, means the manager's stop signal reaches the
+ * listener, and a restart runs the version installed here and never resolves a newer package.
+ */
+export interface Runnable {
+  folder: string
+  node: string
+  cli: string
+  version: string
+}
+
+/** How long a manager waits after asking the listener to stop, so it can say what still waits. */
+const STOP_GRACE_SECONDS = 30
+
 const slug = (folder: string) =>
   basename(folder)
     .toLowerCase()
@@ -265,21 +284,37 @@ const slug = (folder: string) =>
 const xml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const shell = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+/** A value in a systemd unit, where % starts a specifier. */
+const unit = (s: string) => s.replace(/%/g, '%%')
+/** One argument of a systemd command line, quoted so a space or a quote stays in it. */
+const unitArg = (s: string) => `"${unit(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+
+/** Whether the command runs from npx's own cache, which npx may clear or replace. */
+export const fromNpxCache = (cli: string) => /[\\/]_npx[\\/]/.test(cli)
 
 /**
  * What a process manager needs to keep `avow-sandbox listen` running in a folder, with the steps to
  * start it. Each restarts the listener after a failure and leaves it stopped after Ctrl+C or a stop,
  * which exit with 0. pm2 and systemd also leave it stopped after exit code 2, a stop a restart can't
- * fix.
+ * fix. These are for macOS and Linux.
  */
-export function keepRunningText(manager: Manager, folder: string, path: string): string[] {
-  const name = `avow-seller-${slug(folder)}`
+export function keepRunningText(manager: Manager, r: Runnable): string[] {
+  const name = `avow-seller-${slug(r.folder)}`
+  const pinned = [
+    `It runs avow-sandbox ${r.version} from ${r.cli} with the Node at ${r.node}, so an update changes nothing until you run keep-running again.`,
+    ...(fromNpxCache(r.cli)
+      ? [
+          `That file is in npx's cache, which npx can clear. Install it in this folder first with npm install avow-sandbox@${r.version}, then run npx avow-sandbox sell keep-running ${manager} again.`,
+        ]
+      : []),
+  ]
   if (manager === 'pm2') {
     return [
-      'Start the listener under pm2, which also runs on Windows, and keep it across restarts',
-      `  pm2 start npx --name ${name} --cwd ${shell(folder)} --stop-exit-codes 0 2 -- avow-sandbox listen`,
+      'Start the listener under pm2, and keep it across restarts',
+      `  pm2 start ${shell(r.cli)} --interpreter ${shell(r.node)} --name ${name} --cwd ${shell(r.folder)} --kill-timeout ${STOP_GRACE_SECONDS * 1000} --stop-exit-codes 0 2 -- listen`,
       '  pm2 save',
       '  pm2 startup',
+      ...pinned,
       `pm2 logs ${name} shows its status line and each step, and pm2 stop ${name} stops it, after which it says what still waits.`,
     ]
   }
@@ -288,16 +323,16 @@ export function keepRunningText(manager: Manager, folder: string, path: string):
       `Save this as ~/.config/systemd/user/${name}.service`,
       '',
       '[Unit]',
-      `Description=Avow sandbox seller in ${folder}`,
+      `Description=Avow sandbox seller in ${unit(r.folder)}`,
       'After=network-online.target',
       '',
       '[Service]',
-      `WorkingDirectory=${folder}`,
-      `Environment="PATH=${path}"`,
-      'ExecStart=/usr/bin/env npx avow-sandbox listen',
+      `WorkingDirectory=${unit(r.folder)}`,
+      `ExecStart=${unitArg(r.node)} ${unitArg(r.cli)} listen`,
       'Restart=on-failure',
       'RestartSec=10',
       'RestartPreventExitStatus=2',
+      `TimeoutStopSec=${STOP_GRACE_SECONDS}`,
       '',
       '[Install]',
       'WantedBy=default.target',
@@ -305,11 +340,12 @@ export function keepRunningText(manager: Manager, folder: string, path: string):
       'Then start it, and keep it running after you log out',
       `  systemctl --user daemon-reload && systemctl --user enable --now ${name}`,
       '  loginctl enable-linger',
+      ...pinned,
       `journalctl --user -u ${name} -f shows what it says, and systemctl --user stop ${name} stops it, after which it says what still waits.`,
     ]
   }
   const label = `finance.avow.${name}`
-  const log = `${folder}/.avow/listen.log`
+  const log = `${r.folder}/.avow/listen.log`
   return [
     `Save this as ~/Library/LaunchAgents/${label}.plist`,
     '',
@@ -318,13 +354,12 @@ export function keepRunningText(manager: Manager, folder: string, path: string):
     '<plist version="1.0">',
     '<dict>',
     `  <key>Label</key><string>${label}</string>`,
-    '  <key>ProgramArguments</key>',
-    '  <array><string>/usr/bin/env</string><string>npx</string><string>avow-sandbox</string><string>listen</string></array>',
-    `  <key>WorkingDirectory</key><string>${xml(folder)}</string>`,
-    `  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(path)}</string></dict>`,
+    `  <key>ProgramArguments</key><array><string>${xml(r.node)}</string><string>${xml(r.cli)}</string><string>listen</string></array>`,
+    `  <key>WorkingDirectory</key><string>${xml(r.folder)}</string>`,
     '  <key>RunAtLoad</key><true/>',
     '  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>',
     '  <key>ThrottleInterval</key><integer>30</integer>',
+    `  <key>ExitTimeOut</key><integer>${STOP_GRACE_SECONDS}</integer>`,
     `  <key>StandardOutPath</key><string>${xml(log)}</string>`,
     `  <key>StandardErrorPath</key><string>${xml(log)}</string>`,
     '</dict>',
@@ -332,8 +367,23 @@ export function keepRunningText(manager: Manager, folder: string, path: string):
     '',
     'Then start it',
     `  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/${label}.plist`,
+    ...pinned,
     `launchd restarts it after any exit but 0, exit code 2 included, every 30 seconds, so read ${log} when it keeps stopping. launchctl bootout gui/$(id -u)/${label} stops it, after which it says what still waits.`,
   ]
+}
+
+/** This Node, the installed command's file and its version, for `sell keep-running`. */
+export function thisRunnable(folder: string): Runnable {
+  const cli = realpathSync(fileURLToPath(new URL('./cli.js', import.meta.url)))
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+    version?: unknown
+  }
+  return {
+    folder,
+    node: realpathSync(process.execPath),
+    cli,
+    version: typeof pkg.version === 'string' ? pkg.version : 'unknown',
+  }
 }
 
 /** What `sell keep-running` was asked for, or why it can't run. */
@@ -351,7 +401,7 @@ starts the listener. --name, --summary, --evidence, --price, --late-cancellation
 --per-day answer the questions up front, with the rest of offer publish's flags.
 --list-with-avow lists the offer with Avow, --no-listen stops after publishing, and --yes publishes
 without asking. sell keep-running pm2|systemd|launchd prints what a process manager needs to keep
-the listener running unattended.`
+the listener running unattended, on macOS or Linux.`
 
 /** `avow-sandbox sell setup | keep-running <manager>`. */
 export async function sellCommand(args: readonly string[]): Promise<void> {
@@ -362,7 +412,7 @@ export async function sellCommand(args: readonly string[]): Promise<void> {
       console.error(read.error)
       process.exit(1)
     }
-    console.log(keepRunningText(read.manager, process.cwd(), process.env.PATH ?? '').join('\n'))
+    console.log(keepRunningText(read.manager, thisRunnable(process.cwd())).join('\n'))
     return
   }
   if (verb !== 'setup') {

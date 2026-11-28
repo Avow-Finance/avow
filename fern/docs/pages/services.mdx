@@ -97,7 +97,7 @@ Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere, 
 The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has the agent's signing key and the rules below, which its own agent keeps. When Avow serves a [seller's mandate](/docs/reference/seller-mandate) for the agent's key, the agent also holds itself to it before it publishes, quotes or accepts. Avow serves none yet, so today an agent sells as it did before and says that no seller's mandate is in force and that Avow doesn't enforce seller limits yet. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
 
 - It quotes only an offer found among the ones it published, with `publishedOffer`. An order for any other offer, a replaced version included, is left to lapse with nothing reserved. The mailbox carries no refusal yet, so the buyer's agent sees the order lapse and not the reason.
-- It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. The count is by item name and lives in the folder, so `listen` runs once a folder and refuses to start beside another listener there.
+- It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. The count is by item name and lives in the folder, so run one seller on a folder at a time. `listen` takes a lock that keeps a second listener off the folder. The MCP server's `sell`, the SDK's `sell` and a `start` session take no lock, so never run one of them beside a listener on the same folder.
 - It quotes the terms the order builds and nothing else, so there is no price to negotiate in an order.
 - It accepts only an order whose quote it signed.
 
@@ -130,20 +130,24 @@ Each sandbox business is a test business on Tempo's Moderato testnet, it sells f
 
 `listen` is safe to restart. Every quote is kept in `.avow` before it's sent, and an acceptance already on the lock is read back, so a listener that starts again picks up where the last one stopped and takes no step twice. Orders that arrive while nothing listens wait in the inbox until they lapse, with nothing reserved.
 
-Run it under the process manager you already use. `sell keep-running pm2`, `sell keep-running systemd` or `sell keep-running launchd` prints the setup for this folder with the steps to start it. Each restarts the listener after a failure and leaves it stopped after you stop it.
+Run it under the process manager you already use, on macOS or Linux. `sell keep-running pm2`, `sell keep-running systemd` or `sell keep-running launchd` prints the setup for this folder with the steps to start it. Each restarts the listener after a failure, leaves it stopped after you stop it, and gives it 30 seconds to say what still waits before it's ended.
+
+Each setup runs Node and the installed command by their absolute paths, so the manager's stop signal reaches the listener, and a restart runs the version you set up and never fetches a newer one. Install `avow-sandbox` in the folder before you print a setup. When the command runs from npx's cache, which npx can clear, the setup says so. Run `keep-running` again after an update. On Windows, run `listen` in a terminal you keep open.
+
+Only one listener runs on a folder. The lock in `.avow/listen.lock` names the process, the machine, the machine's boot and when the process started, and a new listener takes it over only once its holder is known to be gone. A lock from another machine, from before this machine last started, or from a process that may still run is refused with `listen.already_running`, which names the file to remove once you're sure no listener runs. The lock covers `listen` only.
 
 While it runs, `listen` keeps one status line with what it has quoted, accepted, declined and failed since it started, and when Avow last answered. In a terminal the line updates in place, and in a process manager's log it's written when it changes and every 15 minutes.
 
 ### When it stops
 
-`listen` says why it stopped with a reason code, what still waits, and how to resume. It lists funded orders waiting for you to accept, with the deadline after which their reserve goes back to the buyer, new orders waiting for a quote, quotes waiting for the buyer to fund, and accepted commitments still to deliver. Stopping changes no commitment.
+A stop takes effect between orders. The listener finishes the step it's taking and starts no other. Then it says why it stopped with a reason code, what still waits, and how to resume. It lists funded orders waiting for you to accept, with the deadline after which their reserve goes back to the buyer, new orders waiting for a quote, service and job quotes waiting for the buyer to fund, and accepted service and job commitments still to deliver. When it can't read what waits, it says so. Stopping changes no commitment.
 
 | Reason code | What happened | Exit code |
 | --- | --- | --- |
 | `listen.stopped` | Ctrl+C, or a process manager's SIGTERM or SIGHUP | 0 |
-| `listen.failed` | Something it couldn't carry on past, such as a folder it can't read | 1 |
+| `listen.failed` | Something it couldn't carry on past, such as a folder or a lock it can't read or write | 1 |
 | `listen.not_seller` | The agent holds no signing key. Connect it with `connect --sell` | 2 |
-| `listen.already_running` | Another listener holds the folder, named by its process id | 2 |
+| `listen.already_running` | Another listener holds the folder, or may. It names the lock file to remove once none runs | 2 |
 
 Exit code 2 is a stop a restart can't fix, so the pm2 and systemd setups don't restart after it. A read of the inbox that fails is no stop. The listener says so on its status line and keeps trying.
 

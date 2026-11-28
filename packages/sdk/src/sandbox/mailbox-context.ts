@@ -281,8 +281,9 @@ export type InboxRead = { ok: true; orders: number } | { ok: false; error: unkno
 /**
  * Reads an inbox every few seconds and takes each order's next step, until the signal stops it. An
  * order the handler declines is left to lapse, and a step that throws goes to `onError` and is
- * tried again on the next read. A read that fails goes to `onRead` and is tried again too. Nothing
- * wakes this when it isn't running.
+ * tried again on the next read. A read that fails goes to `onRead` and is tried again too. Once
+ * the signal stops it, it finishes the step it's on and starts no other. Nothing wakes this when it
+ * isn't running.
  */
 export async function listenFor<Order extends Staged, Step>(p: {
   inbox: () => Promise<Order[]>
@@ -307,6 +308,8 @@ export async function listenFor<Order extends Staged, Step>(p: {
       },
     )
     for (const order of orders) {
+      // A stop takes effect between orders, so no new step starts after it.
+      if (p.signal?.aborted) return
       if (order.status === 'requested' && p.accept && !(await p.accept(order))) continue
       await p
         .sell(order, (step) => p.onStep?.(order, step))

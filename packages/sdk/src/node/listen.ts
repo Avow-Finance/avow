@@ -1,11 +1,11 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { uptime } from 'node:os'
 import { join } from 'node:path'
 import { offerItemOf } from '@avow-finance/spec'
 import { sandboxMailbox } from '../sandbox/mailbox.js'
 import type { InboxRead } from '../sandbox/mailbox-context.js'
+import { type KeptJobSale, keptJobSales } from '../sandbox/seller-sales.js'
 import type { Quoted } from '../sandbox/service-quoted.js'
 import { SERVICE_ORDERS_UNSERVED, sandboxServices } from '../sandbox/services.js'
+import { type ListenLock, takeListenLock } from './listen-lock.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
 
 /**
@@ -26,7 +26,7 @@ export type ListenStopCode =
   | 'listen.stopped'
   /** The agent in this folder holds no signing key, so it can't quote or accept. */
   | 'listen.not_seller'
-  /** Another listener already runs on this folder. */
+  /** Another listener holds the folder, or may. */
   | 'listen.already_running'
   /** Something it couldn't carry on past, such as a folder it can't read. */
   | 'listen.failed'
@@ -35,6 +35,8 @@ export interface ListenStop {
   code: ListenStopCode
   /** What happened, in a sentence. */
   detail: string
+  /** The lock file to remove once no other listener runs, for a stop the lock caused. */
+  lockFile?: string
 }
 
 /**
@@ -46,78 +48,6 @@ export const LISTEN_EXIT: Record<ListenStopCode, 0 | 1 | 2> = {
   'listen.failed': 1,
   'listen.not_seller': 2,
   'listen.already_running': 2,
-}
-
-/** The file in `.avow` that says which process listens on the folder. */
-export const LISTEN_LOCK = 'listen.lock'
-
-/** When this machine last started, to the minute, so a lock left before a restart reads as stale. */
-const bootMinute = () => Math.round((Date.now() / 1000 - uptime()) / 60)
-
-/** Whether a process with this id runs, as far as this user can tell. */
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-/** What a lock file says, or null for one that doesn't read. */
-function readLock(text: string): { pid: number; boot: number } | null {
-  const [pid, boot] = text.trim().split(' ').map(Number)
-  return Number.isSafeInteger(pid) && Number.isSafeInteger(boot)
-    ? { pid: pid as number, boot: boot as number }
-    : null
-}
-
-/**
- * Takes the folder's listener lock for this process. A lock left by a process that no longer runs,
- * or by one from before this machine last started, is taken over. Two listeners on one folder could
- * both take the day's last place, so a second one is refused with the id of the first.
- */
-export function takeListenLock(
-  dir: string,
-  o: { pid?: number; boot?: number; alive?: (pid: number) => boolean } = {},
-): { ok: true; release: () => void } | { ok: false; pid: number } {
-  const pid = o.pid ?? process.pid
-  const boot = o.boot ?? bootMinute()
-  const alive = o.alive ?? isAlive
-  const file = join(dir, LISTEN_LOCK)
-  const mine = `${pid} ${boot}\n`
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  for (let tries = 0; tries < 2; tries += 1) {
-    try {
-      writeFileSync(file, mine, { flag: 'wx', mode: 0o600 })
-      const release = () => {
-        try {
-          if (readFileSync(file, 'utf8') === mine) unlinkSync(file)
-        } catch {
-          // Already gone, which is what releasing wants.
-        }
-      }
-      return { ok: true, release }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    }
-    let held: { pid: number; boot: number } | null = null
-    try {
-      held = readLock(readFileSync(file, 'utf8'))
-    } catch {
-      // Removed between the write and the read, so the next try takes it.
-      continue
-    }
-    // Boot times read to the minute, so a minute either way is the same start.
-    const live = held && held.pid !== pid && Math.abs(held.boot - boot) <= 1 && alive(held.pid)
-    if (live) return { ok: false, pid: (held as { pid: number }).pid }
-    try {
-      unlinkSync(file)
-    } catch {
-      // Another listener took it over first, and the next try finds out.
-    }
-  }
-  throw new Error(`Couldn't take ${file}, so this listener doesn't start.`)
 }
 
 /** What a listener has done since it started, and when Avow last answered it. */
@@ -175,9 +105,32 @@ export function statusLine(tally: ListenTally): string {
 
 /** An order waiting on this business as supplier, whichever kind of order it is. */
 type Waiting = { orderId: string } & (
-  | { status: 'requested' | 'expired' | 'quoted' | 'accepted' }
+  | { status: 'requested' | 'expired' | 'quoted' | 'accepted' | 'declined' | 'withdrawn' }
   | { status: 'reserved'; reserve: { acceptBy: bigint } }
 )
+
+/** A sale the folder keeps, a service's or a job's, as the stop report reads it. */
+interface KeptSale {
+  orderId: string
+  item: string
+  until: bigint
+  accepted: boolean
+  deliverBy: bigint | null
+}
+
+/** The sales the folder keeps, from its services and its jobs. */
+export function keptSales(quotes: readonly Quoted[], jobs: readonly KeptJobSale[]): KeptSale[] {
+  return [
+    ...quotes.map((q) => ({
+      orderId: q.orderId,
+      item: q.item,
+      until: q.until,
+      accepted: q.accepted,
+      deliverBy: q.sale?.deliverBy ?? null,
+    })),
+    ...jobs,
+  ]
+}
 
 /** What still waits when a listener stops, read from the inboxes and the folder. */
 export interface Outstanding {
@@ -191,10 +144,10 @@ export interface Outstanding {
   owed: { orderId: string; item: string; deliverBy: bigint | null }[]
 }
 
-/** What still waits, from the orders waiting on the business and the quotes the folder keeps. */
+/** What still waits, from the orders waiting on the business and the sales the folder keeps. */
 export function outstandingOf(
   waiting: readonly Waiting[],
-  quotes: readonly Quoted[],
+  sales: readonly KeptSale[],
   now: bigint,
 ): Outstanding {
   const toQuote = waiting.filter((o) => o.status === 'requested').map((o) => o.orderId)
@@ -202,16 +155,17 @@ export function outstandingOf(
     o.status === 'reserved' ? [{ orderId: o.orderId, acceptBy: o.reserve.acceptBy }] : [],
   )
   const funded = new Set(toAccept.map((o) => o.orderId))
-  const quoted = quotes
+  const quoted = sales
     .filter((q) => !q.accepted && q.until > now && !funded.has(q.orderId))
     .map((q) => ({ orderId: q.orderId, item: q.item, until: q.until }))
-  const owed = quotes
-    .filter((q) => q.accepted && (q.sale === null || q.sale.deliverBy > now))
-    .map((q) => ({ orderId: q.orderId, item: q.item, deliverBy: q.sale?.deliverBy ?? null }))
+  const owed = sales
+    .filter((q) => q.accepted && (q.deliverBy === null || q.deliverBy > now))
+    .map((q) => ({ orderId: q.orderId, item: q.item, deliverBy: q.deliverBy }))
   return { toQuote, toAccept, quoted, owed }
 }
 
 const when = (seconds: bigint) => new Date(Number(seconds) * 1000).toISOString()
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
 
 /** What a listener says when it stops: why, what still waits, and how to start it again. */
 export function stopLines(
@@ -221,30 +175,32 @@ export function stopLines(
 ): string[] {
   const lines = [`The listener stopped with reason code ${stop.code}. ${stop.detail}`]
   if (outstanding && 'unread' in outstanding) {
-    lines.push(`It couldn't read what still waits (${outstanding.unread}).`)
+    lines.push(
+      `It couldn't read what still waits, so it can't say whether anything does (${outstanding.unread}). Funded orders still have to be accepted in time.`,
+    )
   } else if (outstanding) {
     const { toQuote, toAccept, quoted, owed } = outstanding
     if (toAccept.length > 0) {
       lines.push(
-        `${toAccept.length} funded order${toAccept.length === 1 ? '' : 's'} wait${toAccept.length === 1 ? 's' : ''} for this business to accept. One not accepted in time sends its reserve back to the buyer.`,
+        `${toAccept.length} funded ${plural(toAccept.length, 'order waits', 'orders wait')} for this business to accept. One not accepted in time sends its reserve back to the buyer.`,
         ...toAccept.map((o) => `  ${o.orderId}, accept by ${when(o.acceptBy)}`),
       )
     }
     if (toQuote.length > 0) {
       lines.push(
-        `${toQuote.length} new order${toQuote.length === 1 ? '' : 's'} wait${toQuote.length === 1 ? 's' : ''} for a quote, and each lapses with nothing reserved if none comes.`,
+        `${toQuote.length} new ${plural(toQuote.length, 'order waits', 'orders wait')} for a quote, and each lapses with nothing reserved if none comes.`,
         ...toQuote.map((id) => `  ${id}`),
       )
     }
     if (quoted.length > 0) {
       lines.push(
-        `${quoted.length} quote${quoted.length === 1 ? '' : 's'} wait${quoted.length === 1 ? 's' : ''} for the buyer to fund. A listener has to be running to accept once one is funded.`,
+        `${quoted.length} ${plural(quoted.length, 'quote waits', 'quotes wait')} for the buyer to fund. A listener has to be running to accept once one is funded.`,
         ...quoted.map((q) => `  ${q.orderId} for ${q.item}, until ${when(q.until)}`),
       )
     }
     if (owed.length > 0) {
       lines.push(
-        `${owed.length} accepted commitment${owed.length === 1 ? '' : 's'} stand${owed.length === 1 ? 's' : ''}, and stopping the listener changes none of them. Deliver each by its deadline.`,
+        `${owed.length} accepted ${plural(owed.length, 'commitment stands', 'commitments stand')}, and stopping the listener changes none of them. Deliver each by its deadline.`,
         ...owed.map(
           (o) =>
             `  ${o.orderId} for ${o.item}${o.deliverBy === null ? '' : `, deliver by ${when(o.deliverBy)}`}`,
@@ -261,7 +217,7 @@ export function stopLines(
     )
   } else if (stop.code === 'listen.already_running') {
     lines.push(
-      `Stop the other listener first. If none runs, remove ${join(folder, SANDBOX_DIR, LISTEN_LOCK)} and start again.`,
+      `Stop the other listener first. Once you're sure none runs on this folder, remove ${stop.lockFile ?? join(folder, SANDBOX_DIR, 'listen.lock')} and start again.`,
     )
   } else {
     lines.push(
@@ -342,13 +298,27 @@ type Services = Pick<
 export interface ListenDeps {
   /** The working folder, which holds `.avow`. */
   folder: string
-  open: () => Promise<{ mailbox: Mailbox; services: Services }>
+  open: () => Promise<{
+    mailbox: Mailbox
+    services: Services
+    /** The job sales the folder keeps. */
+    jobSales: () => Promise<KeptJobSale[]>
+  }>
   out: ListenOutput
   /** Aborted with the name of the signal that asks the listener to stop. */
   signal: AbortSignal
-  lock?: (dir: string) => ReturnType<typeof takeListenLock>
+  lock?: (dir: string) => Promise<ListenLock>
   now?: () => Date
 }
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** A service inbox that a sandbox carrying no service orders reads as empty, and fails otherwise. */
+const serviceInbox = (services: Services) =>
+  services.inbox().catch((error: unknown) => {
+    if (error instanceof Error && error.message === SERVICE_ORDERS_UNSERVED) return []
+    throw error
+  })
 
 /**
  * Runs a listener until it's asked to stop or can't carry on, and answers with why it stopped
@@ -357,45 +327,58 @@ export interface ListenDeps {
 export async function runListener(deps: ListenDeps): Promise<ListenStop> {
   const now = deps.now ?? (() => new Date())
   const { out } = deps
-  const { mailbox, services } = await deps.open()
-  const finish = async (stop: ListenStop, read: boolean): Promise<ListenStop> => {
-    let outstanding: Outstanding | { unread: string } | null = null
-    if (read) {
-      outstanding = await Promise.all([
-        mailbox.inbox(),
-        services.inbox().catch(() => []),
-        services.quotes(),
-      ]).then(
-        ([jobs, orders, quotes]) =>
-          outstandingOf(
-            [...jobs, ...orders] as Waiting[],
-            quotes,
-            BigInt(Math.floor(now().getTime() / 1000)),
-          ),
-        (error: unknown) => ({ unread: error instanceof Error ? error.message : String(error) }),
-      )
-    }
+  const say = (stop: ListenStop, outstanding: Outstanding | { unread: string } | null) => {
     for (const line of stopLines(stop, outstanding, deps.folder)) out.log(line)
     return stop
   }
+  let opened: Awaited<ReturnType<ListenDeps['open']>>
+  try {
+    opened = await deps.open()
+  } catch (error) {
+    return say(
+      { code: 'listen.failed', detail: `It couldn't open the folder. ${message(error)}` },
+      null,
+    )
+  }
+  const { mailbox, services, jobSales } = opened
+  /** What still waits, or why it couldn't be read. A sandbox that carries no service orders has none. */
+  const outstanding = () =>
+    Promise.all([mailbox.inbox(), serviceInbox(services), services.quotes(), jobSales()]).then(
+      ([jobs, orders, quotes, sold]) =>
+        outstandingOf(
+          [...jobs, ...orders] as Waiting[],
+          keptSales(quotes, sold),
+          BigInt(Math.floor(now().getTime() / 1000)),
+        ),
+      (error: unknown) => ({ unread: message(error) }),
+    )
   if (!services.sells) {
-    return finish(
+    return say(
       {
         code: 'listen.not_seller',
         detail:
           'The agent in this folder holds no signing key, so it can quote and accept nothing.',
       },
-      false,
+      null,
     )
   }
-  const lock = (deps.lock ?? takeListenLock)(join(deps.folder, SANDBOX_DIR))
+  let lock: ListenLock
+  try {
+    lock = await (deps.lock ?? takeListenLock)(join(deps.folder, SANDBOX_DIR))
+  } catch (error) {
+    return say(
+      { code: 'listen.failed', detail: `It couldn't take the folder's lock. ${message(error)}` },
+      await outstanding(),
+    )
+  }
   if (!lock.ok) {
-    return finish(
+    return say(
       {
         code: 'listen.already_running',
-        detail: `Process ${lock.pid} already listens on this folder, and two listeners could both take the day's last place.`,
+        detail: `${lock.why} Two listeners could both take the day's last place.`,
+        lockFile: lock.file,
       },
-      false,
+      null,
     )
   }
   try {
@@ -420,7 +403,7 @@ export async function runListener(deps: ListenDeps): Promise<ListenStop> {
       out.log(
         await services.sellerStanding().then(
           (standing) => standing.notice,
-          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          (error: unknown) => message(error),
         ),
       )
     }
@@ -439,7 +422,7 @@ export async function runListener(deps: ListenDeps): Promise<ListenStop> {
         out.status(statusLine(tally))
       },
       onError: (order: { orderId: string }, error: unknown) => {
-        const line = `${order.orderId}: ${error instanceof Error ? error.message : String(error)}`
+        const line = `${order.orderId}: ${message(error)}`
         if (!said.has(line)) {
           tally.failed += 1
           out.error(line)
@@ -452,31 +435,23 @@ export async function runListener(deps: ListenDeps): Promise<ListenStop> {
       },
     }
     out.status(statusLine(tally))
-    try {
-      await Promise.all([mailbox.listen(told), ...(unserved ? [] : [services.listen(told)])])
-    } catch (error) {
-      return await finish(
-        {
-          code: 'listen.failed',
-          detail: error instanceof Error ? error.message : String(error),
-        },
-        true,
-      )
-    }
+    await Promise.all([mailbox.listen(told), ...(unserved ? [] : [services.listen(told)])])
     const asked = deps.signal.reason
-    return await finish(
+    return say(
       {
         code: 'listen.stopped',
-        detail: `It was asked to stop${typeof asked === 'string' ? ` with ${asked}` : ''}, and took no step after that.`,
+        detail: `It was asked to stop${typeof asked === 'string' ? ` with ${asked}` : ''}. It finished the step it was taking and started no other.`,
       },
-      true,
+      await outstanding(),
     )
+  } catch (error) {
+    return say({ code: 'listen.failed', detail: message(error) }, await outstanding())
   } finally {
     lock.release()
   }
 }
 
-/** The signals that ask a listener to stop. Windows sends only the first. */
+/** The signals that ask a listener to stop. */
 const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
 
 /** `avow-sandbox listen` from a terminal or a process manager, which exits with the stop's code. */
@@ -484,15 +459,15 @@ export async function listenCommand(): Promise<void> {
   const stop = new AbortController()
   for (const name of STOP_SIGNALS) process.once(name, () => stop.abort(name))
   const store = fileStore()
-  const folder = process.cwd()
   const ended = await runListener({
-    folder,
+    folder: process.cwd(),
     open: async () => {
       const [mailbox, services] = await Promise.all([
         sandboxMailbox({ store }),
         sandboxServices({ store }),
       ])
-      return { mailbox, services }
+      const jobSales = () => keptJobSales(store, BigInt(Math.floor(Date.now() / 1000)))
+      return { mailbox, services, jobSales }
     },
     out: processOutput(),
     signal: stop.signal,
