@@ -32,7 +32,8 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
  * A seller's mandate is the authority a business's administrator signs for one selling agent, bound
  * to that agent's signing key the way a buyer's mandate is bound to its agent key. It says what the
  * agent may sell and at what price, how much it may promise, how far ahead, on what charges, to
- * whom, and until when. The business account's root key signs it under the business's own lock.
+ * whom, and until when. The business account's root key or one of its admin keys signs it under the
+ * business's own lock.
  *
  * This module holds the message, what makes one well formed, its signed form and its JSON.
  * `checkSellerMandate` reads a sale against one, `sellerMandateChainProblem` follows the mandates
@@ -98,7 +99,7 @@ export interface SellerMandate {
    */
   mandateId: Hex
   businessId: string
-  /** The business's account, whose root key signs the mandate. */
+  /** The business's account, whose root key or one of its admin keys signs the mandate. */
   account: Address
   /** The agent's signing key, which the business registered to quote and accept with. */
   signingKey: Address
@@ -230,8 +231,9 @@ export function sellerMandateTypedData(m: SellerMandate, d: AvowDomain) {
 }
 
 /**
- * A seller's mandate's hash, which the business account's root key signs and a sale's record
- * names. It includes the domain, so a mandate for one lock or chain can't stand in for another.
+ * A seller's mandate's hash, which the business account's root key or one of its admin keys signs
+ * and a sale's record names. It includes the domain, so a mandate for one lock or chain can't
+ * stand in for another.
  */
 export function sellerMandateHash(m: SellerMandate, d: AvowDomain): Hex {
   return hashTypedData(sellerMandateTypedData(m, d))

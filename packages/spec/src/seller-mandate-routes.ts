@@ -17,7 +17,10 @@ import type { Parsed } from './wire.js'
 
 /** The body that posts a seller's mandate, which carries the mandate and nothing else. */
 export interface SellerMandatePost {
-  /** The mandate the business account's root key signed, under the business's own lock. */
+  /**
+   * The mandate the business account's root key or one of its admin keys signed, under the
+   * business's own lock.
+   */
   mandate: Signed<SellerMandate>
 }
 
@@ -65,7 +68,7 @@ export type SellerMandatesRequest = Record<string, never>
 
 export const sellerMandatePostJson = z.strictObject({
   mandate: signedJson(
-    "The seller's mandate, as a signed SellerMandate the business account's root key signed",
+    "The seller's mandate, as a signed SellerMandate the business account's root key or one of its admin keys signed",
   ),
 })
 

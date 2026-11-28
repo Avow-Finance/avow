@@ -53,6 +53,31 @@ Job terms in version 2's shape name no compute. They read, so a check can say wh
 
 A job fits inside a GPU reservation that holds the same GPU in the same region, at least as many of them, from the job's start until its deadline. The dependency check refuses anything else as `dependency.does_not_fit`, and a booking still inside its free cancellation as `dependency.cancellable`.
 
+## Job offers
+
+A supplier can publish a standing offer of one kind of job, so a buyer's agent can order it without asking first. A `JobOfferVersion` in `@avow-finance/spec` holds it, and a version never changes. A new price, other compute or a change to the rules is a new version with a new id.
+
+| Field | What it holds |
+| --- | --- |
+| `template` | Always `job/1`, so the version reads as a job's wherever it's carried |
+| `supplier` | The supplier's business id |
+| `work` | The kind of work and one sentence on it, as the job's terms name them. The kind is plain text on one line with no quotes, since it's the item a seller's mandate reads and a person reads it on a card |
+| `compute` | The GPU, how many and the region every job of this version runs on |
+| `currency`, `price` | One fixed price for the whole job, in micros, paid by a separate transfer on delivery |
+| `rules.startAfter` | How long after the order work starts, at least 15 minutes, which is `JOB_OFFER_START_MIN` |
+| `rules.turnaround` | How long from the start the job is delivered by |
+| `rules.gracePeriod` | How long after the start the buyer can hand over the inputs, up to the turnaround |
+| `rules.dailyCapacity` | How many of these jobs the supplier takes in a day, which whoever accepts for the supplier counts |
+| `rules.lateCancellationBps`, `rules.noShowBps` | Each charge as a share of the price, with at least one above zero |
+
+Every length counts from the order, so a version names no clock time and can stay listed. `jobOfferVersionId` hashes the version's canonical JSON under the label `avow:offer:job/1`, so a job offer's id never equals a service offer's. `vectors/job-offer-v1.json` holds vectors another implementation can check its canonical JSON and ids against.
+
+The buyer builds the job's terms with `jobOfferTerms`, in version 2's shape, and orders them as it orders any job. Work starts `startAfter` after the order, which ends free cancellation and is when the supplier accepts by, and delivery is due `turnaround` later. Each charge is its share of the price rounded up to the micro, which `jobOfferQuote` gives, so a charge is never less than the share the offer states. Charges can be reported until 24 hours after the deadline, when the reserve comes back. The supplier books the compute and quotes the same terms with the booking added, as version 3 terms, exactly as for a job ordered without an offer.
+
+Job terms name no offer, since `job/1` has no field for one, and a job ordered without an offer runs as it always has. `jobTermsMatchOffer` says whether terms, in either shape, are exactly the ones a version builds, for whoever holds that version. It never reads the version from the terms, so the supplier's agent checks an order against a version it published itself.
+
+`OfferVersion` is either kind of offer. `parseOfferVersion` reads one from JSON, `offerIdOf` gives its id under its own label, and `offerItemOf` names its item under its category, so a service and a job that share a name stay apart. A seller's agent checks a job offer against its seller's mandate with `sellerOfferProblem` before it publishes, as the [seller's mandate](/docs/reference/seller-mandate#listing-an-offer) page says. A person can't approve a job's sale yet, so a job offer priced where the mandate asks a person to decide doesn't list.
+
 ## What the customer's reserve backs
 
 The lock knows two charge kinds, late cancellation and no-show, and the customer's reserve backs only those. It backs what the job's terms let your business charge if the customer walks away, a late cancellation after work has started or a no-show, each up to the cap the terms name. Your business reports a charge, Avow confirms it only when its own records support it or refers it to a ruling, and the customer can contest it before the contest window closes.
