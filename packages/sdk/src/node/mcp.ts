@@ -78,7 +78,9 @@ import {
  *   avow-sandbox-mcp add config                prints the mcpServers block any other client reads
  */
 
-const SERVER = { name: 'avow-sandbox', version: '0.0.0' }
+// The version moves with each release, and server-json.test.ts holds it to the listing's. It's
+// written here because the Claude Desktop extension bundles this file without its package.json.
+const SERVER = { name: 'avow-sandbox', version: '0.12.0' }
 const PROTOCOL = '2025-06-18'
 /** How long a booking waits for the supplier's acceptance before it answers. */
 const ACCEPTANCE_WAIT_MS = 45_000
