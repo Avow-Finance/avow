@@ -5,14 +5,14 @@ slug: docs/reference/commitment-events
 
 A commitment event is the notice of one change in a commitment's life, such as a reserve reaching the lock, the supplier's acceptance or a charge leaving the reserve. It is one typed record with a code and that code's fixed fields, so your code can act on a change without parsing a sentence.
 
-`@avow-finance/spec` holds the shape, its JSON form, its slot and its hash. An agent reads a commitment's events straight from its lock with the SDK or the MCP server's `commitment_events` tool. Avow can also post a business's events to an address it adds, signed with a key Avow publishes, though that isn't switched on for testnet yet. The supplier's adapter sends its webhook events in this shape too.
+`@avow-finance/spec` holds the shape, its JSON form, its slot and its hash. An agent reads a commitment's events straight from its lock with the SDK or the MCP server's `commitment_events` tool. Avow can also post a business's events to an address it adds, signed with a key Avow publishes, though that isn't switched on for testnet yet. Those posts include an order's life in Avow's mailbox before anything reaches the chain, which only Avow can tell you. The supplier's adapter sends its webhook events in this shape too.
 
 ## An event is a notice
 
 The lock is the record. An event tells you something changed and where to look, and that is all it does.
 
 - **It grants nothing.** No event gives an agent authority, approves a request or moves money.
-- **It proves nothing by itself.** An event carries no signature. `commitmentEventProblem` says an event is well formed and says nothing about whether it is true, so anyone can write a well-formed event about any commitment. Before you act on one, read the lock with the verifier, or check the signed message the event names.
+- **It proves nothing by itself.** An event carries no signature. `commitmentEventProblem` says an event is well formed and says nothing about whether it is true, so anyone can write a well-formed event about any commitment. Before you act on one, read the lock with the verifier, or check the signed message the event names. An event about an order before it reaches the chain names nothing you can check that way, so read the order or the thread from Avow.
 - **It carries no words.** Every string in an event is hex of a fixed length or a word from a fixed list. Every other value is a whole number, a decimal string of one in JSON, a flag or null. No field holds text a person or a model wrote, so an event can't carry an instruction to whoever reads it. A test in the spec walks every field of every code and fails if one could hold anything else.
 - **It names no business.** An event names the commitment by its chain, its lock and its id. Each side of a commitment already knows the other, so no event carries a business id, a party's account or a payout address. The lock's address is the one thing in an event that belongs to a party. It names the terms by their hash and never carries them, since terms hold words a party wrote.
 
@@ -26,7 +26,7 @@ The lock is the record. An event tells you something changed and where to look, 
 | `source` | string | Who states the event, which says how its time is known |
 | `at` | Unix seconds | When the change happened, by that source's clock |
 
-Every code but `reserve.owed_paid` also carries `termsHash`, the hash of the terms the commitment was made under. An event names no side, since a lock reserves the buyer's side only.
+Every code but `reserve.owed_paid` and the three codes of an order before it has terms also carries `termsHash`, the hash of the terms the commitment was made under. An event names no side, since a lock reserves the buyer's side only.
 
 In JSON an amount is a decimal string, a time is a decimal string of unix seconds, and hex is in lower case.
 
@@ -54,7 +54,10 @@ The code fixes which sources can state it. A reserve the lock took is stated fro
 
 | Code | Stated by | When | Carries |
 | --- | --- | --- | --- |
+| `booking.proposed` | `avow` | The buyer's agent ordered through Avow's mailbox, and the order waits for the supplier. Nothing is agreed or reserved | `offerVersion`, `orderExpiry` |
 | `booking.agreed` | `avow`, `supplier` | Both sides signed the terms agreement. Nothing is reserved yet | `termsHash`, `reserve`, `agreementExpiry` |
+| `booking.declined` | `avow` | A side declined the order before the lock held a reserve, and the order ended | `declinedBy`, `reason`, `retryAt`, `available`, `currentOffer` |
+| `booking.withdrawn` | `avow` | The buyer took its own order back before the lock held a reserve | Nothing |
 | `reserve.approved` | `avow` | Avow's reserve check passed and Avow signed its approval | `termsHash`, `reserve`, `approvalHash`, `approvalExpiry` |
 | `reserve.locked` | `block` | The lock took the reserve | `termsHash`, `reserve`, `approvalHash`, `mandateHash` |
 | `reserve.held` | `supplier` | The supplier's own check of the funded reserve passed, so it holds the capacity without granting it yet | `termsHash`, `reserve`, `agreementExpiry` |
@@ -80,6 +83,20 @@ The code fixes which sources can state it. A reserve the lock took is stated fro
 `reserve.accepted` carries `acceptanceHash` when a block states it, and `reserve`, `agreementExpiry` and `acceptedIn` when a supplier's adapter does. `acceptedIn` is the acceptance's transaction, or null when the adapter found the acceptance on the lock and never saw the transaction.
 
 `booking.lapsed` says the booking ended unaccepted. It doesn't say whether a reserve had come. A booking lapses with no reserve when the agent never funds one. It also lapses with a reserve on the lock when the acceptance never lands by the deadline, and that reserve is still locked when the event is stated. It then goes back to the business, which is a `reserve.released` with the cause `not_accepted` or `returned_by_avow`.
+
+## An order before the chain
+
+`booking.proposed`, `booking.declined` and `booking.withdrawn` follow an order, or a negotiation thread, through Avow's mailbox before the lock holds anything. Avow states them from its own record, so each comes with `source` set to `avow`, and none is a fact of the chain. No lock logs an order, and these events carry no hash of a signed message, so there is nothing to check them against but Avow. When you need to know where an order stands, read the order or the thread from Avow, with the MCP server's `orders` tool or `sandboxServices` in the SDK, and treat the event as the reason to look.
+
+The event names the commitment the order would make, on the buyer's lock, by the same chain, lock and id the lock uses once the reserve arrives. So an order's events and its commitment's events share one name, and the lock's events follow on from Avow's once the buyer funds.
+
+- **`booking.proposed`** carries `offerVersion`, the id of the offer version ordered, or null for a job, which books none. `orderExpiry` is when the order lapses with no answer, in unix seconds. Avow states it once for a commitment.
+- **`booking.declined`** says the order ended because a side declined it. `declinedBy` is `supplier`, or `business` for the buyer. `reason` is one of the [reasons to decline](/docs/reference/negotiation), and `retryAt`, `available` and `currentOffer` are the fields that reason allows, each null where it allows none or the side gave none. `currentOffer` is the id of the version that replaced the one ordered, and only a decline for a replaced offer carries one. Read that version and check it as any offer you've never seen before you order it.
+- **`booking.withdrawn`** says the buyer took its own order back. It carries no reason.
+
+A decline event carries what the buyer hears and nothing more. A supplier declines with a reason its buyer may hear as it is, and when its own seller's mandate refuses an order it sends `supplier.not_authorized`, which names no limit. The spec refuses a supplier's decline event with any reason `supplierMayDecline` turns away, so a seller's own reason and its limits can't reach an event, whoever writes it. No free text reaches one either, since a decline carries none.
+
+Once the lock holds the buyer's reserve, neither side can end the order this way, and the lock decides from then on. An order that lapses unanswered makes no event of its own.
 
 A few fields need a word.
 
@@ -134,7 +151,7 @@ An `owed` amount has left the commitment's reserve all the same. A `reserve.rele
 
 ## What settles a step
 
-Every code names what a receiver checks when two statements of it differ and neither source outranks the other. `COMMITMENT_EVENT_CHECKED_BY` lists them, from the five in `COMMITMENT_EVENT_CHECKS`.
+Every code names what a receiver checks when two statements of it differ and neither source outranks the other. `COMMITMENT_EVENT_CHECKED_BY` lists them, from the six in `COMMITMENT_EVENT_CHECKS`.
 
 | Check | What the receiver checks |
 | --- | --- |
@@ -143,9 +160,11 @@ Every code names what a receiver checks when two statements of it differ and nei
 | `approval` | Avow's approval of the reserve, signed by Avow's approval key, which `approvalHash` names |
 | `timestamped_request` | The business's signed request, with Avow's signed timestamp over its digest, which `requestHash` names |
 | `start_receipt` | The supplier's signed start receipt, which `receiptHash` names |
+| `avow_record` | Avow's record of the order or the thread, which either side reads from Avow's API. Nothing on the chain states it |
 
 | Code | Settled by |
 | --- | --- |
+| `booking.proposed`, `booking.declined`, `booking.withdrawn` | `avow_record` |
 | `booking.agreed`, `reserve.held` | `terms_agreement` |
 | `reserve.approved` | `approval` |
 | `booking.start_requested`, `booking.cancelled_late` | `timestamped_request` |
@@ -153,7 +172,7 @@ Every code names what a receiver checks when two statements of it differ and nei
 | `reserve.accepted`, `booking.lapsed` | `lock`, then `terms_agreement` for the reserve and the agreement's expiry |
 | Every code stated from a block | `lock` |
 
-Each signed message can be hashed and its signature checked by whoever holds it, without asking anyone. `reserve.locked` also names the mandate the business's administrator signed for the agent by `mandateHash`, and a block's `reserve.accepted` names the supplier's signed acceptance by `acceptanceHash`. An `evidenceHash` or a `statementHash` is the hash of a document. It lets you match a document you hold, and it is no signature.
+Each signed message can be hashed and its signature checked by whoever holds it, without asking anyone. `avow_record` is the one check that asks Avow, since only Avow holds an order before it reaches the chain. `reserve.locked` also names the mandate the business's administrator signed for the agent by `mandateHash`, and a block's `reserve.accepted` names the supplier's signed acceptance by `acceptanceHash`. An `evidenceHash` or a `statementHash` is the hash of a document. It lets you match a document you hold, and it is no signature.
 
 ## The slot and the hashes
 
@@ -202,7 +221,7 @@ It covers every field, the source and the time among them. Two deliveries of the
 1. **Drop a repeat, and only a repeat.** An event with the same event hash is the same event delivered again. Two statements from Avow's clock, or two from one supplier's, with the same statement hash are one step recorded twice, so drop the later and keep the earlier time. Never drop an event because its slot is one you've seen.
 2. **On a step the lock logs, a block's statement replaces a clock's.** That arises only for `reserve.accepted`, the one code both a block and a clock state.
 3. **Avow's clock and a supplier's outrank neither each other.** When they say the same thing they agree. When they differ, check what settles the step. For `booking.agreed` that is the terms agreement with both signatures.
-4. **Any other difference goes to what settles the step.** Two `block` statements that differ at all, their time included, go to the lock, since one of them names a log that isn't there. Two statements from one clock that differ in more than their time go to the lock or the signed message the code names.
+4. **Any other difference goes to what settles the step.** Two `block` statements that differ at all, their time included, go to the lock, since one of them names a log that isn't there. Two statements from one clock that differ in more than their time go to the lock or the signed message the code names, and for an order before the chain, to Avow's record of it.
 5. **A slot is never proof.** A slot says which step an event is about and nothing about what happened. The stronger of two notices is still a notice.
 
 | `sameSlot` returns | Meaning |
@@ -215,6 +234,7 @@ It covers every field, the source and the time among them. Two deliveries of the
 | `held_stands` | They differ, and the one you hold is the lock's log of the step |
 | `read_the_lock` | They differ, neither outranks the other, and the lock settles the step |
 | `check_signed_message` | They differ, neither outranks the other, and the signed message the code names settles it |
+| `read_avow_record` | Avow stated one step of an order two ways. Read the order or the thread from Avow |
 
 ## Written from the lock
 
@@ -250,10 +270,11 @@ A log carries numbers where an event carries words. The spec holds each table an
 
 Events carry no sequence number. No one party observes every change. The lock sees what reaches it, Avow sees what its API records, and a supplier's adapter sees its own bookings. A counter would belong to one writer, and the same step would take a different number from each.
 
-You can rely on three things instead.
+You can rely on four things instead.
 
 - **Changes one lock logged have the lock's own order.** `lockOrder` compares two `block` events of the same lock by block number and then by log index. For two events of different locks or chains it answers that they can't be compared, and gives no number.
 - **A time compares only with times from the same source.** Avow's clock, a supplier's clock and the chain's clock are three clocks.
+- **An order's life comes before its commitment's.** `booking.proposed` comes first, and a decline or a withdrawal ends the order before the lock holds anything. Order Avow's events of one commitment by the codes' order in the table above, and its lock's events by `lockOrder`.
 - **Where a commitment stands is on the lock.** An event can arrive late, twice, out of order or never. Read the lock for the state, and treat an event as the reason to look.
 
 ## Versions and new codes
@@ -286,8 +307,8 @@ The administrator chooses what each address receives.
 
 | Choice | What Avow posts there |
 | --- | --- |
-| As a buyer | Each event the business's own lock logs, for the commitments it buys |
-| As a supplier | Each event of a commitment Avow recorded with the business as its supplier, which another business's lock logs |
+| As a buyer | Each event the business's own lock logs, for the commitments it buys, and Avow's events of each order its agents place |
+| As a supplier | Each event of a commitment Avow recorded with the business as its supplier, which another business's lock logs, and Avow's events of each order placed with it |
 | Both | Both of those |
 
 Signing an address approves no transaction. A supplier address gets no event of a commitment its business doesn't supply. An address that takes both tells the sides apart by comparing the event's `commitment.lock` with the business's own lock address, both in lower case. When they match, the business is buying, and any other lock means it's supplying.
@@ -305,11 +326,11 @@ A delivery follows Standard Webhooks' asymmetric scheme.
 | `webhook-signature` | `v1a,` and the Ed25519 signature over `id.timestamp.body`, in base64 |
 | `avow-key-id` | Which of Avow's keys signed it. Standard Webhooks has no such header, so this one is Avow's |
 
-The body is `{ "type": <code>, "timestamp": <the block's time>, "data": <the event> }`. Avow lists its keys at `/v1/events/keys`, each with its id and, once a newer key replaced it, its `retiredAt`. A retired key stays listed for seven days.
+The body is `{ "type": <code>, "timestamp": <the event's time>, "data": <the event> }`. The time is the block's for a `block` event and Avow's clock for an `avow` one. Avow lists its keys at `/v1/events/keys`, each with its id and, once a newer key replaced it, its `retiredAt`. A retired key stays listed for seven days.
 
 `eventDeliveryVerifier({ apiUrl })` in `@avow-finance/sdk` checks a delivery for you. Hand it the headers and the body exactly as they arrived. It refuses a delivery whose timestamp is more than five minutes from your clock, one whose key id names no key Avow lists after one read of the keys again, which an unknown id causes at most once every 30 seconds, one signed by a key retired more than seven days before, one whose signature doesn't verify, a repeat of an id it already took, and a signed body that isn't an event or a challenge. It caches the keys for five minutes at most. When the delivery is a challenge it gives you the answer to send back, `{ "challenge": … }` with a 2xx status.
 
-A delivery that verifies came from Avow, and it's still a notice. It grants nothing, so read the lock before you act on it. Avow retries a failed delivery on `WEBHOOK_RETRY_SCHEDULE` from the spec, the same schedule as the supplier's adapter, and one commitment's events can still arrive late or out of order, so order them by `blockNumber` and `logIndex`.
+A delivery that verifies came from Avow, and it's still a notice. It grants nothing, so read the lock before you act on it. For an order before the chain, read the order from Avow. Avow retries a failed delivery on `WEBHOOK_RETRY_SCHEDULE` from the spec, the same schedule as the supplier's adapter. Avow posts one commitment's `avow` events in the order it recorded them and its `block` events in the lock's order, each in a line of its own, so an address that refuses one of Avow's events never holds up the lock's. Events can still arrive late or out of order, so order a commitment's `block` events by `blockNumber` and `logIndex`.
 
 ## Reading, checking and hashing
 
@@ -328,7 +349,7 @@ A delivery that verifies came from Avow, and it's still a notice. It grants noth
 
 ## What isn't an event
 
-- **A refusal.** Avow refusing a reserve, or a supplier declining an order, changes nothing in a commitment's life. The caller hears it in the answer to its own request, with a reason code.
+- **A refusal.** Avow refusing a reserve, or a supplier's agent refusing a request it can't carry out, changes nothing in a commitment's life. The caller hears it in the answer to its own request, with a reason code. A decline that ends an order is different, since the order is over, and it's a `booking.declined`.
 - **A failed transfer by itself.** The lock's `PaymentOwed` log has no code. The step it happened in says `owed` on the amount.
 - **A change to a lock's settings.** A lock also logs a supplier being approved or removed, its cap for listed suppliers being set and an approval being cancelled. Those belong to the business's lock and to no commitment.
 - **Who the parties are.** The lock's `Reserved` log holds the supplier's account, the payout address and the key that funded the reserve, and its `OwedWithdrawn` log holds the address it paid. Events leave them out, with the approval's nonce.

@@ -21,6 +21,7 @@ import {
   commitmentEventProblem,
   commitmentEventSlot,
   commitmentEventStatementHash,
+  DECLINED_REASONS,
   lockOrder,
   type ObservedBy,
   parseCommitmentEvent,
@@ -64,8 +65,20 @@ const owed = (amount: bigint) => ({ amount, state: 'owed' as const })
 
 /** One event for every code and every source that can state it, in the order of a life. */
 const facts: CommitmentEventFact[] = [
+  { commitment, code: 'booking.proposed', ...avow, offerVersion: h('0f'), orderExpiry: NOW + 900n },
   { ...agreed, code: 'booking.agreed', ...avow },
   { ...agreed, code: 'booking.agreed', ...supplier },
+  {
+    commitment,
+    code: 'booking.declined',
+    ...avow,
+    declinedBy: 'supplier',
+    reason: 'capacity.exhausted',
+    retryAt: NOW + 600n,
+    available: 3,
+    currentOffer: null,
+  },
+  { commitment, code: 'booking.withdrawn', ...avow },
   {
     ...on,
     code: 'reserve.approved',
@@ -191,6 +204,10 @@ const facts: CommitmentEventFact[] = [
   { commitment, code: 'reserve.owed_paid', ...block(21n), party: 'business', amount: dollars(150) },
 ]
 const events = facts.map(commitmentEvent)
+/** The lock's acceptance as a writer states it. */
+const acceptedOnLock = facts.find(
+  (f) => f.code === 'reserve.accepted' && f.source === 'block',
+) as CommitmentEventFact
 const named = (e: CommitmentEvent) => `${e.code} by ${e.source}`
 const of = <C extends CommitmentEventCode>(code: C, source = 'block') => {
   const found = events.find((e) => e.code === code && e.source === source)
@@ -215,6 +232,12 @@ const thrower = (e: object) =>
 /** The fields an event carries beside its version and its code: the common ones, its source's, its own. */
 const sourceFields = (e: CommitmentEvent) =>
   e.source === 'block' ? ['at', 'blockNumber', 'transactionHash', 'logIndex'] : ['at']
+/** The codes of an order's life in Avow's mailbox, before anything is agreed or reserved. */
+const ORDER_CODES: readonly CommitmentEventCode[] = [
+  'booking.proposed',
+  'booking.declined',
+  'booking.withdrawn',
+]
 
 describe('the codes of a commitment event', () => {
   it('has a sample here for every code and every source that can state it', () => {
@@ -245,6 +268,10 @@ describe('the codes of a commitment event', () => {
     expect(by['reserve.held']).toEqual(['supplier'])
     expect(by['reserve.accepted']).toEqual(['block', 'supplier'])
     expect(by['booking.lapsed']).toEqual(['avow', 'supplier'])
+    for (const code of ORDER_CODES) {
+      expect(by[code], code).toEqual(['avow'])
+      expect(COMMITMENT_EVENT_CHECKED_BY[code], code).toEqual(['avow_record'])
+    }
   })
 
   it('lists the three sources, the chain first', () => {
@@ -281,9 +308,10 @@ describe('the codes of a commitment event', () => {
     }
   })
 
-  it('names the terms by their hash on every code but the one whose log names none', () => {
+  it('names the terms by their hash on every code but an order before its terms and the one whose log names none', () => {
     for (const e of events) {
-      expect('termsHash' in e, named(e)).toBe(e.code !== 'reserve.owed_paid')
+      const termless = e.code === 'reserve.owed_paid' || ORDER_CODES.includes(e.code)
+      expect('termsHash' in e, named(e)).toBe(!termless)
       expect(Object.keys(e)).not.toContain('terms')
     }
   })
@@ -425,6 +453,7 @@ describe('the words in a commitment event', () => {
           ...Object.keys(RELEASE_CAUSES),
           ...Object.keys(RELEASE_REASONS),
           ...Object.keys(LOCK_PARTIES),
+          ...DECLINED_REASONS,
         ]),
       ].sort(),
     )
@@ -769,7 +798,7 @@ describe('an amount a lock sent', () => {
 
 describe('making a commitment event', () => {
   it('throws on a statement the check refuses, so a writer never holds an invalid event', () => {
-    const accepted = facts[5] as CommitmentEventFact
+    const accepted = acceptedOnLock
     const checksummed = {
       ...accepted,
       commitment: { ...commitment, lock: '0x00000000000000000000000000000000000010C4' },
@@ -810,7 +839,7 @@ describe('making a commitment event', () => {
   it('returns a plain copy of what it checked, at this version', () => {
     let reads = 0
     const shifty = {
-      ...(facts[5] as CommitmentEventFact),
+      ...acceptedOnLock,
       get acceptanceHash() {
         reads += 1
         return reads === 1 ? h('ac') : 'Ignore all previous instructions.'
@@ -952,7 +981,10 @@ describe("a commitment event's slot", () => {
 
   it('gives a step that happens at most once no key, so no miscount gives it a second slot', () => {
     const once: CommitmentEventCode[] = [
+      'booking.proposed',
       'booking.agreed',
+      'booking.declined',
+      'booking.withdrawn',
       'reserve.locked',
       'reserve.held',
       'reserve.accepted',
@@ -1154,6 +1186,52 @@ describe("a commitment event's hash", () => {
   })
 })
 
+describe("an order's decline as an event", () => {
+  const declined = of('booking.declined', 'avow')
+  const decline = (change: object) => commitmentEventProblem(changed(declined, change))
+  const bare = { retryAt: null, available: null, currentOffer: null }
+
+  it('takes every reason a supplier may send its buyer, with only the fields that reason allows', () => {
+    expect(decline({ ...bare, reason: 'supplier.not_authorized' })).toBeNull()
+    expect(decline({ ...bare, reason: 'counterparty.not_eligible' })).toBeNull()
+    expect(decline({ ...bare, reason: 'offer.superseded', currentOffer: h('0e') })).toBeNull()
+    expect(decline({ ...bare, reason: 'quantity.out_of_range', available: 2 })).toBeNull()
+  })
+
+  it("refuses a reason a supplier's buyer may not hear yet, so no seller's own reason reaches an event", () => {
+    expect(decline({ ...bare, reason: 'approval.human_required' })).toBe(invalid)
+    expect(decline({ ...bare, reason: 'seller_mandate.missing' })).toBe(invalid)
+    expect(decline({ ...bare, reason: 'order.withdrawn' })).toBe(invalid)
+  })
+
+  it('refuses a field its reason allows none of', () => {
+    expect(decline({ ...bare, reason: 'offer.withdrawn', retryAt: NOW + 60n })).toBe(invalid)
+    expect(decline({ ...bare, reason: 'supplier.not_authorized', available: 1 })).toBe(invalid)
+    expect(decline({ ...bare, reason: 'capacity.exhausted', currentOffer: h('0e') })).toBe(invalid)
+    expect(decline({ ...bare, reason: 'offer.superseded' })).toBe(invalid)
+  })
+
+  it("lets the buyer decline only for a reason either side gives, and never as the supplier's", () => {
+    const buyer = { ...bare, declinedBy: 'business' }
+    expect(decline({ ...buyer, reason: 'proposal.unacceptable' })).toBeNull()
+    expect(decline({ ...buyer, reason: 'capacity.exhausted' })).toBe(invalid)
+    expect(decline({ ...buyer, reason: 'supplier.not_authorized' })).toBe(invalid)
+    expect(decline({ ...bare, declinedBy: 'avow', reason: 'proposal.unacceptable' })).toBe(invalid)
+  })
+
+  it('takes no reason on a withdrawal, which is the buyer taking its own order back', () => {
+    const withdrawn = of('booking.withdrawn', 'avow')
+    expect(commitmentEventFields('booking.withdrawn', 'avow')).toEqual([])
+    expect(commitmentEventProblem(changed(withdrawn, { reason: 'order.withdrawn' }))).toBe(invalid)
+  })
+
+  it('names the version a job order books as null, and an order states no terms', () => {
+    const proposed = of('booking.proposed', 'avow')
+    expect(commitmentEventProblem(changed(proposed, { offerVersion: null }))).toBeNull()
+    expect(commitmentEventProblem(changed(proposed, { termsHash }))).toBe(invalid)
+  })
+})
+
 describe("the receiver's rules for two events", () => {
   const agreedBy = (source: 'avow' | 'supplier', change: object = {}) =>
     changed(of('booking.agreed', source), change)
@@ -1243,6 +1321,24 @@ describe("the receiver's rules for two events", () => {
         expect(by, code).not.toContain('block')
       }
     }
+  })
+
+  it("sends the receiver to Avow's record when Avow states one step of an order two ways", () => {
+    const declined = of('booking.declined', 'avow')
+    const other = changed(declined, {
+      reason: 'proposal.unacceptable',
+      retryAt: null,
+      available: null,
+    })
+    expect(sameSlot(declined, other)).toBe('read_avow_record')
+    expect(sameSlot(declined, changed(declined, { at: declined.at + 5n }))).toBe('repeat')
+    expect(sameSlot(of('booking.declined', 'avow'), of('booking.withdrawn', 'avow'))).toBe(
+      'other_slot',
+    )
+    const proposed = of('booking.proposed', 'avow')
+    expect(sameSlot(proposed, changed(proposed, { orderExpiry: NOW + 1n }))).toBe(
+      'read_avow_record',
+    )
   })
 
   it('names a check for every code, from the list of checks', () => {
