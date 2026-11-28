@@ -154,7 +154,9 @@ describe("the body that posts a seller's mandate", () => {
     expect(reason({})).toBeNull()
     expect(reason({ chainId: CHAIN_ID + 1 })).toBe('message.wrong_chain')
     expect(reason({ lock: OTHER_LOCK })).toBe('message.wrong_contract')
-    expect(reason({ schemaVersion: '2' })).toBe('message.schema_unknown')
+    expect(reason({ schemaVersion: '3' })).toBe('message.schema_unknown')
+    // Version 2 is for a mandate that lets its agent bargain, which this one doesn't.
+    expect(reason({ schemaVersion: '2' })).toBe('message.invalid')
     expect(reason({ type: 'Mandate' })).toBe('message.schema_unknown')
     expect(reason({ signature: 'signed' })).toBe('message.invalid')
     expect(reason({}, { maxOrderValue: 500_000_000 })).toBe('message.invalid')
