@@ -196,6 +196,12 @@ describe('the compatibility scenarios', () => {
       expect(mentions(text, 300)).toBe(true)
     for (const text of ['$3000', '1300', '300.5', '$30']) expect(mentions(text, 300)).toBe(false)
     expect(mentions('$1,500 a day', 1500)).toBe(true)
+    // Ids and hashes carry digits, so a digit followed by a letter is never an amount.
+    expect(mentions('the lock 0x300a holds it', 300)).toBe(false)
+    expect(mentions('commitment 300f', 300)).toBe(false)
+    expect(mentions('$300, the rest', 300)).toBe(true)
+    // Nothing left is never matched, since every 0x address starts with a 0.
+    expect(mentions('the lock 0x9f2c holds $0', 0)).toBe(false)
   })
 
   it('puts each model in a row with the trials each scenario passed, and lists every failed trial', async () => {

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { type CompatArgs, readArgs } from './args.js'
+import { readArgs } from './args.js'
 import { openAiCompatible } from './chat.js'
+import { runModels } from './models.js'
 import { resultsTable } from './report.js'
-import { emptyReport, type ModelReport, runModel } from './run.js'
 import { mcpToolbox, prepareWorld, systemPrompt } from './world.js'
 
 /**
@@ -34,49 +34,23 @@ async function main(argv: string[]): Promise<number> {
   }
   const out = resolve(args.out)
   mkdirSync(out, { recursive: true })
-  const reports: ModelReport[] = []
-  for (const id of args.models) {
-    console.log(`\n${id}: making a test business on Moderato`)
-    reports.push(await runOne(id, args, apiKey))
-    for (const s of reports.at(-1)?.scenarios ?? []) {
-      console.log(`  ${s.id}: ${s.trials.filter((t) => t.passed).length} of ${s.trials.length}`)
-    }
-    // Written after each model, so a run cut short keeps what it finished.
-    writeFileSync(join(out, 'results.json'), `${JSON.stringify(reports, null, 2)}\n`)
-    writeFileSync(join(out, 'results.md'), `${resultsTable(reports)}\n`)
-  }
+  const reports = await runModels(args.models, {
+    trials: args.trials,
+    prepare: () => prepareWorld(() => {}),
+    open: (dir) => mcpToolbox(dir, [args.keyEnv]),
+    model: (id) => openAiCompatible({ baseUrl: args.baseUrl, apiKey, model: id }),
+    system: systemPrompt,
+    save: (so) => {
+      writeFileSync(join(out, 'results.json'), `${JSON.stringify(so, null, 2)}\n`)
+      writeFileSync(join(out, 'results.md'), `${resultsTable(so)}\n`)
+    },
+    progress: (line) => console.log(line),
+  })
   const table = resultsTable(reports)
   console.log(`\n${table}`)
   if (process.env.GITHUB_STEP_SUMMARY)
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${table}\n\n`)
   return 0
-}
-
-/**
- * One model's run, in a test business of its own. Anything that stops it becomes the model's row,
- * so the models after it still run, and the business's folder goes once the run ends.
- */
-async function runOne(id: string, args: CompatArgs, apiKey: string): Promise<ModelReport> {
-  let dir: string | null = null
-  let toolbox: Awaited<ReturnType<typeof mcpToolbox>> | null = null
-  try {
-    dir = await prepareWorld(() => {})
-    toolbox = await mcpToolbox(dir, [args.keyEnv])
-    return await runModel({
-      model: openAiCompatible({ baseUrl: args.baseUrl, apiKey, model: id }),
-      toolbox,
-      system: systemPrompt(toolbox.instructions),
-      trials: args.trials,
-    })
-  } catch (error) {
-    return {
-      ...emptyReport(id, args.trials),
-      error: error instanceof Error ? error.message : String(error),
-    }
-  } finally {
-    await toolbox?.close().catch(() => {})
-    if (dir) rmSync(dir, { recursive: true, force: true })
-  }
 }
 
 // pnpm passes on the `--` that npm drops.

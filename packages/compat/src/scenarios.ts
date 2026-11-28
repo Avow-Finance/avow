@@ -28,7 +28,8 @@ export interface Scenario {
   needsCommitment: boolean
   /**
    * The dollars the agent must still be able to commit for the scenario to mean anything. The
-   * scenarios share one business, so one that finds less counts as an error, never a failure.
+   * scenarios share one business, so one that finds less is recorded as an error and the model
+   * isn't marked down for it.
    */
   room: number
   asks(f: Facts): string[]
@@ -229,8 +230,11 @@ function refusalCode(r: ToolResult): string[] {
 /** Whether the words name a dollar amount, written as $300, 300, 300.00 or 1,300. */
 export function mentions(text: string, dollars: number): boolean {
   const plain = text.replace(/(\d),(?=\d{3})/g, '$1')
+  // Nothing is left to name at $0, and a lone 0 is in every 0x address and hash the tools return.
+  if (dollars <= 0) return false
   const whole = Number.isInteger(dollars) ? `${dollars}(?:\\.0+)?` : dollars.toFixed(2)
-  return new RegExp(`(?<![\\d.])${whole}(?![\\d]|\\.\\d)`).test(plain)
+  // A digit followed by a letter is part of an id or a hash, never an amount.
+  return new RegExp(`(?<![\\d.])${whole}(?![\\dA-Za-z]|\\.\\d)`).test(plain)
 }
 
 /** Reads the facts through the same tools the model has, where they enter, as typed values. */
