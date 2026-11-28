@@ -9,6 +9,7 @@ import {
   BUYER_HEARS,
   buyerFacingReason,
   checkSellerMandate,
+  counterpartyAllowed,
   SALE_ACCEPT_WITHIN_MAX,
   type SaleCounterparty,
   type SellerMandateCheckInput,
@@ -404,6 +405,29 @@ describe("the seller's mandate check", () => {
     }
     // A mandate that excludes no country asks nothing of a buyer's.
     expect(check({ buyer: { ...buyer, country: null } })).toEqual(approved)
+  })
+
+  it('answers by counterpartyAllowed exactly as the check refuses a buyer', () => {
+    const mandates = [
+      mandate,
+      withMandate({ buyers: ['biz_friend'], excludedBuyers: [] }),
+      withMandate({ requiresBusinessCheck: true }),
+      withMandate({ excludedCountries: ['KP'] }),
+    ]
+    const buyers: SaleCounterparty[] = [
+      buyer,
+      { ...buyer, businessId: 'biz_blocked' },
+      { ...buyer, businessId: 'biz_friend' },
+      { ...buyer, passedBusinessCheck: false },
+      { ...buyer, country: 'KP' },
+      { ...buyer, country: null },
+    ]
+    for (const m of mandates) {
+      for (const b of buyers) {
+        const refused = check({ mandate: m, buyer: b }).result === 'denied'
+        expect(counterpartyAllowed(m, b)).toBe(!refused)
+      }
+    }
   })
 
   it('tells a buyer the mandate excludes that and nothing about the sale', () => {
