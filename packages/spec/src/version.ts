@@ -104,3 +104,10 @@ export const SELLER_POLICY_VERSION = 'seller-mandate-check/1'
  * new version, since a reader refuses an event whose code it doesn't know and reads on.
  */
 export const COMMITMENT_EVENT_VERSION = '1'
+
+/**
+ * The schema version of a listing of a job offer, in the body that lists it and in Avow's answer,
+ * as their `schemaVersion`. A listing of a service is version 1 and carries no `schemaVersion`, so
+ * it reads and writes byte for byte as it did before jobs listed.
+ */
+export const OFFER_LISTING_JOB_VERSION = 2

@@ -47,9 +47,11 @@ Each call signs with the agent's signing key under its business's lock. Only a s
 
 | Route | Body | Answer |
 | --- | --- | --- |
-| `SANDBOX_PATHS.offerListings` | `OfferListingRequest`, the whole version of either kind | `OfferListing` |
+| `SANDBOX_PATHS.offerListings` | `OfferListingRequest`, the whole version, at version 1 for a service or 2 for a job | `OfferListing`, at the same version |
 | `SANDBOX_PATHS.offerListingsMine` | An empty object | `OfferListings`, every current listing, oldest first |
 | `SANDBOX_PATHS.offerWithdrawals` | `OfferWithdrawalRequest`, the version's id | `OfferWithdrawal` |
+
+A service lists at version 1, which reads and writes byte for byte as it did before jobs listed. A job lists at version 2, whose body and answer say so with `schemaVersion: 2`, as `OFFER_LISTING_JOB_VERSION`. `offerListingRequestOf` and `offerListingOf` build either at the version its kind takes, and a reader refuses a job without the field or a service with it. A reader that knows only version 1 refuses a job's listing instead of misreading it.
 
 An `OfferListing` carries the version and its id, as `offerIdOf` gives it under the version's own label, when Avow listed it, the seller's mandate Avow checked it against and the version it replaced, if any. `parseOfferListing` refuses an answer whose id isn't its version's, and `parseOfferListings` refuses two listings of one item.
 

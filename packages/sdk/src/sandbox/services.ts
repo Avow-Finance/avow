@@ -7,6 +7,7 @@ import {
   type OfferWithdrawal,
   offerIdOf,
   offerItemKey,
+  offerListingRequestOf,
   offerVersionProblem,
   parseOfferListing,
   parseOfferListings,
@@ -452,7 +453,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       const listing = await asSupplier({
         domain,
         path: SANDBOX_PATHS.offerListings,
-        body: { version },
+        body: offerListingRequestOf(version),
         read: parseOfferListing,
       })
       if (listing.id !== offerIdOf(version)) {
