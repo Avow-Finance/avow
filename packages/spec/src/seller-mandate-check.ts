@@ -122,7 +122,13 @@ export interface SaleCounterparty {
   passedBusinessCheck: boolean
 }
 
-function counterpartyAllowed(m: SellerMandate, buyer: SaleCounterparty): boolean {
+/**
+ * Whether a seller's mandate deals with a buyer: one of its buyers when it names any, none it
+ * excludes, from a known country it doesn't exclude when it excludes any, and past Avow's business
+ * check when it asks for one. `checkSellerMandate` refuses a sale it fails as
+ * `counterparty.not_eligible`, and a search of listings leaves the seller out by the same rule.
+ */
+export function counterpartyAllowed(m: SellerMandate, buyer: SaleCounterparty): boolean {
   if (m.buyers.length > 0 && !m.buyers.includes(buyer.businessId)) return false
   if (m.excludedBuyers.includes(buyer.businessId)) return false
   if (m.excludedCountries.length > 0) {
