@@ -1,15 +1,23 @@
 name: CI
 
+# A pull request's run tests it merged with main as main stood when the run started, and the merge
+# queue's run tests the exact commit that will land, after every pull request queued ahead of it.
+# Requiring the queue on main is what stops two pull requests that each passed from breaking main
+# together.
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its older run. A queue entry's ref names its own commit,
+# so each entry gets a group of its own and the queue decides when one is no longer needed.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
