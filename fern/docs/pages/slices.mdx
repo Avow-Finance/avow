@@ -19,10 +19,10 @@ Two layers hold a worker to its slice's own limits, the SDK and Avow's API. Wher
 
 ## How a worker funds a reserve
 
-A worker runs in its agent's process or in another process on the same machine. A worker on another machine can't reach its agent's key, so it needs a mandate a person signs for it.
+The agent's own process is the only thing that signs with the agent's key, for itself and for its workers.
 
 - The agent's process serves a socket at `.avow/workers/signer.sock`. The folder is the agent's user's alone and the socket opens for that user only.
-- A worker signs each request with its own key. `createParentSigner` checks the signature, reads the worker's slices from Avow and checks them back to the mandate, and runs `checkSlicedMandate` before it signs anything with the agent's key.
+- A worker signs each request with its own key. `createParentSigner` checks the signature, reads the worker's slices from Avow and checks them back to the mandate, and runs `checkSlicedMandate` with what is open and what was approved within each period before it signs anything with the agent's key.
 - It signs the buyer's side of a terms agreement, and later funds the reserve Avow approves for that same agreement and that same worker, reading the slices again first. It refuses anything else.
 - `handOutSlice` signs a slice for a worker's key, `narrowSlice` narrows one, and `revokeWorker` ends one. Each refuses limits wider than the parent's before it signs.
 

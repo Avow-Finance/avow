@@ -35,6 +35,7 @@ let f: BookingFixture
 let mandates: MandateChain
 let served: Map<string, WorkerSlices>
 let open: { mandate: bigint; slices: bigint[] }
+let approved: bigint[]
 let sent: Call[][]
 const worker = privateKeyToAccount(generatePrivateKey())
 
@@ -60,9 +61,12 @@ function signer() {
     now: () => NOW,
     mandates: async () => mandates,
     workerSlices: async (k: Address) => served.get(k.toLowerCase()) ?? null,
-    openReserves: async (chain) => ({
-      mandate: open.mandate,
-      slices: chain.levels.map((_, i) => open.slices[i] ?? 0n),
+    holdings: async (chain) => ({
+      openReserves: {
+        mandate: open.mandate,
+        slices: chain.levels.map((_, i) => open.slices[i] ?? 0n),
+      },
+      approvedWithin: chain.levels.map((_, i) => approved[i] ?? 0n),
     }),
     send: async (calls) => {
       sent.push(calls)
@@ -133,6 +137,7 @@ beforeEach(async () => {
   mandates = read.value
   served = new Map()
   open = { mandate: 0n, slices: [] }
+  approved = []
   sent = []
 })
 
@@ -241,6 +246,15 @@ describe("the agent's signer for its workers", () => {
     expect(await signer().handle(await asked(agreementAsk()))).toEqual({
       ok: false,
       reason: 'mandate.over_open_reserves_cap',
+    })
+  })
+
+  it("refuses a booking past the slice's payment limit for the period", async () => {
+    await give()
+    approved = [dollars(800)]
+    expect(await signer().handle(await asked(agreementAsk()))).toEqual({
+      ok: false,
+      reason: 'mandate.over_payment_limit',
     })
   })
 

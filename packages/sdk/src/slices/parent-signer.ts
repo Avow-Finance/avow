@@ -48,8 +48,15 @@ export interface ParentSignerDeps {
   mandates: () => Promise<MandateChain>
   /** A worker's slices as Avow serves them now, or null when Avow holds none for the key. */
   workerSlices: (subKey: Address) => Promise<WorkerSlices | null>
-  /** What is open under the agent's mandate and under each level of a worker's chain. */
-  openReserves: (chain: SliceChain) => Promise<{ mandate: bigint; slices: readonly bigint[] }>
+  /**
+   * What a worker's chain holds, as Avow counts it from approved reserves: what is open under the
+   * agent's mandate and under each level, and what each level had approved within the period of
+   * its payment limit for the lock's token, in base units, top first.
+   */
+  holdings: (chain: SliceChain) => Promise<{
+    openReserves: { mandate: bigint; slices: readonly bigint[] }
+    approvedWithin: readonly bigint[]
+  }>
   /** Whether the business account signed a digest, for a slice the administrator changed. */
   isAccountSignature?: SignatureCheck
   /** Sends the transaction that funds a reserve with the agent's key. */
@@ -105,11 +112,13 @@ export function createParentSigner(deps: ParentSignerDeps) {
     chain: SliceChain,
     request: Omit<ReserveRequest, 'terms'> & { terms: Terms },
   ): Promise<ReasonCode | null> {
+    const held = await deps.holdings(chain)
     const check = checkSlicedMandate({
       chain,
       request,
       token,
-      openReserves: await deps.openReserves(chain),
+      openReserves: held.openReserves,
+      approvedWithin: held.approvedWithin,
       revoked: false,
       now: deps.now(),
       profile: deps.profile,
