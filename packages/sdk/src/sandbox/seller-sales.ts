@@ -37,7 +37,9 @@ function readJobSale(v: unknown): Omit<CountedSale, 'category'> | null {
 
 /**
  * The job sales kept, by order id. A sale older than a day no longer counts toward the day's units,
- * so it's dropped unless it was accepted and isn't due yet, which still counts as outstanding.
+ * so it's dropped unless it was accepted and isn't due yet, which still counts as outstanding, or
+ * it's a quote that can still be accepted, which holds its place until its acceptance deadline
+ * however far ahead the job starts.
  */
 async function jobSales(store: SandboxStore, now: bigint): Promise<Record<string, CountedSale>> {
   const text = await store.read('job-sales')
@@ -47,7 +49,8 @@ async function jobSales(store: SandboxStore, now: bigint): Promise<Record<string
     const sale = readJobSale(v)
     if (!sale) continue
     const owed = sale.accepted && sale.deliverBy > now
-    if (sale.at > now - DAY || owed) sales[orderId] = { category: JOB_CATEGORY, ...sale }
+    const pending = !sale.accepted && sale.until > now
+    if (sale.at > now - DAY || owed || pending) sales[orderId] = { category: JOB_CATEGORY, ...sale }
   }
   return sales
 }
@@ -122,6 +125,97 @@ export async function holdToMandate(
   )
 }
 
+/** What a job past its offer's capacity for the day throws, before anything is booked or quoted. */
+const capacityTaken = () =>
+  new Error("The offer's capacity for the day is taken, so the order is left to lapse.")
+
+/**
+ * Throws when a job of this kind of work would take more places in a day than its offer's
+ * capacity, counting every other job of the kind this folder quoted: one accepted within the day,
+ * and one quoted that can still be accepted. A job's terms don't carry the capacity, so the seller's
+ * own agent counts against it, as it does a service's. Call it inside the store's turn.
+ */
+async function holdToCapacity(
+  store: SandboxStore,
+  job: { orderId: string; item: string; capacity: number | null },
+  now: bigint,
+): Promise<void> {
+  if (job.capacity === null) return
+  const sales = await jobSales(store, now)
+  if (sales[job.orderId]) return
+  const taken = Object.values(sales).filter(
+    (s) => s.item === job.item && (s.accepted ? s.at > now - DAY : s.until > now),
+  )
+  if (taken.length >= job.capacity) throw capacityTaken()
+}
+
+/** The kind of work of a job's terms, which its offer's capacity counts by. */
+function jobItemOf(terms: Terms | ChainedTerms): string {
+  const facts = saleFacts(terms)
+  if (!facts || facts.category !== JOB_CATEGORY)
+    throw new Error("The order's terms aren't a job's.")
+  return facts.item
+}
+
+/**
+ * Records a job in `job-sales` as quoted and not yet accepted, holding its place until its
+ * acceptance deadline. A job recorded before keeps the time it was first recorded. Call it inside
+ * the store's turn, after the job was held.
+ */
+async function recordJob(
+  store: SandboxStore,
+  sale: Pick<HeldSale, 'orderId' | 'terms'>,
+  now: bigint,
+): Promise<void> {
+  const facts = saleFacts(sale.terms)
+  if (!facts || facts.category !== JOB_CATEGORY)
+    throw new Error("The order's terms aren't a job's.")
+  const sales = await jobSales(store, now)
+  const record: CountedSale = {
+    category: JOB_CATEGORY,
+    item: facts.item,
+    units: facts.units,
+    price: facts.price,
+    deliverBy: facts.deliverBy,
+    at: sales[sale.orderId]?.at ?? now,
+    until: sale.terms.remedies.acceptBy,
+    accepted: false,
+  }
+  await write(store, 'job-sales', { sales: { ...sales, [sale.orderId]: record } })
+}
+
+/**
+ * Holds a job to the mandate in force and to its offer's capacity for the day, and takes its
+ * place, in one turn, before any compute is booked for it. A job refused by either books nothing,
+ * and two jobs at once can't both book compute for the last place. The capacity is null for a job
+ * sold from no offer. The quote keeps the place through `holdJobQuote`, and `releaseJob` gives it
+ * back when the compute can't be booked.
+ */
+export const holdJobInTurn = (
+  store: SandboxStore,
+  standing: SellerStanding,
+  sale: HeldSale,
+  capacity: number | null,
+  now: bigint,
+): Promise<void> =>
+  inTurn(store, async () => {
+    await holdToMandate(store, standing, sale, now)
+    const item = jobItemOf(sale.terms)
+    await holdToCapacity(store, { orderId: sale.orderId, item, capacity }, now)
+    await recordJob(store, sale, now)
+  })
+
+/** Gives back the place a job took that was never quoted, as when its compute couldn't be booked. */
+export function releaseJob(store: SandboxStore, orderId: string, now: bigint): Promise<void> {
+  return inTurn(store, async () => {
+    const sales = await jobSales(store, now)
+    const sale = sales[orderId]
+    if (!sale || sale.accepted) return
+    const { [orderId]: _, ...left } = sales
+    await write(store, 'job-sales', { sales: left })
+  })
+}
+
 /** Holds a sale to the mandate in its own turn, as before an acceptance. */
 export const holdInTurn = (
   store: SandboxStore,
@@ -131,8 +225,9 @@ export const holdInTurn = (
 ): Promise<void> => inTurn(store, () => holdToMandate(store, standing, sale, now))
 
 /**
- * Holds a job the agent is about to quote to the mandate in force, and records it in `job-sales`,
- * in one turn. It answers with the hash of the mandate the quote names, or null when none is in
+ * Holds a job the agent is about to quote to the mandate in force and to its offer's capacity for
+ * the day, null for a job sold from no offer, and records it in `job-sales`, in one turn, so two
+ * jobs at once can't share the last place. It answers with the hash of the mandate the quote names, or null when none is in
  * force. A job quoted again keeps the time it was first quoted. It reads nothing from Avow, so read
  * the standing first.
  */
@@ -141,24 +236,15 @@ export function holdJobQuote(
   standing: SellerStanding,
   sale: Omit<HeldSale, 'offer'>,
   now: bigint,
+  capacity: number | null = null,
 ): Promise<Hex | null> {
   return inTurn(store, async () => {
     await holdToMandate(store, standing, { ...sale, offer: null }, now)
     const facts = saleFacts(sale.terms)
     if (!facts || facts.category !== JOB_CATEGORY)
       throw new Error("The order's terms aren't a job's.")
-    const sales = await jobSales(store, now)
-    const record: CountedSale = {
-      category: JOB_CATEGORY,
-      item: facts.item,
-      units: facts.units,
-      price: facts.price,
-      deliverBy: facts.deliverBy,
-      at: sales[sale.orderId]?.at ?? now,
-      until: sale.terms.remedies.acceptBy,
-      accepted: false,
-    }
-    await write(store, 'job-sales', { sales: { ...sales, [sale.orderId]: record } })
+    await holdToCapacity(store, { orderId: sale.orderId, item: facts.item, capacity }, now)
+    await recordJob(store, sale, now)
     return standing.inForce ? standing.chain.current.hash : null
   })
 }
