@@ -24,12 +24,14 @@ import type {
   Mandate,
   MandateFields,
   PaymentLimit,
+  PricePeriodLimit,
   ReplacementMandate,
   Side,
 } from './types.js'
 import {
   DOMAIN_NAME,
   isSupportedMessageVersion,
+  MANDATE_PERIOD_VERSION,
   MANDATE_PRICE_VERSION,
   MANDATE_REPLACEMENT_VERSION,
   MESSAGE_VERSIONS,
@@ -459,15 +461,38 @@ export const MANDATE_PRICE_TYPES = {
 } as const
 
 /**
- * The domain version a mandate signs at. A price limit decides it first, and `replaces` decides it
- * for a mandate with none.
+ * A mandate's types when it limits what an agent commits over a period: a first mandate's fields,
+ * the price limit for one commitment or zero for none, the limit over a period, then the hash of
+ * the mandate it replaces, the zero hash for a first mandate.
  */
-export const mandateVersion = (m: Pick<Mandate, 'replaces' | 'priceCapPerCommitment'>): string =>
-  m.priceCapPerCommitment !== undefined
-    ? MANDATE_PRICE_VERSION
-    : m.replaces === undefined
-      ? MESSAGE_VERSIONS.Mandate
-      : MANDATE_REPLACEMENT_VERSION
+export const MANDATE_PERIOD_TYPES = {
+  PaymentLimit: MANDATE_TYPES.PaymentLimit,
+  PricePeriodLimit: [
+    { name: 'amount', type: 'uint256' },
+    { name: 'period', type: 'uint64' },
+  ],
+  Mandate: [
+    ...MANDATE_TYPES.Mandate,
+    { name: 'priceCapPerCommitment', type: 'uint256' },
+    { name: 'pricePeriodLimit', type: 'PricePeriodLimit' },
+    { name: 'replaces', type: 'bytes32' },
+  ],
+} as const
+
+/**
+ * The domain version a mandate signs at. A limit over a period decides it first, then a price
+ * limit, and `replaces` decides it for a mandate with neither.
+ */
+export const mandateVersion = (
+  m: Pick<Mandate, 'replaces' | 'priceCapPerCommitment' | 'pricePeriodLimit'>,
+): string =>
+  m.pricePeriodLimit !== undefined
+    ? MANDATE_PERIOD_VERSION
+    : m.priceCapPerCommitment !== undefined
+      ? MANDATE_PRICE_VERSION
+      : m.replaces === undefined
+        ? MESSAGE_VERSIONS.Mandate
+        : MANDATE_REPLACEMENT_VERSION
 
 export const TERMS_AGREEMENT_TYPES = {
   TermsAgreement: [
@@ -693,14 +718,33 @@ export const TIMESTAMP_TYPES = {
  * existed: a first mandate at version 1 under `MANDATE_TYPES`, and a replacement at version 2 with
  * `replaces` as its last field. A mandate with a price limit signs at version 3 under
  * `MANDATE_PRICE_TYPES`, where a first mandate names the zero hash as the one it replaces. A
- * replacement that names the zero hash is refused, since it would sign as a first mandate.
+ * mandate with a limit over a period signs at version 4 under `MANDATE_PERIOD_TYPES`, with a price
+ * limit of zero standing for none. A replacement that names the zero hash is refused, since it
+ * would sign as a first mandate.
  */
 export function mandateTypedData(m: Mandate, d: AvowDomain) {
   const fields = mandateFields(m)
-  if (m.priceCapPerCommitment !== undefined) {
-    if (m.replaces?.toLowerCase() === ZERO_HASH) {
-      throw new RangeError('A replacement mandate names the mandate it replaces by its hash')
+  if (m.replaces?.toLowerCase() === ZERO_HASH) {
+    throw new RangeError('A replacement mandate names the mandate it replaces by its hash')
+  }
+  if (m.pricePeriodLimit !== undefined) {
+    // Zero stands for no price limit here, so a limit of zero would sign as none.
+    if (m.priceCapPerCommitment === 0n) {
+      throw new RangeError('A price limit for one commitment is above zero, or left out')
     }
+    return {
+      domain: domain(d, MANDATE_PERIOD_VERSION),
+      types: MANDATE_PERIOD_TYPES,
+      primaryType: 'Mandate' as const,
+      message: {
+        ...fields,
+        priceCapPerCommitment: m.priceCapPerCommitment ?? 0n,
+        pricePeriodLimit: { amount: m.pricePeriodLimit.amount, period: m.pricePeriodLimit.period },
+        replaces: m.replaces ?? ZERO_HASH,
+      },
+    }
+  }
+  if (m.priceCapPerCommitment !== undefined) {
     return {
       domain: domain(d, MANDATE_PRICE_VERSION),
       types: MANDATE_PRICE_TYPES,
@@ -1038,11 +1082,18 @@ export const isPriceTypedData = (
 ): td is Extract<MandateTypedData, { types: typeof MANDATE_PRICE_TYPES }> =>
   td.types === MANDATE_PRICE_TYPES
 
+/** Whether a mandate's typed data is a version 4 mandate's, which carries a limit over a period. */
+export const isPeriodTypedData = (
+  td: MandateTypedData,
+): td is Extract<MandateTypedData, { types: typeof MANDATE_PERIOD_TYPES }> =>
+  td.types === MANDATE_PERIOD_TYPES
+
 /**
  * The digest of a mandate's typed data under whichever table it signs with. Every branch makes
  * the same call, since viem types its argument by one table, so each has to see a single table.
  */
 function hashMandateTypedData(td: MandateTypedData): Hex {
+  if (isPeriodTypedData(td)) return hashTypedData(td)
   if (isPriceTypedData(td)) return hashTypedData(td)
   return isReplacementTypedData(td) ? hashTypedData(td) : hashTypedData(td)
 }
@@ -1105,15 +1156,24 @@ interface InterfacesMatchTables {
   >
   Mandate: SameFields<
     keyof ReplacementMandate | 'approvalAbove',
+    FieldNames<typeof MANDATE_PERIOD_TYPES.Mandate>
+  >
+  PricedMandate: SameFields<
+    Exclude<keyof ReplacementMandate, 'pricePeriodLimit'> | 'approvalAbove',
     FieldNames<typeof MANDATE_PRICE_TYPES.Mandate>
   >
   ReplacementMandate: SameFields<
-    Exclude<keyof ReplacementMandate, 'priceCapPerCommitment'> | 'approvalAbove',
+    | Exclude<keyof ReplacementMandate, 'priceCapPerCommitment' | 'pricePeriodLimit'>
+    | 'approvalAbove',
     FieldNames<typeof MANDATE_REPLACEMENT_TYPES.Mandate>
   >
   FirstMandate: SameFields<
-    Exclude<keyof MandateFields, 'priceCapPerCommitment'> | 'approvalAbove',
+    Exclude<keyof MandateFields, 'priceCapPerCommitment' | 'pricePeriodLimit'> | 'approvalAbove',
     FieldNames<typeof MANDATE_TYPES.Mandate>
+  >
+  PricePeriodLimit: SameFields<
+    keyof PricePeriodLimit,
+    FieldNames<typeof MANDATE_PERIOD_TYPES.PricePeriodLimit>
   >
   PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>
   SellerMandate: SameFields<
@@ -1165,7 +1225,9 @@ interface InterfacesMatchTables {
 const _interfacesMatchTables: InterfacesMatchTables = {
   ApprovalDecision: true,
   Mandate: true,
+  PricedMandate: true,
   ReplacementMandate: true,
+  PricePeriodLimit: true,
   FirstMandate: true,
   PaymentLimit: true,
   SellerMandate: true,

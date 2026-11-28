@@ -173,6 +173,7 @@ describe('the reserve approval request Avow takes', () => {
       request: { ...plainRequest, terms },
       token: TOKEN,
       openReserves,
+      committedInPeriod: 0n,
       revoked: false,
       now: NOW,
       profile: TESTNET_DEMO_PROFILE,

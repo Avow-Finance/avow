@@ -14,7 +14,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | --- | --- | --- |
 | `connect` | Asks for authority | Makes the agent's key, keeps it in `.avow` and asks for authority. It answers with a pairing code and an approval link for the agent's person |
 | `status` | No | Where the request stands: waiting, picking up its authority, connected or not connected |
-| `authority` | No | How much the agent can commit right now, the most it can hold at once and how much of that is free, what its key can still move today, its price limit for one commitment when its mandate has one, labelled with the SDK and Avow that hold it to that, and the suppliers it may book |
+| `authority` | No | How much the agent can commit right now, the most it can hold at once and how much of that is free, what its key can still move today, its price limit for one commitment and its limit over a period when its mandate has them, labelled with the SDK and Avow that hold it to them, and the suppliers it may book |
 | `check` | No | Whether a GPU booking or an order from a service offer would pass right now, and which layer would refuse it if not, without booking, ordering or moving money |
 | `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |

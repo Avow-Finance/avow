@@ -5,6 +5,8 @@ slug: docs/reference/price-limits
 
 A buyer's mandate can limit the price of one commitment. Every other money limit in a mandate counts the reserve, the money the lock holds against charges. The price is what the buyer pays the supplier for the work, paid outside the lock, and until this limit nothing in a mandate capped it. An administrator who wants an agent to agree to at most \$200 for one booking signs a mandate whose `priceCapPerCommitment` is `200000000`, in micros.
 
+A mandate can also limit what the agent commits over time. An administrator who wants an agent to commit at most \$2,000 in any 30 days signs a mandate whose `pricePeriodLimit` is `{ amount: 2000000000, period: 2592000 }`. Either limit stands without the other.
+
 ## Who holds an agent to it
 
 Two layers hold an agent to its price limit, the SDK and Avow's API. The lock never reads a price, so no chain holds an agent to it, and wherever a price limit is shown it's labelled with those two layers. A mandate's reserve limits have a third layer in the lock.
@@ -27,11 +29,23 @@ A supplier's verifier runs the same function on the buyer's mandate, so it gives
 
 Version 3 terms count as the plain booking they make. A booking they rely on is a commitment of its own, made under its own business's mandate, so its price never counts toward this one.
 
+## How a period counts
+
+The period is a rolling window of `period` seconds, counted back from the moment Avow is asked to approve a reserve. Every commitment Avow approved for the agent's key within that window counts at its full price, under the mandate the agent holds now and every one it replaced, whatever became of it after. A commitment that lapsed, was cancelled or was released still counts, so cancelling and booking again never makes room.
+
+- Avow counts its own record of the approvals it signed, by the time it signed each. A reserve over the limit is refused as `mandate.over_price_period_limit`.
+- The SDK counts the commitments its agent stored in its `.avow` folder, by when it stored each, a moment after Avow approved it. A commitment stored before the SDK kept prices counts nothing there. Avow also counts approvals the SDK never stored, such as one whose reserve never landed, and the SDK counts each commitment a moment longer than Avow does, so the two counts can differ at the edges. Avow's is the one that binds, since the lock takes no reserve without its approval.
+- A supplier's verifier holds no such count, and checks the rest of the mandate with `committedInPeriod: 'not_counted'`.
+
+The window can be at most 366 days. A limit over a period has to be above zero, and a price limit for one commitment can't be above it.
+
 ## The message
 
 A mandate with a price limit signs at version 3, whether it's an agent's first mandate or one that replaces another. Its fields are version 1's, then `priceCapPerCommitment` as a `uint256`, then `replaces` as a `bytes32`. A first mandate leaves `replaces` out on the wire, and its typed data carries the zero hash in that field. A replacement that names the zero hash is refused, since it would sign as a first mandate.
 
-A mandate with no price limit signs at version 1 or 2, byte for byte as before, and reads as one with no limit on the price. Every agent enrolled before the limit existed keeps working, and its administrator adds a limit by signing a replacement. A limit of zero is malformed and refused as `mandate.invalid`.
+A mandate with a limit over a period signs at version 4, first or replacement. Its fields are version 1's, then `priceCapPerCommitment` as a `uint256`, zero when the mandate has no price limit for one commitment, then `pricePeriodLimit` as a struct of `amount` (`uint256`) and `period` (`uint64`), then `replaces`, as at version 3. A price limit of zero is refused rather than signed, since zero stands for none here.
+
+A mandate with neither limit signs at version 1 or 2, byte for byte as before, and reads as one with no limit on the price. Every agent enrolled before the limit existed keeps working, and its administrator adds a limit by signing a replacement. A limit of zero is malformed and refused as `mandate.invalid`.
 
 A first mandate with a price limit still goes on with the agent's key in one transaction. The key's witness on Tempo is the version 3 hash, and nothing about the key changes.
 
@@ -41,6 +55,8 @@ A booking over the limit is refused as `mandate.over_price_limit`. The check rea
 
 An administrator lifts the refusal by signing a mandate with a higher limit, so an offer search lists an offer over the limit among the offers that need approval.
 
+A commitment that would take what the agent committed within the window past the limit over a period is refused as `mandate.over_price_period_limit`, after the price limit for one commitment. The refusal gives the limit, the window and what was already committed.
+
 ## Where it stands
 
-The SDK holds an agent to the price limit of any mandate it reads, and its `authority` and `check` tools give the limit with the two layers that hold the agent to it. `sandboxMandate` takes `priceCapPerCommitment` for a business that signs its own.
+The SDK holds an agent to the price limit of any mandate it reads, and its `authority` and `check` tools give the limit with the two layers that hold the agent to it. `authority` also gives the limit over a period and what the agent committed within it by its own count. `sandboxMandate` takes `priceCapPerCommitment` and `pricePeriodLimit` for a business that signs its own.

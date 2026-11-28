@@ -161,6 +161,7 @@ describe('the demo supplier’s four offers for a job', () => {
         },
         token: TOKEN,
         openReserves: 0n,
+        committedInPeriod: 0n,
         revoked: false,
         now: NOW,
         profile: TESTNET_DEMO_PROFILE,

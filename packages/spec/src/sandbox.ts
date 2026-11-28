@@ -8,7 +8,7 @@ import {
 import { isApiAudience } from './api-request.js'
 import { isApprovalRequestId } from './approval-request.js'
 import { JOB_EVENT_SCHEMAS, JOB_EVENT_TYPES, type JobEvent } from './job-session.js'
-import { address, bytes32, u256 } from './json-fields.js'
+import { address, bytes32, u64, u256 } from './json-fields.js'
 import { PRICE_LIMIT_ENFORCED_BY } from './mandate.js'
 import { isTestnetChain } from './networks.js'
 import { describeReason, type ReasonCode } from './reasons.js'
@@ -409,6 +409,13 @@ export interface RefusalAmounts {
    */
   priceCapPerCommitment: bigint | null
   /**
+   * The mandate's limit over a rolling window: the most the prices may come to, the window in
+   * seconds, and what the agent's key had committed within it before the booking as whoever
+   * refused counted it, or null when it wasn't counted. Null when the mandate has no such limit,
+   * or the refusal was posted before refusals recorded it.
+   */
+  pricePeriodLimit: { limit: bigint; period: bigint; committed: bigint | null } | null
+  /**
    * The most the agent's key can move in a day, the spending limit the business's root key set on
    * the account's keychain, or null when the key has no daily limit on the lock's token.
    */
@@ -552,6 +559,10 @@ const sandboxEventJson = z.discriminatedUnion('type', [
       capPerCommitment: u256.nullable().default(null),
       price: u256.nullable().default(null),
       priceCapPerCommitment: u256.nullable().default(null),
+      pricePeriodLimit: z
+        .strictObject({ limit: u256, period: u64, committed: u256.nullable() })
+        .nullable()
+        .default(null),
       dailyLimit: u256.nullable(),
       dailyLeft: u256.nullable(),
     }),
@@ -606,6 +617,20 @@ export function parseSessionEventAnswer(json: unknown): Parsed<SessionEventAnswe
 }
 
 /** An amount in micros as dollars, such as `$1,500` or `$12.50`. */
+/**
+ * A rolling window in words, as a limit over a period names it after "any": "day", "7 days",
+ * "12 hours", or whole seconds for a window that isn't whole hours.
+ */
+export function formatPeriod(seconds: bigint): string {
+  const DAY = 86_400n
+  const HOUR = 3_600n
+  if (seconds === DAY) return 'day'
+  if (seconds % DAY === 0n) return `${seconds / DAY} days`
+  if (seconds === HOUR) return 'hour'
+  if (seconds % HOUR === 0n) return `${seconds / HOUR} hours`
+  return `${seconds} seconds`
+}
+
 export function formatUsd(micros: bigint): string {
   const sign = micros < 0n ? '-' : ''
   const abs = micros < 0n ? -micros : micros
@@ -675,6 +700,17 @@ export function refusalReason(r: Pick<Refused, 'code' | 'layer' | 'amounts'>): s
       return `This booking needs ${formatUsd(needed)} and your agent has ${formatUsd(left)} left of its ${formatUsd(authority)} held at once, so ${who} refused the reserve and no money moved.${onChain}`
     case 'mandate.over_commitment_cap':
       return `This booking needs ${formatUsd(needed)}, more than ${capPerCommitment === null ? 'your mandate allows' : `the ${formatUsd(capPerCommitment)} your mandate allows`} for one commitment, so ${who} refused the reserve and no money moved.${onChain}`
+    case 'mandate.over_price_period_limit': {
+      const held = r.amounts.pricePeriodLimit
+      const within = held === null ? 'its period' : `any ${formatPeriod(held.period)}`
+      const allows =
+        held === null
+          ? 'what your mandate allows'
+          : `the ${formatUsd(held.limit)} your mandate allows`
+      const already =
+        held?.committed == null ? '' : `, with ${formatUsd(held.committed)} already committed`
+      return `This booking's price ${price === null ? '' : `of ${formatUsd(price)} `}would take what your agent commits within ${within} past ${allows}${already}, so ${who} refused it and no money moved. The lock never reads a price, so ${PRICE_LIMIT_LAYERS} are what hold your agent to this limit.`
+    }
     case 'mandate.over_price_limit':
       return `This booking's price is ${price === null ? 'more than your mandate allows' : `${formatUsd(price)}, more than ${priceCap === null ? 'your mandate allows' : `the ${formatUsd(priceCap)} your mandate allows`}`} for one commitment, so ${who} refused it and no money moved. The lock never reads a price, so ${PRICE_LIMIT_LAYERS} are what hold your agent to this limit.`
     default:

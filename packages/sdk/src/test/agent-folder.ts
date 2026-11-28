@@ -25,6 +25,8 @@ export async function folderWithAgent(
     categories: readonly string[]
     /** The mandate's price limit for one commitment, none when left out. */
     priceCap?: bigint
+    /** The mandate's limit over a period, none when left out. */
+    period?: { amount: bigint; period: bigint }
   },
 ) {
   const store = memoryStore()
@@ -41,6 +43,7 @@ export async function folderWithAgent(
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(1000),
     ...(o.priceCap === undefined ? {} : { priceCapPerCommitment: o.priceCap }),
+    ...(o.period === undefined ? {} : { pricePeriodLimit: o.period }),
     expiry: 1_900_000_000n,
   })
   const business = { ...deployment, account: root.address, lock: LOCK, businessId }

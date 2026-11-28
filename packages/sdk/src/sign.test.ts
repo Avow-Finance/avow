@@ -93,6 +93,14 @@ describe('signing for a business account', () => {
       const td = mandateTypedData(signed.message, DOMAIN)
       expect(await isSignedBy(td, signed.signature, account, keychain)).toBe(true)
     }
+    // A limit over a period signs at version 4.
+    for (const m of [first, replacement]) {
+      const period = { ...m, pricePeriodLimit: { amount: dollars(2000), period: 2_592_000n } }
+      const signed = await signMandate(period, DOMAIN, accountSigner(account, root))
+      expect(signed.schemaVersion).toBe('4')
+      const td = mandateTypedData(signed.message, DOMAIN)
+      expect(await isSignedBy(td, signed.signature, account, keychain)).toBe(true)
+    }
   })
 
   it('produces nothing the keychain accepts when the key signs bare', async () => {

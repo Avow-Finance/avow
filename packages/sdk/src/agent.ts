@@ -9,6 +9,7 @@ import {
   approvalTokenProblem,
   type ChainedTerms,
   type CheckedDependency,
+  type CommittedInPeriod,
   chainedTermsShapeProblem,
   checkEnvelope,
   checkMandate,
@@ -23,6 +24,7 @@ import {
   MESSAGE_VERSIONS,
   mandateHash,
   newSalt,
+  periodLimitProblem,
   priceLimitProblem,
   type RailToken,
   type ReasonCode,
@@ -104,6 +106,12 @@ export interface AgentConfig<A extends AvowApi = AvowApi> {
   maxApprovalValidity?: bigint
   /** The clock, in unix seconds. The system clock by default. */
   now?: () => bigint
+  /**
+   * What the agent's key committed within the last `period` seconds, as the sum of each
+   * commitment's price, for a mandate with a limit over a period. The sandbox agent counts the
+   * commitments it stored. Left out, the agent counts nothing, and only Avow holds it to that limit.
+   */
+  committedInPeriod?: (period: bigint) => Promise<CommittedInPeriod>
   /**
    * Sends the transaction that funds a reserve and returns where it landed. By default the key
    * signs it and Avow's relay pays its fee, through `sendSponsored`. An agent whose wallet pays
@@ -569,18 +577,29 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     }
   }
 
+  /** What the key committed within the mandate's period, when it has one and the agent counts. */
+  async function committedFor(m: Mandate): Promise<CommittedInPeriod> {
+    const period = m.pricePeriodLimit?.period
+    return period === undefined || !config.committedInPeriod
+      ? 'not_counted'
+      : config.committedInPeriod(period)
+  }
+
   /**
    * The same check Avow and a supplier's verifier run, or null when it approves. The lock enforces
-   * the open reserves cap, so this check counts none open, as the verifier does. The SDK can't yet
-   * carry the administrator's approval in person, so a reserve the mandate sends to them is
-   * refused.
+   * the open reserves cap, so this check counts none open, as the verifier does. What the key
+   * committed over the mandate's period comes from `committedInPeriod`, when the agent was given
+   * it. The SDK can't yet carry the administrator's approval in person, so a reserve the mandate
+   * sends to them is refused.
    */
-  function mandateCheck(request: MandateCheckInput['request']): ReasonCode | null {
+  async function mandateCheck(request: MandateCheckInput['request']): Promise<ReasonCode | null> {
+    const committed = await committedFor(mandate)
     const allowed = checkMandate({
       mandate,
       request,
       token,
       openReserves: 0n,
+      committedInPeriod: committed,
       revoked: false,
       now: now(),
       profile: config.profile,
@@ -614,9 +633,11 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
       return { ok: false, reason: 'message.signature_invalid', layer: 'sdk' }
     }
     // Version 3 terms meet the whole mandate check only once Avow's approval names the owner of
-    // each booking they rely on. The price limit reads no lock, so it's held here, before the agent
-    // signs anything or asks Avow.
-    const overPrice = priceLimitProblem(mandate, terms)
+    // each booking they rely on. The limits on the price read no lock, so they're held here, before
+    // the agent signs anything or asks Avow.
+    const overPrice =
+      priceLimitProblem(mandate, terms) ??
+      periodLimitProblem(mandate, terms, await committedFor(mandate))
     if (overPrice) return { ok: false, reason: overPrice, layer: 'sdk' }
     const buyerSignature = await key.sign({ hash: digest, raw: true })
     const signed: SignedAgreement = {
@@ -655,7 +676,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
         config.dependencies ?? { readers: [] },
       )
       if (!relied.ok) return { ...relied, layer: 'sdk', decisionId }
-      const allowed = mandateCheck({ ...request, terms: relied.terms })
+      const allowed = await mandateCheck({ ...request, terms: relied.terms })
       if (allowed) return { ok: false, reason: allowed, layer: 'sdk', decisionId }
       dependencies = relied.checked
     }
@@ -740,7 +761,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
       }
       const supplier = b.supplier.profile
       const commitmentId = toHex(crypto.getRandomValues(new Uint8Array(32)))
-      const allowed = mandateCheck(requestOf(commitmentId, supplier, b.category, terms))
+      const allowed = await mandateCheck(requestOf(commitmentId, supplier, b.category, terms))
       if (allowed) return { ok: false, reason: allowed }
 
       const salt = newSalt()
@@ -790,7 +811,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
       // Version 3 terms go through it once their bookings are checked, since it takes them only as
       // checked terms.
       if (!isChainedTerms(terms)) {
-        const allowed = mandateCheck(requestOf(a.commitmentId, q.supplier, a.category, terms))
+        const allowed = await mandateCheck(requestOf(a.commitmentId, q.supplier, a.category, terms))
         if (allowed) return { ok: false, reason: allowed, layer: 'sdk' }
       }
       return commitAgreed({

@@ -455,6 +455,7 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         price,
         // The fixture's mandate has no price limit.
         priceCapPerCommitment: null,
+        pricePeriodLimit: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(1000),
       }
@@ -472,6 +473,8 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         request,
         token: TOKEN,
         openReserves: 0n,
+        // The fixture's mandate has no limit over a period, so nothing is counted toward one.
+        committedInPeriod: 'not_counted',
         revoked: false,
         now,
         profile: TESTNET_DEMO_PROFILE,
@@ -482,6 +485,7 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
         request,
         token: TOKEN,
         openReserves: open,
+        committedInPeriod: 'not_counted',
         revoked: false,
         now,
         profile: TESTNET_DEMO_PROFILE,

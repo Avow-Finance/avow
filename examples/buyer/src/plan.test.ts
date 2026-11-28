@@ -67,6 +67,7 @@ describe("the quickstart's booking and mandate", () => {
         },
         token: TOKEN,
         openReserves: 0n,
+        committedInPeriod: 0n,
         revoked: false,
         now: NOW,
         profile: TESTNET_DEMO_PROFILE,

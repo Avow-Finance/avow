@@ -3,6 +3,7 @@ import {
   type HashSigner,
   type HumanApproval,
   humanApprovalTypedData,
+  isPeriodTypedData,
   isPriceTypedData,
   isReplacementTypedData,
   type Mandate,
@@ -70,12 +71,14 @@ export async function signMandate(
   }
   const td = mandateTypedData(mandate, d)
   // Every branch makes the same call, since viem types its argument by one table.
-  const signature = isPriceTypedData(td)
+  const signature = isPeriodTypedData(td)
     ? await signer.signTypedData(td)
-    : isReplacementTypedData(td)
+    : isPriceTypedData(td)
       ? await signer.signTypedData(td)
-      : await signer.signTypedData(td)
-  // The envelope carries the version the typed data signed at, which the price limit and
+      : isReplacementTypedData(td)
+        ? await signer.signTypedData(td)
+        : await signer.signTypedData(td)
+  // The envelope carries the version the typed data signed at, which the limits on the price and
   // `replaces` decided.
   return { ...envelope('Mandate', d, mandate, signature), schemaVersion: td.domain.version }
 }

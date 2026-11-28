@@ -5,6 +5,7 @@ import {
   type Mandate,
   type MandateProof,
   mandateVersion,
+  type PricePeriodLimit,
   type SandboxDeployment,
   type SupplierProfile,
 } from '@avow-finance/spec'
@@ -49,6 +50,12 @@ export function sandboxMandate(m: {
    * out, the mandate puts no limit on the price and signs at version 1, as before.
    */
   priceCapPerCommitment?: bigint
+  /**
+   * The most the prices of the agent's commitments may come to within any rolling window of
+   * `period` seconds, which the SDK and Avow hold the agent to. Left out, the mandate puts no limit
+   * on what the agent commits over time.
+   */
+  pricePeriodLimit?: PricePeriodLimit
   /** The most the agent's key can move in a day, `SANDBOX_DAILY_LIMIT` when left out. */
   dailyLimit?: bigint
   /** Unix seconds. */
@@ -67,6 +74,7 @@ export function sandboxMandate(m: {
     ...(m.priceCapPerCommitment === undefined
       ? {}
       : { priceCapPerCommitment: m.priceCapPerCommitment }),
+    ...(m.pricePeriodLimit === undefined ? {} : { pricePeriodLimit: { ...m.pricePeriodLimit } }),
     suppliers: [...m.suppliers],
     categories: [...(m.categories ?? ['compute'])],
     paymentLimits: [{ token: m.token, amount: m.dailyLimit ?? SANDBOX_DAILY_LIMIT, period: DAY }],

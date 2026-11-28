@@ -81,6 +81,8 @@ export const REASON_CODES = {
   'mandate.over_payment_limit': "The amount is above the mandate's payment limit for the token",
   'mandate.over_commitment_cap': 'The amount is above the cap per commitment',
   'mandate.over_open_reserves_cap': "The amount would take open reserves above the mandate's cap",
+  'mandate.over_price_period_limit':
+    "The commitment would take the prices committed within the mandate's period above its limit, which the SDK and Avow hold an agent to",
   'mandate.over_price_limit':
     "The commitment's price is above the mandate's price limit, which the SDK and Avow hold an agent to",
   'mandate.ends_before_window': 'The mandate expires before the booking window ends',

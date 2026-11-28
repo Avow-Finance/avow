@@ -63,6 +63,10 @@ const avowExtensionJson = z.strictObject({
   cap_open_reserves: z.string(),
   /** The mandate's price limit for one commitment, left out when it has none. */
   price_cap_per_commitment: z.string().exactOptional(),
+  /** The mandate's limit over a rolling window, left out when it has none. */
+  price_period_limit: z
+    .strictObject({ amount: z.string(), period_seconds: z.string() })
+    .exactOptional(),
   payment_limits: z.array(
     z.strictObject({ token: z.string(), amount: z.string(), period_seconds: z.string() }),
   ),
@@ -111,6 +115,14 @@ export function toAp2IntentMandate(
         ...(m.priceCapPerCommitment === undefined
           ? {}
           : { price_cap_per_commitment: m.priceCapPerCommitment.toString() }),
+        ...(m.pricePeriodLimit === undefined
+          ? {}
+          : {
+              price_period_limit: {
+                amount: m.pricePeriodLimit.amount.toString(),
+                period_seconds: m.pricePeriodLimit.period.toString(),
+              },
+            }),
         payment_limits: m.paymentLimits.map((l) => ({
           token: l.token,
           amount: l.amount.toString(),
@@ -161,6 +173,14 @@ export function fromAp2IntentMandate(json: unknown): Parsed<Mandate> {
     ...(avow.price_cap_per_commitment === undefined
       ? {}
       : { priceCapPerCommitment: avow.price_cap_per_commitment }),
+    ...(avow.price_period_limit === undefined
+      ? {}
+      : {
+          pricePeriodLimit: {
+            amount: avow.price_period_limit.amount,
+            period: avow.price_period_limit.period_seconds,
+          },
+        }),
     suppliers: intent.merchants ?? [],
     categories: avow.categories,
     paymentLimits: avow.payment_limits.map((l) => ({

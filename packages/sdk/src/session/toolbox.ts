@@ -359,6 +359,7 @@ export class Toolbox {
       // A refusal of the service's own rules comes before any terms, so it names no price.
       price: null,
       priceCapPerCommitment: null,
+      pricePeriodLimit: null,
       dailyLimit: authority.dailyLimit,
       dailyLeft: authority.dailyLeft,
     })

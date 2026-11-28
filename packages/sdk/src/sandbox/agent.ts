@@ -8,6 +8,7 @@ import {
   approvalTermsProblem,
   approvalTokenProblem,
   type CommitmentReference,
+  type CommittedInPeriod,
   checkEnvelope,
   checkMandate,
   dailyLimitOf,
@@ -17,6 +18,7 @@ import {
   type Mandate,
   type MandateChain,
   type MandateProof,
+  type PricePeriodLimit,
   type RailState,
   type RaisableLimit,
   type ReasonCode,
@@ -67,6 +69,7 @@ import {
 import { SANDBOX_SCREEN_URL, sessionRelay, verifyUrl } from './session.js'
 import {
   addCommitment,
+  committedWithin,
   loadAgentItem,
   loadCommitments,
   type SandboxStore,
@@ -269,6 +272,18 @@ export interface SandboxAgent {
    * the agent to it.
    */
   readonly priceCapPerCommitment: number | null
+  /**
+   * The most the prices of the agent's commitments may come to within any rolling window, in
+   * dollars, with the window in seconds, or null when its mandate has no such limit. The SDK and
+   * Avow hold the agent to it, and the lock never reads a price.
+   */
+  readonly pricePeriodLimit: { limit: number; periodSeconds: bigint } | null
+  /**
+   * What the agent committed within that window, in dollars, as its own records count it, or null
+   * when its mandate has no such limit. Avow counts every commitment it approved for the key, by
+   * when it approved each, and its count is the one that binds.
+   */
+  committedInPeriod(): Promise<number | null>
   readonly suppliers: readonly SandboxSupplier[]
   readonly business: { account: Address; lock: Address; businessId: string }
   /** The mandate the business's root key authorized for the agent. */
@@ -579,6 +594,26 @@ function booker(m: {
   }
   const capOf = (h: Held) => h.mandate.message.capOpenReserves
   const priceCapOf = (h: Held) => h.mandate.message.priceCapPerCommitment ?? null
+  /** What the key committed within the mandate's period, as this agent's own records count it. */
+  const committedFor = (period: bigint) => committedWithin(m.store, period, systemClock())
+  const committedUnder = async (h: Held): Promise<CommittedInPeriod> => {
+    const period = h.mandate.message.pricePeriodLimit?.period
+    return period === undefined ? 'not_counted' : committedFor(period)
+  }
+  /** The mandate's limit over a period as a refusal gives it, with what the key committed. */
+  const periodAmounts = (limit: PricePeriodLimit, committed: CommittedInPeriod) => ({
+    limit: limit.amount,
+    period: limit.period,
+    committed: committed === 'not_counted' ? null : committed,
+  })
+  const periodLimitOf = async (h: Held) => {
+    const limit = h.mandate.message.pricePeriodLimit
+    if (!limit) return null
+    return periodAmounts(
+      limit,
+      await committedUnder(h).catch((): CommittedInPeriod => 'not_counted'),
+    )
+  }
   const dailyLimitOf_ = (h: Held) => dailyLimitOf(h.mandate.message, deployment.token)
 
   /** What the lock holds open under the current mandate and every one it replaced. */
@@ -635,7 +670,12 @@ function booker(m: {
     const { mandate } = h
     const cap = capOf(h)
     const price = termsPrice(terms)
-    const [open, dailyLeft] = await Promise.all([openAcross(h), dailyLeftUnder(h)])
+    const [open, dailyLeft, committed] = await Promise.all([
+      openAcross(h),
+      dailyLeftUnder(h),
+      committedUnder(h),
+    ])
+    const period = h.mandate.message.pricePeriodLimit
     const amounts: RefusalAmounts = {
       needed: reserve,
       left: open >= cap ? 0n : cap - open,
@@ -643,6 +683,7 @@ function booker(m: {
       capPerCommitment: mandate.message.capPerCommitment,
       price,
       priceCapPerCommitment: priceCapOf(h),
+      pricePeriodLimit: period ? periodAmounts(period, committed) : null,
       dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
@@ -665,6 +706,7 @@ function booker(m: {
       },
       token,
       openReserves: open,
+      committedInPeriod: committed,
       revoked: false,
       now: systemClock(),
       profile: TESTNET_DEMO_PROFILE,
@@ -711,13 +753,14 @@ function booker(m: {
     const cap = capOf(h)
     const left = open === null ? r.leftBefore : open >= cap ? 0n : cap - open
     const dailyLeft = await dailyLeftUnder(h).catch(() => null)
-    const amounts = {
+    const amounts: RefusalAmounts = {
       needed: r.needed,
       left,
       authority: cap,
       capPerCommitment: h.mandate.message.capPerCommitment,
       price: r.price,
       priceCapPerCommitment: priceCapOf(h),
+      pricePeriodLimit: await periodLimitOf(h),
       dailyLimit: dailyLimitOf_(h),
       dailyLeft,
     }
@@ -739,6 +782,14 @@ function booker(m: {
     get priceCapPerCommitment() {
       const cap = priceCapOf(held)
       return cap === null ? null : toDollars(cap)
+    },
+    get pricePeriodLimit() {
+      const limit = held.mandate.message.pricePeriodLimit
+      return limit ? { limit: toDollars(limit.amount), periodSeconds: limit.period } : null
+    },
+    async committedInPeriod() {
+      const counted = await committedUnder(await current())
+      return counted === 'not_counted' ? null : toDollars(counted)
     },
     suppliers: m.suppliers,
     business: m.business,
@@ -897,6 +948,7 @@ function booker(m: {
         token,
         profile: TESTNET_DEMO_PROFILE,
         avow: watched,
+        committedInPeriod: committedFor,
         send: async (calls) => {
           const receipt = await sendSponsored({
             client,
@@ -950,6 +1002,7 @@ function booker(m: {
         supplier: supplier.id,
         mandateHash,
         madeAt: systemClock(),
+        price,
       })
       const open = await openAcross(h).catch(() => null)
       const left =

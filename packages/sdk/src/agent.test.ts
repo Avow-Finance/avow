@@ -646,6 +646,32 @@ describe('committing to a quote the supplier signed', () => {
     expect((await roomy.commitToQuote(await quoteFor(fits))).ok).toBe(true)
   })
 
+  it('refuses a job that would pass the limit over a period before it signs, counting what it was told', async () => {
+    // The job's price is $40, and the agent has committed $61 of its $100 in the window.
+    const limited = await setup({
+      mandate: {
+        categories: ['compute', JOB_CATEGORY],
+        pricePeriodLimit: { amount: dollars(100), period: 86_400n },
+      },
+    })
+    const counted: bigint[] = []
+    const agent = createAgent({
+      ...limited.config,
+      dependencies: { readers: [computeReader(limited.supplier.account)] },
+      committedInPeriod: async (period) => {
+        counted.push(period)
+        return dollars(61)
+      },
+    })
+    expect(await agent.commitToQuote(await quoteFor(limited))).toEqual({
+      ok: false,
+      reason: 'mandate.over_price_period_limit',
+      layer: 'sdk',
+    })
+    expect(limited.calls).toEqual([])
+    expect(counted).toEqual([86_400n])
+  })
+
   it('refuses a booking it has no reader for', async () => {
     const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
     const result = await s.agent.commitToQuote(await quoteFor(s))
