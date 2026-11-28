@@ -89,6 +89,7 @@ A listing says Avow found the version within the seller's mandate named in it, a
 | `offer.superseded` | 409 | Avow listed this version and has since replaced it |
 | `offer.withdrawn` | 409 | Avow listed this version and it was withdrawn |
 | `offer.unknown` | 404 | A withdrawal names a version Avow holds no listing of for the business |
+| `offer.item_name_not_plain` | 403 | The item's name isn't plain text on one line, so it could pose as a line of a search result. A job's kind of work is held to this already |
 | `seller_mandate.missing` | 403 | The signing key holds no seller's mandate |
 | `seller_mandate.job_approval_unavailable` | 403 | The version is a job priced where the mandate asks a person to decide, and nothing lets a person approve a job's sale yet |
 | `seller_mandate.*` | 403 | The mandate's chain doesn't read as one, or the newest mandate doesn't allow the version, with the reason `sellerOfferProblem` gives |

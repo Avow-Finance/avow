@@ -73,3 +73,10 @@ describe("a business's name", () => {
     expect(shownBusinessName('   ')).toBe('')
   })
 })
+
+describe('a held name with characters that show nothing', () => {
+  it('marks each format character, variation selector and grapheme joiner', () => {
+    expect(shownBusinessName('North؀wind️ Labs͏')).toBe('North[U+0600]wind[U+FE0F] Labs[U+034F]')
+    expect(businessNameFits('North\u{13430}wind')).toBe(false)
+  })
+})

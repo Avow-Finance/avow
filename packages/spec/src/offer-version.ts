@@ -1,6 +1,6 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
-import { JOB_CATEGORY } from './job.js'
+import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import {
   type JobOfferVersion,
   jobOfferProblem,
@@ -11,10 +11,12 @@ import type { SellerCategory } from './seller-mandate.js'
 import {
   offerVersionId,
   SERVICE_CATEGORY,
+  SERVICE_NAME_MAX,
   type ServiceOfferVersion,
   serviceOfferProblem,
   serviceOfferVersionJson,
 } from './service.js'
+import { isPlainText } from './text.js'
 import type { Parsed } from './wire.js'
 
 /**
@@ -65,3 +67,11 @@ export const offerItemOf = (v: OfferVersion): { category: SellerCategory; name: 
   isJobOfferVersion(v)
     ? { category: JOB_CATEGORY, name: v.work.kind }
     : { category: SERVICE_CATEGORY, name: v.item.name }
+
+/**
+ * Whether an offer version's item is named in plain text on one line, by `isPlainText`. Avow lists
+ * an offer where other businesses' agents read its name, so it lists none whose name could pose as
+ * a line it wrote or reorder the words after it. A job's kind of work is held to this already.
+ */
+export const offerItemNameIsPlain = (v: OfferVersion): boolean =>
+  isPlainText(offerItemOf(v).name, isJobOfferVersion(v) ? JOB_KIND_MAX : SERVICE_NAME_MAX)

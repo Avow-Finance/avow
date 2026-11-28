@@ -4,7 +4,12 @@ import { BPS, COUNTRY_CODE } from './fields.js'
 import { JOB, JOB_CATEGORY } from './job.js'
 import { type JobOfferVersion, jobOfferTerms } from './job-offer.js'
 import { handsToPerson, type MandateCheck } from './mandate.js'
-import { isJobOfferVersion, type OfferVersion, offerVersionProblem } from './offer-version.js'
+import {
+  isJobOfferVersion,
+  type OfferVersion,
+  offerItemNameIsPlain,
+  offerVersionProblem,
+} from './offer-version.js'
 import type { TermsProfile } from './profiles.js'
 import type { ReasonCode } from './reasons.js'
 import { coversSale, type SaleContent, saleContentProblem } from './sale-approval.js'
@@ -404,8 +409,10 @@ export function saleContentOf(
 export type SellerOfferInput = Standing & { mandate: SellerMandate; version: OfferVersion }
 
 /**
- * Why a seller's mandate doesn't let its agent list an offer version, or null when it does. The
- * offer is the mandate's business's, in its currency, for an item it may sell, and within the
+ * Why a seller's mandate doesn't let its agent list an offer version, or null when it does. An
+ * item named in anything but plain text, by `offerItemNameIsPlain`, is refused as
+ * `offer.item_name_not_plain`, since other businesses' agents read a listing. The offer is the
+ * mandate's business's, in its currency, for an item it may sell, and within the
  * limits `checkSellerMandate` holds a sale of it to. A service's largest booking is within the
  * units and the value one order may come to. A job is one unit, and the job its version builds is
  * held to the job's limits, with its start and turnaround leaving `SERVICE_ORDER_CLOCK_SKEW` of
@@ -432,6 +439,7 @@ function readOffer(input: SellerOfferInput): ReasonCode | null {
   if (!isObject(v) || offerVersionProblem(v) !== null || v.supplier !== m.businessId) {
     return 'message.invalid'
   }
+  if (!offerItemNameIsPlain(v)) return 'offer.item_name_not_plain'
   return isJobOfferVersion(v) ? readJobOffer(m, v, input.now) : readServiceOffer(m, v)
 }
 

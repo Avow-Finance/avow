@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { API_REQUEST_MAX_VALIDITY } from './api-request.js'
 import { BUSINESS_NAME_MAX, shownBusinessName } from './business-name.js'
 import { bytes32, u64, u256 } from './json-fields.js'
+import { offerItemNameIsPlain } from './offer-version.js'
 import type { ReasonCode } from './reasons.js'
 import {
   offerVersionId,
@@ -136,13 +137,16 @@ const words = (query: string | null) =>
 
 /**
  * Whether an offer version fits a search at `now`, leaving the agent's mandate aside. It's in the
- * search's currency, its item has every word of the query, it takes the quantity, its total for
+ * search's currency, its item is named in plain text by `offerItemNameIsPlain` and has every word
+ * of the query, it takes the quantity, its total for
  * that quantity is within the budget, and booked at `now` it delivers by the search's deadline. An
  * offer whose delivery falls exactly on the deadline fits at `now` and no later, so a search with
  * a deadline is best booked straight away.
  */
 export function offerFits(search: OfferSearch, version: ServiceOfferVersion, now: bigint): boolean {
   if (serviceOfferProblem(version) !== null || version.currency !== search.currency) return false
+  // Other businesses' agents read a result, so an item named in anything but plain text never fits.
+  if (!offerItemNameIsPlain(version)) return false
   const text = `${version.item.name} ${version.item.summary}`.toLowerCase()
   if (!words(search.query).every((w) => text.includes(w))) return false
   let quote: ServiceOfferQuote

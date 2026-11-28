@@ -2,7 +2,7 @@ import type { Address, Hex } from 'viem'
 import { keccak256, stringToHex } from 'viem'
 import { z } from 'zod'
 import { address, bytes32, hexBytes, u64 } from './json-fields.js'
-import { codePointName, isPlainText, markedUnplain, unplainMarks } from './text.js'
+import { codePointName, isPlainText, quotedText, unplainMarks } from './text.js'
 
 /**
  * An agent asking a business for authority, from wherever its developer runs it. The agent makes
@@ -129,8 +129,7 @@ export function agentLabelProblem(raw: string): string | null {
  * so it can neither hide nor reorder what follows.
  */
 export function quotedLabel(label: string): string {
-  if (isPlainText(label, AGENT_LABEL_MAX)) return `"${label}"`
-  return `"${markedUnplain(label)}"`
+  return quotedText(label)
 }
 
 /**

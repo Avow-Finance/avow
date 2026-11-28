@@ -17,10 +17,27 @@ export const isSoundText = (v: unknown, max: number): v is string =>
   isFilled(v, max) && isWellFormedText(v)
 
 /**
+ * The variation selector that asks for an emoji's colour form. A phone adds it after many emoji, so
+ * right after a pictograph it changes only how that emoji shows, and anywhere else it hides.
+ */
+const EMOJI_PRESENTATION = 0xfe0f
+const PICTOGRAPH = /^\p{Extended_Pictographic}$/u
+
+/** Every format character, which shows nothing of its own and can hide or reorder text. */
+const FORMAT = /^\p{Cf}$/u
+
+/**
  * Whether a character changes how text reads without showing: a control, a line or paragraph break,
- * or a mark that sets direction or hides. They are named by code point, so every runtime agrees.
+ * a format character, a variation selector, the combining grapheme joiner, or a mark that sets
+ * direction or hides. Most are named by code point, so every runtime agrees, and every format
+ * character is caught besides, such as the Arabic number signs from U+0600 and the Egyptian
+ * hieroglyph format controls from U+13430.
  */
 const isUnseen = (c: number) =>
+  FORMAT.test(String.fromCodePoint(c)) ||
+  c === 0x34f ||
+  (c >= 0xfe00 && c <= 0xfe0f) ||
+  (c >= 0xe0100 && c <= 0xe01ef) ||
   c <= 0x1f ||
   (c >= 0x7f && c <= 0x9f) ||
   c === 0xad ||
@@ -69,7 +86,8 @@ export interface UnplainMark {
 
 /**
  * The characters that keep `isPlainText` from passing a value of the right length, in order. It is
- * the one form of the rule on characters, which `isPlainText` reads. Both characters of an
+ * the one form of the rule on characters, which `isPlainText` reads. U+FE0F right after a
+ * pictograph is left alone, since it only asks for the emoji's colour form. Both characters of an
  * apostrophe or backtick pair are marked. It finds nothing to mark in a value that is too long,
  * empty or padded, which `isPlainText` refuses on its own.
  */
@@ -81,6 +99,7 @@ export function unplainMarks(v: string): UnplainMark[] {
     const codePoint = ch.codePointAt(0) as number
     const at = i + 1
     if (codePoint >= 0xd800 && codePoint <= 0xdfff) marks.push({ at, codePoint, kind: 'half' })
+    else if (codePoint === EMOJI_PRESENTATION && PICTOGRAPH.test(chars[i - 1] ?? '')) continue
     else if (isUnseen(codePoint)) marks.push({ at, codePoint, kind: 'unseen' })
     else if (QUOTE_MARK.test(ch)) marks.push({ at, codePoint, kind: 'quote' })
     else if ((ch === "'" || ch === '`') && chars[i + 1] === ch) {
@@ -106,3 +125,10 @@ export function markedUnplain(v: string): string {
     .map((ch, i) => (marked.has(i + 1) ? `[${codePointName(ch.codePointAt(0) as number)}]` : ch))
     .join('')
 }
+
+/**
+ * Text another party wrote, as a line shows it, between double quotes with each character
+ * `unplainMarks` finds written as its code point. A name held from before a rule for plain text
+ * can then neither end the quotes early, break the line, nor reorder what follows.
+ */
+export const quotedText = (v: string): string => `"${markedUnplain(v)}"`
