@@ -16,7 +16,7 @@ import {
   termsHash,
   toWire,
 } from '@avow-finance/spec'
-import { hexToBigInt, toHex } from 'viem'
+import { type Hex, hexToBigInt, toHex } from 'viem'
 
 /** The compute a job relies on: the business's own booking of it, with its terms and salt. */
 export interface ComputeBooking {
@@ -42,7 +42,24 @@ export interface JobQuoteInput {
   compute: ComputeBooking | null
   /** When the agreement lapses, in unix seconds. The customer refuses one valid too long. */
   expiry: bigint
+  /**
+   * The hash of the seller's mandate the supplier's agent sells under, which the agreement names,
+   * or null when no seller's mandate is in force for its signing key. Naming one signs the
+   * agreement at version 2, and naming none leaves it at version 1.
+   */
+  sellerMandate: Hex | null
 }
+
+/**
+ * The terms a quote for an order signs: the offer's, with the compute booking added as the one
+ * booking they rely on, which makes them version 3, or the offer's own with no booking.
+ */
+export const jobQuoteTerms = (offer: Pick<JobOffer, 'terms'>, compute: ComputeBooking | null) =>
+  compute
+    ? chainedJobTerms(offer.terms, [
+        { on: compute.reference, condition: 'accepted', disclosed: 'subject' },
+      ])
+    : offer.terms
 
 const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(16))))
 
@@ -50,7 +67,9 @@ const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array
  * Quotes an order. The quote's terms are the offer's, with the compute booking added as the one
  * booking they rely on, which makes them version 3. The salt is new, and the signing key signs the
  * terms agreement naming the offer's commitment id, the customer as buyer under its mandate, this
- * business as supplier and the job category. The quote shows the compute booking's subject, which
+ * business as supplier and the job category, and the seller's mandate the agent sells under when
+ * one is in force. Naming it shows the buyer which mandate the sale was agreed under, and proves no
+ * check of it. The quote shows the compute booking's subject, which
  * holds no price, so the customer can check the booking fits the job.
  */
 export async function quoteJob(input: JobQuoteInput): Promise<QuoteRequest> {
@@ -58,11 +77,7 @@ export async function quoteJob(input: JobQuoteInput): Promise<QuoteRequest> {
   if (input.signingKey.address.toLowerCase() !== input.supplier.signingKey.toLowerCase()) {
     throw new Error("The key given isn't the supplier's signing key")
   }
-  const terms = compute
-    ? chainedJobTerms(offer.terms, [
-        { on: compute.reference, condition: 'accepted', disclosed: 'subject' },
-      ])
-    : offer.terms
+  const terms = jobQuoteTerms(offer, compute)
   const salt = newSalt()
   const agreement: TermsAgreement = {
     commitmentId: offer.commitmentId,
@@ -73,6 +88,7 @@ export async function quoteJob(input: JobQuoteInput): Promise<QuoteRequest> {
     mandateHash: customer.mandateHash,
     nonce: randomUint(),
     expiry: input.expiry,
+    ...(input.sellerMandate === null ? {} : { sellerMandate: input.sellerMandate }),
   }
   const domain = { chainId: customer.chainId, verifyingContract: customer.lock }
   const supplierSignature = await input.signingKey.signDigest(

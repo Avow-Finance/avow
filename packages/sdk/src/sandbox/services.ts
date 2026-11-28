@@ -9,6 +9,7 @@ import {
   type ReasonCode,
   SANDBOX_PATHS,
   SERVICE_ACCEPT_WITHIN,
+  SERVICE_CATEGORY,
   SERVICE_ORDER_ACCEPT_MARGIN,
   type SellerMandateTerms,
   type ServiceOfferVersion,
@@ -20,12 +21,10 @@ import {
   serviceOfferTerms,
   serviceOrderProblem,
   serviceQuoteProblem,
-  tempoKeychainCheck,
   toWire,
 } from '@avow-finance/spec'
 import { type Hex, isAddressEqual, toHex } from 'viem'
 import { AvowApiError, signingRequestKey } from '../http.js'
-import { moderatoClient } from '../moderato.js'
 import { quoteService } from '../service/quote.js'
 import { pause } from './connect.js'
 import {
@@ -52,9 +51,10 @@ import {
   ledgerFor,
   type SellerStanding,
 } from './seller-mandate.js'
-import { readSellerStanding } from './seller-mandate-read.js'
+import { sellerStandingOf } from './seller-mandate-read.js'
 import {
   addCommitment,
+  inTurn,
   isRecord,
   loadCommitments,
   readJson,
@@ -87,21 +87,6 @@ const carried = <T>(sent: Promise<T>): Promise<T> =>
       /no such route/i.test(error.message)
     throw unserved ? new Error(SERVICE_ORDERS_UNSERVED) : error
   })
-
-/**
- * One change at a time to what a store keeps, in this process. Each change reads the file and
- * writes it back, so two at once would lose one. Another process on the same folder isn't held
- * back by this, so run one seller on a folder at a time.
- */
-const turns = new WeakMap<SandboxStore, Promise<unknown>>()
-function inTurn<T>(store: SandboxStore, change: () => Promise<T>): Promise<T> {
-  const turn = (turns.get(store) ?? Promise.resolve()).then(change, change)
-  turns.set(
-    store,
-    turn.catch(() => {}),
-  )
-  return turn
-}
 
 const random = (bytes: number): Hex => toHex(crypto.getRandomValues(new Uint8Array(bytes)))
 
@@ -357,22 +342,12 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   // Where the agent stands as a seller.
 
-  const client = moderatoClient(deployment.rpcUrl)
-  function sellerStanding(): Promise<SellerStanding> {
-    const { signing } = context.needSupplier()
-    return readSellerStanding({
-      apiUrl: deployment.apiUrl,
-      signing,
-      fetch: context.send,
-      domain,
-      agent: {
-        businessId: business.businessId,
-        account: business.account,
-        signingKey: signing.address,
-      },
-      isAccountSignature: tempoKeychainCheck(client),
-    })
-  }
+  const sellerStanding = sellerStandingOf({
+    deployment,
+    send: context.send,
+    business,
+    signing: () => context.needSupplier().signing,
+  })
 
   /** The sales the ledger counts, from the quotes this agent kept, apart from one order. */
   const counted = (k: Kept, apart: string): CountedSale[] =>
@@ -404,7 +379,13 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         offer: version,
         buyer: sale.buyer.businessId,
         signingKey: signing.address,
-        ledger: ledgerFor(standing, version.item.name, counted(k, sale.orderId), now),
+        ledger: ledgerFor(
+          standing,
+          SERVICE_CATEGORY,
+          version.item.name,
+          counted(k, sale.orderId),
+          now,
+        ),
       },
       now,
     )

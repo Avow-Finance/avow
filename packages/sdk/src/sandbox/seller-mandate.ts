@@ -1,8 +1,9 @@
 import {
+  type ChainedTerms,
   checkSellerMandate,
   type ReasonCode,
   type SaleCounterparty,
-  SERVICE_CATEGORY,
+  type SellerCategory,
   type SellerLedger,
   type SellerMandateChain,
   type ServiceOfferVersion,
@@ -82,6 +83,7 @@ export function holdOffer(
 
 /** One sale this agent quoted, as its ledger counts it. */
 export interface CountedSale {
+  /** The item, by the name a service's offer gives it or the kind of work a job does. */
   item: string
   units: number
   /** The whole price, in micros. */
@@ -90,7 +92,7 @@ export interface CountedSale {
   at: bigint
   /** The last moment the agent can accept it, in unix seconds. */
   until: bigint
-  /** When the terms say the service is delivered by, in unix seconds. */
+  /** When the terms say the sale is delivered by, in unix seconds. */
   deliverBy: bigint
   accepted: boolean
 }
@@ -104,19 +106,20 @@ export interface CountedSale {
  */
 export function ledgerFor(
   standing: Extract<SellerStanding, { inForce: true }>,
+  category: SellerCategory,
   item: string,
   sales: readonly CountedSale[],
   now: bigint,
 ): SellerLedger {
   const m = standing.chain.current.signed.message
-  const line = sellingLimitFor(m, SERVICE_CATEGORY, item)
+  const line = sellingLimitFor(m, category, item)
   const dayStart = now - (now % DAY)
   const binding = (s: CountedSale) => s.accepted || s.until > now
   let unitsToday = 0
   let outstanding = 0n
   for (const s of sales) {
     if (!binding(s)) continue
-    const sameLine = line !== null && sellingLimitFor(m, SERVICE_CATEGORY, s.item) === line
+    const sameLine = line !== null && sellingLimitFor(m, category, s.item) === line
     if (sameLine && s.at >= dayStart) unitsToday += s.units
     if (!s.accepted || s.deliverBy > now) outstanding += s.price
   }
@@ -133,8 +136,9 @@ export function ledgerFor(
 export function holdSale(
   standing: SellerStanding,
   sale: {
-    terms: Terms
-    offer: ServiceOfferVersion
+    terms: Terms | ChainedTerms
+    /** The offer a service's terms book, or null for a job, which is sold from none. */
+    offer: ServiceOfferVersion | null
     buyer: string
     signingKey: Address
     ledger: SellerLedger

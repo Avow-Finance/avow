@@ -24,9 +24,10 @@ import {
 } from '@avow-finance/spec'
 import { type Hex, toHex } from 'viem'
 import { signingRequestKey } from '../http.js'
-import { type ComputeBooking, quoteJob } from '../job/quote.js'
+import { type ComputeBooking, jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
+import { holdJobAcceptance, holdJobQuote, jobAccepted } from './job-sales.js'
 import {
   awaitAccepted,
   listenFor,
@@ -34,6 +35,8 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
+import type { SellerStanding } from './seller-mandate.js'
+import { sellerStandingOf } from './seller-mandate-read.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -64,10 +67,14 @@ export type BuyOutcome =
   | { ok: false; reason: ReasonCode | 'order.expired' | 'acceptance.missed'; order: MailboxOrder }
 
 /** Where a sale got to, in order. */
+/**
+ * Where a sale got to, in order. A quote and an acceptance say where the agent stood as a seller
+ * when it took them, so whoever runs it can say whether a seller's mandate was in force.
+ */
 export type SellStep =
   | { step: 'compute'; reservedIn: Hex | null }
-  | { step: 'quoted' }
-  | { step: 'accepted'; acceptedIn: Hex | null }
+  | { step: 'quoted'; standing: SellerStanding }
+  | { step: 'accepted'; acceptedIn: Hex | null; standing: SellerStanding }
 
 /** The compute a seller booked for one order, kept so a restart never books it twice. */
 interface SaleRecord {
@@ -321,6 +328,13 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     return { offer: cheapest, gpus }
   }
 
+  const sellerStanding = sellerStandingOf({
+    deployment,
+    send,
+    business,
+    signing: () => needSupplier().signing,
+  })
+
   async function sell(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = needSupplier()
     if (job.status === 'requested') {
@@ -346,13 +360,27 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
         await keep((k) => ({ sales: { ...k.sales, [job.orderId]: { compute: booking } } }))
         onStep?.({ step: 'compute', reservedIn: booked.commitment.reservedIn })
       }
+      // The job is held to the seller's mandate on the exact terms the quote signs, and the quote
+      // names the mandate it was held to. The mandate is read after the compute is booked, so a
+      // booking that took a while is checked against the newest one.
+      const terms = jobQuoteTerms(job, compute)
+      const standing = await sellerStanding()
+      const now = systemClock()
+      const sale = {
+        orderId: job.orderId,
+        terms,
+        buyer: job.buyer.businessId,
+        signingKey: signing.address,
+      }
+      const sellerMandate = await holdJobQuote(store, standing, sale, now)
       const quote = await quoteJob({
         offer: job,
         customer: job.buyer,
         supplier: supplier.profile,
         signingKey: signingRequestKey(signing),
         compute,
-        expiry: systemClock() + QUOTE_VALIDITY,
+        expiry: now + QUOTE_VALIDITY,
+        sellerMandate,
       })
       await asSupplier({
         domain,
@@ -360,19 +388,31 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
         body: quote,
         read: orderReader,
       })
-      onStep?.({ step: 'quoted' })
+      onStep?.({ step: 'quoted', standing })
       return
     }
     if (job.status === 'reserved') {
+      // The mandate may have changed, ended or been revoked since the quote, so the job is held to
+      // the newest one again before the acceptance binds the seller.
+      const standing = await sellerStanding()
+      const now = systemClock()
+      const sale = {
+        orderId: job.orderId,
+        terms: job.quote.terms,
+        buyer: job.buyer.businessId,
+        signingKey: signing.address,
+      }
+      await holdJobAcceptance(store, standing, sale, now)
       // Null when an earlier run's acceptance was already on the lock, which Avow reads either way.
       const acceptedIn = await context.accept(job.buyer, job.quote)
+      await jobAccepted(store, job.orderId, systemClock())
       await asSupplier({
         domain,
         path: SANDBOX_PATHS.mailboxAccepted(job.orderId),
         body: { acceptedIn },
         read: orderReader,
       })
-      onStep?.({ step: 'accepted', acceptedIn })
+      onStep?.({ step: 'accepted', acceptedIn, standing })
     }
   }
 

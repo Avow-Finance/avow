@@ -552,6 +552,8 @@ export function fixtureWorld(options: FixtureOptions = {}): FixtureWorld {
           ? { reference: booking.reference, terms: booking.terms, salt: booking.salt }
           : null,
         expiry: now + 120n,
+        // The fixture serves no seller's mandate, so its quotes name none.
+        sellerMandate: null,
       })
       held.quote = quote
       held.status = 'verifying'

@@ -14,6 +14,7 @@ import { type Address, type Hex, isAddress } from 'viem'
  * registration as a sandbox supplier. Those two are all a job process reads. `state` holds the
  * commitments the agent made. `request` holds the key of an agent that asked a business for
  * authority and is waiting for the answer, so asking again after a restart keeps the same key.
+ * `job-sales` holds the jobs a selling agent quoted, which its seller's mandate counts.
  */
 export type SandboxStoreItem =
   | 'business'
@@ -23,6 +24,7 @@ export type SandboxStoreItem =
   | 'request'
   | 'mailbox'
   | 'services'
+  | 'job-sales'
 
 /**
  * Where a sandbox keeps its items, as text. In Node it's the `.avow` folder of the working
@@ -197,4 +199,19 @@ export const saveCommitments = (store: SandboxStore, commitments: readonly Store
 /** Adds one commitment, reading the list again first so another process's addition isn't lost. */
 export async function addCommitment(store: SandboxStore, c: StoredCommitment): Promise<void> {
   await saveCommitments(store, [...(await loadCommitments(store)), c])
+}
+
+/**
+ * One change at a time to what a store keeps, in this process. Each change reads the file and
+ * writes it back, so two at once would lose one. Another process on the same folder isn't held
+ * back by this, so run one seller on a folder at a time.
+ */
+const turns = new WeakMap<SandboxStore, Promise<unknown>>()
+export function inTurn<T>(store: SandboxStore, change: () => Promise<T>): Promise<T> {
+  const turn = (turns.get(store) ?? Promise.resolve()).then(change, change)
+  turns.set(
+    store,
+    turn.catch(() => {}),
+  )
+  return turn
 }

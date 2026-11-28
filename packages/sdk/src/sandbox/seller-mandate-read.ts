@@ -2,12 +2,15 @@ import {
   type AvowDomain,
   parseSellerMandates,
   SANDBOX_PATHS,
+  type SandboxDeployment,
   type SignatureCheck,
   sellerMandateChainProblem,
+  tempoKeychainCheck,
 } from '@avow-finance/spec'
 import type { Address } from 'viem'
 import type { PrivateKeyAccount } from 'viem/accounts'
 import { AvowApiError, avowRequests, signingRequestKey } from '../http.js'
+import { moderatoClient } from '../moderato.js'
 import {
   NO_SELLER_MANDATE,
   SellerMandateRefusal,
@@ -80,5 +83,35 @@ export async function readSellerStanding(r: {
     inForce: true,
     chain: chain.value,
     notice: sellerMandateNotice(chain.value.current.hash),
+  }
+}
+
+/**
+ * Reads where the folder's selling agent stands, from its business's own lock, for every way it
+ * sells. The business account's signature on each mandate is checked through Tempo's keychain.
+ * The signing key is asked for at each read, so an agent that only buys reads nothing.
+ */
+export function sellerStandingOf(r: {
+  deployment: Pick<SandboxDeployment, 'apiUrl' | 'rpcUrl' | 'chainId'>
+  send: typeof fetch
+  business: { businessId: string; account: Address; lock: Address }
+  signing: () => PrivateKeyAccount
+}): () => Promise<SellerStanding> {
+  const client = moderatoClient(r.deployment.rpcUrl)
+  const domain = { chainId: r.deployment.chainId, verifyingContract: r.business.lock }
+  return () => {
+    const signing = r.signing()
+    return readSellerStanding({
+      apiUrl: r.deployment.apiUrl,
+      signing,
+      fetch: r.send,
+      domain,
+      agent: {
+        businessId: r.business.businessId,
+        account: r.business.account,
+        signingKey: signing.address,
+      },
+      isAccountSignature: tempoKeychainCheck(client),
+    })
   }
 }
