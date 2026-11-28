@@ -30,7 +30,9 @@ import { jobTermsJson } from './wire.js'
  * 4. The supplier's agent accepts on chain under the commitment's rules, and tells the mailbox,
  *    which reads the acceptance on chain.
  *
- * An order nobody funded lapses at its expiry, with nothing reserved. Once funded it's a
+ * Until the buyer funds it, the supplier's agent can decline an order with a reason, and the buyer's
+ * agent can withdraw it. Either ends it with nothing reserved, and each is answered the same when
+ * sent again. An order nobody funded lapses at its expiry, with nothing reserved. Once funded it's a
  * commitment awaiting acceptance, and the lock's own deadlines decide what happens to the reserve.
  * Each step is answered the same when sent again, so a retry never makes a second commitment.
  */
@@ -65,7 +67,15 @@ export interface MailboxOrderRequest {
   expiry: bigint
 }
 
-export const MAILBOX_STATUSES = ['requested', 'quoted', 'expired', 'reserved', 'accepted'] as const
+export const MAILBOX_STATUSES = [
+  'requested',
+  'quoted',
+  'expired',
+  'declined',
+  'withdrawn',
+  'reserved',
+  'accepted',
+] as const
 export type MailboxStatus = (typeof MAILBOX_STATUSES)[number]
 
 interface MailboxOrderBase extends MailboxOrderRequest {

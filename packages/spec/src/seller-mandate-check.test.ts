@@ -4,11 +4,9 @@ import { dollars } from './demo.js'
 import { chainedJobTerms, JOB, jobTerms } from './job.js'
 import { type JobOfferVersion, jobOfferTerms, jobTermsMatchOffer } from './job-offer.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
-import { REASON_CODES, type ReasonCode } from './reasons.js'
+import type { ReasonCode } from './reasons.js'
 import { SELLER_CATEGORIES, SELLER_TEMPLATES, type SellerMandate } from './seller-mandate.js'
 import {
-  BUYER_HEARS,
-  buyerFacingReason,
   checkSellerMandate,
   SALE_ACCEPT_WITHIN_MAX,
   type SaleCounterparty,
@@ -712,20 +710,5 @@ describe('when Avow approves a reserve for a sale', () => {
     expect(saleApprovalProblem(null as never, NOW)).toBe('message.invalid')
     expect(saleApprovalProblem({ remedies: { acceptBy: 5 as never } }, NOW)).toBe('message.invalid')
     expect(saleApprovalProblem(terms, 5 as never)).toBe('message.invalid')
-  })
-})
-
-describe("what a buyer hears of a seller's limits", () => {
-  it('hears that the seller will not deal with it, and nothing else the check says', () => {
-    const codes = Object.keys(REASON_CODES) as ReasonCode[]
-    const aboutLimits = codes.filter((code) => code.startsWith('seller_mandate.'))
-    expect(aboutLimits.length).toBeGreaterThan(10)
-    for (const code of codes) {
-      const heard = (BUYER_HEARS as readonly ReasonCode[]).includes(code)
-      expect(buyerFacingReason(code)).toBe(heard ? code : 'supplier.not_authorized')
-    }
-    expect(BUYER_HEARS).toEqual(['approved', 'counterparty.not_eligible'])
-    // Nothing yet lets a person approve one sale, so a buyer isn't told to wait for one.
-    expect(buyerFacingReason('approval.human_required')).toBe('supplier.not_authorized')
   })
 })

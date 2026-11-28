@@ -493,28 +493,3 @@ export function saleApprovalProblem(
   if (typeof acceptBy !== 'bigint' || typeof now !== 'bigint') return 'message.invalid'
   return acceptBy - now > SALE_ACCEPT_WITHIN_MAX ? 'approval.acceptance_too_far' : null
 }
-
-/**
- * The answers of the seller's mandate check a buyer hears as they are. A buyer acts on hearing
- * that its seller won't deal with it. `approval.human_required` isn't here, since Avow takes no
- * request to approve one sale yet, so a buyer told to wait would wait for nothing. It joins this
- * list once Avow takes that request.
- */
-export const BUYER_HEARS = [
-  'approved',
-  'counterparty.not_eligible',
-] as const satisfies readonly ReasonCode[]
-
-export type BuyerFacingReason = (typeof BUYER_HEARS)[number] | 'supplier.not_authorized'
-
-/**
- * What a buyer hears for an answer the seller's mandate check gave. Every answer outside
- * `BUYER_HEARS` becomes `supplier.not_authorized`, which names no limit, so a reason added to the
- * check later reaches no buyer until someone lists it there. The amounts a mandate sets stay with
- * the seller. A buyer that varies its orders can still infer roughly where a limit sits from which
- * of them are refused.
- */
-export function buyerFacingReason(reason: ReasonCode): BuyerFacingReason {
-  const heard = BUYER_HEARS.find((r) => r === reason)
-  return heard ?? 'supplier.not_authorized'
-}

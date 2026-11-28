@@ -1,5 +1,6 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
+import { type OrderDecline, orderDeclineJson } from './decline.js'
 import { bytes32, u64, u256 } from './json-fields.js'
 
 /**
@@ -27,10 +28,22 @@ export const mailboxReserveJson = z.strictObject({
   acceptBy: u64,
 })
 
-/** Where an order stands, with the quote its kind of order carries once the supplier has sent one. */
+/**
+ * Where an order stands, with the quote its kind of order carries once the supplier has sent one.
+ * An order ends before anything is reserved in one of three ways: it expires with no answer, the
+ * supplier declines it with a reason, or the buyer withdraws it. A quote sent before either is
+ * still shown, since it's part of the record, and it can no longer be funded.
+ */
 export type OrderStage<Quote> =
   | { status: 'requested' }
   | { status: 'expired'; quote: Quote | null }
+  | { status: 'declined'; quote: Quote | null; decline: OrderDecline }
+  | {
+      status: 'withdrawn'
+      quote: Quote | null
+      /** When Avow took the buyer's withdrawal, by its own clock. */
+      withdrawnAt: bigint
+    }
   | { status: 'quoted'; quote: Quote }
   | { status: 'reserved'; quote: Quote; reserve: MailboxReserve }
   | {
@@ -49,6 +62,18 @@ export const orderStagesJson = <Base extends z.ZodRawShape, Quote extends z.ZodT
   z.discriminatedUnion('status', [
     z.strictObject({ ...base, status: z.literal('requested') }),
     z.strictObject({ ...base, status: z.literal('expired'), quote: quote.nullable() }),
+    z.strictObject({
+      ...base,
+      status: z.literal('declined'),
+      quote: quote.nullable(),
+      decline: orderDeclineJson,
+    }),
+    z.strictObject({
+      ...base,
+      status: z.literal('withdrawn'),
+      quote: quote.nullable(),
+      withdrawnAt: u64,
+    }),
     z.strictObject({ ...base, status: z.literal('quoted'), quote }),
     z.strictObject({ ...base, status: z.literal('reserved'), quote, reserve: mailboxReserveJson }),
     z.strictObject({

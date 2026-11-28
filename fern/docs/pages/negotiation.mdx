@@ -103,21 +103,26 @@ A decline carries a reason code and no free text. `DECLINE_RULES` gives each cod
 | `offer.withdrawn` | `choose_another` | Supplier | |
 | `capacity.exhausted` | `retry_later` | Supplier | When to ask again, and how many units are free |
 | `quantity.out_of_range` | `change_order` | Supplier | How many units the supplier would take |
+| `supplier.not_authorized` | `choose_another` | Supplier | |
 | `terms.not_negotiable` | `change_order` | Either side | |
 | `proposal.unacceptable` | `change_order` | Either side | |
 | `counterparty.not_eligible` | `choose_another` | Either side | |
 | `approval.human_required` | `retry_later` | Either side | When to ask again |
 | `negotiation.rounds_exhausted` | `choose_another` | Either side | |
+| `order.withdrawn` | `none` | Buyer | |
 
 | Next step | What the reader does |
 | --- | --- |
 | `retry_later` | Sends the order again at the time the decline gives, or after a while when it gives none |
 | `change_order` | Opens a new thread for something else |
 | `choose_another` | Looks for another business |
+| `none` | Nothing, since the other side ended its own order |
+
+A supplier whose own seller's mandate refuses an order declines with `supplier.not_authorized`, which names no limit. `supplierDeclineReason` turns any refusal a seller's agent meets, from its own check or from Avow, into the reason it may send, so the seller's own reason never reaches the buyer. A supplier declines with a reason its seller's mandate check also gives only once `BUYER_HEARS` lists it, so today it can't decline with `approval.human_required`, since Avow takes no request to approve one sale and a buyer told to wait would wait for nothing. A buyer that takes back its own proposal, open or agreed, declines with `order.withdrawn`.
 
 No step says to send the same order again at once. A replaced offer is a new offer. Its price and its rules can differ from the version your agent ordered, so the agent reads the replacing version and checks it as it checks any offer it has never seen, its mandate included, before it opens a thread on it. The replacing version has to come from the same supplier and keep the item's name.
 
-A time to ask again is after the thread's first build moment and within seven days of it, `DECLINE_RETRY_MAX`. A reader treats a time already past as now.
+A time to ask again is after the thread's first build moment and within seven days of it, `DECLINE_RETRY_MAX`. A reader treats a time already past as now. The time is advice, and nothing holds either side to it.
 
 `proposal.unacceptable` says only that the proposal was refused. A supplier never has to say where its price stops.
 

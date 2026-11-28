@@ -166,6 +166,9 @@ export const REASON_CODES = {
     "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
   'order.terms_changed':
     "The quote's terms differ from the order's. A job's quote may add the compute bookings it relies on, and a service's quote may change nothing",
+  'order.withdrawn': 'The buyer withdrew its order before anything was reserved',
+  'order.declined':
+    "The supplier declined the order, so it takes no quote or reserve. The order carries the supplier's reason",
   'order.commitment_mismatch':
     "The quote's terms agreement names another commitment id than the order's",
   'agreement.parties_mismatch':

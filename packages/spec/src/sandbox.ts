@@ -297,7 +297,13 @@ export const SANDBOX_PATHS = {
   /** Where the supplier's agent says its acceptance landed. */
   mailboxAccepted: (orderId: string) =>
     `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/accepted`,
-  // The six paths of a service order, which Avow's testnet sandbox serves.
+  /** Where the supplier's agent declines an order with a reason, before it's funded. */
+  mailboxDecline: (orderId: string) =>
+    `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/decline`,
+  /** Where the buyer's agent withdraws its own order, before it's funded. */
+  mailboxWithdraw: (orderId: string) =>
+    `/v1/sandbox/mailbox/orders/${mailboxOrderId(orderId)}/withdraw`,
+  // The paths of a service order, which Avow's testnet sandbox serves.
   /** Where a buyer's agent sends a service order to another business. */
   serviceOrders: '/v1/sandbox/mailbox/service-orders',
   /** Where a supplier's agent reads the service orders waiting on it. */
@@ -314,6 +320,30 @@ export const SANDBOX_PATHS = {
   /** Where the supplier's agent says its acceptance of a service order landed. */
   serviceAccepted: (orderId: string) =>
     `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/accepted`,
+  /** Where the supplier's agent declines a service order with a reason, before it's funded. */
+  serviceDecline: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/decline`,
+  /** Where the buyer's agent withdraws its own service order, before it's funded. */
+  serviceWithdraw: (orderId: string) =>
+    `/v1/sandbox/mailbox/service-orders/${mailboxOrderId(orderId)}/withdraw`,
+  // The paths of a thread order, a service order carried as a negotiation thread.
+  /** Where a buyer's agent opens a thread with its signed proposal. */
+  threadOrders: '/v1/sandbox/mailbox/threads',
+  /** Where a supplier's agent reads the threads waiting on it. */
+  threadInbox: '/v1/sandbox/mailbox/thread-inbox',
+  /** Where either side reads one thread. */
+  threadOrder: (orderId: string) => `/v1/sandbox/mailbox/threads/${mailboxOrderId(orderId)}`,
+  /**
+   * Where either side sends its next signed move: the supplier's acceptance, or either side's
+   * decline, the buyer's withdrawal among them.
+   */
+  threadMove: (orderId: string) => `/v1/sandbox/mailbox/threads/${mailboxOrderId(orderId)}/moves`,
+  /** Where the buyer's agent says its reserve for an agreed thread landed. */
+  threadReserved: (orderId: string) =>
+    `/v1/sandbox/mailbox/threads/${mailboxOrderId(orderId)}/reserved`,
+  /** Where the supplier's agent says its acceptance on the lock landed. */
+  threadAccepted: (orderId: string) =>
+    `/v1/sandbox/mailbox/threads/${mailboxOrderId(orderId)}/accepted`,
   sessionEvents: (sessionId: string) => {
     if (!isSessionId(sessionId)) throw new RangeError(`${sessionId} isn't a session id`)
     return `/v1/sandbox/sessions/${sessionId}/events`
