@@ -216,7 +216,14 @@ describe('a selling agent with no seller’s mandate', () => {
     const { fetch, posted } = avow(null)
     const services = await sandboxServices({ store, fetch })
     expect((await services.publish(draft)).standing).toBeNull()
+    expect(services.signingKey).toBeNull()
     expect(posted.some((p) => p.path === SANDBOX_PATHS.sellerMandates)).toBe(false)
+  })
+
+  it('gives the address of the signing key it sells with, which a mandate it asks for names', async () => {
+    const { store, signingKey } = await seller()
+    const services = await sandboxServices({ store, fetch: avow(null).fetch })
+    expect(services.signingKey?.toLowerCase()).toBe(signingKey.toLowerCase())
   })
 })
 
