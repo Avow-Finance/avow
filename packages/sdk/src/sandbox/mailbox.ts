@@ -22,9 +22,9 @@ import {
   SANDBOX_PATHS,
   testnetDemoJobTerms,
 } from '@avow-finance/spec'
-import { type Address, type Hex, keccak256, stringToHex, toHex } from 'viem'
+import { type Hex, toHex } from 'viem'
 import { signingRequestKey } from '../http.js'
-import { type ComputeBooking, jobQuoteTerms, quoteJob } from '../job/quote.js'
+import { type ComputeBooking, jobQuoteTerms, quoteJob, standInBooking } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
 import {
@@ -80,21 +80,6 @@ export type SellStep =
 interface SaleRecord {
   compute: ComputeBooking
 }
-
-/**
- * A stand-in for the compute a job will rely on, before it's booked, on the business's own lock.
- * Only the check before booking reads it, and no quote or record carries it.
- */
-const standInBooking = (chainId: number, lock: Address): Pick<ComputeBooking, 'reference'> => ({
-  reference: {
-    kind: 'commitment',
-    chainId,
-    lock: lock.toLowerCase() as Address,
-    commitmentId: keccak256(stringToHex('avow-compute-stand-in')),
-    side: 'buyer',
-    termsHash: keccak256(stringToHex('avow-compute-stand-in-terms')),
-  },
-})
 
 /** The sales kept in the store, read back to the types they were written from. */
 function readSales(json: Record<string, unknown>): Record<string, SaleRecord> {

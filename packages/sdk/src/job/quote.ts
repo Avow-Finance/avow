@@ -16,7 +16,7 @@ import {
   termsHash,
   toWire,
 } from '@avow-finance/spec'
-import { type Hex, hexToBigInt, toHex } from 'viem'
+import { type Address, type Hex, hexToBigInt, keccak256, stringToHex, toHex } from 'viem'
 
 /** The compute a job relies on: the business's own booking of it, with its terms and salt. */
 export interface ComputeBooking {
@@ -63,6 +63,24 @@ export const jobQuoteTerms = (
         { on: compute.reference, condition: 'accepted', disclosed: 'subject' },
       ])
     : offer.terms
+
+/**
+ * A stand-in for the compute a job will rely on, before it's booked, on the business's own lock.
+ * Only the seller's mandate check before booking reads it, and no quote or record carries it.
+ */
+export const standInBooking = (
+  chainId: number,
+  lock: Address,
+): Pick<ComputeBooking, 'reference'> => ({
+  reference: {
+    kind: 'commitment',
+    chainId,
+    lock: lock.toLowerCase() as Address,
+    commitmentId: keccak256(stringToHex('avow-compute-stand-in')),
+    side: 'buyer',
+    termsHash: keccak256(stringToHex('avow-compute-stand-in-terms')),
+  },
+})
 
 const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(16))))
 

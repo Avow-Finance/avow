@@ -50,8 +50,10 @@ export interface JobWorld {
   /**
    * Books `gpus` of an offer through the SDK, which checks the mandate, has Avow approve, funds the
    * reserve and waits for the supplier's acceptance. A refusal names its layer, and no money moved.
+   * With the order the compute is for, the business's seller's mandate is checked against that
+   * job first, and a job it refuses throws its refusal with nothing booked.
    */
-  book(offer: ComputeOffer, gpus: number): Promise<BookOutcome>
+  book(offer: ComputeOffer, gpus: number, order?: JobOffer): Promise<BookOutcome>
   /** The agent's authority now, from the lock and the account's keychain. */
   authority(): Promise<AuthorityNow>
   /** Reads a commitment on its lock at the latest finalized block. */
