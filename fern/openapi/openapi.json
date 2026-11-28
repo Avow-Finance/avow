@@ -3582,6 +3582,53 @@
                               "payment"
                             ],
                             "additionalProperties": false
+                          },
+                          "negotiation": {
+                            "type": "object",
+                            "properties": {
+                              "open": {
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unitPrice",
+                                    "quantity",
+                                    "leadTime"
+                                  ]
+                                }
+                              },
+                              "leadTime": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "min": {
+                                        "type": "string",
+                                        "pattern": "^(0|[1-9][0-9]*)$"
+                                      },
+                                      "max": {
+                                        "type": "string",
+                                        "pattern": "^(0|[1-9][0-9]*)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "min",
+                                      "max"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "open",
+                              "leadTime"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -4779,6 +4826,7 @@
                   "seller_mandate.over_outstanding",
                   "seller_mandate.over_delivery_horizon",
                   "seller_mandate.charges_not_allowed",
+                  "seller_mandate.term_not_negotiable",
                   "seller_mandate.job_approval_unavailable",
                   "negotiation.rounds_exhausted",
                   "mandate.currency_not_allowed",
@@ -5065,6 +5113,7 @@
                   "seller_mandate.over_outstanding",
                   "seller_mandate.over_delivery_horizon",
                   "seller_mandate.charges_not_allowed",
+                  "seller_mandate.term_not_negotiable",
                   "seller_mandate.job_approval_unavailable",
                   "negotiation.rounds_exhausted",
                   "mandate.currency_not_allowed",
@@ -5420,6 +5469,7 @@
                   "seller_mandate.over_outstanding",
                   "seller_mandate.over_delivery_horizon",
                   "seller_mandate.charges_not_allowed",
+                  "seller_mandate.term_not_negotiable",
                   "seller_mandate.job_approval_unavailable",
                   "negotiation.rounds_exhausted",
                   "mandate.currency_not_allowed",
@@ -6463,6 +6513,53 @@
                           "payment"
                         ],
                         "additionalProperties": false
+                      },
+                      "negotiation": {
+                        "type": "object",
+                        "properties": {
+                          "open": {
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "unitPrice",
+                                "quantity",
+                                "leadTime"
+                              ]
+                            }
+                          },
+                          "leadTime": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "min": {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]*)$"
+                                  },
+                                  "max": {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]*)$"
+                                  }
+                                },
+                                "required": [
+                                  "min",
+                                  "max"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "open",
+                          "leadTime"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
@@ -6701,6 +6798,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -7197,6 +7295,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -7687,6 +7786,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -8173,6 +8273,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -8654,6 +8755,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -9308,6 +9410,7 @@
                           "seller_mandate.over_outstanding",
                           "seller_mandate.over_delivery_horizon",
                           "seller_mandate.charges_not_allowed",
+                          "seller_mandate.term_not_negotiable",
                           "seller_mandate.job_approval_unavailable",
                           "negotiation.rounds_exhausted",
                           "mandate.currency_not_allowed",
@@ -9656,6 +9759,53 @@
                           "lateCancellationBps",
                           "noShowBps",
                           "payment"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "negotiation": {
+                        "type": "object",
+                        "properties": {
+                          "open": {
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "unitPrice",
+                                "quantity",
+                                "leadTime"
+                              ]
+                            }
+                          },
+                          "leadTime": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "min": {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]*)$"
+                                  },
+                                  "max": {
+                                    "type": "string",
+                                    "pattern": "^(0|[1-9][0-9]*)$"
+                                  }
+                                },
+                                "required": [
+                                  "min",
+                                  "max"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "open",
+                          "leadTime"
                         ],
                         "additionalProperties": false
                       }
@@ -10033,6 +10183,53 @@
                       "payment"
                     ],
                     "additionalProperties": false
+                  },
+                  "negotiation": {
+                    "type": "object",
+                    "properties": {
+                      "open": {
+                        "maxItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "unitPrice",
+                            "quantity",
+                            "leadTime"
+                          ]
+                        }
+                      },
+                      "leadTime": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9][0-9]*)$"
+                              },
+                              "max": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9][0-9]*)$"
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "open",
+                      "leadTime"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -10126,6 +10323,7 @@
                   "seller_mandate.over_outstanding",
                   "seller_mandate.over_delivery_horizon",
                   "seller_mandate.charges_not_allowed",
+                  "seller_mandate.term_not_negotiable",
                   "seller_mandate.job_approval_unavailable",
                   "negotiation.rounds_exhausted",
                   "mandate.currency_not_allowed",
