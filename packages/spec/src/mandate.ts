@@ -12,7 +12,7 @@ import {
   validateChainedTerms,
   validateTerms,
 } from './terms.js'
-import type { Mandate, ReserveRequest } from './types.js'
+import type { ApprovalRule, Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
   mandate: Mandate
@@ -114,9 +114,17 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   if (input.openReserves + amount > m.capOpenReserves) return deny('mandate.over_open_reserves_cap')
   if (mandateEndsBeforeWindow(m, enforced)) return deny('mandate.ends_before_window')
 
-  const rule = m.approvalRule
-  if (rule.kind === 'always' || (rule.kind === 'above' && amount > rule.amount)) {
+  if (handsToPerson(m.approvalRule, amount)) {
     return { result: 'needs_human', reason: 'approval.human_required' }
   }
   return { result: 'approved', reason: 'approved' }
 }
+
+/**
+ * Whether an approval rule hands an amount to a person: always, or above the rule's amount, and
+ * never at it. A buyer's mandate reads it for a reserve and a seller's mandate for a sale, and
+ * whoever asks a person to approve one reads it too, so nobody is asked about an amount the rule
+ * lets through.
+ */
+export const handsToPerson = (rule: ApprovalRule, amount: bigint): boolean =>
+  rule.kind === 'always' || (rule.kind === 'above' && amount > rule.amount)
