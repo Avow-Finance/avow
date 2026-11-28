@@ -2,6 +2,8 @@
 
 A business and its agent on Moderato, from an empty account to a reserve the supplier accepts, and on to cancelling the booking or contesting a charge, through Avow's hosted API. Run it on your own machine, apart from Avow.
 
+To see a kept booking and a late cancellation first, without registering anything by hand, run `npx avow-sandbox loop` in a folder whose agent you connected with `npx avow-sandbox connect`, or `npm run loop` in the starter's folder. It books twice with Avow's demo GPU supplier, a test business, and finishes in about ten minutes. This quickstart is the slower path, where you hold the root key and run each step yourself.
+
 ## What it does
 
 - `init` makes the business's root key and the agent's key, has Moderato's faucet fund the account's fees, and creates the business's lock from Avow's factory. Once `enroll` has saved a mandate for that lock, `init` keeps it and refuses an `AVOW_FACTORY` that gives another. To start over with another lock, use a new `STATE_DIR`.

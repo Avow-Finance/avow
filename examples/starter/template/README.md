@@ -38,6 +38,8 @@ The session picks a model Ollama runs on this machine when you've pulled a suppo
 3. Change `reserve` to 250 and press Enter. It fits, so the agent makes a second commitment under the same authority.
 4. Change `authority` in `business.ts` and press Enter. `npm start` asks you to confirm the new mandate and type the passphrase. It revokes every other key on your account, read from the chain, so no old key can sign for you again, and enrolls a new one. Bookings made under the old authority stay held in the lock until their release, and it lists them.
 
+5. Run `npm run loop` to see a whole booking end both ways in about ten minutes. Your agent books one H100 for four minutes, twice, from Avow's demo GPU supplier, a test business, with a $10 reserve each. It keeps one, and the lock gives that reserve back whole at its release date. It cancels the other once free cancellation has ended, Avow records when, the supplier reports the late-cancellation charge the terms allow, and Avow confirms it from its own record. That charge takes $5 of your business's test dollars, and the rest comes back. The run acts with only your agent's key, within the limits you already signed, and prints a link to check each booking and each report.
+
 Each reserve sits in your business's own lock, for one named supplier, until the booking's window ends. Then it goes back to the business.
 
 ## Drive it from Claude

@@ -7,6 +7,7 @@ import {
   formatUsd,
   isSessionId,
   newSessionId,
+  parseSandboxDeployment,
   parseSessionEvent,
   parseSessionEventAnswer,
   parseSessionEventPost,
@@ -293,5 +294,36 @@ describe('refusalReason', () => {
     expect(formatUsd(12_500_000n)).toBe('$12.50')
     expect(formatUsd(1n)).toBe('$0.000001')
     expect(formatUsd(0n)).toBe('$0')
+  })
+})
+
+describe('parseSandboxDeployment', () => {
+  const published = {
+    chainId: 42431,
+    rpcUrl: 'https://rpc.moderato.tempo.xyz',
+    apiUrl: 'https://api.testnet.avow.finance',
+    supplierUrl: 'https://supplier.testnet.avow.finance',
+    factory: '0x1fC36829ce3f907ac103512a7DeC87fA3aF67a97',
+    token: '0x20c00000000000000000000058fbF8a39A171185',
+    arbiter: '0x7B7b7e93b9De1B9Cba5123f0570B56EB66C53173',
+    day90SupplierShareBps: 5000,
+    approvalKey: '0x76636e9a12C33FD7c0CB3B092bF87677eEC53640',
+  }
+
+  it('reads the clock margin a deployment publishes, in seconds', () => {
+    const read = parseSandboxDeployment({ ...published, clockMargin: 30 })
+    expect(read.ok && read.value.clockMargin).toBe(30n)
+  })
+
+  it('leaves the clock margin out when the deployment publishes none', () => {
+    const read = parseSandboxDeployment(published)
+    expect(read.ok && 'clockMargin' in read.value).toBe(false)
+  })
+
+  it.each([-1, 1.5, 3601, '30'])('refuses a clock margin of %s', (clockMargin) => {
+    expect(parseSandboxDeployment({ ...published, clockMargin })).toEqual({
+      ok: false,
+      reason: 'message.invalid',
+    })
   })
 })
