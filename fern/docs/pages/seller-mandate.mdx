@@ -9,7 +9,7 @@ A seller's mandate is the authority a business's administrator signs for one sel
 
 ## The message
 
-A `SellerMandate` is EIP-712 typed data for the business account's root key to sign, under the business's own lock. It binds one signing key, the key the business registered for its agent to quote and accept with, and hands no authority on to another agent. Its `replaces` field names the hash of the mandate it takes the place of, or null.
+A `SellerMandate` is EIP-712 typed data for the business account's root key or one of its admin keys to sign, under the business's own lock. It binds one signing key, the key the business registered for its agent to quote and accept with, and hands no authority on to another agent. Its `replaces` field names the hash of the mandate it takes the place of, or null.
 
 The spec holds the messages and the checks. Where a deployment turns seller's mandates on, Avow's sandbox stores each one the business account signed, sealed under a key only Avow's API holds, so a mandate's terms never sit in its database in the clear, and it opens one only to answer the business and its selling agent. Avow's testnet has them off until it turns them on. Revocations are to be stored the same way, and until a deployment takes them the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
 
@@ -57,7 +57,7 @@ A mandate that passes `sellerMandateProblem` hashes in one way only. Lines come 
 
 A selling agent is to ask for a seller's mandate through an [approval request](/docs/reference/approval-requests) of the `seller_mandate` kind, which Avow doesn't take yet. The ask holds the terms the agent wants, which are every field above. The fields that say which mandate this is and whose stay out of it, and those are `mandateId`, `businessId`, `account`, `nonce` and `replaces`. `sellerMandateTermsOf` reads a mandate's terms, and `carriesSellerMandateTerms` says whether a well-formed mandate carries exactly the terms an agent asked for.
 
-An agent can ask and can't sign. Only the business account's root key signs a seller's mandate, and it signs one that carries the approved terms with nothing moved.
+An agent can ask and can't sign. Only the business account's root key or one of its admin keys signs a seller's mandate, and it signs one that carries the approved terms with nothing moved.
 
 A selling agent asks from code with `askToSell(terms)` on `sandboxServices`, from a terminal with `npx avow-sandbox ask-to-sell --terms <file>`, or with the MCP server's `request_seller_mandate` tool. Each takes the terms whole, as the spec writes them, signs the ask with the agent's enrolled key and gives the reason itself: `new_seller` when no mandate is in force for the signing key, and `seller_limits` when one is. The terms are the person's to set, so an agent asks its person for every limit and never chooses them itself. The ask answers with a link the administrator opens to decide with their passkey, and nothing an agent can reach approves it. `awaitSellRequest` and `ask-to-sell` read where the request stands every few seconds until it settles, as connecting does, and `request_status` reads it once.
 
@@ -169,7 +169,7 @@ Revoking stops new approvals and new quotes, and it stops nothing else. A commit
 
 The check reads only what it's handed, so four things fall to whoever stores mandates, which is Avow on a deployment that stores them.
 
-- Avow stores mandates sealed only where a deployment turns them on, and it takes no revocation yet. No SDK call or tool builds or signs a mandate or a revocation. Only the account's root key signs a mandate, and its root key or one of its admin keys signs a revocation.
+- Avow stores mandates sealed only where a deployment turns them on, and it takes no revocation yet. No SDK call or tool builds or signs a mandate or a revocation. Only the account's root key or one of its admin keys signs either one.
 - A reader can't see a newer mandate or a revocation its server left out. Avow is to cover that, by approving a reserve only for a sale under the newest mandate of a key nobody revoked, and by serving a revoked key's revocation with every chain for it.
 - A reader can't see a second mandate signed to replace the same one, or a second first mandate for a key. Whoever stores mandates is to refuse both, so a key has one chain.
 - A revocation holds under the lock it was signed for. A business that moves to a new lock is to carry its revocations over before it takes a mandate there.
