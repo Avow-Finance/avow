@@ -33,7 +33,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `orders` | No | The service orders waiting on the agent, as a supplier to quote or accept and as a buyer to see through |
 | `sell` | Signs an agreement, accepts on the lock, or declines | Takes the next step on an order to the business. It quotes a new order for an offer the business published, and accepts a funded one. An order it won't quote it declines with a reason the buyer hears |
 | `decline` | Declines an order | Declines an order to the business before it's funded, with a reason code and only the fields that reason takes. A refusal by the seller's mandate goes as `supplier.not_authorized` |
-| `withdraw_order` | Withdraws an order | Takes back an order the agent sent, before it's funded. Nothing is reserved |
+| `withdraw_order` | Withdraws an order | Takes back an order the business sent, before it's funded. Any active agent of the business can withdraw one. Nothing is reserved |
 | `thread` | No | Reads a thread order as either side and replays its moves with `threadProblem` before saying where it stands |
 
 ### Inputs
@@ -77,7 +77,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 Every tool answers in text a model can read and in structured JSON with the same facts. A refusal names its reason code and its layer, with the amounts behind it where they apply. The layer is `sdk` for the agent's own mandate check, `avow` for Avow's API, `supplier` when the supplier declines, `relay` for the service that sends the transaction, `lock` for the lock and `keychain` for Tempo's keychain. When a tool refuses, tell the person the reason code and what would change it, and don't work around the limit.
 
-Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order` and `sell` are the ones that change anything. `withdraw_listing` is marked destructive, since Avow never lists a withdrawn version again, and nothing else is.
+Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order`, `sell`, `decline` and `withdraw_order` are the ones that change anything. `withdraw_listing`, `decline` and `withdraw_order` are marked destructive, since Avow never lists a withdrawn version again and an ended order takes no further step, and nothing else is.
 
 ## Terminal commands
 
@@ -94,7 +94,7 @@ Run each with `npx avow-sandbox <command>`. They need Node 22.12 or later.
 | `order` | Orders units of a supplier's offer with `--offer <file>` and `--quantity`, or the demo job from another business with `--supplier <id>`. Either way it checks the quote, funds it and waits for the acceptance |
 | `listen` | Reads the business's inbox and quotes and accepts each order until you stop it. A service order it won't quote, for a version the business replaced, an item it doesn't publish, a day already full or a sale its seller's mandate refuses, it declines with a reason the buyer hears |
 | `decline <order>` | Declines a service order to the business with `--reason <code>`, and `--retry-minutes` or `--available` where the reason takes them |
-| `withdraw <order>` | Takes back a service order the agent sent, before it's funded |
+| `withdraw <order>` | Takes back a service order the business sent, before it's funded, which any active agent of the business can do |
 | `thread <order>` | Reads a thread order, replays its moves and says where it stands, and exits with 1 when it doesn't replay |
 | `ask-to-sell` | Asks the business's administrator for a seller's mandate with `--terms <file>`, prints the link to decide it and waits for the decision. Avow doesn't take these requests yet, and it says so |
 | `start` | In a folder made by the sample agent, sets up its business, opens its screen and runs its agent |

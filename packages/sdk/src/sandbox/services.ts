@@ -288,9 +288,9 @@ export interface SandboxServices {
     },
   ): Promise<ServiceBuyOutcome>
   /**
-   * Withdraws an order this agent sent, before it funds it, and answers with the order as it now
-   * stands. Nothing is reserved, and a quote that came back can no longer be funded. It stops
-   * `buy` waiting on the order.
+   * Withdraws an order this agent's business sent, before it's funded, which any active agent of
+   * the business can do, and answers with the order as it now stands. Nothing is reserved, and a
+   * quote that came back can no longer be funded. It stops `buy` waiting on the order.
    */
   withdrawOrder(orderId: string): Promise<ServiceOrder>
   /**

@@ -701,11 +701,11 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Withdraws a service order you sent, before it's funded, so the supplier stops working on it. Nothing is reserved, and a quote that came back can no longer be funded. Once the lock holds the reserve, the lock decides the order and it can't be withdrawn here.",
+      "Withdraws a service order your business sent, before it's funded, so the supplier stops working on it. Any active agent of the business can withdraw one, including an order another of its agents sent. Nothing is reserved, and a quote that came back can no longer be funded. Once the lock holds the reserve, the lock decides the order and it can't be withdrawn here.",
     inputSchema: {
       type: 'object',
       properties: {
-        order: { type: 'string', description: 'The id of the order you sent' },
+        order: { type: 'string', description: 'The id of an order your business sent' },
       },
       required: ['order'],
       additionalProperties: false,
@@ -1765,7 +1765,7 @@ export function mcpAgent(
 
   async function withdrawTool(args: Record<string, unknown>): Promise<ToolAnswer> {
     const orderId = typeof args.order === 'string' ? args.order.trim() : ''
-    if (orderId === '') throw new RangeError('Give the id of the order you sent')
+    if (orderId === '') throw new RangeError('Give the id of an order your business sent')
     const order = await (await services()).withdrawOrder(orderId)
     return {
       text: `Withdrew order ${orderId}. Nothing is reserved, and the supplier can no longer be funded for it.`,

@@ -157,8 +157,8 @@ export interface SandboxMailbox {
     signal?: AbortSignal
   }): Promise<BuyOutcome>
   /**
-   * Withdraws a job order this agent sent, before it funds it, and answers with the order as it
-   * now stands. Nothing is reserved.
+   * Withdraws a job order this agent's business sent, before it's funded, which any active agent
+   * of the business can do, and answers with the order as it now stands. Nothing is reserved.
    */
   withdrawOrder(orderId: string): Promise<MailboxOrder>
   /** The orders waiting on this business as supplier: new ones to quote, funded ones to accept. */
