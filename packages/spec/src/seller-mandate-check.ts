@@ -35,7 +35,8 @@ import type { ChainedTerms, RemedyCharge, Terms } from './types.js'
  * agent acts under, and `sellerOfferProblem` reads an offer before anyone orders. Both are pure
  * and never throw, so a seller's own agent and Avow can run the same code on the same inputs.
  * Whatever they're given that they can't read, they refuse.
- * Nothing calls them yet. The lock belongs to the buyer and never reads a seller's mandate, and
+ * The SDK's selling agent calls them before it lists, quotes or accepts, and Avow doesn't yet. The
+ * lock belongs to the buyer and never reads a seller's mandate, and
  * the signing key moves no money, so no chain will hold a seller to these limits.
  *
  * The limits are the seller's own. A reason these checks give is for the seller's agent, and

@@ -4,6 +4,8 @@ import { decodeEventLog, type Hex, parseAbiItem, toEventSelector } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { CHARGE_KINDS, RELEASE_REASONS } from './eip712.js'
 import {
+  AVOW_RETURN_REASONS,
+  avowReturnReasonOf,
   chargeKindOf,
   LOCK_LOG_ABI,
   LOCK_LOGS,
@@ -17,6 +19,7 @@ import {
   RELEASE_CAUSES,
   type ReceiptLog,
   releaseCauseOf,
+  releaseReasonFor,
   releaseReasonOf,
   sentStates,
 } from './lock-log.js'
@@ -66,6 +69,7 @@ describe("the words for a lock's numbers", () => {
   const tables = [
     [RELEASE_CAUSES, releaseCauseOf],
     [RELEASE_REASONS, releaseReasonOf],
+    [AVOW_RETURN_REASONS, avowReturnReasonOf],
     [PAUSE_CAUSES, pauseCauseOf],
     [LOCK_PARTIES, lockPartyOf],
     [CHARGE_KINDS, chargeKindOf],
@@ -100,6 +104,29 @@ describe("the words for a lock's numbers", () => {
       reached_release_date: 4,
     })
     expect(LOCK_PARTIES).toEqual({ business: 0, supplier: 1 })
+  })
+
+  it("numbers Avow's one reason for returning a reserve, and leaves zero naming none", () => {
+    expect(AVOW_RETURN_REASONS).toEqual({ agentRevoked: 1 })
+    expect(avowReturnReasonOf(0)).toBeNull()
+  })
+
+  it("gives a consent's reasons and Avow's no word in common, so a word names one step's reason", () => {
+    const consent = Object.keys(RELEASE_REASONS)
+    for (const word of Object.keys(AVOW_RETURN_REASONS)) expect(consent).not.toContain(word)
+  })
+
+  it("reads a release's reason by the step that gave it, so one number reads by its own table", () => {
+    // Both tables use 1, so the cause alone says which word it is.
+    expect(releaseReasonFor('returned_by_avow', 1)).toBe('agentRevoked')
+    expect(releaseReasonFor('supplier_consent', 1)).toBe('kept')
+    expect(releaseReasonFor('supplier_consent', 2)).toBe('supplierFailed')
+    expect(releaseReasonFor('returned_by_avow', 2)).toBeNull()
+    expect(releaseReasonFor('returned_by_avow', 0)).toBeNull()
+    expect(releaseReasonFor('returned_by_avow', 255)).toBeNull()
+    for (const cause of ['cancelled_in_time', 'not_accepted', 'reached_release_date'] as const) {
+      for (const code of [0, 1, 2]) expect(releaseReasonFor(cause, code)).toBeNull()
+    }
   })
 })
 

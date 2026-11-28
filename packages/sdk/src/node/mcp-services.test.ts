@@ -7,10 +7,14 @@ import {
   SANDBOX_PATHS,
   SERVICE_CATEGORY,
   serviceQuoteProblem,
+  toWire,
 } from '@avow-finance/spec'
 import { describe, expect, it, vi } from 'vitest'
+import { NO_SELLER_MANDATE } from '../sandbox/seller-mandate.js'
+import { SELLER_MANDATE_ASKS_UNTAKEN } from '../sandbox/services.js'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
+import { testPing, testSellersList } from '../test/test-sellers.js'
 import { fileStore, SANDBOX_DIR } from './platform.js'
 import { readSharedOffer } from './services.js'
 
@@ -99,7 +103,9 @@ describe("the MCP server's tools for services", () => {
     expect(none.text).toMatch(/published no offers/)
     const published = await seller.call('publish_offer', asked)
     expect(published.isError).toBe(false)
-    expect(published.text).toMatch(/Nothing was sent to Avow/)
+    expect(published.text).toMatch(/The offer wasn't sent to Avow/)
+    // Avow serves no seller's mandate here, which the answer says plainly.
+    expect(published.text).toContain(NO_SELLER_MANDATE)
     const offer = readSharedOffer(published.structured.offer)
     if (!offer) throw new Error('the answer carried no offer')
     expect(offer.supplier).toBe(SELLER)
@@ -117,8 +123,8 @@ describe("the MCP server's tools for services", () => {
     })
     expect(free.isError).toBe(true)
     expect((await seller.call('offers', {})).structured.offers).toHaveLength(1)
-    // Publishing reaches Avow for nothing but the deployment.
-    expect(new Set(paths)).toEqual(new Set(['/config.json']))
+    // Publishing reaches Avow for nothing but the deployment and the agent's seller's mandates.
+    expect(new Set(paths)).toEqual(new Set(['/config.json', SANDBOX_PATHS.sellerMandates]))
   })
 
   it('check an order from the offer without sending it, with the price beside what is reserved', async () => {
@@ -357,5 +363,111 @@ describe("the MCP server's tools for services", () => {
     const answer = await buyer.call('sell', { order: 'ab'.repeat(16) })
     expect(answer.isError).toBe(true)
     expect(answer.text).toMatch(/--sell/)
+  })
+
+  it('list the test sellers as test businesses with their offers whole, and say when there are none', async () => {
+    const sandbox = (extra: Record<string, unknown>) =>
+      (async () => json({ ...wire(deployment), ...extra })) as unknown as typeof fetch
+    // Listing needs no connection, so a folder with no agent in it lists them too.
+    const dir = mkdtempSync(join(tmpdir(), 'avow-mcp-services-'))
+    const listed = await mcpAgent(dir, { fetch: sandbox({ testSellers: testSellersList }) }).call(
+      'test_sellers',
+      {},
+    )
+    expect(listed.isError).toBe(false)
+    expect(listed.structured.sellers).toEqual([
+      {
+        businessId: testPing.supplier,
+        name: 'Test Seller One (test business)',
+        label: 'test business',
+        offers: [{ id: offerVersionId(testPing), offer: wire(testPing) }],
+      },
+    ])
+    expect(listed.text).toContain('Test Seller One (test business), the test business sandbox-')
+    expect(listed.text).toContain('Nothing it sells is delivered or billed.')
+    expect(listed.text).toContain(JSON.stringify(toWire(testPing)))
+    expect(listed.text).not.toMatch(/verified/i)
+    // The offer as listed is one the order tool reads.
+    const [first] = listed.structured.sellers as { offers: { offer: unknown }[] }[]
+    expect(readSharedOffer(first?.offers[0]?.offer)).toEqual(testPing)
+    const none = await mcpAgent(dir, { fetch: sandbox({}) }).call('test_sellers', {})
+    expect(none).toEqual({
+      text: expect.stringMatching(/^The sandbox lists no test sellers/),
+      structured: { sellers: [] },
+      isError: false,
+    })
+  })
+})
+
+describe("the MCP server's ask for a seller's mandate", () => {
+  /** A seller's mandate's terms on the wire, for the signing key in the folder. */
+  async function termsIn(dir: string) {
+    const supplier = await fileStore(join(dir, SANDBOX_DIR)).read('supplier')
+    const signingKey = (JSON.parse(supplier ?? '{}') as { profile: { signingKey: string } }).profile
+      .signingKey
+    return {
+      signingKey: signingKey.toLowerCase(),
+      currency: 'USD',
+      limits: [
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: '40000000',
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+      ],
+      maxOrderValue: '500000000',
+      maxOutstanding: '2000000000',
+      maxDeliveryHorizon: '604800',
+      minLateCancellationBps: 2000,
+      minNoShowBps: 5000,
+      maxFreeCancelWindow: '86400',
+      buyers: [],
+      excludedBuyers: [],
+      excludedCountries: [],
+      requiresBusinessCheck: false,
+      negotiable: [],
+      approvalRule: { kind: 'never' },
+      expiry: '1900000000',
+    }
+  }
+
+  it("says plainly that Avow doesn't take seller's mandate requests yet", async () => {
+    const dir = await folder(SELLER, true)
+    const asks: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.approvalRequests) return null
+      asks.push(body)
+      return json(
+        {
+          error: {
+            reason: 'approval_request.kind_unavailable',
+            message: "Avow doesn't take requests of this kind yet, so nothing was asked",
+          },
+        },
+        409,
+      )
+    })
+    const seller = mcpAgent(dir, { fetch })
+    const answer = await seller.call('request_seller_mandate', { terms: await termsIn(dir) })
+    expect(answer.isError).toBe(false)
+    expect(answer.text).toBe(SELLER_MANDATE_ASKS_UNTAKEN)
+    expect(answer.structured).toEqual({
+      asked: false,
+      reason: 'approval_request.kind_unavailable',
+      notice: SELLER_MANDATE_ASKS_UNTAKEN,
+    })
+    expect(asks).toHaveLength(1)
+    expect(asks[0]).toMatchObject({ kind: 'seller_mandate', reason: 'new_seller' })
+  })
+
+  it("refuses terms that are not a seller's mandate's, before it asks", async () => {
+    const dir = await folder(SELLER, true)
+    const { fetch, paths } = avow(() => null)
+    const seller = mcpAgent(dir, { fetch })
+    const answer = await seller.call('request_seller_mandate', { terms: { limits: [] } })
+    expect(answer.isError).toBe(true)
+    expect(paths).not.toContain(SANDBOX_PATHS.approvalRequests)
   })
 })

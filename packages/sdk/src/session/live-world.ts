@@ -22,10 +22,13 @@ import { Account } from 'viem/tempo'
 import { AvowApiError, requestSupplierAuthorization, signingRequestKey } from '../http.js'
 import { acceptJob } from '../job/accept.js'
 import { connectTestCustomer, TestCustomerError } from '../job/customer.js'
-import { quoteJob } from '../job/quote.js'
+import { jobQuoteTerms, quoteJob, standInBooking } from '../job/quote.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/fees.js'
+import { holdToNamedMandate } from '../sandbox/seller-mandate.js'
+import { sellerStandingOf } from '../sandbox/seller-mandate-read.js'
+import { holdInTurn, holdJobQuote, jobAccepted } from '../sandbox/seller-sales.js'
 import type { SandboxStore } from '../sandbox/store.js'
 import { loadSupplierItem } from '../sandbox/supplier-key.js'
 import { trustedChainReader, trustedLockReaders } from '../sandbox/trusted-readers.js'
@@ -79,6 +82,19 @@ export async function liveWorld(options: {
     fetch: send,
   })
   const agent = await sandboxAgent({ store, deployment, session: null, log: () => {}, fetch: send })
+  const sellerStanding = sellerStandingOf({
+    deployment,
+    send,
+    business: agent.business,
+    signing: () => signing,
+  })
+  /** A job sale as the seller's mandate reads it, on the exact terms its quote signs. */
+  const jobSale = (orderId: string, terms: Parameters<typeof holdJobQuote>[2]['terms']) => ({
+    orderId,
+    terms,
+    buyer: customer.profile.businessId,
+    signingKey: signing.address,
+  })
   const token = moderatoUsdToken(deployment.token)
   const lockReader = tempoLockReader(client, {
     factory: deployment.factory,
@@ -123,7 +139,16 @@ export async function liveWorld(options: {
       return parsed.value
     },
 
-    async book(offer, gpus) {
+    async book(offer, gpus, order) {
+      // The job is held to the seller's mandate before any compute is booked for it, so a job the
+      // mandate refuses leaves nothing booked. Its limits don't read the booking a job relies on,
+      // so this check runs on the job's terms with a stand-in for the booking, and the quote holds
+      // the exact terms it signs again.
+      if (order) {
+        const standIn = standInBooking(deployment.chainId, agent.business.lock)
+        const sale = { ...jobSale(order.orderId, jobQuoteTerms(order, standIn)), offer: null }
+        await holdInTurn(store, await sellerStanding(), sale, systemClock())
+      }
       const terms = computeOfferTerms(offer, gpus, deployment)
       const { reserve, price } = computeOfferCost(offer, gpus)
       try {
@@ -187,15 +212,27 @@ export async function liveWorld(options: {
     read,
 
     async quote(order, booking: WorldBooking | null) {
+      const compute = booking
+        ? { reference: booking.reference, terms: booking.terms, salt: booking.salt }
+        : null
+      // The job is held to the seller's mandate in force, which throws a refusal with the spec's
+      // reason, and the quote names the mandate it was held to.
+      const standing = await sellerStanding()
+      const now = systemClock()
+      const sellerMandate = await holdJobQuote(
+        store,
+        standing,
+        jobSale(order.orderId, jobQuoteTerms(order, compute)),
+        now,
+      )
       const quote = await quoteJob({
         offer: order,
         customer: customer.profile,
         supplier: profile,
         signingKey: signingRequestKey(signing),
-        compute: booking
-          ? { reference: booking.reference, terms: booking.terms, salt: booking.salt }
-          : null,
-        expiry: systemClock() + QUOTE_VALIDITY,
+        compute,
+        expiry: now + QUOTE_VALIDITY,
+        sellerMandate,
       })
       try {
         await customer.quote(order.orderId, quote)
@@ -210,8 +247,14 @@ export async function liveWorld(options: {
 
     orderState: (orderId) => customer.state(orderId),
 
-    async accept(_order, quote) {
+    async accept(order, quote) {
       const c = customer.profile
+      // The mandate may have changed since the quote, so the job is held to the newest one again,
+      // and only when it's the one the agreement names.
+      const standing = await sellerStanding()
+      holdToNamedMandate(standing, quote.agreement.sellerMandate)
+      const sale = { ...jobSale(order.orderId, quote.terms), offer: null }
+      await holdInTurn(store, standing, sale, systemClock())
       const approvalKey = await client.readContract({
         address: c.lock,
         abi: APPROVAL_KEY_ABI,
@@ -220,7 +263,7 @@ export async function liveWorld(options: {
       // The signing key pays its own fee, which Moderato's faucet tops up when it runs low.
       await fundFees(client, signing.address)
       const sender = Account.fromSecp256k1(supplierItem.signingKey)
-      return acceptJob(
+      const accepted = await acceptJob(
         {
           config: {
             chainId: deployment.chainId,
@@ -249,6 +292,8 @@ export async function liveWorld(options: {
         },
         { customer: c, quote },
       )
+      if (accepted.ok) await jobAccepted(store, order.orderId, systemClock())
+      return accepted
     },
 
     async landed(hashes: readonly Hex[]) {

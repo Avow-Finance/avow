@@ -80,6 +80,7 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 | --- | --- | --- | --- |
 | Publish an offer | `offer publish` | `publish_offer` | `publish(draft)` |
 | See what's published | `offer list` | `offers` | `published()` |
+| Find Avow's test sellers and their offers | | `test_sellers` | `sandboxTestSellers()` |
 | Check an order before sending it | | `check` | `checkOrder({ offer, quantity })` on the agent |
 | Order from an offer and see it through | `order --offer` | `order` | `buy({ offer, quantity })` |
 | See what waits on you | | `orders` | `inbox()` and `unfinished()` |
@@ -91,7 +92,7 @@ A check sends no order. It answers whether the order would pass the buyer's mand
 
 Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere. No directory lists it, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer.
 
-No mandate holds what an agent sells. The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has only the agent's signing key and the rules below, which its own agent keeps. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
+The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has the agent's signing key and the rules below, which its own agent keeps. When Avow serves a [seller's mandate](/docs/reference/seller-mandate) for the agent's key, the agent also holds itself to it before it publishes, quotes or accepts. Avow serves none yet, so today an agent sells as it did before and says that no seller's mandate is in force and that Avow doesn't enforce seller limits yet. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
 
 - It quotes only an offer found among the ones it published, with `publishedOffer`. An order for any other offer, a replaced version included, is left to lapse with nothing reserved. The mailbox carries no refusal yet, so the buyer's agent sees the order lapse and not the reason.
 - It counts against the offer's `dailyCapacity` as it quotes, and quotes nothing past it. A quote holds its place until you can no longer accept the order, 15 minutes after its terms were built, and an order you accepted holds its place for 24 hours. The count is by item name and lives in the folder, so run one seller on a folder at a time.
@@ -101,6 +102,24 @@ No mandate holds what an agent sells. The buyer's side is checked three ways, by
 The buyer's agent keeps each order in `.avow` before it sends it, and checks the quote against that copy, whatever the mailbox says the order was. Ordering the same offer and quantity again picks up an order that's still open, and sends a new one once the first has ended. It funds nothing the lock already holds. A funded order is listed with the agent's other commitments, with a link anyone can check it by.
 
 A booking's reserve backs the two charges the offer names and nothing else. The price is paid by the offer's payment route, and nothing in the order pays it or shows that it was paid.
+
+## Order from a test seller
+
+Avow's sandbox runs test sellers, labelled test businesses that quote and accept simple service orders at any hour, so a newly connected agent has something real to order before any business hands it an offer. Each one's name ends "(test business)", each item it sells starts "Test", and nothing it sells is delivered or billed. A test business is never verified, so call each one a test business wherever you show it.
+
+The sandbox lists them in the deployment file it publishes, the same `config.json` the SDK reads Avow's API and factory from, under `testSellers`. Each entry has the seller's business ID, its name and its offers, whole. `sandboxTestSellers()` reads the list, so it's as trustworthy as the sandbox's own origin, and the mandate your person approved is what stops an order. It answers `{ listed: false }` when the sandbox lists none. It refuses the whole list when any seller has a name without the label, an item that doesn't start "Test", text outside one-line printable ASCII, or one of the words `TEST_SELLER_REFUSED_WORDS` lists, such as verified, certified, KYB or vetted, in any of its words. The check reads five stand-ins as letters, 0 as o, 1, l and | as i, and 3 as e, and nothing else. Avow writes the list itself, so the word check is a backstop, and it refuses those words and nothing more.
+
+```ts
+import { sandboxServices, sandboxTestSellers } from '@avow-finance/sdk'
+
+const found = await sandboxTestSellers()
+if (!found.listed) throw new Error('The sandbox lists no test sellers')
+const [seller] = found.sellers
+const ping = seller.offers.find((o) => o.item.name === 'Test ping')
+const outcome = await (await sandboxServices()).buy({ offer: ping, quantity: 1 })
+```
+
+From a model, call `test_sellers`, then `check` and `order` with one of the offers it lists, as it lists it. The buyer's mandate has to name the seller's business, as for any supplier. When `check` says the supplier isn't allowed, ask with `request_change` to name it, and the administrator decides.
 
 ## When the offer changes
 

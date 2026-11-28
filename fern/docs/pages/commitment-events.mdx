@@ -5,7 +5,7 @@ slug: docs/reference/commitment-events
 
 A commitment event is the notice of one change in a commitment's life, such as a reserve reaching the lock, the supplier's acceptance or a charge leaving the reserve. It is one typed record with a code and that code's fixed fields, so your code can act on a change without parsing a sentence.
 
-`@avow-finance/spec` holds the shape, its JSON form, its slot and its hash. Nothing stores, sends, signs or subscribes to events yet. Avow keeps no event log and delivers nothing, and no SDK call or MCP tool reads events. The supplier's adapter still sends its own four webhook events in its own format. Today this page describes a format, and it says so until that changes.
+`@avow-finance/spec` holds the shape, its JSON form, its slot and its hash. An agent reads a commitment's events straight from its lock with the SDK or the MCP server's `commitment_events` tool. Avow can also post a business's events to an address it adds, signed with a key Avow publishes, though that isn't switched on for testnet yet. The supplier's adapter sends its webhook events in this shape too.
 
 ## An event is a notice
 
@@ -99,11 +99,13 @@ A release says which of the lock's five steps made it and what reason that step 
 
 | `cause` | The step | `reasonCode` and `reason` |
 | --- | --- | --- |
-| `returned_by_avow` | Avow returned a reserve the supplier hadn't accepted | Any number from 0 to 255, as Avow gave it. This spec lists no words for Avow's numbers, so `reason` is null |
+| `returned_by_avow` | Avow returned a reserve the supplier hadn't accepted | Any number from 0 to 255, as Avow gave it. 1 means the business revoked the agent that made the reserve, which `avowReturnReasonOf` reads as `agentRevoked`. `reason` stays null, since an event names only a consent's reasons |
 | `cancelled_in_time` | The business took its reserve back before free cancellation ended | 0 and null |
 | `supplier_consent` | The supplier's account consented to give the reserve back | Any number from 0 to 255. `reason` is `kept` for 1 and `supplierFailed` for 2, and null for any other |
 | `not_accepted` | A reserve nobody accepted went back at the acceptance deadline | 0 and null |
 | `reached_release_date` | A reserve with nothing reported went back at its release date | 0 and null |
+
+Avow doesn't return reserves for a revoked agent yet, so no lock has logged that reason. Until it does, a revoked agent's unaccepted reserve goes back at its acceptance deadline as `not_accepted`.
 
 A business cancelling in time has no code of its own. It takes its reserve back on the lock, so it is a `reserve.released` with the cause `cancelled_in_time`. `booking.cancelled_late` is the cancellation Avow records once free cancellation has ended, which a late-cancellation charge rests on.
 
@@ -238,7 +240,9 @@ A `block` event is written from three things: the arguments of the step's own lo
 
 An event takes four things from around its log. The chain and the lock's address are where the log was read. The commitment id is the log's `commitmentId`. The block's number, the transaction and the log's index are the log's place, and `at` is the time of that block.
 
-A log carries numbers where an event carries words. The spec holds each table and its lookup, which are `chargeKindOf`, `contestReasonOf`, `releaseCauseOf`, `releaseReasonOf`, `pauseCauseOf` and `lockPartyOf`. A lookup gives null for a number its table doesn't list, and the event keeps the number beside the null.
+`lockReceiptEvents` in the spec writes them. It takes one transaction's receipt and where it was read, which is the chain, the lock, the block, the block's time and the transaction. It gives an event for each of that lock's steps in the order of their logs, and the index of every one of the lock's commitment logs that no event accounts for. That is a log with one of the lock's signatures that doesn't decode, a step it can't state, such as a pause with a cause the spec doesn't know, and a `PaymentOwed` no step folds in, whose step then reads as paid. It reads only the lock it's given, since any contract can write a log of the same shape. Pass it only a receipt from a final block.
+
+A log carries numbers where an event carries words. The spec holds each table and its lookup, which are `chargeKindOf`, `contestReasonOf`, `releaseCauseOf`, `releaseReasonOf`, `avowReturnReasonOf`, `pauseCauseOf` and `lockPartyOf`. A lookup gives null for a number its table doesn't list, and the event keeps the number beside the null. A consent and Avow both number their reasons from 1, so read a release's `reasonCode` with `releaseReasonFor`, which takes the cause too and never reads one table's number with the other's words. A release's `cause` has no number beside it in the event, so a `Released` log with a cause the table doesn't list makes no event, and `lockReceiptEvents` names it as unread.
 
 `paid` and `owed` come from the lock's `PaymentOwed` log, which the lock writes inside a step, before the step's own log, for each transfer that fails. A resolution pays the supplier and then the business, so when both transfers fail its receipt holds two `PaymentOwed` logs in a row before `Resolved`. `sentStates(receiptLogs, logIndex)` reads them. For each party, it is `owed` when a `PaymentOwed` for that party, commitment and side sits between the step's own log and the lock's log before it that isn't a `PaymentOwed`, and `paid` otherwise. Logs from other contracts in between, such as the token's transfer, count for nothing. `PaymentOwed` has no code of its own.
 
@@ -262,6 +266,34 @@ A reader follows two rules, in this order.
 2. An event of its own version with a code it doesn't know is refused as `event.code_unknown`, whatever else it holds. That is one event set aside. The reader keeps reading the rest, and an older reader keeps working when a code is added.
 
 Anything else that doesn't fit is `message.invalid`, which includes a source or a field the reader doesn't know on a code it does, and a `code` that isn't written as a subject, a dot and a word.
+
+## Reading events from the lock
+
+An agent reads what its business's lock logged for one of its commitments from the chain, with no call to Avow. The MCP server's `commitment_events` tool does it for a commitment `commitments` lists, and so does `sandboxCommitmentEvents(commitmentId)` in `@avow-finance/sdk`. Underneath, `readLockEvents` in `@avow-finance/verifier` asks a node for the lock's logs that name the commitment, reads each transaction's receipt with `lockReceiptEvents`, and gives the events oldest first.
+
+- **It reads the lock and nothing else.** Every event it gives is a `block` event the lock logged. Avow's own records, such as its approval of a reserve, never appear, since no lock logs them. The SDK reaches the chain through Moderato's public RPC and the factories it ships with, and reads only a lock one of them made, so nothing Avow serves, its deployment file included, decides what it reads.
+- **It reads final blocks only.** It stops at the node's latest final block, so no event names a log a reorganization drops.
+- **A read is bounded.** One read makes at most 10 log queries of 10,000 blocks each, so a long-lived lock never meets an endpoint's limits. When a read stops short of the final block it gives `next`, the block to carry on from. Without a starting block, the SDK starts a little before the time it recorded the commitment.
+- **It names what it can't state.** A log of the commitment that makes no event comes back in `unread`, so you know the lock logged a step the SDK doesn't write.
+
+What the read gives is still a notice. It's only as true as the lock it read is the one you think it is, so check the commitment with `verify` before you act on an event.
+
+## Receiving events from Avow
+
+Once delivery is switched on, which it isn't on testnet yet, a business adds an address in the console, signed with its passkey, and Avow posts each event its lock logs there after the address answers a challenge. A delivery follows Standard Webhooks' asymmetric scheme.
+
+| Header | What it holds |
+| --- | --- |
+| `webhook-id` | The event's hash, the same on every try, so a repeat is one you drop |
+| `webhook-timestamp` | When this try was signed, in unix seconds |
+| `webhook-signature` | `v1a,` and the Ed25519 signature over `id.timestamp.body`, in base64 |
+| `avow-key-id` | Which of Avow's keys signed it. Standard Webhooks has no such header, so this one is Avow's |
+
+The body is `{ "type": <code>, "timestamp": <the block's time>, "data": <the event> }`. Avow lists its keys at `/v1/events/keys`, each with its id and, once a newer key replaced it, its `retiredAt`. A retired key stays listed for seven days.
+
+`eventDeliveryVerifier({ apiUrl })` in `@avow-finance/sdk` checks a delivery for you. Hand it the headers and the body exactly as they arrived. It refuses a delivery whose timestamp is more than five minutes from your clock, one whose key id names no key Avow lists after one read of the keys again, which an unknown id causes at most once every 30 seconds, one signed by a key retired more than seven days before, one whose signature doesn't verify, a repeat of an id it already took, and a signed body that isn't an event or a challenge. It caches the keys for five minutes at most. When the delivery is a challenge it gives you the answer to send back, `{ "challenge": … }` with a 2xx status.
+
+A delivery that verifies came from Avow, and it's still a notice. It grants nothing, so read the lock before you act on it. Avow retries a failed delivery on `WEBHOOK_RETRY_SCHEDULE` from the spec, the same schedule as the supplier's adapter, and one commitment's events can still arrive late or out of order, so order them by `blockNumber` and `logIndex`.
 
 ## Reading, checking and hashing
 

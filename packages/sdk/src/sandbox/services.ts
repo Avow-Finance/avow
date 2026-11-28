@@ -10,16 +10,19 @@ import {
   SANDBOX_PATHS,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_ORDER_ACCEPT_MARGIN,
+  type SellerMandateTerms,
   type ServiceOfferVersion,
   type ServiceOrder,
   type ServiceOrderRequest,
   type ServiceQuote,
+  saleFacts,
   serviceOfferProblem,
+  serviceOfferTerms,
   serviceOrderProblem,
   serviceQuoteProblem,
   toWire,
 } from '@avow-finance/spec'
-import { type Hex, toHex } from 'viem'
+import { type Address, type Hex, isAddressEqual, toHex } from 'viem'
 import { AvowApiError, signingRequestKey } from '../http.js'
 import { quoteService } from '../service/quote.js'
 import { pause } from './connect.js'
@@ -31,13 +34,19 @@ import {
   systemClock,
 } from './mailbox-context.js'
 import {
-  addCommitment,
-  isRecord,
-  loadCommitments,
-  readJson,
-  type SandboxStore,
-  write,
-} from './store.js'
+  type AskedChange,
+  askForChange,
+  hasSettled,
+  isUsable,
+  type RequestContext,
+  readOwnRequest,
+  sellerMandateAsk,
+} from './requests.js'
+import { DAY, holdOffer, holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
+import { sellerStandingOf } from './seller-mandate-read.js'
+import { type HeldSale, holdInTurn, holdToMandate } from './seller-sales.js'
+import { type Quoted, readQuoted } from './service-quoted.js'
+import { addCommitment, inTurn, loadCommitments, readJson, write } from './store.js'
 
 /**
  * Services through the sandbox mailbox, from an agent's side. A supplier's agent publishes offers
@@ -65,29 +74,12 @@ const carried = <T>(sent: Promise<T>): Promise<T> =>
     throw unserved ? new Error(SERVICE_ORDERS_UNSERVED) : error
   })
 
-/**
- * One change at a time to what a store keeps, in this process. Each change reads the file and
- * writes it back, so two at once would lose one. Another process on the same folder isn't held
- * back by this, so run one seller on a folder at a time.
- */
-const turns = new WeakMap<SandboxStore, Promise<unknown>>()
-function inTurn<T>(store: SandboxStore, change: () => Promise<T>): Promise<T> {
-  const turn = (turns.get(store) ?? Promise.resolve()).then(change, change)
-  turns.set(
-    store,
-    turn.catch(() => {}),
-  )
-  return turn
-}
-
 const random = (bytes: number): Hex => toHex(crypto.getRandomValues(new Uint8Array(bytes)))
 
 /** The longest a service order can wait to be funded, which leaves the supplier time to accept. */
 export const SERVICE_ORDER_SECONDS = SERVICE_ACCEPT_WITHIN - SERVICE_ORDER_ACCEPT_MARGIN
 /** How long a supplier's quote stays valid, in seconds. */
 const QUOTE_VALIDITY = 120n
-/** The day an offer's capacity counts over, in seconds. */
-const DAY = 24n * 60n * 60n
 
 /** Where buying a service got to, in order. */
 export type ServiceBuyStep =
@@ -101,8 +93,22 @@ export type ServiceBuyOutcome =
   | { ok: true; order: ServiceOrder }
   | { ok: false; reason: ReasonCode | 'order.expired' | 'acceptance.missed'; order: ServiceOrder }
 
-/** Where selling a service got to, in order. */
-export type ServiceSellStep = { step: 'quoted' } | { step: 'accepted'; acceptedIn: Hex | null }
+/**
+ * Where selling a service got to, in order. Each step says where the agent stood as a seller when
+ * it took it, so whoever runs it can say whether a seller's mandate was in force.
+ */
+export type ServiceSellStep =
+  | { step: 'quoted'; standing: SellerStanding }
+  | { step: 'accepted'; acceptedIn: Hex | null; standing: SellerStanding }
+
+/** What Avow said to an agent's ask for a seller's mandate. */
+export type SellAskOutcome =
+  | { ok: true; asked: AskedChange }
+  | { ok: false; reason: 'approval_request.kind_unavailable'; notice: string }
+
+/** What an agent is told when Avow refuses to take its ask for a seller's mandate. */
+export const SELLER_MANDATE_ASKS_UNTAKEN =
+  "Avow doesn't take seller's mandate requests yet, so nothing was asked. This agent sells as it did before, and no seller's mandate is in force for its signing key."
 
 /** An offer as its supplier writes it, before its business is named for it. */
 export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>
@@ -112,11 +118,42 @@ export interface SandboxServices {
   /** Whether the folder holds a signing key, so the agent can quote and accept as a supplier. */
   readonly sells: boolean
   /**
-   * Publishes an offer under this business, and answers with the version and its id. A version of
-   * the same item it had published is replaced, since an item has one current version. Publishing
-   * keeps the offer in this folder and tells nobody, so hand the version to whoever should order.
+   * The address of the signing key the agent sells with, which a seller's mandate names, or null
+   * for an agent that only buys. The key itself stays in the folder.
    */
-  publish(draft: ServiceOfferDraft): Promise<{ version: ServiceOfferVersion; id: Hex }>
+  readonly signingKey: Address | null
+  /**
+   * Publishes an offer under this business, and answers with the version, its id and where the
+   * agent stands as a seller. A version of the same item it had published is replaced, since an
+   * item has one current version. Publishing keeps the offer in this folder and tells nobody, so
+   * hand the version to whoever should order. An agent that sells under a seller's mandate lists
+   * only an offer the mandate allows, and throws a `SellerMandateRefusal` for any other.
+   */
+  publish(
+    draft: ServiceOfferDraft,
+  ): Promise<{ version: ServiceOfferVersion; id: Hex; standing: SellerStanding | null }>
+  /**
+   * Asks the business's administrator for a seller's mandate with exactly these terms, signed with
+   * the agent's own enrolled key. It only asks: the administrator decides with their passkey on
+   * the page the link opens, and nothing here can approve it. The reason is a first mandate, or
+   * other limits than the ones in force. Avow doesn't take seller's mandate requests yet, and then
+   * it answers with a plain notice and nothing was asked.
+   */
+  askToSell(terms: SellerMandateTerms): Promise<SellAskOutcome>
+  /**
+   * Reads the agent's request for a seller's mandate every few seconds until it settles or the
+   * mandate is in force, or until the signal stops it, and answers with where it stands then.
+   */
+  awaitSellRequest(
+    id: string,
+    o?: { every?: number; signal?: AbortSignal; onRead?: (asked: AskedChange) => void },
+  ): Promise<AskedChange>
+  /**
+   * Reads where the agent stands as a seller: the seller's mandate in force for its signing key,
+   * read from Avow and checked as one chain the business account signed, or none. With none, it
+   * sells as it did before, and Avow doesn't enforce seller limits yet either way.
+   */
+  sellerStanding(): Promise<SellerStanding>
   /** The offers this business has published and not withdrawn, oldest first. */
   published(): Promise<ServiceOfferVersion[]>
   /** Withdraws a published version by its id, and says whether there was one. */
@@ -155,7 +192,9 @@ export interface SandboxServices {
    * It throws for an order whose offer this business never published, and for one past the offer's
    * capacity for the day, and quotes nothing for either. A quote holds its place while the order
    * can still be accepted, and an accepted order holds it for the day. It accepts only an order
-   * whose quote it signed.
+   * whose quote it signed. Under a seller's mandate it checks the sale against the newest mandate
+   * before it quotes and again before it accepts, and throws a `SellerMandateRefusal` with the
+   * spec's reason for a sale the mandate doesn't allow, so the order lapses.
    */
   sell(order: ServiceOrder, onStep?: (step: ServiceSellStep) => void): Promise<void>
   /**
@@ -172,30 +211,12 @@ export interface SandboxServices {
   }): Promise<void>
 }
 
-/**
- * An order this business quoted. It holds a place in its item's capacity until the supplier can no
- * longer accept it, and for the rest of the day once the supplier has.
- */
-interface Quoted {
-  orderId: string
-  item: string
-  at: bigint
-  /** The last moment the supplier can accept the order, in unix seconds. */
-  until: bigint
-  accepted: boolean
-  /** The terms hash of each agreement this agent signed for the order. */
-  hashes: Hex[]
-}
-
 /** What the store keeps for services: a supplier's offers and quotes, and a buyer's unfinished orders. */
 interface Kept {
   published: ServiceOfferVersion[]
   buying: ServiceOrderRequest[]
   quoted: Quoted[]
 }
-
-const isSeconds = (v: unknown): v is string => typeof v === 'string' && /^[0-9]{1,15}$/.test(v)
-const isHash = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/.test(v)
 
 /** Services for the agent in this folder, as buyer and, when it holds a signing key, supplier. */
 export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxServices> {
@@ -227,28 +248,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       if (!request) throw unreadable()
       return request
     })
-    const since = systemClock() - DAY
-    const quoted = (Array.isArray(json.quoted) ? json.quoted : []).flatMap(
-      (q: unknown): Quoted[] => {
-        if (!isRecord(q) || typeof q.orderId !== 'string' || typeof q.item !== 'string') return []
-        if (!isSeconds(q.at) || !isSeconds(q.until) || typeof q.accepted !== 'boolean') return []
-        const hashes = Array.isArray(q.hashes) ? q.hashes.filter(isHash) : []
-        const at = BigInt(q.at)
-        // A quote older than a day no longer counts, so it's dropped the next time the file is kept.
-        return at > since
-          ? [
-              {
-                orderId: q.orderId,
-                item: q.item,
-                at,
-                until: BigInt(q.until),
-                accepted: q.accepted,
-                hashes,
-              },
-            ]
-          : []
-      },
-    )
+    const quoted = readQuoted(json, systemClock())
     return { published, buying, quoted }
   }
 
@@ -256,11 +256,86 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
    * Changes what's kept, one change at a time. The change sees the file as it is when its turn
    * comes, and a change that throws writes nothing.
    */
-  const keep = (change: (k: Kept) => Partial<Kept>) =>
+  const keep = (change: (k: Kept) => Partial<Kept> | Promise<Partial<Kept>>) =>
     inTurn(store, async () => {
       const now = await kept()
-      await write(store, 'services', toWire({ ...now, ...change(now) }) as object)
+      await write(store, 'services', toWire({ ...now, ...(await change(now)) }) as object)
     })
+
+  const signingKey = (() => {
+    try {
+      return context.needSupplier().signing.address
+    } catch {
+      return null
+    }
+  })()
+  const sells = signingKey !== null
+
+  // Where the agent stands as a seller.
+
+  const sellerStanding = sellerStandingOf({
+    deployment,
+    send: context.send,
+    business,
+    signing: () => context.needSupplier().signing,
+  })
+
+  /** A service sale as the seller's mandate reads it, on the exact terms its quote signs. */
+  const heldSale = (
+    sale: ServiceOrder,
+    terms: ServiceQuote['terms'],
+    version: ServiceOfferVersion,
+  ): HeldSale => ({
+    orderId: sale.orderId,
+    terms,
+    offer: version,
+    buyer: sale.buyer.businessId,
+    signingKey: context.needSupplier().signing.address,
+  })
+
+  // Asking for a seller's mandate.
+
+  const asking: RequestContext = {
+    apiUrl: deployment.apiUrl,
+    agentKey: context.agentKey,
+    domain,
+    send: context.send,
+  }
+
+  async function askToSell(terms: SellerMandateTerms): Promise<SellAskOutcome> {
+    // A mandate binds one signing key, and this agent sells with its own.
+    const { signing } = context.needSupplier()
+    if (!isAddressEqual(terms.signingKey, signing.address)) {
+      throw new RangeError(
+        'The terms name another signing key than the one this agent sells with, so nothing was asked.',
+      )
+    }
+    // The reason says whether the key holds a mandate now, which the ask would replace.
+    const standing = await sellerStanding()
+    const ask = sellerMandateAsk(terms, standing.inForce)
+    try {
+      return { ok: true, asked: await askForChange(asking, ask) }
+    } catch (error) {
+      if (error instanceof AvowApiError && error.reason === 'approval_request.kind_unavailable') {
+        return { ok: false, reason: error.reason, notice: SELLER_MANDATE_ASKS_UNTAKEN }
+      }
+      throw error
+    }
+  }
+
+  async function awaitSellRequest(
+    id: string,
+    o: Parameters<SandboxServices['awaitSellRequest']>[1] = {},
+  ): Promise<AskedChange> {
+    for (;;) {
+      const asked = await readOwnRequest(asking, id)
+      o.onRead?.(asked)
+      const { request } = asked
+      if (hasSettled(request) || isUsable(request) || o.signal?.aborted) return asked
+      await pause(o.every ?? 5000, o.signal).catch(() => {})
+      if (o.signal?.aborted) return asked
+    }
+  }
 
   // The supplier's offers.
 
@@ -268,6 +343,10 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     const version: ServiceOfferVersion = { ...draft, supplier: business.businessId }
     const problem = serviceOfferProblem(version)
     if (problem) throw new RangeError(problem)
+    // An agent that can sell lists only what its seller's mandate allows, when one is in force.
+    const standing = sells ? await sellerStanding() : null
+    if (standing)
+      holdOffer(standing, version, context.needSupplier().signing.address, systemClock())
     // An offer that wouldn't read back, such as one with a time too long to write, is never kept.
     if (!parseServiceOfferVersion(JSON.parse(JSON.stringify(toWire(version)))).ok) {
       throw new RangeError('The offer holds a number too large to keep.')
@@ -276,7 +355,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     await keep((k) => ({
       published: [...k.published.filter((v) => v.item.name !== version.item.name), version],
     }))
-    return { version, id }
+    return { version, id, standing }
   }
 
   const published = async () => (await kept()).published
@@ -455,15 +534,6 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   // The supplier's side.
 
-  const sells = (() => {
-    try {
-      context.needSupplier()
-      return true
-    } catch {
-      return false
-    }
-  })()
-
   async function inbox(): Promise<ServiceOrder[]> {
     const { asSupplier } = context.needSupplier()
     return carried(
@@ -488,16 +558,31 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       // The offer in an order is the buyer's copy, so only a version published here is quoted.
       const version = publishedOffer(sale, await published())
       if (!version) throw new Error("The order is for an offer this business hasn't published.")
+      const early = serviceOrderProblem(sale, systemClock())
+      if (early) throw new Error(`The order can't be quoted: ${early}`)
+      // The mandate in force is read first, so nothing below waits on Avow inside a change.
+      const standing = await sellerStanding()
+      // The read can take a while, so the order, the mandate and the quote's expiry are all held
+      // to the clock as it reads once the mandate is in hand.
       const now = systemClock()
       const problem = serviceOrderProblem(sale, now)
       if (problem) throw new Error(`The order can't be quoted: ${problem}`)
-      // The terms don't carry the offer's capacity, so the supplier's own agent counts against it.
-      // The count and the place it takes are one change, so two orders at once can't share the
-      // last place. An order already quoted is quoted again without taking a second.
+      // The terms this order builds, which the quote signs and the seller's mandate reads.
+      const terms = serviceOfferTerms(version, sale.quantity, sale.builtAt, settlement)
+      const facts = saleFacts(terms)
+      if (!facts) throw new Error("The order's terms aren't a service's.")
+      const counts = { units: facts.units, price: facts.price, deliverBy: facts.deliverBy }
+      // The terms don't carry the offer's capacity, so the supplier's own agent counts against it,
+      // and holds the sale to its seller's mandate. The counts, the check and the place they take
+      // are one change, so two orders at once can't share the last place or both pass a limit. An
+      // order already quoted is checked again and keeps its place either way.
       const name = version.item.name
-      await keep((k) => {
+      await keep(async (k) => {
+        await holdToMandate(store, standing, heldSale(sale, terms, version), now)
         if (k.quoted.some((q) => q.orderId === sale.orderId)) return {}
-        const taken = k.quoted.filter((q) => q.item === name && (q.accepted || q.until > now))
+        const taken = k.quoted.filter(
+          (q) => q.item === name && (q.accepted ? q.at > now - DAY : q.until > now),
+        )
         if (taken.length >= version.rules.dailyCapacity) {
           throw new Error(
             "The offer's capacity for the day is taken, so the order is left to lapse.",
@@ -510,6 +595,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
           until: sale.builtAt + SERVICE_ACCEPT_WITHIN,
           accepted: false,
           hashes: [],
+          sale: counts,
         }
         return { quoted: [...k.quoted, place] }
       })
@@ -520,7 +606,13 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         signingKey: signingRequestKey(signing),
         settlement,
         expiry: now + QUOTE_VALIDITY,
+        // The quote names the mandate it was held to above, so the agreement says which one.
+        sellerMandate: standing.inForce ? standing.chain.current.hash : null,
       })
+      // The quote signs exactly the terms the mandate read, or it goes nowhere.
+      if (JSON.stringify(toWire(quote.terms)) !== JSON.stringify(toWire(terms))) {
+        throw new Error("The quote's terms aren't the ones the order builds, so it isn't sent.")
+      }
       // Kept before it's sent, so the agent knows every agreement it signed when one comes back.
       const signed = quote.agreement.termsHash.toLowerCase() as Hex
       await change(sale.orderId, (q) => ({ ...q, hashes: [...q.hashes, signed] }))
@@ -530,7 +622,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         body: quote,
         read: orderReader,
       })
-      onStep?.({ step: 'quoted' })
+      onStep?.({ step: 'quoted', standing })
       return
     }
     if (sale.status === 'reserved') {
@@ -538,6 +630,19 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       const signed = (await kept()).quoted.find((q) => q.orderId === sale.orderId)
       if (!signed?.hashes.includes(sale.quote.agreement.termsHash.toLowerCase() as Hex)) {
         throw new Error("The order's quote isn't one this agent signed, so it isn't accepted.")
+      }
+      // The mandate may have changed, ended or been revoked since the quote, so the sale is held to
+      // the newest one again before the acceptance binds the seller, and only when it's the one the
+      // agreement names.
+      const standing = await sellerStanding()
+      holdToNamedMandate(standing, sale.quote.agreement.sellerMandate)
+      const version = publishedOffer(sale, await published())
+      if (standing.inForce) {
+        if (!version) {
+          throw new Error("The order is for an offer this business hasn't published.")
+        }
+        const held = heldSale(sale, sale.quote.terms, version)
+        await holdInTurn(store, standing, held, systemClock())
       }
       // Null when an earlier run's acceptance was already on the lock, which Avow reads either way.
       const acceptedIn = await context.accept(sale.buyer, sale.quote)
@@ -548,7 +653,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         body: { acceptedIn },
         read: orderReader,
       })
-      onStep?.({ step: 'accepted', acceptedIn })
+      onStep?.({ step: 'accepted', acceptedIn, standing })
     }
   }
 
@@ -558,7 +663,11 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   return {
     businessId: business.businessId,
     sells,
+    signingKey,
     publish,
+    sellerStanding,
+    askToSell,
+    awaitSellRequest,
     published,
     withdraw,
     order,

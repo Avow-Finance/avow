@@ -8,3 +8,4 @@ import { setSandboxPlatform } from './sandbox/agent.js'
 setSandboxPlatform(nodePlatform)
 
 export * from './index.js'
+export { fileStore } from './node/platform.js'

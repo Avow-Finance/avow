@@ -130,7 +130,7 @@ export const SANDBOX_PATHS = {
    * another account than the business's, or whose `replaces` doesn't name the mandate the key
    * holds now, or names any when the key holds none, is `seller_mandate.chain_mismatch`. A key
    * whose chain already holds `MAX_MANDATE_CHAIN` mandates takes no more, as
-   * `seller_mandate.invalid`. One past its expiry is `seller_mandate.expired`, posted again or
+   * `seller_mandate.chain_full`. One past its expiry is `seller_mandate.expired`, posted again or
    * not, and one the business account didn't sign is `seller_mandate.signature_invalid`. When
    * Avow can't read its records or the chain it is to answer `service.unavailable` and record
    * nothing.
@@ -149,10 +149,49 @@ export const SANDBOX_PATHS = {
    * `message.wrong_chain`, and one signed under another lock than the business's own as
    * `message.wrong_contract`. A key that isn't a signing key the business registered is
    * `request.signer_unknown`, a body that isn't an empty object is `message.invalid`, and a key
-   * that holds no seller's mandate is `seller_mandate.missing`. When Avow can't read its records
-   * it is to answer `service.unavailable`.
+   * that holds no seller's mandate is `seller_mandate.missing`, with status 404, which a selling
+   * agent reads as no mandate in force and every other 404 as a refusal. When Avow can't read its
+   * records it is to answer `service.unavailable`.
    */
   sellerMandates: '/v1/sandbox/sellers/mandates',
+  /**
+   * Where a business's console is to send the account's revocation of one selling agent's signing
+   * key, as a `SellerKeyRevocationPost`, the way it sends a seller's mandate. Avow doesn't take this
+   * route yet. Anyone may post one, unsigned, since the business account's signature is the only
+   * authority, and its root key or one of its admin keys signs it. Avow is to answer with a
+   * `SellerKeyRevocationReceipt`, and posting the same revocation again answers the same receipt.
+   *
+   * A revocation is for good. Avow is to record no seller's mandate for the key after it, to
+   * approve no new reserve for an agreement the key signed, to take no new quote the key signs and
+   * to refuse the key wherever a supplier registers one, for any business. The seller's side hears
+   * each of those refusals as `seller_mandate.revoked`. A buyer whose reserve is refused for an
+   * agreement the key signed is to hear `supplier.not_authorized`, as `buyerFacingReason` gives,
+   * and Avow is to keep `seller_mandate.revoked` in the decision's evidence. It stops new approvals
+   * and new quotes only. A commitment already made stays in force, and a revocation can't
+   * invalidate an approval already issued on-chain, which a lock goes on taking until its own
+   * deadline.
+   *
+   * It is to refuse a signing key in the path that isn't an address as `request.invalid`, a body
+   * that doesn't parse or a revocation that isn't well formed as `message.invalid`, a revocation of
+   * a type or version it doesn't read as `message.schema_unknown`, and one signed for another chain
+   * as `message.wrong_chain`. A revocation that names another signing key than the path's is
+   * `seller_mandate.key_mismatch`, one that names a business Avow has no record of is
+   * `business.unknown`, one signed under another lock than that business's is
+   * `message.wrong_contract`, and one that names another account than the business's is
+   * `seller_mandate.chain_mismatch`. One the business account didn't sign is
+   * `seller_mandate.signature_invalid`.
+   *
+   * Then, with the business's records held, a key Avow already holds a revocation of is
+   * `seller_mandate.revoked` when another business revoked it, or this business did under another
+   * lock, so a business that moved to a new lock and posts again is refused too. The same business
+   * posting under the same lock gets the receipt it got before. Last, the key has to be the signing
+   * key the business registers now, or one it registered before that holds a chain of seller's
+   * mandates and that no other business registers now, and any other is
+   * `seller_mandate.key_mismatch`. When Avow can't read its records or the chain it is to answer
+   * `service.unavailable` and record nothing.
+   */
+  sellerKeyRevocation: (signingKey: Address) =>
+    `/v1/sandbox/sellers/${signingKeyInPath(signingKey)}/revocation`,
   /**
    * Where a business starts a check of itself, signed by its account's root key under its own
    * lock. Avow answers with a `BusinessCheck`, whose `url` is the checker's page.

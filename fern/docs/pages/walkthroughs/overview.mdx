@@ -29,7 +29,7 @@ export AVOW_FACTORY=$(curl -fsS https://try.testnet.avow.finance/config.json | j
 (cd packages/supplier && node dist/main.js init)
 ```
 
-The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. Each buyer prints its account and lock, and the supplier prints three addresses. The quickstarts don't register through the sandbox yet, so send all of them, with a name and country for each business, to the person at Avow who invited you to the testnet. Nothing past this point works until Avow has registered them. Avow sends each buyer's account enough test tUSD for three \$500 reserves, and sends you each business id. The other settings are the testnet's own, published at https://try.testnet.avow.finance/config.json.
+The second buyer is a spare, so a booking that has to be made again doesn't wait on a new registration. The supplier's `init` registers it with Avow's sandbox and prints its business id. Each buyer prints its account and lock. The buyer quickstart doesn't register through the sandbox yet, so send both buyers, with a name and country for each, to the person at Avow who invited you to the testnet. Nothing past this point works until Avow has registered them. Avow sends each buyer's account enough test tUSD for three \$500 reserves, and sends you each buyer's business id. The other settings are the testnet's own, published at https://try.testnet.avow.finance/config.json.
 
 | Setting | Side | What it is |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ The second buyer is a spare, so a booking that has to be made again doesn't wait
 | `AVOW_TOKEN` | Both | The token reserves are held in |
 | `BUYER_BUSINESS_ID` | Buyer | The business id Avow registered the buyer under, with a second one for the spare |
 | `AVOW_ARBITER` | Buyer | The arbiter Avow's approvals name |
-| `SUPPLIER_BUSINESS_ID` | Supplier | The business id Avow registered the supplier under |
+| `SUPPLIER_BUSINESS_ID` | Supplier | The business id the supplier's `init` printed |
 | `AVOW_APPROVAL_KEYS` | Supplier | The address Avow signs authorizations with |
 
 The quickstarts read their settings from the environment, so every terminal needs them. Put them in a file at the repository's root, here called `avow-settings.sh`, and keep it out of version control.
@@ -51,7 +51,7 @@ export AVOW_TOKEN=$(echo "$CONFIG" | jq -r .token)
 export AVOW_ARBITER=$(echo "$CONFIG" | jq -r .arbiter)
 export AVOW_APPROVAL_KEYS=$(echo "$CONFIG" | jq -r .approvalKey)
 export BUYER_BUSINESS_ID=<from Avow>
-export SUPPLIER_BUSINESS_ID=<from Avow>
+export SUPPLIER_BUSINESS_ID=<the businessId the supplier's init printed>
 export SUPPLIER_URL=http://localhost:8790
 ```
 

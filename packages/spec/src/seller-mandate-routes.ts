@@ -1,21 +1,26 @@
 import { type Address, type Hex, zeroHash } from 'viem'
 import { z } from 'zod'
 import type { Signed } from './eip712.js'
-import { bytes32, signedJson, u64 } from './json-fields.js'
+import { address, bytes32, signedJson, u64 } from './json-fields.js'
+import { parseSellerKeyRevocation, type SellerKeyRevocation } from './seller-key-revocation.js'
 import { parseSellerMandate, type SellerMandate } from './seller-mandate.js'
 import type { Parsed } from './wire.js'
 
 /**
- * What the two routes for a seller's mandate take and answer, at `SANDBOX_PATHS.sellerMandate` and
- * `SANDBOX_PATHS.sellerMandates`. The first is to record a mandate the business account signed, and
- * the second is to serve a selling agent every mandate its signing key has held. Avow takes neither
- * yet. Both are to keep and hand back what an administrator signed and no more, so neither is to
- * hold a sale to a mandate's limits.
+ * What the three routes for a seller's mandate take and answer, at `SANDBOX_PATHS.sellerMandate`,
+ * `SANDBOX_PATHS.sellerMandates` and `SANDBOX_PATHS.sellerKeyRevocation`. The first is to record a
+ * mandate the business account signed, the second is to serve a selling agent every mandate its
+ * signing key has held, and the third is to record the account's revocation of a selling agent's
+ * key. Avow takes none of them yet. They are to keep and hand back what an administrator signed and
+ * no more, so none is to hold a sale to a mandate's limits.
  */
 
 /** The body that posts a seller's mandate, which carries the mandate and nothing else. */
 export interface SellerMandatePost {
-  /** The mandate the business account's root key signed, under the business's own lock. */
+  /**
+   * The mandate the business account's root key or one of its admin keys signed, under the
+   * business's own lock.
+   */
   mandate: Signed<SellerMandate>
 }
 
@@ -40,12 +45,30 @@ export interface SellerMandateReceipt {
   current: boolean
 }
 
+/** The body that posts a revocation of a selling agent's key, which carries it and nothing else. */
+export interface SellerKeyRevocationPost {
+  /** The revocation the business account signed, under the business's own lock. */
+  revocation: Signed<SellerKeyRevocation>
+}
+
+/**
+ * The answer to a posted revocation, once it is recorded. Posting the same revocation again answers
+ * the same receipt. A revocation stops new approvals and new quotes under the key, and it can't
+ * invalidate a commitment already made or an approval already issued on-chain.
+ */
+export interface SellerKeyRevocationReceipt {
+  /** The signing key revoked, in lower case. */
+  signingKey: Address
+  /** When the revocation was first recorded, in unix seconds by the clock of whoever records it. */
+  recordedAt: bigint
+}
+
 /** The body of a selling agent's read of its own mandates, which is an empty object. */
 export type SellerMandatesRequest = Record<string, never>
 
 export const sellerMandatePostJson = z.strictObject({
   mandate: signedJson(
-    "The seller's mandate, as a signed SellerMandate the business account's root key signed",
+    "The seller's mandate, as a signed SellerMandate the business account's root key or one of its admin keys signed",
   ),
 })
 
@@ -58,6 +81,17 @@ export const sellerMandateReceiptJson = z.strictObject({
 })
 
 export const sellerMandatesRequestJson = z.strictObject({})
+
+export const sellerKeyRevocationPostJson = z.strictObject({
+  revocation: signedJson(
+    "The revocation of the selling agent's key, as a signed SellerKeyRevocation the business account signed",
+  ),
+})
+
+export const sellerKeyRevocationReceiptJson = z.strictObject({
+  signingKey: address,
+  recordedAt: u64,
+})
 
 const invalid = { ok: false, reason: 'message.invalid' } as const
 
@@ -107,5 +141,37 @@ export function parseSellerMandatesRequest(json: unknown): Parsed<SellerMandates
   return reading(() => {
     const parsed = sellerMandatesRequestJson.safeParse(json)
     return parsed.success ? { ok: true, value: {} } : invalid
+  })
+}
+
+/**
+ * Parses the body that posts a revocation of a selling agent's key. The revocation has to parse as
+ * `parseSellerKeyRevocation` reads one, for this chain and, when given, the selling business's
+ * lock, and a refusal keeps that reason. The route is unsigned, so the lock comes from the business
+ * the revocation names, and a caller that leaves `lock` out has to compare `revocation.lock` with
+ * that business's lock before it does anything else with it. The signature is the caller's to
+ * check against that business's account. It never throws.
+ */
+export function parseSellerKeyRevocationPost(
+  json: unknown,
+  expected: { chainId: number; lock?: Address },
+): Parsed<SellerKeyRevocationPost> {
+  return reading(() => {
+    const outer = sellerKeyRevocationPostJson.safeParse(json)
+    if (!outer.success) return invalid
+    const revocation = parseSellerKeyRevocation(outer.data.revocation, expected)
+    if (!revocation.ok) return revocation
+    return { ok: true, value: { revocation: revocation.value } }
+  })
+}
+
+/**
+ * Parses the receipt for a posted revocation. Its key reads in either case and comes back in lower
+ * case, its time is a decimal string, and it holds no other field. It never throws.
+ */
+export function parseSellerKeyRevocationReceipt(json: unknown): Parsed<SellerKeyRevocationReceipt> {
+  return reading(() => {
+    const parsed = sellerKeyRevocationReceiptJson.safeParse(json)
+    return parsed.success ? { ok: true, value: parsed.data } : invalid
   })
 }

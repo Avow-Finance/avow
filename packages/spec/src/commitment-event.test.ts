@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { decodeEventLog, type Hex } from 'viem'
+import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -27,24 +27,19 @@ import {
   sameSlot,
 } from './commitment-event.js'
 import { COMMITMENT_EVENT_LOGS } from './commitment-event-log.js'
+import { lockReceiptEvents } from './commitment-event-receipt.js'
 import { CONTEST_REASON_NAMES, contestReasonOf } from './contest.js'
 import { dollars } from './demo.js'
 import { CHARGE_KINDS, RELEASE_REASONS } from './eip712.js'
 import { BUSINESS_ID } from './fields.js'
 import {
-  chargeKindOf,
-  LOCK_LOG_ABI,
   LOCK_LOGS,
   LOCK_PARTIES,
   type LockLogName,
   type LockParty,
-  lockPartyOf,
   PAUSE_CAUSES,
   RELEASE_CAUSES,
-  releaseCauseOf,
-  releaseReasonOf,
   SENT_STATES,
-  sentStates,
 } from './lock-log.js'
 import { ARBITER, CHAIN_ID, id, LOCK, lockReceiptLog, NOW, OTHER_LOCK } from './test-helpers.js'
 import { COMMITMENT_EVENT_VERSION } from './version.js'
@@ -695,6 +690,9 @@ describe('a step a lock allows that names no listed word', () => {
     const wrong: object[] = [
       // Avow's numbers are its own, so a consent's word is never read into one.
       { cause: 'returned_by_avow', reason: 'kept', reasonCode: 1 },
+      // An event names a consent's reasons only, and keeps Avow's as the number, so defining
+      // Avow's words changed no event and no event's hash.
+      { cause: 'returned_by_avow', reason: 'agentRevoked', reasonCode: 1 },
       { cause: 'supplier_consent', reason: 'kept', reasonCode: 2 },
       { cause: 'supplier_consent', reason: null, reasonCode: 1 },
       { cause: 'cancelled_in_time', reason: null, reasonCode: 1 },
@@ -1054,6 +1052,16 @@ describe("a commitment event's slot", () => {
 
 describe("a commitment event's hash", () => {
   it('is one fixed digest for one fixed event, so a change to the hashed form is noticed', () => {
+    // A reserve Avow returned, with the number for a revoked agent, which an event keeps as a number.
+    const returned = changed(of('reserve.released'), {
+      cause: 'returned_by_avow',
+      reason: null,
+      reasonCode: 1,
+    })
+    expect(commitmentEventProblem(returned)).toBeNull()
+    expect(commitmentEventHash(returned)).toMatchInlineSnapshot(
+      `"0x8dac50e341fe78f0f0488b599e043ae9146c6bf0d77d7513f5537693c478759c"`,
+    )
     expect(commitmentEventHash(of('reserve.locked'))).toMatchInlineSnapshot(
       `"0x00b40bab7d280ab4aecf5e22a070d02f6357964628fd3f0ac89bfb0a8a772d71"`,
     )
@@ -1583,12 +1591,6 @@ describe("a commitment event written from a lock's log", () => {
       args: { commitmentId: h('c1'), side: 0, party: 0, to: LOCK, amount: dollars(150) },
     },
   }
-  const WORDS: Record<string, (code: number) => string | null> = {
-    kind: chargeKindOf,
-    cause: releaseCauseOf,
-    filer: lockPartyOf,
-    party: lockPartyOf,
-  }
   type Source = {
     log: LockLogName
     cause?: keyof typeof PAUSE_CAUSES
@@ -1615,53 +1617,20 @@ describe("a commitment event written from a lock's log", () => {
     return [...owed, lockReceiptLog(sourceOf(code).log, args, owed.length)]
   }
   /**
-   * Writes an event from a receipt alone: the step's log decoded with the lock's ABI, what
-   * `sentStates` reads from the same receipt, and where the log was read. It reads nothing else.
+   * Writes the one event a step's receipt states, through `lockReceiptEvents`. The event takes its
+   * log's index from the receipt, and the samples here number their logs from 0, so the index is
+   * checked against the receipt and then set to the sample's for the comparison.
    */
   const written = (code: keyof typeof LOGS, place: ObservedBy<'block'>): CommitmentEvent => {
+    const { source: _, logIndex, ...at } = place as BlockEvent
     const receipt = receiptOf(code)
-    const own = receipt[receipt.length - 1]
-    if (!own) throw new Error('no log')
-    const states = sentStates(receipt, own.logIndex)
-    if (!states) throw new Error(`${code} is no step`)
-    const decoded = decodeEventLog({
-      abi: LOCK_LOG_ABI,
-      topics: own.topics as [Hex],
-      data: own.data,
-      strict: true,
-    })
-    const args = decoded.args as unknown as Args
-    const { log, from, sends = {} } = sourceOf(code)
-    expect(decoded.eventName).toBe(log)
-    const types = LOCK_LOGS[log] as Record<string, string>
-    const fields = Object.entries(from).map(([name, arg]) => {
-      const raw = args[arg]
-      const to = sends[name]
-      if (to) return [name, raw === 0n ? null : { amount: raw, state: states[to] }]
-      if (name === 'reason') {
-        const consent = args.cause === RELEASE_CAUSES.supplier_consent
-        const word =
-          code === 'charge.contested'
-            ? contestReasonOf(raw as number)
-            : consent
-              ? releaseReasonOf(raw as number)
-              : null
-        return [name, word]
-      }
-      const word = WORDS[name]
-      if (word) return [name, word(raw as number)]
-      return [name, types[arg] === 'address' ? (raw as string).toLowerCase() : raw]
-    })
-    return commitmentEvent({
+    const read = lockReceiptEvents(receipt, { ...at, chainId: CHAIN_ID, lock: LOCK })
+    expect(read.unread, code).toEqual([])
+    expect(
+      read.events.map((e) => e.logIndex),
       code,
-      commitment: {
-        chainId: CHAIN_ID,
-        lock: own.address.toLowerCase() as Hex,
-        commitmentId: String(args.commitmentId).toLowerCase(),
-      },
-      ...place,
-      ...Object.fromEntries(fields),
-    } as CommitmentEventFact)
+    ).toEqual([receipt.at(-1)?.logIndex])
+    return { ...read.events[0], logIndex } as CommitmentEvent
   }
   const placeOf = (e: CommitmentEvent) => {
     const { source, at, blockNumber, transactionHash, logIndex } = e as BlockEvent
@@ -1842,8 +1811,13 @@ describe('the reference page for commitment events', () => {
     expect(page).toContain('`message.schema_unknown`')
   })
 
-  it('says plainly that nothing stores, sends, signs or subscribes to events yet', () => {
-    expect(page).toContain('Nothing stores, sends, signs or subscribes to events yet.')
+  it('says a read gives what the lock logged and nothing of Avow, and a delivery grants nothing', () => {
+    const reading = between('## Reading events from the lock', '## Receiving events from Avow')
+    expect(reading).toContain('**It reads the lock and nothing else.**')
+    expect(reading).toContain("Avow's own records")
+    const receiving = between('## Receiving events from Avow', '## Reading, checking and hashing')
+    expect(receiving).toContain("isn't on testnet yet")
+    expect(receiving).toContain('It grants nothing, so read the lock before you act on it.')
   })
 
   it('names no business id and promises nothing about reorganizations', () => {

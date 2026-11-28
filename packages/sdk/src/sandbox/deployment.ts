@@ -44,15 +44,11 @@ export function trustedFactory(chainId: number, address: Address): TrustedFactor
   return trustedFactories(chainId).find((f) => isAddressEqual(f.address, address)) ?? null
 }
 
-/**
- * The facts of the deployment the sandbox's screen runs against, as it publishes them. It refuses
- * a deployment whose factory isn't one the SDK trusts on that chain, so a changed settings file
- * can't point the sandbox, or its verifier, at another factory's locks.
- */
-export async function loadSandboxDeployment(
+/** The deployment file the sandbox's screen publishes, as JSON, with the URL it came from. */
+export async function readDeploymentFile(
   screenUrl: string = SANDBOX_SCREEN_URL,
   send: typeof fetch = (input, init) => fetch(input, init),
-): Promise<SandboxDeployment> {
+): Promise<{ url: string; ok: boolean; json: unknown }> {
   const url = `${new URL(screenUrl).origin}${SANDBOX_DEPLOYMENT_PATH}`
   let response: Response
   try {
@@ -60,16 +56,33 @@ export async function loadSandboxDeployment(
   } catch (error) {
     throw new Error(`The sandbox at ${url} didn't answer: ${describe(error)}`)
   }
-  const parsed = parseSandboxDeployment(await response.json().catch(() => null))
-  if (!response.ok || !parsed.ok) throw new Error(`${url} doesn't describe a testnet deployment`)
+  return { url, ok: response.ok, json: await response.json().catch(() => null) }
+}
+
+/**
+ * The deployment a deployment file describes. It refuses a deployment whose factory isn't one the
+ * SDK trusts on that chain, so a changed settings file can't point the sandbox, or its verifier,
+ * at another factory's locks.
+ */
+export function deploymentOf(file: { url: string; ok: boolean; json: unknown }): SandboxDeployment {
+  const parsed = parseSandboxDeployment(file.json)
+  if (!file.ok || !parsed.ok) throw new Error(`${file.url} doesn't describe a testnet deployment`)
   const { chainId, factory } = parsed.value
   if (!trustedFactory(chainId, factory)) {
     const trusted = trustedFactories(chainId).map((f) => f.address)
     throw new Error(
-      `${url} names the factory ${factory}, but on chain ${chainId} the SDK trusts only ${trusted.join(', ') || 'none'}`,
+      `${file.url} names the factory ${factory}, but on chain ${chainId} the SDK trusts only ${trusted.join(', ') || 'none'}`,
     )
   }
   return parsed.value
+}
+
+/** The facts of the deployment the sandbox's screen runs against, as it publishes them. */
+export async function loadSandboxDeployment(
+  screenUrl: string = SANDBOX_SCREEN_URL,
+  send: typeof fetch = (input, init) => fetch(input, init),
+): Promise<SandboxDeployment> {
+  return deploymentOf(await readDeploymentFile(screenUrl, send))
 }
 
 /**

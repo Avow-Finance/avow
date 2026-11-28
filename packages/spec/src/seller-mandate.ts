@@ -12,12 +12,13 @@ import {
   LOWER_ADDRESS,
   LOWER_BYTES32,
 } from './fields.js'
-import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
+import { JOB, JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import { address, bytes32, u64, u256 } from './json-fields.js'
 import { OPEN_TERMS, type OpenTerm } from './negotiation.js'
 import type { ReasonCode } from './reasons.js'
 import {
   BUSINESS_ID_MAX,
+  SERVICE,
   SERVICE_CATEGORY,
   SERVICE_NAME_MAX,
   SERVICE_QUANTITY_MAX,
@@ -31,7 +32,8 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
  * A seller's mandate is the authority a business's administrator signs for one selling agent, bound
  * to that agent's signing key the way a buyer's mandate is bound to its agent key. It says what the
  * agent may sell and at what price, how much it may promise, how far ahead, on what charges, to
- * whom, and until when. The business account's root key signs it under the business's own lock.
+ * whom, and until when. The business account's root key or one of its admin keys signs it under the
+ * business's own lock.
  *
  * This module holds the message, what makes one well formed, its signed form and its JSON.
  * `checkSellerMandate` reads a sale against one, `sellerMandateChainProblem` follows the mandates
@@ -46,6 +48,15 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
 /** The mandate categories a seller's mandate can name, one for each template it covers. */
 export const SELLER_CATEGORIES = [SERVICE_CATEGORY, JOB_CATEGORY] as const
 export type SellerCategory = (typeof SELLER_CATEGORIES)[number]
+
+/**
+ * The templates a seller's mandate covers, in the order of `SELLER_CATEGORIES`. A sale under any
+ * other template, such as a GPU reservation, falls under no seller's mandate, so whoever holds
+ * sales to one checks only these. `saleFacts` reads exactly these, and a test holds the two
+ * together.
+ */
+export const SELLER_TEMPLATES = [SERVICE, JOB] as const
+export type SellerTemplate = (typeof SELLER_TEMPLATES)[number]
 
 /** The most lines of selling limits one mandate holds. */
 export const SELLER_LIMITS_MAX = 50
@@ -88,7 +99,7 @@ export interface SellerMandate {
    */
   mandateId: Hex
   businessId: string
-  /** The business's account, whose root key signs the mandate. */
+  /** The business's account, whose root key or one of its admin keys signs the mandate. */
   account: Address
   /** The agent's signing key, which the business registered to quote and accept with. */
   signingKey: Address
@@ -220,8 +231,9 @@ export function sellerMandateTypedData(m: SellerMandate, d: AvowDomain) {
 }
 
 /**
- * A seller's mandate's hash, which the business account's root key signs and a sale's record
- * names. It includes the domain, so a mandate for one lock or chain can't stand in for another.
+ * A seller's mandate's hash, which the business account's root key or one of its admin keys signs
+ * and a sale's record names. It includes the domain, so a mandate for one lock or chain can't
+ * stand in for another.
  */
 export function sellerMandateHash(m: SellerMandate, d: AvowDomain): Hex {
   return hashTypedData(sellerMandateTypedData(m, d))

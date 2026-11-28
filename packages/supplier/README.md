@@ -100,7 +100,7 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `AVOW_FACTORY` | Avow's lock factory on Moderato |
 | `AVOW_TOKEN` | The token reserves are held in |
 | `AVOW_APPROVAL_KEYS` | The address Avow signs authorizations with. Separate several with commas |
-| `SUPPLIER_BUSINESS_ID` | The business id Avow registered you under |
+| `SUPPLIER_BUSINESS_ID` | The business id Avow registered you under, which `init` prints |
 | `PORT` | Where agents reach you, 8790 by default |
 | `MAX_RESERVE_DOLLARS` | The largest reserve you take for one booking, 1000 by default |
 | `POLL_SECONDS` | How often it asks Avow about open bookings, 5 by default |
@@ -113,7 +113,7 @@ Each acceptance transaction's hash is recorded before its bytes go to the chain.
 | `LOCAL_PORT` | Where your own systems reach the check, 8791 by default |
 | `LOCAL_HOST` | The IP address the check listens on, `127.0.0.1` by default |
 
-`serve` needs every setting Avow sends, and the rest have defaults. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
+`serve` needs the first five settings, and the rest have defaults. `report` needs only `AVOW_FACTORY` and `AVOW_TOKEN`, with `STATE_DIR` and `RPC_URL` when you set them for `serve`.
 
 A booking is open from the moment the supplier signs its agreement until the lock holds the acceptance or the booking lapses.
 
@@ -124,7 +124,7 @@ cd packages/supplier
 node dist/main.js init
 ```
 
-`init` makes your account key and signing key, has Moderato's faucet fund the signing key's fees, and prints three addresses. Send them to Avow, which registers you and gives you the settings above.
+`init` makes your account key and signing key, registers them with Avow's sandbox as a supplier, has Moderato's faucet fund the signing key's fees when it holds too little for them, and prints your business id and three addresses. Put the business id in `SUPPLIER_BUSINESS_ID`. Both keys sign the registration, so nobody can register a key they don't hold. It registers with the deployment the testnet publishes at https://try.testnet.avow.finance/config.json, where the other settings above are published too, unless `AVOW_API_URL` and `AVOW_FACTORY` are both set, and it refuses a factory the SDK doesn't trust either way. Run it again after any failure. It keeps its keys, and Avow answers a repeat with the supplier it holds. A registered supplier has no lock, so the testnet's supplier registry doesn't list it, and every buyer names it on its lock.
 
 Make a webhook secret, give it to your receiver, and set `WEBHOOK_URL` and `WEBHOOK_SECRET`.
 
@@ -149,7 +149,7 @@ node dist/main.js report 0x<commitment id> --no-show
 
 ## Hosting it
 
-Run `init` on your own machine, then give the host only what `serve` needs. `serve` signs with the signing key alone and never with the account key, so the account key stays on your machine with `keys.json`. Back that file up, since the account is where charges are paid.
+Run `init` on your own machine, then give the host only what `serve` needs. `init` refuses to run where `SUPPLIER_SIGNING_KEY` and `SUPPLIER_ACCOUNT` are set. `serve` signs with the signing key alone and never with the account key, so the account key stays on your machine with `keys.json`. Back that file up, since the account is where charges are paid.
 
 | Setting | What it is |
 | --- | --- |

@@ -516,6 +516,17 @@ describe('the approval link', () => {
     expect(approvalLink(key)).toBe(`https://testnet.avow.finance/#approve-${key.toLowerCase()}`)
   })
 
+  it('opens the console a service names instead, such as a local one, with the same request', () => {
+    const key = privateKeyToAccount(generatePrivateKey()).address
+    expect(approvalLink(key, 'http://127.0.0.1:5174')).toBe(
+      `http://127.0.0.1:5174/#approve-${key.toLowerCase()}`,
+    )
+    // A trailing slash or a path is left out, so the link never doubles its slash.
+    for (const url of ['http://127.0.0.1:5174/', 'http://127.0.0.1:5174/console']) {
+      expect(approvalLink(key, url)).toBe(`http://127.0.0.1:5174/#approve-${key.toLowerCase()}`)
+    }
+  })
+
   it('opens a request on its signing page, named by its id and nothing else', () => {
     const id = 'ab'.repeat(16)
     expect(approvalRequestLink(id)).toBe(`https://testnet.avow.finance/#sign-${id}`)

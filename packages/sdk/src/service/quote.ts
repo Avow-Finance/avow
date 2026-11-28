@@ -13,7 +13,7 @@ import {
   termsAgreementTypedData,
   termsHash,
 } from '@avow-finance/spec'
-import { hexToBigInt, toHex } from 'viem'
+import { type Hex, hexToBigInt, toHex } from 'viem'
 
 export interface ServiceQuoteInput {
   /** The order, whose offer the supplier has already found among the versions it published. */
@@ -28,6 +28,12 @@ export interface ServiceQuoteInput {
   settlement: ServiceSettlement
   /** When the agreement lapses, in unix seconds. */
   expiry: bigint
+  /**
+   * The hash of the seller's mandate the supplier's agent sells under, which the agreement names,
+   * or null when no seller's mandate is in force for its signing key. Naming one signs the
+   * agreement at version 2, and naming none leaves it at version 1.
+   */
+  sellerMandate: Hex | null
 }
 
 const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array(16))))
@@ -35,7 +41,9 @@ const randomUint = () => hexToBigInt(toHex(crypto.getRandomValues(new Uint8Array
 /**
  * Quotes a service order. The terms are the ones the order builds, with nothing moved, under a new
  * salt. The signing key signs the terms agreement naming the order's commitment id, the buyer under
- * its mandate, this business as supplier and the service category. It throws when the offer names
+ * its mandate, this business as supplier, the service category, and the seller's mandate the
+ * agent sells under when one is in force. Naming it shows the buyer which mandate the sale was
+ * agreed under, and proves no check of it. It throws when the offer names
  * another business, since a supplier quotes only its own.
  */
 export async function quoteService(input: ServiceQuoteInput): Promise<ServiceQuote> {
@@ -57,6 +65,7 @@ export async function quoteService(input: ServiceQuoteInput): Promise<ServiceQuo
     mandateHash: buyer.mandateHash,
     nonce: randomUint(),
     expiry: input.expiry,
+    ...(input.sellerMandate === null ? {} : { sellerMandate: input.sellerMandate }),
   }
   const domain = { chainId: buyer.chainId, verifyingContract: buyer.lock }
   const supplierSignature = await input.signingKey.signDigest(

@@ -21,6 +21,7 @@ export * from './agent.js'
 export * from './agent-key.js'
 export * from './avow-api.js'
 export * from './contest.js'
+export * from './event-delivery.js'
 export * from './http.js'
 export * from './job/accept.js'
 export * from './job/customer.js'
@@ -53,6 +54,14 @@ export {
 } from './sandbox/agent.js'
 export * from './sandbox/business.js'
 export * from './sandbox/business-check.js'
+export {
+  readCommitmentEvents,
+  type SandboxCommitmentEvents,
+  sandboxCommitmentEvents,
+  trustedEventChain,
+  UnknownCommitment,
+  UntrustedLock,
+} from './sandbox/commitment-events.js'
 export {
   approvalLink,
   approvalRequestLink,
@@ -97,11 +106,20 @@ export {
   isUsable,
   openModeAsk,
   raiseAsk,
+  sellerMandateAsk,
   supplierAsk,
 } from './sandbox/requests.js'
 export {
+  NO_SELLER_MANDATE,
+  SellerMandateRefusal,
+  type SellerStanding,
+  sellerMandateNotice,
+} from './sandbox/seller-mandate.js'
+export {
   type SandboxServices,
+  SELLER_MANDATE_ASKS_UNTAKEN,
   SERVICE_ORDER_SECONDS,
+  type SellAskOutcome,
   type ServiceBuyOutcome,
   type ServiceBuyStep,
   type ServiceOfferDraft,
@@ -123,7 +141,9 @@ export {
   type SandboxStoreItem,
   type SandboxSupplier,
 } from './sandbox/store.js'
+export { registerSandboxSupplier } from './sandbox/supplier-key.js'
 export * from './sandbox/terms.js'
+export { type SandboxTestSellers, sandboxTestSellers } from './sandbox/test-sellers.js'
 export * from './sandbox/top-up.js'
 export { lockReadersFor } from './sandbox/trusted-readers.js'
 export {

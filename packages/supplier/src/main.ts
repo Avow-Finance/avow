@@ -5,6 +5,8 @@ import {
   type AvowResend,
   type Call,
   factoriesToRead,
+  fundFees,
+  loadSandboxDeployment,
   moderatoClient,
   moderatoUsdToken,
   type OnSent,
@@ -20,12 +22,12 @@ import {
 import { readBacking, tempoChainReader } from '@avow-finance/verifier'
 import type { Address } from 'viem'
 import { type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts'
-import { Actions } from 'viem/tempo'
 import { type AcceptDeps, bookingPoller } from './accept.js'
 import { agentServer } from './agents.js'
+import { initSupplier } from './init.js'
 import { localHostnames, localServer } from './local.js'
 import { reportArgs, reportCharge } from './report.js'
-import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
+import { baseSettings, envKeys, initSettings, reportSettings, serveSettings } from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 import { type Booking, SupplierStore } from './store.js'
 import { bookingEvent, fetchPost, Outbox, reconcile, webhookSender } from './webhook.js'
@@ -64,20 +66,23 @@ function keysOf(store: SupplierStore): { account: Address; signingKey: PrivateKe
   return { account: fromEnv.account, signingKey: privateKeyToAccount(fromEnv.signingKey) }
 }
 
-/** Makes the supplier's keys and has the faucet fund the signing key, which pays for acceptances. */
+/**
+ * Makes the supplier's keys, registers them with Avow's sandbox as a supplier and has the faucet
+ * fund the signing key, which pays for acceptances. It registers with Avow's API and factory when
+ * both are set, and with the testnet's published deployment otherwise.
+ */
 async function init() {
-  const { stateDir, rpcUrl } = baseSettings(process.env)
-  const store = new SupplierStore(stateDir)
-  if (!store.keys()) store.makeKeys()
-  const { account, signingKey } = fileKeys(store)
-  log(`funding the signing key ${signingKey.address} from Moderato's faucet`)
-  await Actions.faucet.fundSync(moderatoClient(rpcUrl), {
-    account: signingKey.address,
-    timeout: 60_000,
+  const { stateDir, rpcUrl, avow } = initSettings(process.env)
+  const profile = await initSupplier({
+    store: new SupplierStore(stateDir),
+    deployment: async () => avow ?? (await loadSandboxDeployment()),
+    fund: (account) => fundFees(moderatoClient(rpcUrl), account),
+    log,
   })
-  log(`keys are in ${stateDir}/keys.json. Keep that file safe and out of version control.`)
-  console.log(JSON.stringify({ account, payee: account, signingKey: signingKey.address }, null, 2))
-  log('Send Avow these three addresses to be registered as a supplier, then run serve.')
+  console.log(JSON.stringify(profile, null, 2))
+  log(
+    `Avow registered you as ${profile.businessId}, a sandbox supplier and a test business. Set SUPPLIER_BUSINESS_ID to that id, then run serve.`,
+  )
 }
 
 /** Serves agents and accepts each reserve Avow authorizes, until it's stopped. */

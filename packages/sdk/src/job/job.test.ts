@@ -14,6 +14,7 @@ import {
   TEST_CUSTOMER_LABEL,
   type TestCustomerProfile,
   termsAgreementTypedData,
+  termsAgreementVersion,
   termsHash,
   testnetDemoJobTerms,
   testnetDemoTerms,
@@ -84,6 +85,7 @@ describe('quoting a job', () => {
       signingKey,
       compute,
       expiry: NOW + 300n,
+      sellerMandate: null,
     })
     expect(quoteTermsProblem(offer.terms, quote.terms)).toBeNull()
     expect('dependencies' in quote.terms && quote.terms.dependencies[0]?.on).toEqual(
@@ -98,6 +100,8 @@ describe('quoting a job', () => {
       mandateHash: profile.mandateHash,
       expiry: NOW + 300n,
     })
+    // With no seller's mandate in force the agreement names none, and signs at version 1.
+    expect(quote.agreement).not.toHaveProperty('sellerMandate')
     const domain = { chainId: profile.chainId, verifyingContract: CUSTOMER_LOCK }
     const digest = digestOf(termsAgreementTypedData(quote.agreement, domain))
     const who = await recoverAddress({ hash: digest, signature: quote.supplierSignature })
@@ -109,6 +113,25 @@ describe('quoting a job', () => {
     expect(checkSectionDisclosure(shown.value, compute.reference.termsHash)).toBeNull()
   })
 
+  it('names the seller’s mandate it sells under, which signs the agreement at version 2', async () => {
+    const hash = id('seller-mandate')
+    const quote = await quoteJob({
+      offer,
+      customer: profile,
+      supplier,
+      signingKey,
+      compute,
+      expiry: NOW + 300n,
+      sellerMandate: hash,
+    })
+    expect(quote.agreement.sellerMandate).toBe(hash)
+    expect(termsAgreementVersion(quote.agreement)).toBe('2')
+    const domain = { chainId: profile.chainId, verifyingContract: CUSTOMER_LOCK }
+    const digest = digestOf(termsAgreementTypedData(quote.agreement, domain))
+    const who = await recoverAddress({ hash: digest, signature: quote.supplierSignature })
+    expect(who).toBe(signer.address)
+  })
+
   it('quotes the offer’s terms alone when the business booked no compute', async () => {
     const quote = await quoteJob({
       offer,
@@ -117,6 +140,7 @@ describe('quoting a job', () => {
       signingKey,
       compute: null,
       expiry: NOW + 300n,
+      sellerMandate: null,
     })
     expect(quote.terms).toEqual(offer.terms)
     expect(quote.disclosed).toEqual([])
@@ -136,6 +160,7 @@ describe('quoting a job', () => {
         signingKey: key,
         compute,
         expiry: NOW + 300n,
+        sellerMandate: null,
       }),
     ).rejects.toThrow("isn't the supplier's signing key")
   })

@@ -227,7 +227,8 @@ const KIND_FIELDS = {
      * The exact terms of the seller's mandate the agent asks for, with the signing key the mandate
      * would bind among them. The request's `agentKey` is the key of the agent that asks, which may
      * be another key of the same agent. An approval is carried out only by a mandate the root key
-     * signs that carries these terms and nothing else, as `carriesOutSellerRequest` checks.
+     * or one of its admin keys signs that carries these terms and nothing else, as
+     * `carriesOutSellerRequest` checks.
      */
     terms: sellerMandateTermsJson.refine(
       (t) => sellerMandateTermsProblem(t) === null,
@@ -608,7 +609,8 @@ export function changedMandate(
  * Whether a seller's mandate carries out an approved request for one. The mandate is well formed
  * and for the request's business, it replaces exactly the mandate the request was asked against,
  * and it carries the terms asked for with nothing moved, the signing key among them. Whoever
- * records the mandate also checks that the business account's root key signed it.
+ * records the mandate also checks that the business account's root key or one of its admin keys
+ * signed it.
  */
 export function carriesOutSellerRequest(request: ApprovalRequest, mandate: SellerMandate): boolean {
   if (request.kind !== 'seller_mandate') return false

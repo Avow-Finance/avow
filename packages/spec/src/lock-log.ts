@@ -158,6 +158,15 @@ export const RELEASE_CAUSES = {
 export type ReleaseCause = keyof typeof RELEASE_CAUSES
 
 /**
+ * Why Avow returned a reserve the supplier hadn't accepted, by the number a `Released` log carries
+ * as its `reason` when its cause is `returned_by_avow`. `agentRevoked` is a reserve whose agent the
+ * business revoked before any supplier accepted it. Avow gives no other number a meaning, and zero
+ * names no reason. A lock takes any number here, so a reader keeps one this table doesn't list.
+ */
+export const AVOW_RETURN_REASONS = { agentRevoked: 1 } as const
+export type AvowReturnReason = keyof typeof AVOW_RETURN_REASONS
+
+/**
  * What paused a charge, by the code a `Paused` log carries as its `cause`. A referral pauses a
  * charge too, and has a log of its own, so no `Paused` log carries its code.
  */
@@ -183,9 +192,30 @@ export const releaseCauseOf = wordOf<ReleaseCause>(RELEASE_CAUSES)
 /**
  * The reason a supplier's consent gave, from the code a `Released` log carries as its `reason`, or
  * null for a code that names none. Only a release by the supplier's consent carries one of these.
- * Avow gives a number of its own when it returns a reserve, which this table says nothing about.
+ * Avow's numbers, when it returns a reserve, are `avowReturnReasonOf`'s.
  */
 export const releaseReasonOf = wordOf<ReleaseReason>(RELEASE_REASONS)
+
+/**
+ * The reason Avow gave for returning a reserve, from the code a `Released` log carries as its
+ * `reason`, or null for a code that names none. Only a release whose cause is `returned_by_avow`
+ * carries one of these.
+ */
+export const avowReturnReasonOf = wordOf<AvowReturnReason>(AVOW_RETURN_REASONS)
+
+/**
+ * The reason a release gave, read by the step that made it, so a consent's number and Avow's are
+ * never read as one another. It is null for a step that gives no reason, as the other three
+ * causes are, and for a number its step's table doesn't list.
+ */
+export function releaseReasonFor(
+  cause: ReleaseCause,
+  code: number,
+): ReleaseReason | AvowReturnReason | null {
+  if (cause === 'supplier_consent') return releaseReasonOf(code)
+  if (cause === 'returned_by_avow') return avowReturnReasonOf(code)
+  return null
+}
 
 /** The cause a `Paused` log's code stands for, or null for a code that names none. */
 export const pauseCauseOf = wordOf<PauseCause>(PAUSE_CAUSES)
@@ -217,13 +247,17 @@ export interface ReceiptLog {
   data: Hex
 }
 
-interface LockLog {
+/** One of the lock's logs as `LOCK_LOG_ABI` decodes it. */
+export interface LockLog {
   name: LockLogName
   args: Readonly<Record<string, unknown>>
 }
 
-/** A receipt's log read as one of the lock's logs, or null for a log of any other shape. */
-function lockLogOf(log: ReceiptLog): LockLog | null {
+/**
+ * A receipt's log read as one of the lock's logs, or null for a log of any other shape. It reads
+ * the log's shape and nothing about who wrote it, so a caller checks the log's address first.
+ */
+export function readLockLog(log: ReceiptLog): LockLog | null {
   try {
     const [selector, ...rest] = log.topics
     if (!selector) return null
@@ -261,23 +295,45 @@ export function sentStates(
   receiptLogs: readonly ReceiptLog[],
   logIndex: number,
 ): Record<LockParty, SentState> | null {
+  const owedLogs = stepOwed(receiptLogs, logIndex)
+  if (!owedLogs) return null
+  const owed = new Set(owedLogs.map((o) => o.party))
+  const stateOf = (p: LockParty): SentState => (owed.has(p) ? 'owed' : 'paid')
+  return { business: stateOf('business'), supplier: stateOf('supplier') }
+}
+
+/** A `PaymentOwed` log a step folds in: its index in the receipt and the party it names. */
+export interface FoldedOwed {
+  logIndex: number
+  party: LockParty
+}
+
+/**
+ * The `PaymentOwed` logs one step folds in, which `sentStates` reads the step's payments from:
+ * those for the step's commitment and side, naming a party the lock knows, between the step's own
+ * log and the lock's log before it that isn't a `PaymentOwed`. A `PaymentOwed` that isn't among
+ * them for any step is one no step accounts for. It gives null where `sentStates` does.
+ */
+export function stepOwed(
+  receiptLogs: readonly ReceiptLog[],
+  logIndex: number,
+): FoldedOwed[] | null {
   const logs = [...receiptLogs].sort((a, b) => a.logIndex - b.logIndex)
   const at = logs.findIndex((log) => log.logIndex === logIndex)
   const own = logs[at]
-  const step = own ? lockLogOf(own) : null
+  const step = own ? readLockLog(own) : null
   if (!own || !step || step.name === 'PaymentOwed') return null
   const lock = own.address.toLowerCase()
-  const owed = new Set<LockParty | null>()
+  const folded: FoldedOwed[] = []
   for (const log of logs.slice(0, at).reverse()) {
     if (log.address.toLowerCase() !== lock) continue
-    const read = lockLogOf(log)
+    const read = readLockLog(log)
     if (read?.name !== 'PaymentOwed') break
     const { commitmentId, side, party } = read.args
     const same = String(commitmentId).toLowerCase() === String(step.args.commitmentId).toLowerCase()
-    if (same && side === step.args.side) {
-      owed.add(lockPartyOf(Number(party)))
-    }
+    const named = lockPartyOf(Number(party))
+    if (same && side === step.args.side && named)
+      folded.push({ logIndex: log.logIndex, party: named })
   }
-  const stateOf = (p: LockParty): SentState => (owed.has(p) ? 'owed' : 'paid')
-  return { business: stateOf('business'), supplier: stateOf('supplier') }
+  return folded
 }

@@ -17,6 +17,7 @@ export {
   type SandboxSession,
   type ServicePreflight,
 } from './sandbox/agent.js'
+export type { SandboxCommitmentEvents } from './sandbox/commitment-events.js'
 export type { SandboxStore, SandboxSupplier } from './sandbox/store.js'
 export type { SandboxResource } from './sandbox/terms.js'
 

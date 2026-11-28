@@ -5,7 +5,14 @@ import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { checkCommitment, localHostnames } from './local.js'
-import { baseSettings, envKeys, reportSettings, serveSettings } from './settings.js'
+import {
+  baseSettings,
+  envKeys,
+  initSettings,
+  registrationSettings,
+  reportSettings,
+  serveSettings,
+} from './settings.js'
 import { makeWebhookSecret } from './signature.js'
 import type { Booking } from './store.js'
 import {
@@ -212,7 +219,14 @@ describe('the supplier adapter reference', () => {
         return undefined
       },
     })
-    for (const settings of [serveSettings, reportSettings, baseSettings, envKeys]) {
+    for (const settings of [
+      serveSettings,
+      reportSettings,
+      baseSettings,
+      envKeys,
+      registrationSettings,
+      initSettings,
+    ]) {
       try {
         settings(env)
       } catch {

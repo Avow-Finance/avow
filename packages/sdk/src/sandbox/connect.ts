@@ -42,10 +42,12 @@ export const SANDBOX_CONSOLE_URL = 'https://testnet.avow.finance'
 
 /**
  * The console link that opens this agent's request for review, on a phone or anywhere else. It names
- * the request and grants nothing: the administrator still signs in and signs what it shows.
+ * the request and grants nothing: the administrator still signs in and signs what it shows. A
+ * service that runs against another console, such as a local one, names that console, and the
+ * link keeps only its origin.
  */
-export const approvalLink = (agentKey: Address): string =>
-  `${SANDBOX_CONSOLE_URL}/${approvalHash(agentKey)}`
+export const approvalLink = (agentKey: Address, consoleUrl: string = SANDBOX_CONSOLE_URL): string =>
+  `${new URL(consoleUrl).origin}/${approvalHash(agentKey)}`
 
 /**
  * The console link that opens one approval request on its signing page. Like the agent's link, it

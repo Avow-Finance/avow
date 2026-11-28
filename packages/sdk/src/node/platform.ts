@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { isSessionId } from '@avow-finance/spec'
 import type { SandboxPlatform } from '../sandbox/agent.js'
 import type { SandboxStore } from '../sandbox/store.js'
@@ -19,6 +19,7 @@ const IGNORE_ALL = '# The sandbox keeps its keys here. Never commit them.\n*\n'
 export function fileStore(dir: string = join(process.cwd(), SANDBOX_DIR)): SandboxStore {
   const file = (item: string) => join(dir, `${item}.json`)
   return {
+    place: resolve(dir),
     async read(item) {
       try {
         return await readFile(file(item), 'utf8')

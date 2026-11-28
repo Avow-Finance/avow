@@ -288,7 +288,7 @@ export class Toolbox {
         `Offer ${offer.id} takes ${offer.gpus.min === offer.gpus.max ? `exactly ${offer.gpus.min}` : `${offer.gpus.min} to ${offer.gpus.max}`} GPUs in one booking.`,
       )
     }
-    const outcome = await this.world.book(offer, quantity)
+    const outcome = await this.world.book(offer, quantity, this.state.order ?? undefined)
     if (!outcome.ok) return this.#bookingRefused(ctx, outcome.code, outcome.layer, outcome.amounts)
     const booking: WorldBooking = { ...outcome.booking, id: `b${this.#nextBooking++}` }
     this.state.bookings.set(booking.id, booking)

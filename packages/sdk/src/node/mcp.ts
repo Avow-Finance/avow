@@ -20,10 +20,13 @@ import {
   SANDBOX_TOOLS,
   type SandboxTool,
   type ServiceOrder,
+  sellerMandateTermsJson,
   serviceOfferQuote,
+  TEST_BUSINESS_LABEL,
   toWire,
   whenRetryPasses,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import { setRequestClient } from '../http.js'
 import {
   agentRequest,
@@ -34,7 +37,9 @@ import {
   SERVICE_PREFLIGHT_UNCHECKED,
   sandboxAgent,
 } from '../sandbox/agent.js'
+import { sandboxCommitmentEvents } from '../sandbox/commitment-events.js'
 import { type AskedChange, changeWords } from '../sandbox/requests.js'
+import { SellerMandateRefusal } from '../sandbox/seller-mandate.js'
 import {
   type SandboxServices,
   type ServiceBuyOutcome,
@@ -43,6 +48,7 @@ import {
 import { sessionUrl, verifyUrl } from '../sandbox/session.js'
 import { checkShared, isPayee, sharedJson, sharedSentences } from '../sandbox/shared.js'
 import { toDollars } from '../sandbox/terms.js'
+import { sandboxTestSellers } from '../sandbox/test-sellers.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { addToClient, isMcpClient, MCP_CLIENTS, mcpServersJson } from './mcp-clients.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
@@ -87,16 +93,18 @@ const usd = (dollars: number | null) =>
 const noInput = { type: 'object', properties: {}, additionalProperties: false } as const
 
 /**
- * The tools that need no authority: setting the agent up, and checking a commitment someone else
- * shared, which any agent can do without connecting.
+ * The tools that need no authority: setting the agent up, checking a commitment someone else
+ * shared, and reading the test sellers the sandbox lists, which any agent can do without
+ * connecting.
  */
-type FreeTool = 'connect' | 'status' | 'verify'
+type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
  * mandate like any other commitment. The first two and `sell` are a supplier's, for an agent
- * connected to sell. No mandate holds what an agent sells. Its signing key and the offers in its
- * folder are its only limits, and the tools say so. None reports to the runner's screen.
+ * connected to sell. Its signing key, the offers in its folder and, once Avow serves one, the
+ * seller's mandate its own SDK holds it to are its limits, and the tools say which stand. Avow
+ * enforces no seller limit yet. None reports to the runner's screen.
  */
 const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
@@ -112,8 +120,15 @@ type FundsTool = (typeof FUNDS_TOOLS)[number]
  * The tools that ask the business for a change to the agent's authority, and read where it stands.
  * They ask and read: only the business's administrator decides, with their passkey.
  */
-const REQUEST_TOOLS = ['request_change', 'request_status'] as const
+const REQUEST_TOOLS = ['request_change', 'request_seller_mandate', 'request_status'] as const
 type RequestTool = (typeof REQUEST_TOOLS)[number]
+
+/**
+ * The tools that read what a lock logged, from the chain alone. They open no key, sign nothing and
+ * report nothing to the runner's screen.
+ */
+const EVENT_TOOLS = ['commitment_events'] as const
+type EventTool = (typeof EVENT_TOOLS)[number]
 
 /** The tools, kept to what shows the authority model and nothing more. */
 export const MCP_TOOLS = [
@@ -283,6 +298,34 @@ export const MCP_TOOLS = [
     inputSchema: noInput,
   },
   {
+    name: 'commitment_events',
+    title: "Read a commitment's events",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Reads what your business's lock logged for one of the commitments `commitments` lists, from Tempo's final blocks, oldest first: the reserve landing, the supplier's acceptance, each charge and its outcome, and the release. It reads the lock and never Avow, so Avow's own records, such as its approval, aren't in it. An event is a notice that grants nothing and proves nothing on its own, so before you act on one, check the commitment with `verify`, which reads the lock. One call reads a bounded run of blocks, and when it stops short of the latest final block it gives `next`, the block to read from on the next call.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commitmentId: {
+          type: 'string',
+          description: "The commitment's id, from its reference in `commitments`",
+        },
+        from: {
+          type: 'string',
+          description:
+            'The block to read from, as the last call gave it in next. Left out, the read starts where the commitment did',
+        },
+      },
+      required: ['commitmentId'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'top_up',
     title: "Top up the business's test dollars",
     annotations: {
@@ -343,6 +386,31 @@ export const MCP_TOOLS = [
     _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
   },
   {
+    name: 'request_seller_mandate',
+    title: "Ask for a seller's mandate",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Asks your business's administrator for a seller's mandate: the limits on what your agent may sell, for the signing key it sells with. Ask your person for every limit and never choose them yourself. It only asks. It answers with a link for your person to open, where the administrator approves or declines with their passkey, and nothing changes until then. Avow doesn't take seller's mandate requests yet, and then it says so and nothing is asked. Avow doesn't enforce seller limits yet either. Your agent holds itself to its newest mandate before it publishes, quotes or accepts. Call request_status to see where the request stands.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        terms: {
+          type: 'object',
+          description:
+            'The mandate\'s terms exactly as the spec writes a SellerMandate without mandateId, businessId, account, nonce and replaces: signingKey, currency, limits, maxOrderValue, maxOutstanding, maxDeliveryHorizon, minLateCancellationBps, minNoShowBps, maxFreeCancelWindow, buyers, excludedBuyers, excludedCountries, requiresBusinessCheck, negotiable, approvalRule and expiry. Amounts are decimal strings of micros, so $40 is "40000000", and times are decimal strings of seconds',
+        },
+      },
+      required: ['terms'],
+      additionalProperties: false,
+    },
+    _meta: { ui: { resourceUri: APPROVAL_CARD_URI } },
+  },
+  {
     name: 'request_status',
     title: 'Where a request stands',
     annotations: {
@@ -356,7 +424,10 @@ export const MCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The request id request_change answered with' },
+        id: {
+          type: 'string',
+          description: 'The request id request_change or request_seller_mandate answered with',
+        },
       },
       required: ['id'],
       additionalProperties: false,
@@ -444,6 +515,19 @@ export const MCP_TOOLS = [
     inputSchema: noInput,
   },
   {
+    name: 'test_sellers',
+    title: 'List the test sellers',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Lists Avow's test sellers, labelled test businesses that sell simple services through the sandbox at any hour, each with its business ID and its offers, whole. Nothing a test seller sells is delivered or billed, and no test business is verified, so call each one a test business. Order from one by giving order one of its offers as it is, after check says it would pass. Your mandate has to name the seller's business, so when check says it isn't allowed, ask your person with request_change to name it. It needs no connection.",
+    inputSchema: noInput,
+  },
+  {
     name: 'order',
     title: 'Order a service',
     annotations: {
@@ -495,7 +579,7 @@ export const MCP_TOOLS = [
       openWorldHint: true,
     },
     description:
-      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. Those are its only limits, since no mandate holds what an agent sells. To decline an order, leave it, and it lapses with nothing reserved.",
+      "Takes the next step on a service order to your business, for an agent connected to sell. A new order is quoted, which signs your business's agreement to the terms the offer builds, so the buyer can fund it. A funded order is accepted on the buyer's lock, after the open verifier's checks pass, and only when its quote is one this agent signed. It quotes only an offer your business published from this folder, since the offer in an order is the buyer's copy, and it refuses an order past the offer's bookings for the day. When Avow serves a seller's mandate for your signing key, it also refuses a quote or an acceptance the mandate doesn't allow, with the reason. Avow serves none and enforces no seller limit yet, and the answer says which applies. To decline an order, leave it, and it lapses with nothing reserved.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -506,7 +590,7 @@ export const MCP_TOOLS = [
     },
   },
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool
+  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool | EventTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -915,6 +999,47 @@ export function mcpAgent(
     }
   }
 
+  async function commitmentEvents(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const id = typeof args.commitmentId === 'string' ? args.commitmentId.trim() : ''
+    if (!/^0x[0-9a-fA-F]{64}$/.test(id)) {
+      throw new RangeError("The read needs a commitment's id, 0x and 64 hex characters")
+    }
+    const from = typeof args.from === 'string' ? args.from.trim() : ''
+    if (from !== '' && !/^[0-9]{1,20}$/.test(from))
+      throw new RangeError(`${from} isn't a block number`)
+    const read = await sandboxCommitmentEvents(id as Hex, {
+      store,
+      ...(from !== '' ? { from: BigInt(from) } : {}),
+    })
+    const lines = read.events.map(
+      (e) =>
+        `${e.code} at ${new Date(Number(e.at) * 1000).toISOString()}, block ${e.blockNumber}, transaction ${e.transactionHash}.`,
+    )
+    const more =
+      read.next === null
+        ? 'That reads up to the latest final block.'
+        : `The read stopped at block ${read.readTo}. Call again with from ${read.next} for later blocks.`
+    const unread =
+      read.unread.length === 0
+        ? ''
+        : ` The lock also logged ${read.unread.length} step${read.unread.length === 1 ? '' : 's'} for it that this SDK can't state.`
+    return {
+      text: `${
+        lines.length === 0
+          ? 'The lock logged nothing for that commitment in the blocks read.'
+          : lines.join('\n')
+      }\n${more}${unread} These are notices of what the lock logged. They grant nothing and prove nothing on their own, so check the commitment with verify before you act on one.`,
+      structured: {
+        reference: toWire(read.reference),
+        events: toWire(read.events),
+        readTo: read.readTo.toString(),
+        next: read.next === null ? null : read.next.toString(),
+        unread: read.unread,
+      },
+      isError: false,
+    }
+  }
+
   async function topUp(): Promise<ToolAnswer> {
     const t = await agentTopUp({ store, ...(options.fetch ? { fetch: options.fetch } : {}) })
     const next = new Date(Number(t.nextAt) * 1000).toISOString()
@@ -953,7 +1078,9 @@ export function mcpAgent(
       case 'executing':
         return "It's approved and the change is landing. Keep within your current limits until it's active."
       case 'active':
-        return 'It is active. Your agent picks up the new limit the next time it reads its mandates, within half a minute.'
+        return request.kind === 'seller_mandate'
+          ? "It is active. Your agent reads its seller's mandate before it next publishes, quotes or accepts, and holds itself to it. Avow doesn't enforce seller limits yet."
+          : 'It is active. Your agent picks up the new limit the next time it reads its mandates, within half a minute.'
       case 'declined':
         return 'Your business declined it, so nothing changed.'
       case 'expired':
@@ -1037,9 +1164,34 @@ export function mcpAgent(
     }
   }
 
+  async function requestSellerMandate(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const read = sellerMandateTermsJson.safeParse(args.terms)
+    if (!read.success) {
+      throw new RangeError(
+        "terms has to be a seller's mandate's terms as the spec writes them, with amounts and times as decimal strings",
+      )
+    }
+    const outcome = await (await services()).askToSell(read.data)
+    if (!outcome.ok) {
+      return {
+        text: outcome.notice,
+        structured: { asked: false, reason: outcome.reason, notice: outcome.notice },
+        isError: false,
+      }
+    }
+    const facts = requestFacts(outcome.asked)
+    return {
+      text: `Asked your business to ${facts.change.title.toLowerCase()}, request ${outcome.asked.request.id}. ${facts.sentence}`,
+      structured: { asked: true, ...facts },
+      isError: false,
+    }
+  }
+
   async function requestStatus(args: Record<string, unknown>): Promise<ToolAnswer> {
     if (typeof args.id !== 'string' || !isApprovalRequestId(args.id)) {
-      throw new RangeError('id is the request id request_change answered with')
+      throw new RangeError(
+        'id is the request id request_change or request_seller_mandate answered with',
+      )
     }
     const asked = await agentRequest(args.id, {
       store,
@@ -1088,10 +1240,11 @@ export function mcpAgent(
   async function publishOffer(args: Record<string, unknown>): Promise<ToolAnswer> {
     const draft = readOfferInput(args as OfferInput)
     if ('error' in draft) throw new RangeError(draft.error)
-    const { version, id } = await (await services()).publish(draft)
+    const { version, id, standing } = await (await services()).publish(draft)
     return {
       text: [
-        `Published offer ${id}, kept in this folder. Nothing was sent to Avow, and no directory lists it.`,
+        `Published offer ${id}, kept in this folder. The offer wasn't sent to Avow, and no directory lists it.`,
+        ...(standing ? [standing.notice] : []),
         ...offerSentences(version),
         "Hand the buyer's agent the offer below, whole, and it orders from it with its order tool. Call orders to see what comes, and sell to quote and accept.",
         JSON.stringify(toWire(version)),
@@ -1117,6 +1270,45 @@ export function mcpAgent(
               )
               .join('\n'),
       structured: { offers: published.map(shared) },
+      isError: false,
+    }
+  }
+
+  /**
+   * The test sellers the sandbox lists, each as a test business with its offers whole, for the
+   * model to order from. A sandbox that lists none says so.
+   */
+  async function testSellers(): Promise<ToolAnswer> {
+    const found = await sandboxTestSellers(options.fetch ? { fetch: options.fetch } : {})
+    if (!found.listed) {
+      return {
+        text: 'The sandbox lists no test sellers, so there is none to order from here. Order from an offer another business gave you instead.',
+        structured: { sellers: [] },
+        isError: false,
+      }
+    }
+    return {
+      text: [
+        ...found.sellers.map((s) =>
+          [
+            `${s.name}, the ${TEST_BUSINESS_LABEL} ${s.businessId}. Nothing it sells is delivered or billed.`,
+            ...s.offers.map((v) =>
+              [`Offer ${offerVersionId(v)}.`, ...offerSentences(v), JSON.stringify(toWire(v))].join(
+                ' ',
+              ),
+            ),
+          ].join('\n'),
+        ),
+        "To order, call check with one of these offers, whole, and a quantity, then order with the same two once it would pass. Your mandate has to name the seller's business. When check says it isn't allowed, ask your person with request_change to name it.",
+      ].join('\n\n'),
+      structured: {
+        sellers: found.sellers.map((s) => ({
+          businessId: s.businessId,
+          name: s.name,
+          label: TEST_BUSINESS_LABEL,
+          offers: s.offers.map(shared),
+        })),
+      },
       isError: false,
     }
   }
@@ -1308,19 +1500,37 @@ export function mcpAgent(
       }
     }
     let acceptedIn: string | null = null
-    await mine.sell(waiting, (step) => {
-      if (step.step === 'accepted') acceptedIn = step.acceptedIn
-    })
+    let notice = ''
+    try {
+      await mine.sell(waiting, (step) => {
+        notice = step.standing.notice
+        if (step.step === 'accepted') acceptedIn = step.acceptedIn
+      })
+    } catch (error) {
+      if (!(error instanceof SellerMandateRefusal)) throw error
+      return {
+        text:
+          waiting.status === 'requested'
+            ? `${error.message} No quote was sent, so the order is left to lapse.`
+            : `${error.message} The order isn't accepted, so the buyer's reserve goes back once the acceptance deadline passes.`,
+        structured: { ...orderFacts(waiting), step: null, acceptedIn: null, refused: error.reason },
+        isError: true,
+      }
+    }
     const quoted = waiting.status === 'requested'
     return {
-      text: quoted
-        ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
-        : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`,
+      text: `${
+        quoted
+          ? `Quoted, which signed your business's agreement to these terms. ${bookingSentence(waiting.offer, waiting.quantity)} The buyer's agent funds it next. Call orders to see once it has, then sell again to accept.`
+          : `Accepted order ${orderId} on the buyer's lock, so the commitment stands. Deliver by the terms' deadline.`
+      } ${notice}`.trim(),
       structured: { ...orderFacts(waiting), step: quoted ? 'quoted' : 'accepted', acceptedIn },
       isError: false,
     }
   }
 
+  const isEventTool = (name: string): name is EventTool =>
+    (EVENT_TOOLS as readonly string[]).includes(name)
   const isFundsTool = (name: string): name is FundsTool =>
     (FUNDS_TOOLS as readonly string[]).includes(name)
   const isRequestTool = (name: string): name is RequestTool =>
@@ -1334,18 +1544,22 @@ export function mcpAgent(
         if (name === 'connect') return await connect(args)
         if (name === 'status') return connectionAnswer(await connection.status())
         if (name === 'verify') return await verify(args)
+        if (name === 'test_sellers') return await testSellers()
         if (
           !SANDBOX_TOOLS.includes(name as SandboxTool) &&
           !isServiceTool(name) &&
           !isFundsTool(name) &&
-          !isRequestTool(name)
+          !isRequestTool(name) &&
+          !isEventTool(name)
         ) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
         if (name === 'top_up') return await topUp()
+        if (name === 'commitment_events') return await commitmentEvents(args)
         if (name === 'request_change') return await requestChange(args)
+        if (name === 'request_seller_mandate') return await requestSellerMandate(args)
         if (name === 'request_status') return await requestStatus(args)
         if (name === 'publish_offer') return await publishOffer(args)
         if (name === 'offers') return await offers()

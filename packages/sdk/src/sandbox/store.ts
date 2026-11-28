@@ -14,6 +14,7 @@ import { type Address, type Hex, isAddress } from 'viem'
  * registration as a sandbox supplier. Those two are all a job process reads. `state` holds the
  * commitments the agent made. `request` holds the key of an agent that asked a business for
  * authority and is waiting for the answer, so asking again after a restart keeps the same key.
+ * `job-sales` holds the jobs a selling agent quoted, which its seller's mandate counts.
  */
 export type SandboxStoreItem =
   | 'business'
@@ -23,6 +24,7 @@ export type SandboxStoreItem =
   | 'request'
   | 'mailbox'
   | 'services'
+  | 'job-sales'
 
 /**
  * Where a sandbox keeps its items, as text. In Node it's the `.avow` folder of the working
@@ -31,6 +33,11 @@ export type SandboxStoreItem =
 export interface SandboxStore {
   read(item: SandboxStoreItem): Promise<string | null>
   write(item: SandboxStoreItem, text: string): Promise<void>
+  /**
+   * What names the place the store keeps its items, such as a folder's resolved path, so two stores
+   * over the same place take their changes in one turn. A store with none takes turns by itself.
+   */
+  readonly place?: string
 }
 
 /** A store held in memory, for a test or a page that shouldn't keep anything. */
@@ -197,4 +204,24 @@ export const saveCommitments = (store: SandboxStore, commitments: readonly Store
 /** Adds one commitment, reading the list again first so another process's addition isn't lost. */
 export async function addCommitment(store: SandboxStore, c: StoredCommitment): Promise<void> {
   await saveCommitments(store, [...(await loadCommitments(store)), c])
+}
+
+/**
+ * One change at a time to what a store keeps, in this process. Each change reads a file and writes
+ * it back, so two at once would lose one, and a check that reads every sale before recording one
+ * would let two pass the same limit. Stores over the same place share a turn, so every way the SDK
+ * opens a folder takes its changes in one line. Another process on the same folder isn't held back
+ * by this, so run one seller on a folder at a time.
+ */
+const placeTurns = new Map<string, Promise<unknown>>()
+const storeTurns = new WeakMap<SandboxStore, Promise<unknown>>()
+export function inTurn<T>(store: SandboxStore, change: () => Promise<T>): Promise<T> {
+  const last =
+    (store.place === undefined ? storeTurns.get(store) : placeTurns.get(store.place)) ??
+    Promise.resolve()
+  const turn = last.then(change, change)
+  const settled = turn.catch(() => {})
+  if (store.place === undefined) storeTurns.set(store, settled)
+  else placeTurns.set(store.place, settled)
+  return turn
 }
