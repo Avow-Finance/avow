@@ -1,5 +1,6 @@
 import {
   type CommitmentReference,
+  DEFAULT_CLOCK_MARGIN,
   type Mandate,
   type RailState,
   type ReasonCode,
@@ -12,6 +13,7 @@ import { moderatoClient } from '../moderato.js'
 import { httpSupplier } from '../supplier.js'
 import {
   agentContext,
+  Refusal,
   type SandboxAgent,
   type SandboxAgentOptions,
   type SandboxBooking,
@@ -19,7 +21,7 @@ import {
   sandboxAgent,
 } from './agent.js'
 import { askForLateCharge, type LateChargeOutcome, type LateChargeReport } from './late-charge.js'
-import { micros } from './terms.js'
+import { fromDollars, micros } from './terms.js'
 
 /**
  * One run of the whole loop on testnet, from an agent its business already approved. The agent
@@ -38,13 +40,8 @@ import { micros } from './terms.js'
  */
 export const LOOP_RESOURCE = { gpu: 'H100', count: 1, hours: 4 / 60 } as const
 
-/**
- * Seconds Avow keeps between a late cancellation and each moment it's measured against, as the
- * testnet's `clockMargin` publishes it. Avow confirms a late-cancellation charge only for a
- * cancellation at least this far inside the late window and this far before the report, since its
- * records carry its clock and the lock's times are block times, and refers one any closer.
- */
-export const AVOW_CLOCK_MARGIN = 30n
+/** How the run names Avow's demo GPU supplier wherever it shows, labelled as a test business. */
+export const DEMO_SUPPLIER_NAME = `Avow's demo GPU supplier${TEST_BUSINESS_SUFFIX}`
 
 /** The reserve of each booking, in dollars, when the run names none. */
 export const LOOP_RESERVE = 10
@@ -89,14 +86,51 @@ export interface LoopOutcome {
   }
 }
 
-/** Why the run stopped before it finished, with Avow's reason code where one applies. */
+/** A booking the run made, as a run that stops reports what it left in the lock. */
+export interface LoopHeld {
+  role: LoopRole
+  link: string
+  reference: CommitmentReference
+  /** In micros. */
+  reserve: bigint
+  /** When the lock gives back what it still holds, at the latest. */
+  releaseDate: bigint
+  /** Whether the run asked the supplier to report a late-cancellation charge on it. */
+  chargeAsked: boolean
+}
+
+/**
+ * Why the run stopped before it finished, with the reason code where one applies, and every
+ * booking it made before it stopped, each still held in the business's lock.
+ */
 export class LoopStopped extends Error {
   readonly reason: ReasonCode | null
-  constructor(message: string, reason: ReasonCode | null, options?: { cause?: unknown }) {
-    super(message, options)
+  readonly held: readonly LoopHeld[]
+  constructor(
+    message: string,
+    reason: ReasonCode | null,
+    options: { cause?: unknown; held?: readonly LoopHeld[] } = {},
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause })
     this.name = 'LoopStopped'
     this.reason = reason
+    this.held = options.held ?? []
   }
+}
+
+/**
+ * A stop from anything that went wrong once the run had booked, carrying what the lock holds.
+ * A refusal keeps its reason code, as does a refusal from Avow's API or a supplier.
+ */
+function stopWith(error: unknown, held: readonly LoopHeld[]): LoopStopped {
+  const copy = held.map((h) => ({ ...h }))
+  if (error instanceof LoopStopped) {
+    return new LoopStopped(error.message, error.reason, { cause: error.cause, held: copy })
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  const reason =
+    error instanceof Refusal ? error.code : error instanceof AvowApiError ? error.reason : null
+  return new LoopStopped(`The run stopped: ${message}`, reason, { cause: error, held: copy })
 }
 
 /** What the run stands on, which `sandboxLoop` builds from the agent's folder. */
@@ -163,23 +197,37 @@ export async function runLoop(d: LoopDeps): Promise<LoopOutcome> {
     )
   }
   const [left, dailyLeft] = await Promise.all([agent.left(), agent.dailyLeft()])
-  const toMicros = (dollars: number) => BigInt(Math.round(dollars * 1_000_000))
-  if (toMicros(left) < 2n * reserve) {
+  if (fromDollars(left) < 2n * reserve) {
     throw new LoopStopped(
       `The run books two reserves of $${d.reserve} at once, and your agent has $${left} of authority left. Run it with a smaller --reserve.`,
       'mandate.over_open_reserves_cap',
     )
   }
-  if (dailyLeft !== null && toMicros(dailyLeft) < 2n * reserve) {
+  if (dailyLeft !== null && fromDollars(dailyLeft) < 2n * reserve) {
     throw new LoopStopped(
       `The run moves two reserves of $${d.reserve}, and your agent's key can move $${dailyLeft} more today. Run it with a smaller --reserve, or tomorrow.`,
       'keychain.over_daily_limit',
     )
   }
 
+  const held: LoopHeld[] = []
+  try {
+    return await bookAndFollow(d, booking, held)
+  } catch (error) {
+    throw stopWith(error, held)
+  }
+}
+
+/** Everything the run does once its checks pass, adding each booking to `held` as it's made. */
+async function bookAndFollow(
+  d: LoopDeps,
+  booking: SandboxBooking,
+  held: LoopHeld[],
+): Promise<LoopOutcome> {
+  const { supplier } = d
   // The booking to cancel goes first, so its free cancellation ends first.
-  const late = await book(d, 'cancelled', booking)
-  const kept = await book(d, 'kept', booking)
+  const late = await book(d, 'cancelled', booking, held)
+  const kept = await book(d, 'kept', booking, held)
   const [lateAccepted, keptAccepted] = await Promise.all([
     late.commitment.accepted(),
     kept.commitment.accepted(),
@@ -200,6 +248,8 @@ export async function runLoop(d: LoopDeps): Promise<LoopOutcome> {
   // Avow confirms the charge only for a cancellation the clock margin inside the late window, which
   // opens when free cancellation ends and closes when a no-show can be reported, and the margin
   // before the report.
+  const opens = late.freeCancelBy + d.clockMargin
+  const closes = late.noShowFrom - d.clockMargin
   const margin = d.clockMargin + SLACK
   const cancelFrom = late.freeCancelBy + margin
   const cancelBy = late.noShowFrom - margin
@@ -209,15 +259,31 @@ export async function runLoop(d: LoopDeps): Promise<LoopOutcome> {
   }
   if (d.now() > cancelBy) {
     throw new LoopStopped(
-      'The late window closed before the run could cancel inside it, so it stops. The lock releases both reserves at their release dates.',
+      `It's too late to cancel at least ${d.clockMargin} seconds before a no-show can be reported, which Avow needs to confirm a charge, so the run cancels nothing.`,
       null,
     )
   }
   const id = late.commitment.reference.commitmentId
   const { cancelledAt } = await cancelOnce(d, id)
   d.onStep({ type: 'cancelled', cancelledAt })
+  // The time that counts is the one Avow recorded, which can sit apart from this machine's clock.
+  if (cancelledAt < opens || cancelledAt > closes) {
+    throw new LoopStopped(
+      `Avow recorded the cancellation at ${new Date(Number(cancelledAt) * 1000).toISOString()}, within its ${d.clockMargin}-second clock margin of the late window's ${cancelledAt < opens ? 'start' : 'end'}, so Avow would refer a charge to a ruling rather than confirm it. The run asks the supplier for no charge.`,
+      null,
+    )
+  }
   await waitUntil(d, cancelledAt + margin)
-  const report = await d.askForLateCharge(id, late.mandate)
+  const lateHeld = held.find((h) => h.role === 'cancelled')
+  if (lateHeld) lateHeld.chargeAsked = true
+  const report = await d.askForLateCharge(id, late.mandate).catch((error: unknown) => {
+    const reason = error instanceof AvowApiError ? error.reason : null
+    throw new LoopStopped(
+      `${supplier.name} didn't report the charge: ${error instanceof Error ? error.message : String(error)}`,
+      reason ?? 'service.unavailable',
+      { cause: error },
+    )
+  })
   d.onStep({ type: 'reported', amount: report.amount, transaction: report.transaction })
 
   const confirmBy = d.now() + CONFIRM_WITHIN
@@ -243,18 +309,11 @@ export async function runLoop(d: LoopDeps): Promise<LoopOutcome> {
 }
 
 /** One booking, with the mandate it was made under and the times its terms set. */
-async function book(d: LoopDeps, role: LoopRole, booking: SandboxBooking) {
+async function book(d: LoopDeps, role: LoopRole, booking: SandboxBooking, held: LoopHeld[]) {
   d.onStep({ type: 'booking', role })
   const commitment: SandboxCommitment = await d.agent.book(booking)
   const { terms, agreement } = commitment.commitment
-  // The supplier takes a request about a booking only with the mandate its agreement names.
   const mandate = d.agent.mandate
-  if (agreement.message.mandateHash.toLowerCase() !== d.agent.mandateHash.toLowerCase()) {
-    throw new LoopStopped(
-      "Your administrator replaced the agent's mandate while it booked, so the run stops. Run it again.",
-      null,
-    )
-  }
   const freeCancelBy = terms.remedies.freeCancelBy
   const noShow = terms.remedies.charges.find((c) => c.kind === 'noShow')
   const noShowFrom = noShow ? noShow.earliest : terms.remedies.chargeDeadline
@@ -268,6 +327,21 @@ async function book(d: LoopDeps, role: LoopRole, booking: SandboxBooking) {
     freeCancelBy,
     releaseDate,
   })
+  held.push({
+    role,
+    link: commitment.link,
+    reference: commitment.reference,
+    reserve: terms.backing.amount,
+    releaseDate,
+    chargeAsked: false,
+  })
+  // The supplier takes a request about a booking only with the mandate its agreement names.
+  if (agreement.message.mandateHash.toLowerCase() !== d.agent.mandateHash.toLowerCase()) {
+    throw new LoopStopped(
+      "Your administrator replaced the agent's mandate while it booked, so the run stops before it cancels anything.",
+      null,
+    )
+  }
   return {
     commitment,
     mandate: mandate.message,
@@ -384,6 +458,7 @@ export interface SandboxLoopOptions
  * supplier the deployment names.
  */
 export async function sandboxLoop(options: SandboxLoopOptions = {}): Promise<LoopOutcome> {
+  // The deployment is read once here and handed on, so the run fetches config.json once.
   const { send, deployment, agentKey, domain, store, screenUrl } = await agentContext(options)
   const profile = await httpSupplier(deployment.supplierUrl, send)
   const supplierId = profile.profile.businessId
@@ -404,9 +479,9 @@ export async function sandboxLoop(options: SandboxLoopOptions = {}): Promise<Loo
     fetch: send,
   }).records
   return runLoop({
-    supplier: { id: supplierId, name: `Avow's demo GPU supplier${TEST_BUSINESS_SUFFIX}` },
+    supplier: { id: supplierId, name: DEMO_SUPPLIER_NAME },
     reserve: options.reserve ?? LOOP_RESERVE,
-    clockMargin: AVOW_CLOCK_MARGIN,
+    clockMargin: deployment.clockMargin ?? DEFAULT_CLOCK_MARGIN,
     agent,
     cancel: (commitmentId) => records.cancel({ commitmentId }),
     askForLateCharge: (commitmentId, mandate) =>

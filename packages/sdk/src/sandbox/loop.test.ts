@@ -3,7 +3,7 @@ import type { LockedBacking } from '@avow-finance/verifier'
 import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { AvowApiError } from '../http.js'
-import type { SandboxCommitment, SandboxPreflight } from './agent.js'
+import { Refusal, type SandboxCommitment, type SandboxPreflight } from './agent.js'
 import type { LateChargeReport } from './late-charge.js'
 import { type LoopDeps, type LoopStep, LoopStopped, runLoop } from './loop.js'
 
@@ -35,6 +35,14 @@ function world(
     confirms?: boolean
     releases?: boolean
     acceptDelay?: bigint
+    /** Makes the nth booking throw this instead of booking. */
+    bookFails?: { nth: number; error: unknown }
+    /** Makes the nth booking go unaccepted. */
+    unaccepted?: number
+    /** Makes the supplier's report request throw this. */
+    chargeFails?: unknown
+    /** Makes the second booking come back under a mandate the agent no longer holds. */
+    mandateReplaced?: boolean
   } = {},
 ) {
   let now = START
@@ -49,7 +57,9 @@ function world(
   } as unknown as SandboxCommitment['commitment'] & { message: Mandate }
 
   const book = async (): Promise<SandboxCommitment> => {
+    if (o.bookFails?.nth === booked + 1) throw o.bookFails.error
     booked++
+    const nth = booked
     const id = idOf(booked)
     const freeCancelBy = now + 120n
     const noShowFrom = now + 360n
@@ -71,12 +81,16 @@ function world(
           backing: { amount: 10_000_000n, releaseDate },
           resolution: { contestWindow: 600n },
         },
-        agreement: { message: { mandateHash: MANDATE_HASH } },
+        agreement: {
+          message: {
+            mandateHash: o.mandateReplaced && nth === 2 ? `0x${'99'.repeat(32)}` : MANDATE_HASH,
+          },
+        },
       },
       verify: async () => [],
       accepted: async () => {
         now += o.acceptDelay ?? 0n
-        return true
+        return o.unaccepted !== nth
       },
     } as unknown as SandboxCommitment
   }
@@ -115,6 +129,7 @@ function world(
     },
     askForLateCharge: async (id, m): Promise<LateChargeReport> => {
       asked.push({ id, mandate: m })
+      if (o.chargeFails !== undefined) throw o.chargeFails
       reportedAt = now
       return {
         commitmentId: id,
@@ -254,5 +269,105 @@ describe('runLoop', () => {
     const outcome = await runLoop(w.deps)
     expect(outcome.cancelled.charge).toMatchObject({ outcome: 'awaiting_avow', paysAt: null })
     expect(outcome.kept.state).toBe('accepted')
+  })
+
+  describe('a run that stops after booking says what it left in the lock', () => {
+    const stopOf = async (w: ReturnType<typeof world>) => {
+      const error = await runLoop(w.deps).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(LoopStopped)
+      return error as LoopStopped
+    }
+
+    it('when the second booking fails', async () => {
+      const refusal = new Refusal({
+        code: 'keychain.over_daily_limit',
+        layer: 'keychain',
+        amounts: passes.amounts,
+      })
+      const stop = await stopOf(world({ bookFails: { nth: 2, error: refusal } }))
+      expect(stop.reason).toBe('keychain.over_daily_limit')
+      expect(stop.held).toEqual([
+        expect.objectContaining({
+          role: 'cancelled',
+          reference: expect.objectContaining({ commitmentId: idOf(1) }),
+          link: 'https://try.testnet.avow.finance/#verify=1',
+          reserve: 10_000_000n,
+          releaseDate: START + 480n,
+          chargeAsked: false,
+        }),
+      ])
+    })
+
+    it('when a crash ends it between the bookings', async () => {
+      const stop = await stopOf(
+        world({ bookFails: { nth: 2, error: new Error('socket hang up') } }),
+      )
+      expect(stop.reason).toBeNull()
+      expect(stop.message).toContain('socket hang up')
+      expect(stop.held.map((h) => h.role)).toEqual(['cancelled'])
+    })
+
+    it('when the supplier does not accept', async () => {
+      const w = world({ unaccepted: 2 })
+      const stop = await stopOf(w)
+      expect(stop.held.map((h) => h.role)).toEqual(['cancelled', 'kept'])
+      expect(w.cancelAttempts()).toBe(0)
+    })
+
+    it('when Avow refuses the cancellation', async () => {
+      const w = world({
+        cancel: async () => {
+          throw new AvowApiError('Closed', {
+            status: 409,
+            reason: 'commitment.cancel_closed',
+            requestId: `0x${'00'.repeat(32)}`,
+            definite: true,
+          })
+        },
+      })
+      const stop = await stopOf(w)
+      expect(stop.reason).toBe('commitment.cancel_closed')
+      expect(stop.held.map((h) => [h.role, h.chargeAsked])).toEqual([
+        ['cancelled', false],
+        ['kept', false],
+      ])
+      expect(w.asked).toEqual([])
+    })
+
+    it('when the supplier is down at the report, after its retries', async () => {
+      const down = new AvowApiError('No definite answer from Avow.', {
+        status: 0,
+        reason: null,
+        requestId: `0x${'00'.repeat(32)}`,
+        definite: false,
+      })
+      const stop = await stopOf(world({ chargeFails: down }))
+      expect(stop.reason).toBe('service.unavailable')
+      // The request may have landed, so the charge it asked for is named against that reserve.
+      expect(stop.held.map((h) => [h.role, h.chargeAsked])).toEqual([
+        ['cancelled', true],
+        ['kept', false],
+      ])
+    })
+
+    it('when the mandate changed under a booking, once its link is out', async () => {
+      const w = world({ mandateReplaced: true })
+      const stop = await stopOf(w)
+      expect(w.steps.filter((s) => s.type === 'booked')).toHaveLength(2)
+      expect(stop.held.map((h) => h.role)).toEqual(['cancelled', 'kept'])
+      expect(w.cancelAttempts()).toBe(0)
+    })
+  })
+
+  it.each([
+    ['near the start of the late window', START + 120n + 29n],
+    ['near its end', START + 360n - 29n],
+  ])('asks for no charge when Avow recorded the cancellation %s', async (_, cancelledAt) => {
+    const w = world({ cancel: async () => ({ cancelledAt }) })
+    const error = await runLoop(w.deps).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(LoopStopped)
+    expect((error as LoopStopped).message).toContain('clock margin')
+    expect(w.asked).toEqual([])
+    expect((error as LoopStopped).held.every((h) => !h.chargeAsked)).toBe(true)
   })
 })

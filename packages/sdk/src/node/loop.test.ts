@@ -1,8 +1,8 @@
 import type { CommitmentReference } from '@avow-finance/spec'
 import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
-import type { LoopOutcome } from '../sandbox/loop.js'
-import { introLines, outcomeLines, readLoopArgs, stepLine } from './loop.js'
+import { type LoopOutcome, LoopStopped } from '../sandbox/loop.js'
+import { introLines, outcomeLines, readLoopArgs, stepLine, stoppedLines } from './loop.js'
 
 const ref = (n: number) =>
   ({ commitmentId: `0x${n.toString(16).padStart(64, '0')}` as Hex }) as CommitmentReference
@@ -30,6 +30,8 @@ describe('avow-sandbox loop', () => {
   it('takes a reserve in dollars and nothing else', () => {
     expect(readLoopArgs([])).toEqual({ reserve: 10 })
     expect(readLoopArgs(['--reserve', '12.50'])).toEqual({ reserve: 12.5 })
+    expect(readLoopArgs(['--reserve', '19.99'])).toEqual({ reserve: 19.99 })
+    expect(readLoopArgs(['--reserve', '0.29'])).toEqual({ reserve: 0.29 })
     expect(readLoopArgs(['--reserve', '0'])).toHaveProperty('error')
     expect(readLoopArgs(['--reserve', '1.234'])).toHaveProperty('error')
     expect(readLoopArgs(['--reserve'])).toHaveProperty('error')
@@ -70,5 +72,47 @@ describe('avow-sandbox loop', () => {
     expect(late).toContain('2027-01-15T08:13:20.000Z')
     expect(outcomeLines(outcome({ outcome: 'ruling', paysAt: null }))[1]).toContain('ruling')
     expect(outcomeLines(outcome({}, 'accepted'))[0]).toContain("hasn't landed yet")
+  })
+
+  it('prints the reason code and every reserve a stopped run left, with its release and link', () => {
+    const stop = new LoopStopped(
+      "Avow's demo GPU supplier (test business) didn't report the charge",
+      'service.unavailable',
+      {
+        held: [
+          {
+            role: 'cancelled',
+            link: 'https://try.testnet.avow.finance/#verify=late',
+            reference: ref(1),
+            reserve: 10_000_000n,
+            releaseDate: 1_800_000_480n,
+            chargeAsked: true,
+          },
+          {
+            role: 'kept',
+            link: 'https://try.testnet.avow.finance/#verify=kept',
+            reference: ref(2),
+            reserve: 10_000_000n,
+            releaseDate: 1_800_000_500n,
+            chargeAsked: false,
+          },
+        ],
+      },
+    )
+    const [message, reason, late, kept] = stoppedLines(stop)
+    expect(message).toContain("didn't report the charge")
+    expect(reason).toBe('The reason code is service.unavailable.')
+    expect(late).toContain('$10')
+    expect(late).toContain('comes back whole by its release date, 2027-01-15T08:08:00.000Z')
+    expect(late).toContain(
+      'less the late-cancellation charge the run asked the supplier for if Avow confirms it',
+    )
+    expect(late).toContain('#verify=late')
+    expect(kept).not.toContain('late-cancellation charge')
+    expect(kept).toContain('#verify=kept')
+    expect(stoppedLines(new LoopStopped('No supplier', null))).toEqual([
+      'No supplier',
+      'The run booked nothing, so nothing is held.',
+    ])
   })
 })

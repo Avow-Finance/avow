@@ -343,7 +343,20 @@ export interface SandboxDeployment {
   arbiter: Address
   /** The supplier's share of a disputed charge at day 90, which Avow's approvals name. */
   day90SupplierShareBps: number
+  /**
+   * Seconds Avow keeps a late cancellation from each moment it's measured against before it
+   * confirms a charge from it, since its records carry its clock and the lock's times are block
+   * times. A deployment that publishes none keeps `DEFAULT_CLOCK_MARGIN`.
+   */
+  clockMargin?: bigint
 }
+
+/**
+ * The clock margin Avow keeps when a deployment publishes none, in seconds. Avow confirms a
+ * late-cancellation charge only for a cancellation at least this far inside the window it records
+ * cancellations in, at each end, and this far before the report, and refers one any closer.
+ */
+export const DEFAULT_CLOCK_MARGIN = 30n
 
 const origin = z.string().refine(isApiAudience, 'an http or https origin, with no path')
 
@@ -358,6 +371,7 @@ export const sandboxDeploymentJson = z.object({
   token: address,
   arbiter: address,
   day90SupplierShareBps: z.number().int().min(0).max(10_000),
+  clockMargin: z.number().int().min(0).max(3600).optional(),
 })
 
 /** Reads the deployment's facts, refusing any chain that isn't a testnet. */
@@ -378,6 +392,9 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
           token: parsed.data.token,
           arbiter: parsed.data.arbiter,
           day90SupplierShareBps: parsed.data.day90SupplierShareBps,
+          ...(parsed.data.clockMargin === undefined
+            ? {}
+            : { clockMargin: BigInt(parsed.data.clockMargin) }),
         },
       }
     : { ok: false, reason: 'message.invalid' }

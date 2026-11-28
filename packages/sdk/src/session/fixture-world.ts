@@ -11,6 +11,7 @@ import {
   checkMandate,
   computeOfferCost,
   computeOfferTerms,
+  DEFAULT_CLOCK_MARGIN,
   DEMO_GPU_SUPPLIER,
   DEMO_JOB_TIMING,
   type DeliveryResult,
@@ -139,7 +140,7 @@ const AVOW_ANSWERS_AFTER = 6n
  * one in, in seconds, before the fixture world's Avow confirms a charge from it. Closer than that,
  * Avow's clock and the chain's could disagree about the order, so the report is referred.
  */
-const AVOW_CLOCK_MARGIN = 30n
+const AVOW_CLOCK_MARGIN = DEFAULT_CLOCK_MARGIN
 
 export interface FixtureWorld extends JobWorld {
   readonly kind: 'fixture'

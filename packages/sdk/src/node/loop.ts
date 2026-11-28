@@ -1,9 +1,17 @@
 import { formatUsd } from '@avow-finance/spec'
 import { moderatoTransactionUrl } from '../moderato.js'
-import { LOOP_RESERVE, type LoopOutcome, type LoopStep, sandboxLoop } from '../sandbox/loop.js'
+import {
+  LOOP_RESERVE,
+  type LoopHeld,
+  type LoopOutcome,
+  type LoopStep,
+  LoopStopped,
+  DEMO_SUPPLIER_NAME as SUPPLIER,
+  sandboxLoop,
+} from '../sandbox/loop.js'
+import { micros } from '../sandbox/terms.js'
 import { fileStore } from './platform.js'
 
-const SUPPLIER = "Avow's demo GPU supplier (test business)"
 const at = (unix: bigint) => new Date(Number(unix) * 1000).toISOString()
 
 /** What `avow-sandbox loop` takes, read from its arguments, or why it can't run. */
@@ -13,7 +21,9 @@ export function readLoopArgs(args: readonly string[]): { reserve: number } | { e
     const flag = args[i]
     if (flag !== '--reserve') return { error: `loop doesn't take ${flag}` }
     const value = Number(args[++i])
-    if (!Number.isFinite(value) || value <= 0 || Math.round(value * 100) !== value * 100) {
+    try {
+      micros(value, 'reserve')
+    } catch {
       return { error: '--reserve needs a number of dollars, such as 10 or 12.50' }
     }
     reserve = value
@@ -23,10 +33,10 @@ export function readLoopArgs(args: readonly string[]): { reserve: number } | { e
 
 /** What the run says before it books anything, so nobody is surprised by what it spends. */
 export function introLines(reserve: number): string[] {
-  const micros = BigInt(Math.round(reserve * 100)) * 10_000n
+  const each = micros(reserve, 'reserve')
   return [
-    `Your agent books one H100 for four minutes, twice, from ${SUPPLIER}, each backed by a ${formatUsd(micros)} reserve in your business's lock. It keeps one and cancels the other late.`,
-    `The late cancellation costs your business ${formatUsd(micros / 2n)} of its test dollars, the charge its terms allow, and every other dollar comes back. It all runs on Tempo's Moderato testnet, within the limits your administrator signed, and takes about ten minutes.`,
+    `Your agent books one H100 for four minutes, twice, from ${SUPPLIER}, each backed by a ${formatUsd(each)} reserve in your business's lock. It keeps one and cancels the other late.`,
+    `The late cancellation costs your business ${formatUsd(each / 2n)} of its test dollars, the charge its terms allow, and every other dollar comes back. It all runs on Tempo's Moderato testnet, within the limits your administrator signed, and takes about ten minutes.`,
   ]
 }
 
@@ -77,6 +87,27 @@ export function outcomeLines(o: LoopOutcome): string[] {
 }
 
 /**
+ * What a run that stopped prints, its reason code and every reserve it left in the lock, with when
+ * each comes back and the link to check it.
+ */
+export function stoppedLines(stop: LoopStopped): string[] {
+  const held = (h: LoopHeld) => {
+    const which = h.role === 'kept' ? 'the booking it was to keep' : 'the booking it was to cancel'
+    const charge = h.chargeAsked
+      ? ', less the late-cancellation charge the run asked the supplier for if Avow confirms it'
+      : ''
+    return `Your business's lock holds ${formatUsd(h.reserve)} for ${which}, ${h.reference.commitmentId}. It comes back whole by its release date, ${at(h.releaseDate)}${charge}. Check it at ${h.link}`
+  }
+  return [
+    stop.message,
+    ...(stop.reason ? [`The reason code is ${stop.reason}.`] : []),
+    ...(stop.held.length === 0
+      ? ['The run booked nothing, so nothing is held.']
+      : stop.held.map(held)),
+  ]
+}
+
+/**
  * `avow-sandbox loop [--reserve <dollars>]`. The agent in this folder, once its business approved
  * it, books twice with Avow's demo GPU supplier, keeps one booking and cancels the other late, and
  * prints what the lock and Avow did with each. It acts with only the agent's key.
@@ -96,7 +127,11 @@ export async function loopCommand(args: readonly string[]): Promise<void> {
     })
     for (const line of outcomeLines(outcome)) console.log(line)
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    const lines =
+      error instanceof LoopStopped
+        ? stoppedLines(error)
+        : [error instanceof Error ? error.message : String(error)]
+    for (const line of lines) console.error(line)
     process.exitCode = 1
   }
 }
