@@ -266,11 +266,14 @@ describe("the MCP server's tools for services", () => {
   it('show a supplier its inbox, and quote only an order for an offer it published', async () => {
     const posted: { path: string; body: Record<string, unknown> }[] = []
     let inbox: unknown[] = []
+    // The order a read by its id answers with, which is the inbox's first unless set.
+    let readable: unknown = null
     const { fetch } = avow((path, body) => {
       posted.push({ path, body })
       if (path === SANDBOX_PATHS.serviceInbox) return json({ orders: inbox })
+      if (/service-orders\/[0-9a-f]{32}$/.test(path)) return json(readable ?? inbox[0])
       if (path.endsWith('/decline')) {
-        const { quote: _, ...order } = inbox[0] as Record<string, unknown>
+        const { quote: _, ...order } = (readable ?? inbox[0]) as Record<string, unknown>
         return json({
           ...order,
           status: 'declined',
@@ -347,6 +350,30 @@ describe("the MCP server's tools for services", () => {
     await expect(
       seller.call('decline', { order: request.orderId, reason: 'approval.human_required' }),
     ).resolves.toMatchObject({ isError: true })
+    // A quoted order waits on the buyer and leaves the inbox, and past its expiry Avow reads it as
+    // expired with its quote. The buyer can still fund it, so the seller can still decline it.
+    inbox = []
+    readable = held(request, 'expired', { quote: toWire(quote) })
+    posted.length = 0
+    const late = await seller.call('decline', {
+      order: request.orderId,
+      reason: 'proposal.unacceptable',
+    })
+    expect(late.isError).toBe(false)
+    expect(posted.some((p) => p.path.endsWith('/decline'))).toBe(true)
+    // A time to ask again falls within a week of when Avow took the order, not a week from now.
+    const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86_400 + 1800
+    readable = held(request, 'quoted', { quote: toWire(quote), requestedAt: String(weekAgo) })
+    posted.length = 0
+    const tooLate = await seller.call('decline', {
+      order: request.orderId,
+      reason: 'capacity.exhausted',
+      retry_minutes: 60,
+    })
+    expect(tooLate.isError).toBe(true)
+    expect(tooLate.text).toMatch(/at most a week after the order was taken/)
+    expect(posted.some((p) => p.path.endsWith('/decline'))).toBe(false)
+    readable = null
     const gone = await seller.call('sell', { order: 'cd'.repeat(16) })
     expect(gone.isError).toBe(true)
     expect(gone.text).toMatch(/No order cdcd/)

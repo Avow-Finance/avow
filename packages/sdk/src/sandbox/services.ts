@@ -573,10 +573,17 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   const unfinished = async () => (await kept()).buying
 
-  const read = (orderId: string) =>
-    carried(
-      asAgent({ domain, path: SANDBOX_PATHS.serviceOrder(orderId), body: {}, read: orderReader }),
+  /** Reads an order with the agent's key, or for a seller with its signing key. */
+  const read = (orderId: string) => {
+    const path = SANDBOX_PATHS.serviceOrder(orderId)
+    return carried(
+      asAgent({ domain, path, body: {}, read: orderReader }).catch((error: unknown) => {
+        const unknown = error instanceof AvowApiError && error.status === 404
+        if (!unknown || !sells) throw error
+        return context.needSupplier().asSupplier({ domain, path, body: {}, read: orderReader })
+      }),
     )
+  }
 
   async function withdrawOrder(orderId: string): Promise<ServiceOrder> {
     const withdrawn = await carried(

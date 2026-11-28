@@ -119,7 +119,7 @@ const mandateFor = (account: Address, signingKey: Address, change: Partial<Selle
 async function sellingJobs(
   orderIds: string[],
   change?: Partial<SellerMandate> | null,
-  o: { booked?: boolean } = {},
+  o: { booked?: boolean; refuseQuotes?: boolean } = {},
 ) {
   const { store, root } = await folderWithAgent(SELLER, {
     sells: true,
@@ -178,6 +178,10 @@ async function sellingJobs(
       status: 'requested',
     }))
     if (path === SANDBOX_PATHS.mailboxInbox) return json({ orders: held })
+    // Avow refusing the quote under the seller's mandate, which only a seller's agent hears.
+    if (o.refuseQuotes && path.endsWith('/quote')) {
+      return json({ error: { reason: 'seller_mandate.over_outstanding', message: 'Refused' } }, 403)
+    }
     return json(held.find((o) => path.includes(o.orderId)) ?? held[0])
   }) as typeof globalThis.fetch
   const mailbox = await sandboxMailbox({ store, fetch })
@@ -290,6 +294,22 @@ describe('a job sold through the mailbox', () => {
     expect(await refusedFor(order)).toBe('seller_mandate.over_outstanding')
     expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
     expect(quoted(order.orderId)).toBeNull()
+  })
+
+  it('declines a job Avow refuses at the quote, and keeps nothing of it against the mandate', async () => {
+    const { mailbox, quoted, store, declinedWith, refusedFor } = await sellingJobs(
+      ['c4'.repeat(16)],
+      undefined,
+      { refuseQuotes: true },
+    )
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    expect(await refusedFor(order)).toBe('seller_mandate.over_outstanding')
+    expect(declinedWith(order.orderId)).toBe('supplier.not_authorized')
+    expect(quoted(order.orderId)).not.toBeNull()
+    // The job was held before its quote went out, and the decline drops it again.
+    const kept = JSON.parse((await store.read('job-sales')) ?? '{}')
+    expect(Object.keys(kept.sales ?? {})).not.toContain(order.orderId)
   })
 
   it('doesn’t accept a job whose agreement names a mandate replaced since the quote', async () => {

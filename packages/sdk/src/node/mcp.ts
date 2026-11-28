@@ -9,6 +9,7 @@ import {
   type ApprovalRequest,
   agentLabelOf,
   agentLabelProblem,
+  DECLINE_RETRY_MAX,
   type DeclineReason,
   describeReason,
   formatUsd,
@@ -21,6 +22,7 @@ import {
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
+  SERVICE_QUANTITY_MAX,
   type ServiceOrder,
   sellerMandateTermsJson,
   serviceOfferQuote,
@@ -673,7 +675,7 @@ export const MCP_TOOLS = [
         retry_minutes: {
           type: 'integer',
           description:
-            'For capacity.exhausted, in how many minutes the buyer could ask again, at most a week',
+            'For capacity.exhausted, in how many minutes the buyer could ask again, at most a week after the order was taken',
         },
         available: {
           type: 'integer',
@@ -1734,8 +1736,9 @@ export function mcpAgent(
         : Number.isSafeInteger(v) && (v as number) >= 0 && (v as number) <= most
           ? (v as number)
           : NaN
-    const minutes = whole(args.retry_minutes, 7 * 24 * 60)
-    const available = whole(args.available, 1_000_000)
+    // A week at most, and `declineWaiting` holds it to a week from when Avow took the order.
+    const minutes = whole(args.retry_minutes, Number(DECLINE_RETRY_MAX / 60n))
+    const available = whole(args.available, SERVICE_QUANTITY_MAX)
     if (Number.isNaN(minutes))
       throw new RangeError('retry_minutes is a whole number of minutes, at most a week')
     if (Number.isNaN(available)) throw new RangeError('available is a whole number of units')

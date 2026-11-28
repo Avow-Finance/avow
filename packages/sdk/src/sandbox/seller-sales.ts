@@ -172,3 +172,17 @@ export function jobAccepted(store: SandboxStore, orderId: string, now: bigint): 
     await write(store, 'job-sales', { sales: { ...sales, [orderId]: { ...sale, accepted: true } } })
   })
 }
+
+/**
+ * Drops a job the agent declined from `job-sales`, once Avow took the decline, so a declined job
+ * holds nothing against the mandate's limits. An accepted job is never dropped.
+ */
+export function jobDeclined(store: SandboxStore, orderId: string, now: bigint): Promise<void> {
+  return inTurn(store, async () => {
+    const sales = await jobSales(store, now)
+    const sale = sales[orderId]
+    if (!sale || sale.accepted) return
+    const { [orderId]: _, ...rest } = sales
+    await write(store, 'job-sales', { sales: rest })
+  })
+}

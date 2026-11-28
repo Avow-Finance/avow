@@ -38,7 +38,7 @@ import {
 } from './mailbox-context.js'
 import { holdToNamedMandate, SellerMandateRefusal, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
-import { holdInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
+import { holdInTurn, holdJobQuote, jobAccepted, jobDeclined } from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -375,13 +375,17 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     return withdrawn
   }
 
-  const decline = (orderId: string, d: OrderDeclineRequest) =>
-    needSupplier().asSupplier({
+  async function decline(orderId: string, d: OrderDeclineRequest): Promise<MailboxOrder> {
+    const declined = await needSupplier().asSupplier({
       domain,
       path: SANDBOX_PATHS.mailboxDecline(orderId),
       body: d,
       read: orderReader,
     })
+    // A declined job is never accepted, so it holds nothing against the seller's mandate.
+    await jobDeclined(store, orderId, systemClock())
+    return declined
+  }
 
   /**
    * Quotes a new job, or declines it when the seller's mandate or Avow refuses it, so its buyer

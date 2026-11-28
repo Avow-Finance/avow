@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  DECLINE_RETRY_MAX,
   DECLINE_RULES,
   type DeclineNext,
   type DeclineReason,
@@ -607,7 +608,8 @@ export function readDeclineArgs(
   if (!(SELLER_DECLINE_REASONS as readonly string[]).includes(reason)) return { error: usage }
   const whole = (v: string | undefined, most: number) =>
     v === undefined ? null : /^\d+$/.test(v) && Number(v) <= most ? Number(v) : Number.NaN
-  const retryMinutes = whole(flags.get('--retry-minutes'), 7 * 24 * 60)
+  // A week at most, and `declineWaiting` holds it to a week from when Avow took the order.
+  const retryMinutes = whole(flags.get('--retry-minutes'), Number(DECLINE_RETRY_MAX / 60n))
   const available = whole(flags.get('--available'), SERVICE_QUANTITY_MAX)
   if (Number.isNaN(retryMinutes) || Number.isNaN(available)) return { error: usage }
   return { order, reason: reason as DeclineReason, retryMinutes, available }
@@ -635,16 +637,22 @@ export async function declineWaiting(
     available: number | null
   },
 ): Promise<Declined> {
-  const waiting = (await services.inbox()).find((o) => o.orderId === ask.order)
-  if (!waiting) {
+  // Read by id, since a quoted order waits on the buyer and is no longer in the inbox.
+  const order = await services.read(ask.order)
+  // A quoted order past its expiry reads as expired with its quote, and can still be funded.
+  const open =
+    order.status === 'requested' ||
+    order.status === 'quoted' ||
+    (order.status === 'expired' && order.quote !== null)
+  if (!open) {
     return {
       ok: false,
-      why: `No order ${ask.order} is waiting on this business, so there's nothing to decline. It may have lapsed, or the buyer may have funded or withdrawn it.`,
+      why: `${orderSentence(order)} There's nothing to decline, since only an order the buyer hasn't funded can be.`,
     }
   }
   const current =
     ask.reason === 'offer.superseded'
-      ? ((await services.published()).find((o) => o.item.name === waiting.offer.item.name) ?? null)
+      ? ((await services.published()).find((o) => o.item.name === order.offer.item.name) ?? null)
       : null
   if (ask.reason === 'offer.superseded' && !current) {
     return {
@@ -652,12 +660,22 @@ export async function declineWaiting(
       why: 'This folder publishes no version of that item, so decline it as offer.withdrawn.',
     }
   }
+  let retryAt: bigint | null = null
+  if (ask.retryMinutes !== null) {
+    retryAt = BigInt(Math.floor(Date.now() / 1000) + ask.retryMinutes * 60)
+    // Avow takes a time within a week of when it took the order, which may be sooner than a week
+    // from now.
+    const latest = order.requestedAt + DECLINE_RETRY_MAX
+    if (retryAt > latest) {
+      return {
+        ok: false,
+        why: `A time to ask again is at most a week after the order was taken, so no later than ${new Date(Number(latest) * 1000).toISOString()}.`,
+      }
+    }
+  }
   const sent: OrderDeclineRequest = {
     reason: ask.reason,
-    retryAt:
-      ask.retryMinutes === null
-        ? null
-        : BigInt(Math.floor(Date.now() / 1000) + ask.retryMinutes * 60),
+    retryAt,
     available: ask.available,
     current,
   }
