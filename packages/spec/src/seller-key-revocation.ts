@@ -11,8 +11,8 @@ import { heldEnvelopeProblem, type Parsed, parseSigned } from './wire.js'
 
 /**
  * A revocation is the administrator's word that one selling agent's authority has ended, for good.
- * The business account's root key signs it under the business's own lock, as it signs a seller's
- * mandate. It names the business, the account and the agent's signing key, and no mandate, and it
+ * The business account's root key or one of its admin keys signs it under the business's own
+ * lock, as it signs a seller's mandate. It names the business, the account and the agent's signing key, and no mandate, and it
  * ends every seller's mandate for that business, account and key under that lock, whenever each
  * was signed. A signature carries no time, so nothing could say whether a mandate came before a
  * revocation or after it, and a rule that needs no order is the only one a reader can hold. So a
@@ -30,7 +30,7 @@ import { heldEnvelopeProblem, type Parsed, parseSigned } from './wire.js'
  */
 export interface SellerKeyRevocation {
   businessId: string
-  /** The business's account, whose root key signs the revocation. */
+  /** The business's account, whose root key or one of its admin keys signs the revocation. */
   account: Address
   /** The selling agent's signing key, which loses its authority. */
   signingKey: Address
@@ -54,7 +54,7 @@ export function sellerKeyRevocationTypedData(r: SellerKeyRevocation, d: AvowDoma
   }
 }
 
-/** A revocation's hash, which the business account's root key signs. */
+/** A revocation's hash, which the business account's root key or one of its admin keys signs. */
 export function sellerKeyRevocationHash(r: SellerKeyRevocation, d: AvowDomain): Hex {
   return hashTypedData(sellerKeyRevocationTypedData(r, d))
 }
@@ -134,8 +134,10 @@ export function parseSellerKeyRevocation(
  * Checks a signed revocation whole, for whoever records one: its envelope is a revocation's for
  * the lock, it's well formed, it names the expected selling agent, and the business account signed
  * it. It gives `message.signature_invalid` when the account didn't. The default check recovers a
- * secp256k1 signer, and an account whose root key is a passkey takes the caller's own check. It
- * throws only what that check throws.
+ * secp256k1 signer, so it reads the root key only. A revocation an admin key signed, or one from
+ * an account whose root key is a passkey, takes the caller's own check, one that reads the
+ * account's keychain, as Avow's API does with its chain reader's `isAccountSignature`. It throws
+ * only what that check throws.
  */
 export async function sellerKeyRevocationSignatureProblem(
   revocation: Signed<SellerKeyRevocation>,

@@ -175,12 +175,17 @@ export const SANDBOX_PATHS = {
    * `seller_mandate.key_mismatch`, one that names a business Avow has no record of is
    * `business.unknown`, one signed under another lock than that business's is
    * `message.wrong_contract`, and one that names another account than the business's is
-   * `seller_mandate.chain_mismatch`. The key has to be the signing key the business registers now,
-   * or one it registered before that holds a chain of seller's mandates and that no other business
-   * registers now, and any other is `seller_mandate.key_mismatch`. One the business account didn't
-   * sign is `seller_mandate.signature_invalid`, and a key another business already revoked is
-   * `seller_mandate.revoked`. When Avow can't read its records or the chain it is to
-   * answer `service.unavailable` and record nothing.
+   * `seller_mandate.chain_mismatch`. One the business account didn't sign is
+   * `seller_mandate.signature_invalid`.
+   *
+   * Then, with the business's records held, a key Avow already holds a revocation of is
+   * `seller_mandate.revoked` when another business revoked it, or this business did under another
+   * lock, so a business that moved to a new lock and posts again is refused too. The same business
+   * posting under the same lock gets the receipt it got before. Last, the key has to be the signing
+   * key the business registers now, or one it registered before that holds a chain of seller's
+   * mandates and that no other business registers now, and any other is
+   * `seller_mandate.key_mismatch`. When Avow can't read its records or the chain it is to answer
+   * `service.unavailable` and record nothing.
    */
   sellerKeyRevocation: (signingKey: Address) =>
     `/v1/sandbox/sellers/${signingKeyInPath(signingKey)}/revocation`,
