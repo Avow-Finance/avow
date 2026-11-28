@@ -64,6 +64,16 @@ Open the link, or find the request under Agents in the console, and check it sho
 
 The command waits while you approve, then enrolls the agent with Avow and exits. Stop it at any time and run it again, and it asks with the same key and the same code.
 
+## See the whole loop
+
+With the agent connected, one command books twice with Avow's demo GPU supplier, a test business, keeps one booking and cancels the other late, in about ten minutes.
+
+```sh
+npx avow-sandbox loop
+```
+
+The kept booking's \$10 reserve comes back whole at its release date. The late cancellation costs your business \$5 of its test dollars, the charge its terms allow, which Avow confirms from its own record of when your agent cancelled. The run needs a mandate that names the demo supplier and permits cancelling, and it says so before booking anything when yours doesn't. [Run all four in an hour](/docs/walkthroughs/overview) sets out each step.
+
 ## Connect from your own code
 
 ```ts

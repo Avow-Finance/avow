@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "label": "avow:offer:job/1",
+  "vectors": [
+    {
+      "name": "a fine-tuning job on one H100",
+      "version": {
+        "template": "job/1",
+        "supplier": "biz_supplier",
+        "work": {
+          "kind": "fine-tuning",
+          "summary": "Fine-tune a small model on the dataset the buyer sends"
+        },
+        "compute": {
+          "gpu": "H100",
+          "count": 1,
+          "region": "demo"
+        },
+        "currency": "USD",
+        "price": "120000000",
+        "rules": {
+          "startAfter": "3600",
+          "turnaround": "7200",
+          "gracePeriod": "600",
+          "dailyCapacity": 3,
+          "lateCancellationBps": 2000,
+          "noShowBps": 5000
+        }
+      },
+      "canonicalJson": "{\"compute\":{\"count\":1,\"gpu\":\"H100\",\"region\":\"demo\"},\"currency\":\"USD\",\"price\":\"120000000\",\"rules\":{\"dailyCapacity\":3,\"gracePeriod\":\"600\",\"lateCancellationBps\":2000,\"noShowBps\":5000,\"startAfter\":\"3600\",\"turnaround\":\"7200\"},\"supplier\":\"biz_supplier\",\"template\":\"job/1\",\"work\":{\"kind\":\"fine-tuning\",\"summary\":\"Fine-tune a small model on the dataset the buyer sends\"}}",
+      "id": "0x811a27f34e90b6f58ce21114abe766c5e33dfe1d6500cbfb70ef321e1aaba5b7"
+    },
+    {
+      "name": "non-ASCII text and escapes",
+      "version": {
+        "template": "job/1",
+        "supplier": "biz_supplier",
+        "work": {
+          "kind": "évaluation",
+          "summary": "Zürich \"east\" said 日本語 🙂 \\ ok"
+        },
+        "compute": {
+          "gpu": "H200",
+          "count": 8,
+          "region": "Zürich \"east\""
+        },
+        "currency": "USD",
+        "price": "120000000",
+        "rules": {
+          "startAfter": "3600",
+          "turnaround": "7200",
+          "gracePeriod": "600",
+          "dailyCapacity": 3,
+          "lateCancellationBps": 2000,
+          "noShowBps": 5000
+        }
+      },
+      "canonicalJson": "{\"compute\":{\"count\":8,\"gpu\":\"H200\",\"region\":\"Zürich \\\"east\\\"\"},\"currency\":\"USD\",\"price\":\"120000000\",\"rules\":{\"dailyCapacity\":3,\"gracePeriod\":\"600\",\"lateCancellationBps\":2000,\"noShowBps\":5000,\"startAfter\":\"3600\",\"turnaround\":\"7200\"},\"supplier\":\"biz_supplier\",\"template\":\"job/1\",\"work\":{\"kind\":\"évaluation\",\"summary\":\"Zürich \\\"east\\\" said 日本語 🙂 \\\\ ok\"}}",
+      "id": "0xd0b97972810bd7e24bebcdd04594bb65272cbf5e97453ab74a3d2ae0a30156a1"
+    },
+    {
+      "name": "a large price and one charge",
+      "version": {
+        "template": "job/1",
+        "supplier": "biz_supplier",
+        "work": {
+          "kind": "fine-tuning",
+          "summary": "Fine-tune a small model on the dataset the buyer sends"
+        },
+        "compute": {
+          "gpu": "H100",
+          "count": 1,
+          "region": "demo"
+        },
+        "currency": "USD",
+        "price": "123456789012345678901",
+        "rules": {
+          "startAfter": "3600",
+          "turnaround": "7200",
+          "gracePeriod": "7200",
+          "dailyCapacity": 3,
+          "lateCancellationBps": 0,
+          "noShowBps": 5000
+        }
+      },
+      "canonicalJson": "{\"compute\":{\"count\":1,\"gpu\":\"H100\",\"region\":\"demo\"},\"currency\":\"USD\",\"price\":\"123456789012345678901\",\"rules\":{\"dailyCapacity\":3,\"gracePeriod\":\"7200\",\"lateCancellationBps\":0,\"noShowBps\":5000,\"startAfter\":\"3600\",\"turnaround\":\"7200\"},\"supplier\":\"biz_supplier\",\"template\":\"job/1\",\"work\":{\"kind\":\"fine-tuning\",\"summary\":\"Fine-tune a small model on the dataset the buyer sends\"}}",
+      "id": "0xf8f91d80b9d9362c647deeefd1cd451595624ed5bbdb1c399a38141e75bb28a5"
+    }
+  ]
+}

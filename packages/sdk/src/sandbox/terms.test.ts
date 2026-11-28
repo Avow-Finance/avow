@@ -46,6 +46,8 @@ describe('dollars and micros', () => {
   it('takes whole dollars and cents, and nothing finer', () => {
     expect(micros(200, 'reserve')).toBe(dollars(200))
     expect(micros(12.5, 'reserve')).toBe(12_500_000n)
+    expect(micros(19.99, 'reserve')).toBe(19_990_000n)
+    expect(micros(0.29, 'reserve')).toBe(290_000n)
     expect(toDollars(12_500_000n)).toBe(12.5)
     for (const bad of [0, -1, 0.001, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => micros(bad, 'reserve')).toThrow(RangeError)

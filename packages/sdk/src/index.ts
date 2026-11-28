@@ -116,6 +116,9 @@ export {
   sellerMandateNotice,
 } from './sandbox/seller-mandate.js'
 export {
+  type JobOfferDraft,
+  type OfferDraft,
+  type Published,
   type SandboxServices,
   SELLER_MANDATE_ASKS_UNTAKEN,
   SERVICE_ORDER_SECONDS,

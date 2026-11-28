@@ -28,6 +28,7 @@ import { MIN_PASSPHRASE } from '../sandbox/vault.js'
 import { connectCommand } from './connect.js'
 import { FIRST_RUN_STEPS } from './first-run.js'
 import { readJobFlags, runJobSession, SERVICE_FILE } from './job.js'
+import { loopCommand } from './loop.js'
 import { listenCommand, orderCommand } from './mailbox.js'
 import { mcpCommand } from './mcp.js'
 import { fileStore, latestRun, SANDBOX_DIR, takeRun } from './platform.js'
@@ -99,6 +100,10 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            requests yet, and says so
   verify   checks a commitment someone shared, from its link, against the chain, with
            --payee <address> to check it pays you. It needs no agent or business
+  loop     books twice with Avow's demo GPU supplier, a test business, within the limits the
+           agent in this folder was approved for, keeps one booking and cancels the other late,
+           and prints what the lock and Avow did with each, in about ten minutes. --reserve
+           sets each booking's reserve, $10 by default, and the late charge takes half of one
   top-up   asks the sandbox faucet for more test dollars for the business of the agent in this
            folder, sent to its account and never its lock, once a day
   mcp      add claude-code, claude-desktop, cursor, vscode or codex gives a model there this
@@ -159,6 +164,8 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === 'verify') return verifyCommand(args.slice(1))
   // More test dollars for the agent's business, which widen nothing it may commit.
   if (args[0] === 'top-up') return topUpCommand()
+  // A kept booking and a late cancellation, within the mandate the agent already holds.
+  if (args[0] === 'loop') return loopCommand(args.slice(1))
   const command = !args[0] || args[0].startsWith('--') ? 'start' : args[0]
   const flags = readJobFlags(args[0] === command ? args.slice(1) : args, process.env)
   if ('error' in flags) {

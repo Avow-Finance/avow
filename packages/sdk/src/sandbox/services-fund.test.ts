@@ -1,5 +1,7 @@
 import {
   dollars,
+  isJobOfferVersion,
+  offerItemOf,
   offerVersionId,
   parseServiceOrder,
   SANDBOX_PATHS,
@@ -357,7 +359,7 @@ describe('what a folder keeps', () => {
     await Promise.all(
       names.map((name) => two.selling.publish({ ...draft, item: { ...draft.item, name } })),
     )
-    expect((await two.selling.published()).map((v) => v.item.name).sort()).toEqual(
+    expect((await two.selling.published()).map((v) => offerItemOf(v).name).sort()).toEqual(
       [...names].sort(),
     )
 
@@ -458,7 +460,7 @@ describe("an offer's bookings for the day", () => {
     const two = await twoAgents()
     await two.selling.publish({ ...draft, rules: { ...draft.rules, dailyCapacity: 1 } })
     const [published] = await two.selling.published()
-    if (!published) throw new Error('nothing was published')
+    if (!published || isJobOfferVersion(published)) throw new Error('no service was published')
     await two.buying.order({ offer: published, quantity: 1 })
     const first = parseServiceOrder(two.order())
     if (!first) throw new Error("the mailbox's order didn't parse")

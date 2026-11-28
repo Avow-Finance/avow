@@ -90,10 +90,10 @@ export const SANDBOX_PATHS = {
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**
-   * Where a selling agent lists an offer version with Avow, as an `OfferListingRequest`, signed by
-   * its signing key under its business's lock. Avow answers with the `OfferListing` it holds, and
-   * the version becomes its item's current version, replacing the one held for the item before.
-   * Listing the current version again checks it against the newest mandate again, and answers the
+   * Where a selling agent lists an offer version with Avow, a service's or a job's, as an
+   * `OfferListingRequest`, signed by its signing key under its business's lock. Avow answers with
+   * the `OfferListing` it holds, and the version becomes its item's current version, replacing the
+   * one held for the item before. Listing the current version again checks it against the newest mandate again, and answers the
    * listing Avow already holds or the refusal, which leaves the listing in place.
    *
    * Avow refuses a request out of form as `request.invalid`, one signed for another chain as
@@ -110,8 +110,10 @@ export const SANDBOX_PATHS = {
    * business account signed. A key with no mandate is `seller_mandate.missing`, a chain that
    * doesn't read as one is refused with the reason `sellerMandateChainProblem` gives, and a
    * version the mandate doesn't allow is refused with the reason `sellerOfferProblem` gives, each
-   * with status 403. A business that already lists `OFFER_LISTINGS_MAX` items and lists a new one
-   * is `offer.listings_full`, with status 409. When Avow can't read its records or the chain it
+   * with status 403. A job offer priced where the mandate asks a person to decide is
+   * `seller_mandate.job_approval_unavailable`, since nothing lets a person approve a job's sale yet.
+   * A business that already lists `OFFER_LISTINGS_MAX` items and lists a new one is
+   * `offer.listings_full`, with status 409. When Avow can't read its records or the chain it
    * answers `service.unavailable` and lists nothing.
    */
   offerListings: '/v1/sandbox/offers/listings',
@@ -373,7 +375,20 @@ export interface SandboxDeployment {
   arbiter: Address
   /** The supplier's share of a disputed charge at day 90, which Avow's approvals name. */
   day90SupplierShareBps: number
+  /**
+   * Seconds Avow keeps a late cancellation from each moment it's measured against before it
+   * confirms a charge from it, since its records carry its clock and the lock's times are block
+   * times. A deployment that publishes none keeps `DEFAULT_CLOCK_MARGIN`.
+   */
+  clockMargin?: bigint
 }
+
+/**
+ * The clock margin Avow keeps when a deployment publishes none, in seconds. Avow confirms a
+ * late-cancellation charge only for a cancellation at least this far inside the window it records
+ * cancellations in, at each end, and this far before the report, and refers one any closer.
+ */
+export const DEFAULT_CLOCK_MARGIN = 30n
 
 const origin = z.string().refine(isApiAudience, 'an http or https origin, with no path')
 
@@ -388,6 +403,7 @@ export const sandboxDeploymentJson = z.object({
   token: address,
   arbiter: address,
   day90SupplierShareBps: z.number().int().min(0).max(10_000),
+  clockMargin: z.number().int().min(0).max(3600).optional(),
 })
 
 /** Reads the deployment's facts, refusing any chain that isn't a testnet. */
@@ -408,6 +424,9 @@ export function parseSandboxDeployment(json: unknown): Parsed<SandboxDeployment>
           token: parsed.data.token,
           arbiter: parsed.data.arbiter,
           day90SupplierShareBps: parsed.data.day90SupplierShareBps,
+          ...(parsed.data.clockMargin === undefined
+            ? {}
+            : { clockMargin: BigInt(parsed.data.clockMargin) }),
         },
       }
     : { ok: false, reason: 'message.invalid' }

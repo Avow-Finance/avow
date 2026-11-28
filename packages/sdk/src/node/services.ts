@@ -6,8 +6,12 @@ import {
   type DeclineNext,
   type DeclineReason,
   formatUsd,
+  isJobOfferVersion,
+  type JobOfferVersion,
+  type OfferVersion,
   ORDER_DECLINES,
   type OrderDeclineRequest,
+  offerIdOf,
   offerVersionId,
   PAYMENT_ROUTES,
   type PaymentRoute,
@@ -142,8 +146,12 @@ function span(seconds: bigint): string {
 
 const percent = (bps: number) => `${bps / 100}%`
 
-/** An offer in sentences, with every rule that sets what a booking costs and reserves. */
-export function offerSentences(v: ServiceOfferVersion): string[] {
+/**
+ * An offer in sentences, with every rule that sets what a booking costs and reserves, for a
+ * service or a job.
+ */
+export function offerSentences(v: OfferVersion): string[] {
+  if (isJobOfferVersion(v)) return jobOfferSentences(v)
   const r = v.rules
   const charges = [
     r.lateCancellationBps > 0 ? `${percent(r.lateCancellationBps)} for cancelling late` : null,
@@ -160,6 +168,27 @@ export function offerSentences(v: ServiceOfferVersion): string[] {
     r.freeCancelWindow === 0n
       ? 'No booking is free to cancel.'
       : `Cancelling is free for ${span(r.freeCancelWindow)} after booking.`,
+  ]
+}
+
+/** A job offer in sentences, with every rule that sets what a job costs and reserves. */
+function jobOfferSentences(v: JobOfferVersion): string[] {
+  const r = v.rules
+  const charges = [
+    r.lateCancellationBps > 0 ? `${percent(r.lateCancellationBps)} for cancelling late` : null,
+    r.noShowBps > 0 ? `${percent(r.noShowBps)} for not handing over the inputs` : null,
+  ].filter((c) => c !== null)
+  const { gpu, count: gpus, region } = v.compute
+  return [
+    `A job of ${v.work.kind} from ${v.supplier}. ${v.work.summary}.`.replace(/\.\.$/, '.'),
+    `${formatUsd(v.price)} a job, run on ${count(gpus, gpu)} in ${region}.`,
+    `Work starts ${span(r.startAfter)} after the order and is delivered within ${span(r.turnaround)} of the start, and the supplier takes up to ${count(r.dailyCapacity, 'job')} a day.`,
+    r.gracePeriod === 0n
+      ? 'The buyer hands over the inputs by the start.'
+      : `The buyer hands over the inputs within ${span(r.gracePeriod)} of the start.`,
+    "The price is paid by transfer on delivery, and the reserve doesn't secure it.",
+    `The supplier can charge ${charges.join(' and ')}, as a share of the price, and a job reserves the larger.`,
+    'Cancelling is free until work starts.',
   ]
 }
 
@@ -363,7 +392,7 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     const published = await services.published()
     if (published.length === 0) console.log('This business has published no offers.')
     for (const version of published) {
-      console.log(`${offerVersionId(version)}\n  ${offerSentences(version).join('\n  ')}`)
+      console.log(`${offerIdOf(version)}\n  ${offerSentences(version).join('\n  ')}`)
     }
     return
   }
@@ -652,7 +681,10 @@ export async function declineWaiting(
   }
   const current =
     ask.reason === 'offer.superseded'
-      ? ((await services.published()).find((o) => o.item.name === order.offer.item.name) ?? null)
+      ? ((await services.published()).find(
+          (o): o is ServiceOfferVersion =>
+            !isJobOfferVersion(o) && o.item.name === order.offer.item.name,
+        ) ?? null)
       : null
   if (ask.reason === 'offer.superseded' && !current) {
     return {
