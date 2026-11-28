@@ -174,8 +174,9 @@ export interface SandboxServices {
    * hand the version to whoever should order. An agent that sells under a seller's mandate lists
    * only an offer the mandate allows, and throws a `SellerMandateRefusal` for any other.
    */
-  publish(draft: ServiceOfferDraft): Promise<Published<ServiceOfferVersion>>
   publish(draft: JobOfferDraft): Promise<Published<JobOfferVersion>>
+  // A service's comes last, so a type read from `publish` alone keeps reading a service's answer.
+  publish(draft: ServiceOfferDraft): Promise<Published<ServiceOfferVersion>>
   /**
    * Asks the business's administrator for a seller's mandate with exactly these terms, signed with
    * the agent's own enrolled key. It only asks: the administrator decides with their passkey on
