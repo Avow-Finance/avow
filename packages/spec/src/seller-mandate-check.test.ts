@@ -1,7 +1,8 @@
 import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
-import { chainedJobTerms, jobTerms } from './job.js'
+import { chainedJobTerms, JOB, jobTerms } from './job.js'
+import { type JobOfferVersion, jobOfferTerms, jobTermsMatchOffer } from './job-offer.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
 import { SELLER_CATEGORIES, SELLER_TEMPLATES, type SellerMandate } from './seller-mandate.js'
@@ -561,6 +562,94 @@ describe("listing an offer under a seller's mandate", () => {
     for (let units = 1; units <= awkward.rules.maxPerBooking; units++) {
       expect(sell(awkward, units, { mandate: never }), `${units} units`).toEqual(approved)
     }
+  })
+})
+
+describe("listing a job offer under a seller's mandate", () => {
+  /** Fine-tuning on one H100 for $120, starting an hour after the order and taking two. */
+  const jobOffer: JobOfferVersion = {
+    template: JOB,
+    supplier: 'biz_supplier',
+    work: { kind: 'fine-tuning', summary: 'Fine-tune a small model' },
+    compute: { gpu: 'H100', count: 1, region: 'demo' },
+    currency: 'USD',
+    price: dollars(120),
+    rules: {
+      startAfter: HOUR,
+      turnaround: 2n * HOUR,
+      gracePeriod: 600n,
+      dailyCapacity: 3,
+      lateCancellationBps: 2_000,
+      noShowBps: 5_000,
+    },
+  }
+  const withJob = (
+    change: Partial<Omit<JobOfferVersion, 'rules'>>,
+    rules: Partial<JobOfferVersion['rules']> = {},
+  ): JobOfferVersion => ({ ...jobOffer, ...change, rules: { ...jobOffer.rules, ...rules } })
+  const listing = { mandate, signingKey: KEY, version: jobOffer, revoked: false, now: NOW }
+  const problem = (version: JobOfferVersion = jobOffer, change: Partial<SellerMandate> = {}) =>
+    sellerOfferProblem({ ...listing, mandate: withMandate(change), version })
+
+  it('lets the agent list a job offer inside the job line', () => {
+    expect(problem()).toBeNull()
+    // The whole horizon, from the order to delivery, is the mandate's own seven days.
+    expect(problem(withJob({}, { startAfter: DAY, turnaround: 6n * DAY }))).toBeNull()
+    expect(problem(withJob({ price: dollars(500) }))).toBeNull()
+  })
+
+  it('refuses each way a job offer goes past the mandate', () => {
+    const cases: [JobOfferVersion, ReasonCode][] = [
+      [withJob({ price: dollars(99) }), 'seller_mandate.under_price_floor'],
+      [withJob({ price: dollars(501) }), 'seller_mandate.over_order_value'],
+      [
+        withJob({}, { startAfter: DAY, turnaround: 6n * DAY + 1n }),
+        'seller_mandate.over_delivery_horizon',
+      ],
+      [withJob({}, { lateCancellationBps: 1_999 }), 'seller_mandate.charges_not_allowed'],
+      [withJob({}, { noShowBps: 4_999 }), 'seller_mandate.charges_not_allowed'],
+      [
+        withJob({ work: { kind: 'inference', summary: 'Serve a model' } }),
+        'seller_mandate.item_not_allowed',
+      ],
+      [withJob({ supplier: 'biz_other' }), 'message.invalid'],
+      [withJob({}, { gracePeriod: 2n * HOUR + 1n }), 'message.invalid'],
+      [withJob({ work: { kind: 'fine "tuning"', summary: 'x' } }), 'message.invalid'],
+    ]
+    for (const [version, reason] of cases) expect(problem(version), reason).toBe(reason)
+    expect(problem(jobOffer, { limits: [anyService, bulkEval] })).toBe(
+      'seller_mandate.item_not_allowed',
+    )
+    // A service line doesn't cover a job of the same name.
+    const sameName = withJob({ work: { kind: 'Bulk eval', summary: 'One evaluation run' } })
+    expect(problem(sameName, { limits: [anyService, bulkEval] })).toBe(
+      'seller_mandate.item_not_allowed',
+    )
+  })
+
+  it("refuses every job listing once the mandate has ended, is revoked or is another key's", () => {
+    expect(sellerOfferProblem({ ...listing, now: mandate.expiry })).toBe('seller_mandate.expired')
+    expect(sellerOfferProblem({ ...listing, revoked: true })).toBe('seller_mandate.revoked')
+    expect(sellerOfferProblem({ ...listing, signingKey: OTHER_KEY })).toBe(
+      'seller_mandate.key_mismatch',
+    )
+  })
+
+  it('lists no job offer whose job the check would refuse', () => {
+    // A price that doesn't divide evenly, with each charge at the mandate's lowest share and the
+    // horizon at its longest.
+    const awkward = withJob(
+      { price: 100_000_001n },
+      { startAfter: DAY, turnaround: 6n * DAY, gracePeriod: 6n * DAY },
+    )
+    expect(problem(awkward)).toBeNull()
+    const quoted = chainedJobTerms(jobOfferTerms(awkward, NOW, settlement), [
+      { on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' },
+    ])
+    expect(jobTermsMatchOffer(quoted, awkward)).toBe(true)
+    expect(check({ terms: quoted, offer: null })).toEqual(approved)
+    // A job still sells with no offer, as it always has.
+    expect(sellJob()).toEqual(approved)
   })
 })
 
