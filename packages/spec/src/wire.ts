@@ -296,13 +296,15 @@ export const mandateJson = z.strictObject({
   currency: z.enum(CURRENCIES),
   capPerCommitment: u256,
   capOpenReserves: u256,
+  priceCapPerCommitment: u256.exactOptional(),
   suppliers: z.array(z.string().min(1)),
   categories: z.array(z.string().min(1)),
   paymentLimits: z.array(z.strictObject({ token: address, amount: u256, period: u64 })).min(1),
   approvalRule: approvalRuleJson,
   expiry: u64,
   nonce: u256,
-  replaces: bytes32.exactOptional(),
+  /** The mandate this one replaces, which is never the zero hash, since that marks a first one. */
+  replaces: bytes32.refine((h) => h !== zeroHash, "a mandate's hash").exactOptional(),
 })
 
 export const reserveRequestJson = z.strictObject({

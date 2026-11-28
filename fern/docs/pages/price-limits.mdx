@@ -1,0 +1,46 @@
+---
+title: Price limits
+slug: docs/reference/price-limits
+---
+
+A buyer's mandate can limit the price of one commitment. Every other money limit in a mandate counts the reserve, the money the lock holds against charges. The price is what the buyer pays the supplier for the work, paid outside the lock, and until this limit nothing in a mandate capped it. An administrator who wants an agent to agree to at most \$200 for one booking signs a mandate whose `priceCapPerCommitment` is `200000000`, in micros.
+
+## Who holds an agent to it
+
+Two layers hold an agent to its price limit, the SDK and Avow's API. The lock never reads a price, so no chain holds an agent to it, and wherever a price limit is shown it's labelled with those two layers. A mandate's reserve limits have a third layer in the lock.
+
+- The SDK runs `checkMandate` before the agent signs terms, and refuses a booking over the limit with nothing signed.
+- Avow's API runs the same check before it approves a reserve. The lock takes no reserve without Avow's approval, so an agent that skips its own check still can't reserve a booking over its limit.
+
+A supplier's verifier runs the same function on the buyer's mandate, so it gives the same answer. It reads the limit to check the buyer, and its refusal adds no layer the buyer's administrator relies on.
+
+## What counts as the price
+
+`termsPrice` in `@avow-finance/spec` reads the price from the terms, whichever template they use. It's the whole price of the one commitment, in micros of the terms' currency.
+
+| Template | The price |
+| --- | --- |
+| `service/1` | The price per unit times the units booked |
+| `job/1` | The job's one fixed price |
+| `gpu-reservation/1` | The rate per GPU-hour for every GPU over the whole window, rounded down to a whole micro, the most its usage can come to |
+| Version 1 terms | Read as the GPU reservation they are |
+
+Version 3 terms count as the plain booking they make. A booking they rely on is a commitment of its own, made under its own business's mandate, so its price never counts toward this one.
+
+## The message
+
+A mandate with a price limit signs at version 3, whether it's an agent's first mandate or one that replaces another. Its fields are version 1's, then `priceCapPerCommitment` as a `uint256`, then `replaces` as a `bytes32`, which is the zero hash for a first mandate. A replacement that names the zero hash is refused, since it would sign as a first mandate.
+
+A mandate with no price limit signs at version 1 or 2, byte for byte as before, and reads as one with no limit on the price. Every agent enrolled before the limit existed keeps working, and its administrator adds a limit by signing a replacement. A limit of zero is malformed and refused as `mandate.invalid`.
+
+A first mandate with a price limit still goes on with the agent's key in one transaction. The key's witness on Tempo is the version 3 hash, and nothing about the key changes.
+
+## The refusal
+
+A booking over the limit is refused as `mandate.over_price_limit`. The check reads the reserve limits first, so a booking over both a reserve limit and the price limit is refused for the reserve.
+
+An administrator lifts the refusal by signing a mandate with a higher limit, so an offer search lists an offer over the limit among the offers that need approval.
+
+## Where it stands
+
+The SDK holds an agent to the price limit of any mandate it reads. Avow's API and console take a mandate with a price limit in a later release, and until then no administrator signs one in the console. A mandate holds no limit on what an agent commits over a period yet.

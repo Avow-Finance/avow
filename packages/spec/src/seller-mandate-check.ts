@@ -3,6 +3,7 @@ import { isChainedTerms } from './dependencies.js'
 import { BPS, COUNTRY_CODE } from './fields.js'
 import { JOB, JOB_CATEGORY } from './job.js'
 import { handsToPerson, type MandateCheck } from './mandate.js'
+import { termsPrice } from './price.js'
 import type { TermsProfile } from './profiles.js'
 import type { ReasonCode } from './reasons.js'
 import { coversSale, type SaleContent, saleContentProblem } from './sale-approval.js'
@@ -22,7 +23,6 @@ import {
   type ServiceOfferVersion,
   serviceOfferProblem,
   serviceOfferQuote,
-  servicePrice,
   serviceTermsMatchOffer,
 } from './service.js'
 import { SERVICE_ORDER_CLOCK_SKEW } from './service-order.js'
@@ -74,7 +74,7 @@ export function saleFacts(terms: Terms | ChainedTerms): SaleFacts | null {
       category: SERVICE_CATEGORY,
       item: terms.subject.item.name,
       units: terms.subject.quantity,
-      price: servicePrice(terms),
+      price: termsPrice(terms),
       deliverBy: terms.subject.delivery.by,
     }
   }
@@ -83,7 +83,7 @@ export function saleFacts(terms: Terms | ChainedTerms): SaleFacts | null {
       category: JOB_CATEGORY,
       item: terms.subject.work.kind,
       units: 1,
-      price: terms.consideration.amount,
+      price: termsPrice(terms),
       deliverBy: terms.subject.deliverBy,
     }
   }

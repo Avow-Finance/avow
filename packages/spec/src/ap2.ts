@@ -61,6 +61,8 @@ const avowExtensionJson = z.strictObject({
   currency: mandateJson.shape.currency,
   cap_per_commitment: z.string(),
   cap_open_reserves: z.string(),
+  /** The mandate's price limit for one commitment, left out when it has none. */
+  price_cap_per_commitment: z.string().exactOptional(),
   payment_limits: z.array(
     z.strictObject({ token: z.string(), amount: z.string(), period_seconds: z.string() }),
   ),
@@ -106,6 +108,9 @@ export function toAp2IntentMandate(
         currency: m.currency,
         cap_per_commitment: m.capPerCommitment.toString(),
         cap_open_reserves: m.capOpenReserves.toString(),
+        ...(m.priceCapPerCommitment === undefined
+          ? {}
+          : { price_cap_per_commitment: m.priceCapPerCommitment.toString() }),
         payment_limits: m.paymentLimits.map((l) => ({
           token: l.token,
           amount: l.amount.toString(),
@@ -153,6 +158,9 @@ export function fromAp2IntentMandate(json: unknown): Parsed<Mandate> {
     currency: avow.currency,
     capPerCommitment: avow.cap_per_commitment,
     capOpenReserves: avow.cap_open_reserves,
+    ...(avow.price_cap_per_commitment === undefined
+      ? {}
+      : { priceCapPerCommitment: avow.price_cap_per_commitment }),
     suppliers: intent.merchants ?? [],
     categories: avow.categories,
     paymentLimits: avow.payment_limits.map((l) => ({

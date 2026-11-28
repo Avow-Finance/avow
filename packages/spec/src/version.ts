@@ -41,6 +41,14 @@ export const MESSAGE_VERSIONS = {
 export const MANDATE_REPLACEMENT_VERSION = '2'
 
 /**
+ * The domain version of a mandate that limits the price of one commitment, first or replacement.
+ * It carries `priceCapPerCommitment`, and `replaces` as the zero hash for a first mandate. A
+ * mandate with no price limit keeps version 1 or 2 byte for byte, so it reads as one with no limit
+ * on the price, and every agent enrolled before the limit existed keeps working.
+ */
+export const MANDATE_PRICE_VERSION = '3'
+
+/**
  * The domain version of a terms agreement that names the seller's mandate the supplier's agent
  * agreed under. An agreement that names none keeps version 1 byte for byte, so every sale made
  * under no seller's mandate signs and reads exactly as before.
@@ -58,7 +66,7 @@ export const SUPPORTED_MESSAGE_VERSIONS: { readonly [T in VersionedType]: readon
   Evidence: [MESSAGE_VERSIONS.Evidence],
   BusinessAction: [MESSAGE_VERSIONS.BusinessAction],
   SupplierAction: [MESSAGE_VERSIONS.SupplierAction],
-  Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION],
+  Mandate: [MESSAGE_VERSIONS.Mandate, MANDATE_REPLACEMENT_VERSION, MANDATE_PRICE_VERSION],
   SellerMandate: [MESSAGE_VERSIONS.SellerMandate],
   SellerKeyRevocation: [MESSAGE_VERSIONS.SellerKeyRevocation],
   TermsAgreement: [MESSAGE_VERSIONS.TermsAgreement, TERMS_AGREEMENT_SELLER_VERSION],
@@ -90,8 +98,11 @@ export function isSupportedMessageVersion(type: string, version: string): boolea
  */
 export const COMMITMENT_RECORD_VERSION = '3'
 
-/** The version of the mandate check in `checkMandate`, recorded on every decision. */
-export const POLICY_VERSION = 'mandate-check/1'
+/**
+ * The version of the mandate check in `checkMandate`, recorded on every decision. Version 2 holds a
+ * commitment's price to the mandate's price limit, when it has one.
+ */
+export const POLICY_VERSION = 'mandate-check/2'
 
 /** The version of the seller's mandate check in `checkSellerMandate`, for a decision to record. */
 export const SELLER_POLICY_VERSION = 'seller-mandate-check/1'

@@ -23,6 +23,7 @@ import {
   MESSAGE_VERSIONS,
   mandateHash,
   newSalt,
+  priceLimitProblem,
   type RailToken,
   type ReasonCode,
   type RefusalLayer,
@@ -612,6 +613,11 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     if (!isKeySignature(digest, a.supplierSignature, supplier.signingKey)) {
       return { ok: false, reason: 'message.signature_invalid', layer: 'sdk' }
     }
+    // Version 3 terms meet the whole mandate check only once Avow's approval names the owner of
+    // each booking they rely on. The price limit reads no lock, so it's held here, before the agent
+    // signs anything or asks Avow.
+    const overPrice = priceLimitProblem(mandate, terms)
+    if (overPrice) return { ok: false, reason: overPrice, layer: 'sdk' }
     const buyerSignature = await key.sign({ hash: digest, raw: true })
     const signed: SignedAgreement = {
       type: 'TermsAgreement',

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { type GpuReservationTerms, gpuReservationTerms } from './gpu-reservation.js'
+import { type GpuReservationTerms, gpuReservationTerms, gpuWindowPrice } from './gpu-reservation.js'
 import { u64, u256 } from './json-fields.js'
 import type { SandboxDeployment } from './sandbox.js'
 import { SUPPLIER_ADAPTER_PATHS } from './supplier-adapter.js'
@@ -85,10 +85,9 @@ export function computeOfferCost(
   if (!offerTakes(offer, gpus)) {
     throw new RangeError(`Offer ${offer.id} takes ${offer.gpus.min} to ${offer.gpus.max} GPUs`)
   }
-  const n = BigInt(gpus)
   return {
-    price: (offer.pricePerGpuHour * n * offerSeconds(offer)) / 3600n,
-    reserve: offer.reservePerGpu * n,
+    price: gpuWindowPrice(offer.pricePerGpuHour, gpus, offerSeconds(offer)),
+    reserve: offer.reservePerGpu * BigInt(gpus),
   }
 }
 

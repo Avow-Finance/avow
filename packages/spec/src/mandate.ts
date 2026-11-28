@@ -1,5 +1,6 @@
 import { isAddressEqual } from 'viem'
 import { type CheckedChainedTerms, isChainedTerms } from './dependencies.js'
+import { termsPrice } from './price.js'
 import type { TermsProfile } from './profiles.js'
 import { type RailToken, toTokenUnits } from './rail.js'
 import type { ReasonCode } from './reasons.js'
@@ -12,7 +13,7 @@ import {
   validateChainedTerms,
   validateTerms,
 } from './terms.js'
-import type { ApprovalRule, Mandate, ReserveRequest } from './types.js'
+import type { ApprovalRule, ChainedTerms, Mandate, ReserveRequest } from './types.js'
 
 export interface MandateCheckInput {
   mandate: Mandate
@@ -42,6 +43,9 @@ export function validateMandate(m: Mandate): ReasonCode | null {
   if (m.suppliers.length === 0 && m.categories.length === 0) return 'mandate.invalid'
   if (m.actions.length === 0) return 'mandate.invalid'
   if (m.capPerCommitment <= 0n || m.capPerCommitment > m.capOpenReserves) return 'mandate.invalid'
+  if (m.priceCapPerCommitment !== undefined && m.priceCapPerCommitment <= 0n) {
+    return 'mandate.invalid'
+  }
   if (m.paymentLimits.length === 0 || m.paymentLimits.some((l) => l.amount <= 0n)) {
     return 'mandate.invalid'
   }
@@ -63,8 +67,24 @@ export function mandateEndsBeforeWindow(
 }
 
 /**
+ * Whether terms are priced over the mandate's price limit for one commitment, or null when the
+ * mandate has none or they fit it. It reads no lock, so version 3 terms come as they are, before
+ * anyone checked the bookings they rely on, and the SDK refuses them with it before it signs
+ * anything. `checkMandate` makes the same comparison.
+ */
+export function priceLimitProblem(
+  m: Pick<Mandate, 'priceCapPerCommitment'>,
+  terms: AnyTerms | ChainedTerms,
+): 'mandate.over_price_limit' | null {
+  if (m.priceCapPerCommitment === undefined) return null
+  return termsPrice(terms) > m.priceCapPerCommitment ? 'mandate.over_price_limit' : null
+}
+
+/**
  * The mandate check Avow runs before it signs an approval. It's pure, so the SDK and a supplier
- * can run the same check on the signed mandate. The caller checks the mandate's signature first.
+ * can run the same check on the signed mandate. A mandate's price limit is held here and nowhere
+ * on the chain, so the SDK's run and Avow's are the two layers that enforce it. The caller checks
+ * the mandate's signature first.
  * It reads version 3 terms as the plain booking they make, and it can't read a lock, so it takes
  * them only as the checked terms the dependency check produces. The types hold a caller to that,
  * short of a deliberate cast, and nothing checks it at run time.
@@ -112,6 +132,10 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   if (units > limit.amount) return deny('mandate.over_payment_limit')
   if (amount > m.capPerCommitment) return deny('mandate.over_commitment_cap')
   if (input.openReserves + amount > m.capOpenReserves) return deny('mandate.over_open_reserves_cap')
+  // The lock never reads a price, so this check, in the SDK and in Avow's API, is all that holds
+  // an agent to the price limit.
+  const overPrice = priceLimitProblem(m, r.terms)
+  if (overPrice) return deny(overPrice)
   if (mandateEndsBeforeWindow(m, enforced)) return deny('mandate.ends_before_window')
 
   if (handsToPerson(m.approvalRule, amount)) {

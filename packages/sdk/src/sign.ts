@@ -3,6 +3,7 @@ import {
   type HashSigner,
   type HumanApproval,
   humanApprovalTypedData,
+  isPriceTypedData,
   isReplacementTypedData,
   type Mandate,
   MESSAGE_VERSIONS,
@@ -68,11 +69,14 @@ export async function signMandate(
     throw new Error("The mandate names another account than the signer's")
   }
   const td = mandateTypedData(mandate, d)
-  // Both branches make the same call, since viem types its argument by one table.
-  const signature = isReplacementTypedData(td)
+  // Every branch makes the same call, since viem types its argument by one table.
+  const signature = isPriceTypedData(td)
     ? await signer.signTypedData(td)
-    : await signer.signTypedData(td)
-  // The envelope carries the version the typed data signed at, which `replaces` decided.
+    : isReplacementTypedData(td)
+      ? await signer.signTypedData(td)
+      : await signer.signTypedData(td)
+  // The envelope carries the version the typed data signed at, which the price limit and
+  // `replaces` decided.
   return { ...envelope('Mandate', d, mandate, signature), schemaVersion: td.domain.version }
 }
 
