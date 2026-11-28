@@ -13,6 +13,8 @@ import {
   sellerMandateHash,
   sellerMandateTermsOf,
   sellerMandateTypedData,
+  termsAgreementTypedData,
+  termsAgreementVersion,
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, keccak256, recoverAddress, stringToHex } from 'viem'
@@ -195,7 +197,11 @@ describe('a selling agent with no seller’s mandate', () => {
     const steps: unknown[] = []
     const order = orderFor(version, 4)
     await services.sell(order, (s) => steps.push(s)).catch(() => {})
-    expect(quoted(posted, order.orderId)).not.toBeNull()
+    const quote = quoted(posted, order.orderId)
+    if (!quote) throw new Error('the seller quoted the order')
+    // With no mandate in force the agreement names none, and signs at version 1 as before.
+    expect(quote.agreement).not.toHaveProperty('sellerMandate')
+    expect(termsAgreementVersion(quote.agreement)).toBe('1')
     // The read is signed by the agent's signing key, under its business's lock.
     expect(posted.some((p) => p.path === SANDBOX_PATHS.sellerMandates)).toBe(true)
   })
@@ -268,6 +274,22 @@ describe('a selling agent under a seller’s mandate', () => {
     const refused = services.sell(excluded)
     await expect(refused).rejects.toMatchObject({ reason: 'counterparty.not_eligible' })
     expect(quoted(posted, excluded.orderId)).toBeNull()
+  })
+
+  it('names the mandate it sold under in the agreement, which its signing key signs at version 2', async () => {
+    const { services, posted, mandate, signingKey } = await under()
+    const { version } = await services.publish(draft)
+    const order = orderFor(version, 2)
+    await services.sell(order).catch(() => {})
+    const quote = quoted(posted, order.orderId)
+    if (!quote) throw new Error('the seller quoted the order')
+    expect(quote.agreement.sellerMandate).toBe(sellerMandateHash(mandate, domain))
+    expect(termsAgreementVersion(quote.agreement)).toBe('2')
+    const signer = await recoverAddress({
+      hash: digestOf(termsAgreementTypedData(quote.agreement, domain)),
+      signature: quote.supplierSignature,
+    })
+    expect(signer.toLowerCase()).toBe(signingKey.toLowerCase())
   })
 
   it('counts what it already quoted today, and refuses a sale past the day’s units', async () => {

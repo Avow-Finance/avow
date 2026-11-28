@@ -16,7 +16,7 @@ That leaves out several things a supplier may want, so plan around them.
 
 - **No service orders.** It doesn't sell `service/1` offers. [Services sold by quantity](/docs/reference/services) covers those, sold through the `avow-sandbox` package.
 - **No offers yet.** It answers no `GET /offers`, so an agent looking for compute to run a [job](/docs/composable-commitments/jobs) on can't find yours through it, and an agent books from it with terms it already has.
-- **No seller's mandate.** It refuses an agreement that names one, since it acts under none.
+- **No seller's mandate.** A seller's mandate covers services and jobs, and GPU reservations aren't covered by one yet. So the adapter acts under none and refuses an agreement that names one.
 - **No check of your capacity.** It signs any offer that meets the rules below without asking your system first, and your system hears of the booking only once it's signed. Set `MAX_RESERVE_DOLLARS`, `MAX_OPEN_PER_BUYER` and `MAX_OPEN_BOOKINGS` to what you can actually serve.
 - **One process.** Run one `serve` at a time for a state directory, since it counts open bookings from what it saved itself.
 

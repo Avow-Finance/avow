@@ -723,6 +723,8 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         signingKey: signingRequestKey(signing),
         settlement,
         expiry: now + QUOTE_VALIDITY,
+        // The quote names the mandate it was held to above, so the agreement says which one.
+        sellerMandate: standing.inForce ? standing.chain.current.hash : null,
       })
       // The quote signs exactly the terms the mandate read, or it goes nowhere.
       if (JSON.stringify(toWire(quote.terms)) !== JSON.stringify(toWire(terms))) {
