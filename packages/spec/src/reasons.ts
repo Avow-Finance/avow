@@ -26,6 +26,11 @@ export const REASON_CODES = {
   'offer.superseded':
     'The supplier replaced the offer version booked with a newer one, which the answer carries for review before booking again',
   'offer.withdrawn': "The supplier withdrew the offer, so it can't be booked",
+  'offer.unknown': 'Avow holds no listing of that offer version for this business',
+  'offer.listing_unavailable':
+    "This Avow deployment doesn't hold seller's mandates, so it lists no offer, since every listing is checked against one",
+  'offer.listings_full':
+    'The business already lists as many items as one business can, so withdraw one before listing another',
   'capacity.exhausted':
     'The supplier has no capacity for this now. The answer says when to ask again, or how many units are free, when the supplier gave them',
   'quantity.out_of_range':

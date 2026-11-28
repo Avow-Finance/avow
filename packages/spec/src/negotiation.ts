@@ -17,10 +17,10 @@ import {
   SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
   type ServiceTerms,
-  serviceOfferProblem,
   serviceOfferQuote,
   serviceOfferTerms,
   serviceOfferVersionJson,
+  soundOfferVersion,
 } from './service.js'
 import {
   leavesTimeToAccept,
@@ -657,7 +657,7 @@ export const negotiationThreadJson = z
     moves: z.array(signedMoveJson).min(1).max(THREAD_MOVES_MAX),
   })
   // An offer the template's rules refuse is refused where the thread is read.
-  .refine((thread) => serviceOfferProblem(thread.base as ServiceOfferVersion) === null)
+  .refine((thread) => soundOfferVersion(thread.base) !== null)
 
 export const parseNegotiationMove = readOrNull(
   negotiationMoveJson as unknown as z.ZodType<NegotiationMove>,

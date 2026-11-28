@@ -90,7 +90,7 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 
 A check sends no order. It answers whether the order would pass the buyer's mandate now, with the price and the reserve, or the reason code and the layer that would refuse it. The reserve is what the mandate's limits count. No limit counts the price, which is paid outside the lock.
 
-Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere. No directory lists it, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer.
+Publishing keeps the offer in the seller's `.avow` folder and sends it nowhere, so the seller hands the offer to the buyer, as the file `offer publish` writes or the JSON `publish_offer` answers with. Publishing an item of the same name again replaces its offer. [Listing offers with Avow](/docs/reference/offer-listings) sends a published version to Avow's directory, checked against the seller's mandate.
 
 The buyer's side is checked three ways, by the mandate check, Avow's approval and the keychain. The seller's side has the agent's signing key and the rules below, which its own agent keeps. When Avow serves a [seller's mandate](/docs/reference/seller-mandate) for the agent's key, the agent also holds itself to it before it publishes, quotes or accepts. Avow serves none yet, so today an agent sells as it did before and says that no seller's mandate is in force and that Avow doesn't enforce seller limits yet. So the price and both charges are the person's to set, and an agent that publishes an offer asks for them.
 

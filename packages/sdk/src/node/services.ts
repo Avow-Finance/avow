@@ -265,31 +265,52 @@ const fileName = (name: string) =>
       .replace(/^-+|-+$/g, '') || 'offer'
   }.offer.json`
 
-/**
- * `avow-sandbox offer publish | list | withdraw <id>`. Publishing keeps the offer in `.avow` and
- * writes it to a file beside it, which is what a buyer's agent orders from. Nothing is sent to
- * Avow, and no directory lists the offer.
- */
-export async function offerCommand(args: readonly string[]): Promise<void> {
+/** The `offer` verbs that act on Avow's listing of one version, named by its id. */
+const AVOW_VERBS = ['list-with-avow', 'withdraw-from-avow'] as const
+const OFFER_VERBS = ['publish', 'list', 'withdraw', ...AVOW_VERBS, 'listed-with-avow'] as const
+type OfferVerb = (typeof OFFER_VERBS)[number]
+const isOfferVerb = (v: string | undefined): v is OfferVerb =>
+  (OFFER_VERBS as readonly (string | undefined)[]).includes(v)
+
+/** What `offer` was asked to do, read from its arguments before the folder is read. */
+export type OfferAsk =
+  | { verb: 'publish'; draft: ServiceOfferDraft }
+  | { verb: 'list' | 'listed-with-avow' }
+  | { verb: 'withdraw' | (typeof AVOW_VERBS)[number]; id: Hex }
+
+/** What `offer` was asked to do, or why it can't run, so a mistyped flag is the first thing said. */
+export function readOfferArgs(args: readonly string[]): OfferAsk | { error: string } {
   const [verb, ...rest] = args
-  if (verb !== 'publish' && verb !== 'list' && verb !== 'withdraw') {
-    return fail('offer takes publish, list or withdraw <id>')
+  if (!isOfferVerb(verb)) {
+    return { error: `offer takes ${OFFER_VERBS.slice(0, -1).join(', ')} or ${OFFER_VERBS.at(-1)}` }
   }
-  // What was asked is read before the folder is, so a mistyped flag is the first thing said.
-  let draft: ServiceOfferDraft | null = null
   if (verb === 'publish') {
     const input = readPublishArgs(rest)
-    if ('error' in input) return fail(input.error)
-    const read = readOfferInput(input)
-    if ('error' in read) return fail(read.error)
-    draft = read
+    if ('error' in input) return input
+    const draft = readOfferInput(input)
+    return 'error' in draft ? draft : { verb, draft }
   }
-  const withdrawn = rest[0]
-  if (verb === 'withdraw' && (!withdrawn || !/^0x[0-9a-fA-F]{64}$/.test(withdrawn))) {
-    return fail('offer withdraw takes the id of an offer')
+  if (verb === 'list' || verb === 'listed-with-avow') {
+    return rest.length === 0 ? { verb } : { error: `offer ${verb} takes nothing more` }
   }
+  const [id, ...more] = rest
+  if (!id || more.length > 0 || !/^0x[0-9a-fA-F]{64}$/.test(id)) {
+    return { error: `offer ${verb} takes the id of an offer` }
+  }
+  return { verb, id: id as Hex }
+}
+
+/**
+ * `avow-sandbox offer publish | list | withdraw <id>`, which keep offers in `.avow`, and
+ * `list-with-avow <id> | withdraw-from-avow <id> | listed-with-avow`, which list a published
+ * version in Avow's directory, take it away and show what Avow lists. Publishing writes the offer
+ * to a file beside `.avow`, which is what a buyer's agent orders from, and sends nothing to Avow.
+ */
+export async function offerCommand(args: readonly string[]): Promise<void> {
+  const ask = readOfferArgs(args)
+  if ('error' in ask) return fail(ask.error)
   const services = await sandboxServices({ store: fileStore() })
-  if (verb === 'list') {
+  if (ask.verb === 'list') {
     const published = await services.published()
     if (published.length === 0) console.log('This business has published no offers.')
     for (const version of published) {
@@ -297,8 +318,37 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     }
     return
   }
-  if (verb === 'withdraw') {
-    const gone = await services.withdraw(withdrawn as Hex)
+  if (ask.verb === 'list-with-avow') {
+    const listed = await services.listWithAvow(ask.id)
+    if (!listed.ok) return fail(listed.notice)
+    console.log(
+      [
+        `Listed offer ${listed.listing.id} with Avow, checked against seller's mandate ${listed.listing.sellerMandate}.`,
+        ...(listed.listing.replaced
+          ? [`It replaces ${listed.listing.replaced}, which Avow no longer lists.`]
+          : []),
+        "Avow holds it as the item's current listing. A listing grants nothing, and every order is checked again.",
+      ].join('\n'),
+    )
+    return
+  }
+  if (ask.verb === 'withdraw-from-avow') {
+    const { id } = await services.withdrawFromAvow(ask.id)
+    console.log(
+      `Avow no longer lists ${id}. It stays published here, and a booking already accepted stands.`,
+    )
+    return
+  }
+  if (ask.verb === 'listed-with-avow') {
+    const listed = await services.listedWithAvow()
+    if (listed.length === 0) console.log('Avow lists no offers for this business.')
+    for (const { id, version } of listed) {
+      console.log(`${id}\n  ${offerSentences(version).join('\n  ')}`)
+    }
+    return
+  }
+  if (ask.verb === 'withdraw') {
+    const gone = await services.withdraw(ask.id)
     console.log(
       gone
         ? 'Withdrawn. An order for it is no longer quoted, and a booking already accepted stands.'
@@ -306,8 +356,8 @@ export async function offerCommand(args: readonly string[]): Promise<void> {
     )
     return
   }
-  if (!draft) return
-  const { version, id, standing } = await services.publish(draft)
+  if (ask.verb !== 'publish') return
+  const { version, id, standing } = await services.publish(ask.draft)
   const file = resolve(fileName(version.item.name))
   writeFileSync(file, `${JSON.stringify(toWire(version), null, 2)}\n`)
   console.log(
