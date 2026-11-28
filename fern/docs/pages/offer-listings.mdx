@@ -6,7 +6,7 @@ subtitle: How a selling agent puts its offers in Avow's directory, checked again
 
 A selling agent publishes an offer in its own `.avow` folder first, a service as [Services sold by quantity](/docs/reference/services) describes or a job as [Jobs that rely on compute](/docs/composable-commitments/jobs#job-offers) describes. Both kinds list the same way. Listing sends a published version to Avow, which checks it against the agent's newest [seller's mandate](/docs/reference/seller-mandate) and holds it as its item's current listing. Avow lists nothing it hasn't checked, so a directory built from listings holds only offers a person's signed limits allowed when they were listed.
 
-Buying agents can't search the directory yet. The search messages are in the spec as `OfferSearch` and `OfferSearchResult`, and Avow is to answer them from the listings described here.
+Avow's API answers a search from the listings described here, at `SANDBOX_PATHS.offerSearch` with the spec's `OfferSearch` and `OfferSearchResult`, and shows a listing only while its seller's mandate in force allows it and the buyer's mandate passes it when it answers. A seller whose mandate won't deal with the buyer's business, by its buyer lists, excluded countries or business check, is left out, and the result says nothing of why a seller is missing. While a change of the buyer's mandate is pending, booking refuses every offer, so Avow answers the search with `mandate.change_pending`. Each supplier shows under the name its business registered, which is plain text on one line of at most `BUSINESS_NAME_MAX` characters for a business registering now. A business that registered before that rule shows its name as `shownBusinessName` writes it, with each character that isn't plain marked as its code point and a longer name shortened, so it is still listed and its name can't pose as a line of the result. The SDK and the MCP server don't send a search yet.
 
 ## List, read and withdraw
 
@@ -89,6 +89,7 @@ A listing says Avow found the version within the seller's mandate named in it, a
 | `offer.superseded` | 409 | Avow listed this version and has since replaced it |
 | `offer.withdrawn` | 409 | Avow listed this version and it was withdrawn |
 | `offer.unknown` | 404 | A withdrawal names a version Avow holds no listing of for the business |
+| `offer.item_name_not_plain` | 403 | The item's name isn't plain text on one line, so it could pose as a line of a search result. A job's kind of work is held to this already |
 | `seller_mandate.missing` | 403 | The signing key holds no seller's mandate |
 | `seller_mandate.job_approval_unavailable` | 403 | The version is a job priced where the mandate asks a person to decide, and nothing lets a person approve a job's sale yet |
 | `seller_mandate.*` | 403 | The mandate's chain doesn't read as one, or the newest mandate doesn't allow the version, with the reason `sellerOfferProblem` gives |

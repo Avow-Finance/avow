@@ -29,6 +29,8 @@ export const REASON_CODES = {
   'offer.unknown': 'Avow holds no listing of that offer version for this business',
   'offer.listing_unavailable':
     "This Avow deployment doesn't hold seller's mandates, so it lists no offer, since every listing is checked against one",
+  'offer.item_name_not_plain':
+    "The item's name isn't plain text on one line, so Avow doesn't list it where other businesses' agents read it. Name it without line breaks, double quotes or characters that hide or reorder text",
   'offer.listings_full':
     'The business already lists as many items as one business can, so withdraw one before listing another',
   'capacity.exhausted':

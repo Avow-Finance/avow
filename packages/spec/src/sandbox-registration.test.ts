@@ -1,5 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
+import { BUSINESS_NAME_MAX, HELD_BUSINESS_NAME_MAX } from './business-name.js'
 import { isKeySignature } from './keychain.js'
 import {
   businessRegistrationBody,
@@ -8,6 +9,7 @@ import {
   SANDBOX_ENVIRONMENT,
   signBusinessRegistration,
 } from './sandbox-registration.js'
+import { toWire } from './wire.js'
 
 const FACTORY = '0x8fa7177c84be069df2a51f096ed28d5d661b8283'
 const domain = registrationDomain(42431, FACTORY)
@@ -90,5 +92,31 @@ describe('the sandbox registration', () => {
         rootKey: root,
       })
     expect((await sign()).registration.nonce).not.toBe((await sign()).registration.nonce)
+  })
+
+  it('signs a name a business registered before the cap, so its setup can be sent again, and refuses one the body cannot carry', async () => {
+    const root = privateKeyToAccount(generatePrivateKey())
+    const sign = (legalName: string) =>
+      signBusinessRegistration({
+        chainId: 42431,
+        factory: FACTORY,
+        audience: 'https://api.testnet.avow.finance',
+        account: root.address,
+        lock: '0x00000000000000000000000000000000000000b2',
+        legalName,
+        country: 'JP',
+        now: 1_800_000_000n,
+        validity: 120n,
+        rootKey: root,
+      })
+    const held = 'N'.repeat(HELD_BUSINESS_NAME_MAX)
+    const signed = await sign(held)
+    expect(signed.registration.legalName).toBe(held)
+    expect(businessRegistrationBody.safeParse(toWire(signed)).success).toBe(true)
+    expect((await sign('N'.repeat(BUSINESS_NAME_MAX))).registration.legalName).toHaveLength(
+      BUSINESS_NAME_MAX,
+    )
+    await expect(sign(`${held}s`)).rejects.toThrow(RangeError)
+    await expect(sign('')).rejects.toThrow(RangeError)
   })
 })

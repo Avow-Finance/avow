@@ -1,3 +1,4 @@
+import { BUSINESS_NAME_MAX, BUSINESS_NAME_RULE } from '@avow-finance/spec'
 import type { Address } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { Account } from 'viem/tempo'
@@ -15,6 +16,7 @@ import {
 import { Refusal } from './agent.js'
 import { liveKeys, lockCreatedIn } from './keys.js'
 import { limitTry, prepareSandboxBusiness } from './setup.js'
+import { memoryStore } from './store.js'
 
 describe("the business's side, when the agent writes to .avow", () => {
   it('stands on a mandate the chain holds, and asks nothing', async () => {
@@ -40,6 +42,55 @@ describe("the business's side, when the agent writes to .avow", () => {
     expect(prepared).toMatchObject({ signed: false, authority: 500, lock: LOCK })
     expect(asked).toEqual([])
     expect(chain.writes).toEqual([])
+  })
+
+  it('stands on a business set up under a name longer than new names may be', async () => {
+    const b = await enrolledBusiness()
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: b.root.address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      keys: [{ key: b.agentKey, block: LOCK_BLOCK + 5n, witness: b.witness }],
+    })
+    const { asked, prompts } = recordingPrompts()
+    const prepared = await prepareSandboxBusiness({
+      config: { ...config, name: 'N'.repeat(BUSINESS_NAME_MAX + 30) },
+      prompts,
+      store: b.store,
+      deployment,
+      client: chain.client,
+      session: null,
+      log: () => {},
+    })
+    expect(prepared).toMatchObject({ signed: false, lock: LOCK })
+    expect(asked).toEqual([])
+  })
+
+  it('refuses to register a new business under a longer name, before it asks anything', async () => {
+    const store = memoryStore()
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: Account.fromSecp256k1(generatePrivateKey()).address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+    })
+    const { asked, prompts } = recordingPrompts(true)
+    await expect(
+      prepareSandboxBusiness({
+        config: { ...config, name: 'N'.repeat(BUSINESS_NAME_MAX + 1) },
+        prompts,
+        store,
+        deployment,
+        client: chain.client,
+        session: null,
+        log: () => {},
+      }),
+    ).rejects.toThrow(BUSINESS_NAME_RULE)
+    expect(asked).toEqual([])
+    expect(await store.read('business')).toBeNull()
   })
 
   it('stands on its lock from an earlier factory after the sandbox moves to a newer one', async () => {
@@ -101,6 +152,44 @@ describe("the business's side, when the agent writes to .avow", () => {
     // Declined, it never asked for the passphrase, sent nothing and wrote nothing.
     expect(chain.writes).toEqual([])
     expect(await b.store.read('business')).toBe(before)
+  })
+
+  it('sends the setup of a business set up before the cap again under its longer name', async () => {
+    const b = await enrolledBusiness()
+    const edited = JSON.parse((await b.store.read('business')) as string)
+    edited.business.lock = '0x000000000000000000000000000000000000beef'
+    await b.store.write('business', JSON.stringify(edited))
+    const chain = fakeChain({
+      factory: MODERATO_FACTORY,
+      account: b.root.address,
+      lock: LOCK,
+      lockBlock: LOCK_BLOCK,
+      latest: LOCK_BLOCK + 10n,
+      keys: [{ key: b.agentKey, block: LOCK_BLOCK + 5n, witness: b.witness }],
+    })
+    const name = 'N'.repeat(BUSINESS_NAME_MAX + 30)
+    const sent: string[] = []
+    const refusing = (async (_input: unknown, init?: RequestInit) => {
+      const body = init?.body
+      sent.push(body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? ''))
+      return new Response(
+        JSON.stringify({ error: { reason: 'sandbox.taken', message: 'Taken for the test' } }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+    await expect(
+      prepareSandboxBusiness({
+        config: { ...config, name },
+        prompts: recordingPrompts(true).prompts,
+        store: b.store,
+        deployment,
+        client: chain.client,
+        session: null,
+        log: () => {},
+        fetch: refusing,
+      }),
+    ).rejects.toThrow('sandbox.taken')
+    expect(sent.some((body) => body.includes(name))).toBe(true)
   })
 
   it("asks for a new mandate when the agent's file names a key the chain revoked", async () => {
