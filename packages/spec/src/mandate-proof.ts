@@ -2,7 +2,6 @@ import type { Address, Hex } from 'viem'
 import { mandateVersion, type Signed } from './eip712.js'
 import { bytes32 } from './json-fields.js'
 import type { FirstMandate, Mandate } from './types.js'
-import { MESSAGE_VERSIONS } from './version.js'
 import { mandateJson, type Parsed, parseSigned } from './wire.js'
 
 /**
@@ -12,7 +11,8 @@ import { mandateJson, type Parsed, parseSigned } from './wire.js'
  * account's word on exactly this mandate. One passkey prompt then covers the mandate, the key and
  * its limits. The envelope is the one a signed mandate carries, so a reader checks the same chain
  * and lock, and `mandateHash` hashes the message the same way. Only a first mandate can be shown
- * this way, since the transaction bound the first mandate's hash and no later one.
+ * this way, since the transaction bound the first mandate's hash and no later one. It signs at
+ * version 1, or at version 3 when it carries a price limit.
  */
 export type AuthorizedMandate = Omit<Signed<FirstMandate>, 'signature'> & {
   /** The transaction that put the agent's key on the account with this mandate's hash. */
@@ -56,7 +56,7 @@ export function parseMandateProof(
   if (!read.ok) return read
   const { signature: _, message, ...rest } = read.value
   const { replaces, ...first } = message
-  if (replaces !== undefined || rest.schemaVersion !== MESSAGE_VERSIONS.Mandate) {
+  if (replaces !== undefined || rest.schemaVersion !== mandateVersion(first)) {
     return { ok: false, reason: 'message.invalid' }
   }
   return { ok: true, value: { ...rest, message: first, authorizedIn: tx.data as Hex } }

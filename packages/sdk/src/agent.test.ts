@@ -621,6 +621,31 @@ describe('committing to a quote the supplier signed', () => {
     expect(capped.calls).toEqual(['approveReserve'])
   })
 
+  it("refuses a job priced over the mandate's price limit before it signs or asks Avow", async () => {
+    // The job's price is $40, paid on delivery, a dollar over the limit.
+    const priced = await setup({
+      mandate: { categories: ['compute', JOB_CATEGORY], priceCapPerCommitment: dollars(39) },
+    })
+    const agent = createAgent({
+      ...priced.config,
+      dependencies: { readers: [computeReader(priced.supplier.account)] },
+    })
+    expect(await agent.commitToQuote(await quoteFor(priced))).toEqual({
+      ok: false,
+      reason: 'mandate.over_price_limit',
+      layer: 'sdk',
+    })
+    expect(priced.calls).toEqual([])
+    const fits = await setup({
+      mandate: { categories: ['compute', JOB_CATEGORY], priceCapPerCommitment: dollars(40) },
+    })
+    const roomy = createAgent({
+      ...fits.config,
+      dependencies: { readers: [computeReader(fits.supplier.account)] },
+    })
+    expect((await roomy.commitToQuote(await quoteFor(fits))).ok).toBe(true)
+  })
+
   it('refuses a booking it has no reader for', async () => {
     const s = await setup({ mandate: { categories: ['compute', JOB_CATEGORY] } })
     const result = await s.agent.commitToQuote(await quoteFor(s))

@@ -58,6 +58,7 @@ export const APPROVAL_NEEDS = [
   'mandate.over_commitment_cap',
   'mandate.over_open_reserves_cap',
   'mandate.over_payment_limit',
+  'mandate.over_price_limit',
   'mandate.ends_before_window',
 ] as const satisfies readonly ReasonCode[]
 export type ApprovalNeed = (typeof APPROVAL_NEEDS)[number]

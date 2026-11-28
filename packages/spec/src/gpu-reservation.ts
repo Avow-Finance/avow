@@ -27,6 +27,13 @@ export interface GpuSubject {
   windowDuration: bigint
 }
 
+/**
+ * What `count` GPUs cost for a window of `seconds` at a rate per GPU-hour, in micros, rounded down
+ * to a whole micro. An offer's quote and a reservation's price both read it, so the two agree.
+ */
+export const gpuWindowPrice = (perGpuHour: bigint, count: number, seconds: bigint): bigint =>
+  (perGpuHour * BigInt(count) * seconds) / 3600n
+
 /** GPU reservation terms. Usage is charged per GPU-hour and paid like any other purchase. */
 export type GpuReservationTerms = TermsOf<GpuSubject, typeof GPU_RESERVATION>
 

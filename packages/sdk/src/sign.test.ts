@@ -83,6 +83,18 @@ describe('signing for a business account', () => {
     expect((await signMandate(first, DOMAIN, accountSigner(account, root))).schemaVersion).toBe('1')
   })
 
+  it('signs a mandate with a price limit at version 3, first or replacement, with a passkey', async () => {
+    const { root, account } = passkeyBusiness()
+    const first = { ...mandateFor(account), priceCapPerCommitment: dollars(200) }
+    const replacement = { ...first, nonce: first.nonce + 1n, replaces: mandateHash(first, DOMAIN) }
+    for (const m of [first, replacement]) {
+      const signed = await signMandate(m, DOMAIN, accountSigner(account, root))
+      expect(signed.schemaVersion).toBe('3')
+      const td = mandateTypedData(signed.message, DOMAIN)
+      expect(await isSignedBy(td, signed.signature, account, keychain)).toBe(true)
+    }
+  })
+
   it('produces nothing the keychain accepts when the key signs bare', async () => {
     const { root, account } = passkeyBusiness()
     const td = mandateTypedData(mandateFor(account), DOMAIN)

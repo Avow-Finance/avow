@@ -30,6 +30,7 @@ import type {
 import {
   DOMAIN_NAME,
   isSupportedMessageVersion,
+  MANDATE_PRICE_VERSION,
   MANDATE_REPLACEMENT_VERSION,
   MESSAGE_VERSIONS,
   TERMS_AGREEMENT_SELLER_VERSION,
@@ -444,9 +445,29 @@ export const MANDATE_REPLACEMENT_TYPES = {
   Mandate: [...MANDATE_TYPES.Mandate, { name: 'replaces', type: 'bytes32' }],
 } as const
 
-/** The domain version a mandate signs at, which `replaces` decides. */
-export const mandateVersion = (m: Pick<Mandate, 'replaces'>): string =>
-  m.replaces === undefined ? MESSAGE_VERSIONS.Mandate : MANDATE_REPLACEMENT_VERSION
+/**
+ * A mandate's types when it limits the price of one commitment: a first mandate's fields, the price
+ * limit, then the hash of the mandate it replaces, which is the zero hash for a first mandate.
+ */
+export const MANDATE_PRICE_TYPES = {
+  PaymentLimit: MANDATE_TYPES.PaymentLimit,
+  Mandate: [
+    ...MANDATE_TYPES.Mandate,
+    { name: 'priceCapPerCommitment', type: 'uint256' },
+    { name: 'replaces', type: 'bytes32' },
+  ],
+} as const
+
+/**
+ * The domain version a mandate signs at. A price limit decides it first, and `replaces` decides it
+ * for a mandate with none.
+ */
+export const mandateVersion = (m: Pick<Mandate, 'replaces' | 'priceCapPerCommitment'>): string =>
+  m.priceCapPerCommitment !== undefined
+    ? MANDATE_PRICE_VERSION
+    : m.replaces === undefined
+      ? MESSAGE_VERSIONS.Mandate
+      : MANDATE_REPLACEMENT_VERSION
 
 export const TERMS_AGREEMENT_TYPES = {
   TermsAgreement: [
@@ -668,11 +689,29 @@ export const TIMESTAMP_TYPES = {
 } as const
 
 /**
- * A mandate's EIP-712 typed data. A first mandate signs at version 1 under `MANDATE_TYPES`, exactly
- * as before replacements existed, and a replacement at version 2 with `replaces` as its last field.
+ * A mandate's EIP-712 typed data. A mandate with no price limit signs as it did before the limit
+ * existed: a first mandate at version 1 under `MANDATE_TYPES`, and a replacement at version 2 with
+ * `replaces` as its last field. A mandate with a price limit signs at version 3 under
+ * `MANDATE_PRICE_TYPES`, where a first mandate names the zero hash as the one it replaces. A
+ * replacement that names the zero hash is refused, since it would sign as a first mandate.
  */
 export function mandateTypedData(m: Mandate, d: AvowDomain) {
   const fields = mandateFields(m)
+  if (m.priceCapPerCommitment !== undefined) {
+    if (m.replaces?.toLowerCase() === ZERO_HASH) {
+      throw new RangeError('A replacement mandate names the mandate it replaces by its hash')
+    }
+    return {
+      domain: domain(d, MANDATE_PRICE_VERSION),
+      types: MANDATE_PRICE_TYPES,
+      primaryType: 'Mandate' as const,
+      message: {
+        ...fields,
+        priceCapPerCommitment: m.priceCapPerCommitment,
+        replaces: m.replaces ?? ZERO_HASH,
+      },
+    }
+  }
   if (m.replaces === undefined) {
     return {
       domain: domain(d, MESSAGE_VERSIONS.Mandate),
@@ -985,19 +1024,26 @@ export function mandateHash(m: Mandate, d: AvowDomain): Hex {
 export type MandateTypedData = ReturnType<typeof mandateTypedData>
 
 /**
- * Whether a mandate's typed data is a replacement's. The two tables differ only in `replaces`, so
- * its presence in the message says which one it is, and a signer narrows on this before signing.
+ * Whether a mandate's typed data is a version 2 replacement's, which carries `replaces` and no
+ * price limit. A signer narrows on this and `isPriceTypedData` before signing.
  */
 export const isReplacementTypedData = (
   td: MandateTypedData,
 ): td is Extract<MandateTypedData, { types: typeof MANDATE_REPLACEMENT_TYPES }> =>
-  'replaces' in td.message
+  td.types === MANDATE_REPLACEMENT_TYPES
+
+/** Whether a mandate's typed data is a version 3 mandate's, which carries a price limit. */
+export const isPriceTypedData = (
+  td: MandateTypedData,
+): td is Extract<MandateTypedData, { types: typeof MANDATE_PRICE_TYPES }> =>
+  td.types === MANDATE_PRICE_TYPES
 
 /**
- * The digest of a mandate's typed data under whichever table it signs with. Both branches make
+ * The digest of a mandate's typed data under whichever table it signs with. Every branch makes
  * the same call, since viem types its argument by one table, so each has to see a single table.
  */
 function hashMandateTypedData(td: MandateTypedData): Hex {
+  if (isPriceTypedData(td)) return hashTypedData(td)
   return isReplacementTypedData(td) ? hashTypedData(td) : hashTypedData(td)
 }
 
@@ -1059,10 +1105,14 @@ interface InterfacesMatchTables {
   >
   Mandate: SameFields<
     keyof ReplacementMandate | 'approvalAbove',
+    FieldNames<typeof MANDATE_PRICE_TYPES.Mandate>
+  >
+  ReplacementMandate: SameFields<
+    Exclude<keyof ReplacementMandate, 'priceCapPerCommitment'> | 'approvalAbove',
     FieldNames<typeof MANDATE_REPLACEMENT_TYPES.Mandate>
   >
   FirstMandate: SameFields<
-    keyof MandateFields | 'approvalAbove',
+    Exclude<keyof MandateFields, 'priceCapPerCommitment'> | 'approvalAbove',
     FieldNames<typeof MANDATE_TYPES.Mandate>
   >
   PaymentLimit: SameFields<keyof PaymentLimit, FieldNames<typeof MANDATE_TYPES.PaymentLimit>>
@@ -1115,6 +1165,7 @@ interface InterfacesMatchTables {
 const _interfacesMatchTables: InterfacesMatchTables = {
   ApprovalDecision: true,
   Mandate: true,
+  ReplacementMandate: true,
   FirstMandate: true,
   PaymentLimit: true,
   SellerMandate: true,

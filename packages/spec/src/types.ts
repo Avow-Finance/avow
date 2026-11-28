@@ -117,6 +117,13 @@ export interface MandateFields {
   currency: Currency
   capPerCommitment: bigint
   capOpenReserves: bigint
+  /**
+   * The most one commitment's price may come to, in micros, as `termsPrice` reads it from the
+   * terms. The price is paid outside the lock and the lock never reads it, so the SDK and Avow's
+   * API are the two layers that hold an agent to this. A mandate that leaves it out puts no limit
+   * on the price, and signs exactly as it did before the field existed.
+   */
+  priceCapPerCommitment?: bigint
   /** Business ids of the suppliers the agent may commit to. */
   suppliers: readonly string[]
   categories: readonly string[]
@@ -126,13 +133,17 @@ export interface MandateFields {
   nonce: bigint
 }
 
-/** The mandate an agent's key was put on with, which replaces none and signs at version 1. */
+/**
+ * The mandate an agent's key was put on with, which replaces none. It signs at version 1, or at
+ * `MANDATE_PRICE_VERSION` when it carries a price limit.
+ */
 export type FirstMandate = MandateFields & { replaces?: never }
 
 /**
  * A mandate that replaces another, for the same business, lock and agent key, when the
  * administrator changed the agent's limits in place. `replaces` is the hash of the mandate it
- * replaces. It signs at `MANDATE_REPLACEMENT_VERSION`, and only the business account's own
+ * replaces. It signs at `MANDATE_REPLACEMENT_VERSION`, or at `MANDATE_PRICE_VERSION` when it
+ * carries a price limit, and only the business account's own
  * signature authorizes it, since the key on the chain still carries the first mandate's hash.
  */
 export type ReplacementMandate = MandateFields & { replaces: Hex }
