@@ -117,17 +117,15 @@ export const SANDBOX_PATHS = {
   offerListings: '/v1/sandbox/offers/listings',
   /**
    * Where a selling agent reads every current listing of its business, oldest first, as
-   * `OfferListings`, with an empty object as an `OfferListingsRequest` signed the same way. Any
-   * business's registered signing key may read, whatever the business's standing, so one that left
-   * the sandbox still sees what it listed. A business with none answers an empty list.
+   * `OfferListings`, with an empty object as an `OfferListingsRequest` signed the same way. A
+   * business with none answers an empty list.
    */
   offerListingsMine: '/v1/sandbox/offers/listings/mine',
   /**
    * Where a selling agent withdraws an item's current version from the directory, as an
    * `OfferWithdrawalRequest` signed the same way, and Avow answers with an `OfferWithdrawal`.
-   * Withdrawing needs no seller's mandate, since it only takes an offer away, and any business's
-   * registered signing key may withdraw its business's listings, whatever the business's standing.
-   * The item lists nothing until a new version of it is listed. When a business registers a new
+   * Withdrawing needs no seller's mandate, since it only takes an offer away. The item lists
+   * nothing until a new version of it is listed. When a business registers a new
    * signing key, Avow ends every current listing of the old one as withdrawn. A version Avow holds for the business but that
    * isn't current is `offer.superseded` or `offer.withdrawn`, with status 409, and an id Avow
    * holds no listing of for the business is `offer.unknown`, with status 404.

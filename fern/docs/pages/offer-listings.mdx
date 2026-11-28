@@ -27,7 +27,7 @@ const listed = await services.listWithAvow(id)
 if (!listed.ok) console.log(listed.notice)
 ```
 
-Each call signs with the agent's signing key under its business's lock. Only a sandbox business lists, and a search result is to say so on each supplier, as `OfferMatch` does with `sandbox: true`. Passing a business check doesn't change that, and nothing about a listing says the business is verified. A business reads and withdraws its own listings whatever its standing, so one that leaves the sandbox can still take them down.
+Each call signs with the agent's signing key under its business's lock. Only a sandbox business lists, and a search result is to say so on each supplier, as `OfferMatch` does with `sandbox: true`. Passing a business check doesn't change that, and nothing about a listing says the business is verified.
 
 | Route | Body | Answer |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ A listing says Avow found the version within the seller's mandate named in it, a
 
 | Reason | Status | Meaning |
 | --- | --- | --- |
-| `request.signer_unknown` | 401 | The signer isn't a business's registered signing key, or for a listing, a sandbox business's |
+| `request.signer_unknown` | 401 | The signer isn't the signing key a sandbox business registers now |
 | `message.wrong_contract` | 400 | The request wasn't signed under the business's own lock |
 | `message.invalid` | 400 | The body doesn't parse, or the version names another business |
 | `offer.listing_unavailable` | 409 | The deployment holds no seller's mandates, so it lists nothing |
