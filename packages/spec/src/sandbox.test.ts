@@ -56,6 +56,7 @@ const events: SessionEvent[] = [
       capPerCommitment: dollars(500),
       price: null,
       priceCapPerCommitment: null,
+      pricePeriodLimit: null,
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     },
@@ -130,6 +131,7 @@ describe('session events', () => {
           capPerCommitment: '0',
           price: null,
           priceCapPerCommitment: null,
+          pricePeriodLimit: null,
           dailyLimit: null,
           dailyLeft: null,
         },
@@ -194,6 +196,7 @@ describe('refusalSentence', () => {
       capPerCommitment: dollars(500),
       price: null,
       priceCapPerCommitment: null,
+      pricePeriodLimit: null,
       dailyLimit: dollars(1000),
       dailyLeft: dollars(800),
     }
@@ -236,6 +239,7 @@ describe('refusalReason', () => {
     capPerCommitment: dollars(350),
     price: null,
     priceCapPerCommitment: null,
+    pricePeriodLimit: null,
     dailyLimit: dollars(500),
     dailyLeft: dollars(300),
   }
@@ -270,6 +274,19 @@ describe('refusalReason', () => {
     )
     expect(refusalReason({ code: 'mandate.over_price_limit', layer: 'sdk', amounts })).toBe(
       "This booking's price is more than your mandate allows for one commitment, so the SDK refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
+    )
+  })
+
+  it('says what the period limit allows, what was committed, and that the lock never reads a price', () => {
+    const over = {
+      ...amounts,
+      price: dollars(240),
+      pricePeriodLimit: { limit: dollars(2000), period: 30n * 86_400n, committed: dollars(1900) },
+    }
+    expect(
+      refusalReason({ code: 'mandate.over_price_period_limit', layer: 'avow', amounts: over }),
+    ).toBe(
+      "This booking's price of $240 would take what your agent commits within any 30 days past the $2,000 your mandate allows, with $1,900 already committed, so Avow refused it and no money moved. The lock never reads a price, so the SDK and Avow are what hold your agent to this limit.",
     )
   })
 

@@ -37,6 +37,7 @@ describe('Refusal', () => {
       capPerCommitment: dollars(500),
       price: null,
       priceCapPerCommitment: null,
+      pricePeriodLimit: null,
       dailyLimit: dollars(500),
       dailyLeft: dollars(300),
     }

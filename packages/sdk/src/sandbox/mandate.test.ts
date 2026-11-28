@@ -47,6 +47,7 @@ const check = (reserve: number, open: number, supplier = 'avow-demo-gpu') =>
     },
     token: moderatoUsdToken(TOKEN),
     openReserves: dollars(open),
+    committedInPeriod: 0n,
     revoked: false,
     now: NOW,
     profile: TESTNET_DEMO_PROFILE,

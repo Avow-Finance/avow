@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { accountSigner, signMandate } from '../sign.js'
 import { deployment, domain, LOCK, supplier, TOKEN } from '../test/sandbox-business.js'
 import { sandboxMandate } from './mandate.js'
-import { memoryStore, saveAgentItem } from './store.js'
+import { addCommitment, memoryStore, saveAgentItem } from './store.js'
 
 // What the lock holds under the mandate and what the key can still move today, in base units.
 const chain = vi.hoisted(() => ({ open: 0n, leftToday: 0n, sent: 0, toSeller: 0 }))
@@ -40,7 +40,15 @@ const STRANGER = 'sandbox-00000000000000000000000000000000000000d4'
  * supplier's compute unless `o` names other suppliers and categories.
  */
 async function enrolled(
-  o: { suppliers?: string[]; categories?: string[]; days?: bigint; priceCap?: bigint } = {},
+  o: {
+    suppliers?: string[]
+    categories?: string[]
+    days?: bigint
+    priceCap?: bigint
+    period?: { amount: bigint; period: bigint }
+    /** Commitments the agent already made, each with its price and how long ago, in seconds. */
+    made?: { price: bigint; ago: bigint }[]
+  } = {},
 ) {
   const root = Account.fromSecp256k1(generatePrivateKey())
   const agentKey = generatePrivateKey()
@@ -56,6 +64,7 @@ async function enrolled(
     capPerCommitment: dollars(500),
     capOpenReserves: dollars(1000),
     ...(o.priceCap === undefined ? {} : { priceCapPerCommitment: o.priceCap }),
+    ...(o.period === undefined ? {} : { pricePeriodLimit: o.period }),
     dailyLimit: dollars(1000),
     expiry: BigInt(Math.floor(Date.now() / 1000)) + (o.days ?? 300n) * 86_400n,
   })
@@ -76,6 +85,24 @@ async function enrolled(
     keyAuthorizedIn: `0x${'ab'.repeat(32)}`,
     suppliers: [supplier],
   })
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000))
+  for (const [i, c] of (o.made ?? []).entries()) {
+    await addCommitment(store, {
+      reference: {
+        kind: 'commitment',
+        chainId: deployment.chainId,
+        lock: LOCK,
+        commitmentId: `0x${(i + 1).toString(16).padStart(64, '0')}`,
+        side: 'buyer',
+        termsHash: `0x${'cc'.repeat(32)}`,
+      },
+      amount: dollars(100),
+      supplier: supplier.id,
+      mandateHash: mandateHash(message, domain),
+      madeAt: nowSeconds - c.ago,
+      price: c.price,
+    })
+  }
   // Anything sent anywhere is counted, since a check sends nothing. The agent reads its mandates
   // from Avow once when it starts, which this API answers it has no route for, so the agent keeps
   // the one it was enrolled with.
@@ -125,10 +152,38 @@ describe("checking a booking before it's made", () => {
         capPerCommitment: dollars(500),
         price: dollars(24),
         priceCapPerCommitment: null,
+        pricePeriodLimit: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(800),
       },
     })
+    expect(chain.sent).toBe(0)
+  })
+
+  it('holds a booking to the limit over a period, counting what it made within the window', async () => {
+    const DAY = 86_400n
+    const period = { amount: dollars(100), period: 7n * DAY }
+    // $70 made two days ago counts, $500 made eight days ago doesn't, and this booking is $24.
+    const made = [
+      { price: dollars(70), ago: 2n * DAY },
+      { price: dollars(500), ago: 8n * DAY },
+    ]
+    const fits = await enrolled({ period, made })
+    expect(fits.pricePeriodLimit).toEqual({ limit: 100, periodSeconds: 7n * DAY })
+    expect(await fits.committedInPeriod()).toBe(70)
+    expect(await fits.check(booking(300))).toMatchObject({
+      passes: true,
+      amounts: {
+        pricePeriodLimit: { limit: dollars(100), period: 7n * DAY, committed: dollars(70) },
+      },
+    })
+    const full = await enrolled({ period, made: [{ price: dollars(77), ago: DAY }] })
+    expect(await full.check(booking(300))).toMatchObject({
+      passes: false,
+      code: 'mandate.over_price_period_limit',
+      layer: 'sdk',
+    })
+    expect((await enrolled()).pricePeriodLimit).toBeNull()
     expect(chain.sent).toBe(0)
   })
 
@@ -227,6 +282,7 @@ describe("checking a service order before it's sent", () => {
         capPerCommitment: dollars(500),
         price: dollars(200),
         priceCapPerCommitment: null,
+        pricePeriodLimit: null,
         dailyLimit: dollars(1000),
         dailyLeft: dollars(1000),
       },

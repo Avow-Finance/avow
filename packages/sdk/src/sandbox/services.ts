@@ -25,6 +25,7 @@ import {
   serviceOfferTerms,
   serviceOrderProblem,
   serviceQuoteProblem,
+  termsPrice,
   toWire,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual, toHex } from 'viem'
@@ -630,6 +631,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
         supplier: mine.offer.supplier,
         mandateHash: quote.agreement.mandateHash,
         madeAt: systemClock(),
+        price: termsPrice(quote.terms),
       })
     })
 

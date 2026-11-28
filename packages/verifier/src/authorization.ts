@@ -246,7 +246,9 @@ export async function checkAuthorization(
     })
     if (proof) return refuse(proof)
     // The parts a supplier can check. Open reserves and revocation live with the lock and the
-    // key, which the checks above read, and Avow's signature stands for any human approval.
+    // key, which the checks above read, and Avow's signature stands for any human approval. What
+    // the buyer's agent committed over the mandate's period is counted by the SDK and Avow, and a
+    // supplier holds no such count.
     const limits = checkMandate({
       mandate,
       request: {
@@ -261,6 +263,7 @@ export async function checkAuthorization(
       },
       token,
       openReserves: 0n,
+      committedInPeriod: 'not_counted',
       revoked: false,
       now: input.now,
       profile: config.profile,

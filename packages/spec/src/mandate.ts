@@ -21,6 +21,19 @@ import type { ApprovalRule, ChainedTerms, Mandate, ReserveRequest } from './type
  */
 export const PRICE_LIMIT_ENFORCED_BY = ['sdk', 'avow'] as const
 
+/** The longest window a limit over a period may count back, a year of 366 days, in seconds. */
+export const MAX_PRICE_PERIOD = 366n * 86_400n
+
+/**
+ * What the agent's key committed within its mandate's rolling window before this commitment, as
+ * the sum of each commitment's price, or that the caller doesn't count it. Avow counts every
+ * commitment it approved for the key, under every mandate the key held, by when it approved each,
+ * whatever became of it after. The SDK counts the commitments it made. A supplier's verifier holds
+ * no such count, and checks the rest of the mandate with `not_counted`, which leaves the limit to
+ * the SDK and Avow.
+ */
+export type CommittedInPeriod = bigint | 'not_counted'
+
 export interface MandateCheckInput {
   mandate: Mandate
   /**
@@ -34,6 +47,11 @@ export interface MandateCheckInput {
   token: RailToken
   /** Micros already reserved and still open under this mandate, as the lock reports them. */
   openReserves: bigint
+  /**
+   * The prices the agent's key committed within the mandate's period, counted back from `now`,
+   * when the mandate has a limit over a period. Read only then.
+   */
+  committedInPeriod: CommittedInPeriod
   revoked: boolean
   now: bigint
   profile: TermsProfile
@@ -51,6 +69,15 @@ export function validateMandate(m: Mandate): ReasonCode | null {
   if (m.capPerCommitment <= 0n || m.capPerCommitment > m.capOpenReserves) return 'mandate.invalid'
   if (m.priceCapPerCommitment !== undefined && m.priceCapPerCommitment <= 0n) {
     return 'mandate.invalid'
+  }
+  const period = m.pricePeriodLimit
+  if (period !== undefined) {
+    if (period.amount <= 0n || period.period <= 0n || period.period > MAX_PRICE_PERIOD) {
+      return 'mandate.invalid'
+    }
+    if (m.priceCapPerCommitment !== undefined && m.priceCapPerCommitment > period.amount) {
+      return 'mandate.invalid'
+    }
   }
   if (m.paymentLimits.length === 0 || m.paymentLimits.some((l) => l.amount <= 0n)) {
     return 'mandate.invalid'
@@ -84,6 +111,23 @@ export function priceLimitProblem(
 ): 'mandate.over_price_limit' | null {
   if (m.priceCapPerCommitment === undefined) return null
   return termsPrice(terms) > m.priceCapPerCommitment ? 'mandate.over_price_limit' : null
+}
+
+/**
+ * Whether a commitment priced as these terms are would take what the agent's key committed within
+ * the mandate's rolling window past its limit over a period, or null when it wouldn't, when the
+ * mandate has no such limit, or when the caller doesn't count the window. `checkMandate` makes the
+ * same comparison.
+ */
+export function periodLimitProblem(
+  m: Pick<Mandate, 'pricePeriodLimit'>,
+  terms: AnyTerms | ChainedTerms,
+  committed: CommittedInPeriod,
+): 'mandate.over_price_period_limit' | null {
+  if (m.pricePeriodLimit === undefined || committed === 'not_counted') return null
+  return committed + termsPrice(terms) > m.pricePeriodLimit.amount
+    ? 'mandate.over_price_period_limit'
+    : null
 }
 
 /**
@@ -142,6 +186,8 @@ export function checkMandate(input: MandateCheckInput): MandateCheck {
   // an agent to the price limit.
   const overPrice = priceLimitProblem(m, r.terms)
   if (overPrice) return deny(overPrice)
+  const overPeriod = periodLimitProblem(m, r.terms, input.committedInPeriod)
+  if (overPeriod) return deny(overPeriod)
   if (mandateEndsBeforeWindow(m, enforced)) return deny('mandate.ends_before_window')
 
   if (handsToPerson(m.approvalRule, amount)) {

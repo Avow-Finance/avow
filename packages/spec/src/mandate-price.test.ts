@@ -64,6 +64,7 @@ function input(mandate: Mandate, rest: Partial<MandateCheckInput> = {}): Mandate
     request: demoRequest(agent.address),
     token: TOKEN,
     openReserves: 0n,
+    committedInPeriod: 0n,
     revoked: false,
     now: NOW,
     profile: TESTNET_DEMO_PROFILE,

@@ -115,6 +115,10 @@ describe('a mandate that replaces another', () => {
     })
     expect(parseMandateProof(envelope(first, SIGNED, '4'), expected)).toEqual({
       ok: false,
+      reason: 'message.invalid',
+    })
+    expect(parseMandateProof(envelope(first, SIGNED, '5'), expected)).toEqual({
+      ok: false,
       reason: 'message.schema_unknown',
     })
   })

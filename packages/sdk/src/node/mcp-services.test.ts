@@ -50,10 +50,16 @@ const asked = {
 }
 
 /** A folder on disk with a connected agent, as the MCP server finds one. */
-async function folder(businessId: string, sells = false, priceCap?: bigint) {
+async function folder(
+  businessId: string,
+  sells = false,
+  priceCap?: bigint,
+  period?: { amount: bigint; period: bigint },
+) {
   const made = await folderWithAgent(businessId, {
     sells,
     ...(priceCap === undefined ? {} : { priceCap }),
+    ...(period === undefined ? {} : { period }),
     suppliers: [SELLER],
     categories: [SERVICE_CATEGORY],
   })
@@ -167,6 +173,44 @@ describe("the MCP server's tools for services", () => {
     const none = await open.call('authority', {})
     expect(none.structured).toMatchObject({ pricePerCommitment: null })
     expect(none.text).toMatch(/Its mandate puts no limit on the price of a commitment/)
+  })
+
+  it('give the limit over a period, what the agent committed within it, and the two layers', async () => {
+    const sellerSide = mcpAgent(await folder(SELLER, true), { fetch: avow(() => null).fetch })
+    const { structured } = await sellerSide.call('publish_offer', asked)
+    const account = '0x00000000000000000000000000000000000000c3'
+    const fetch = avow((path) =>
+      path === SANDBOX_PATHS.supplier(SELLER)
+        ? json({ businessId: SELLER, account, payee: account, signingKey: account })
+        : null,
+    ).fetch
+    const period = { amount: 120_000_000n, period: 7n * 86_400n }
+    const limited = mcpAgent(await folder(BUYER, false, undefined, period), { fetch })
+    const authority = await limited.call('authority', {})
+    expect(authority.structured).toMatchObject({
+      pricePerPeriod: {
+        limit: 120,
+        periodSeconds: 604_800,
+        committed: 0,
+        enforcedBy: ['sdk', 'avow'],
+      },
+    })
+    expect(authority.text).toMatch(
+      /What it commits within any 7 days can come to at most \$120, a limit the SDK and Avow hold it to, and \$0 is committed now by its own count\./,
+    )
+    // Two units come to $100, within the $120, and three to $150, past it.
+    const fits = await limited.call('check', { offer: structured.offer, quantity: 2 })
+    expect(fits.structured).toMatchObject({
+      status: 'would_pass',
+      amounts: { pricePerPeriod: { limit: 120, committed: 0, enforcedBy: ['sdk', 'avow'] } },
+    })
+    const over = await limited.call('check', { offer: structured.offer, quantity: 3 })
+    expect(over.structured).toMatchObject({
+      status: 'would_be_refused',
+      code: 'mandate.over_price_period_limit',
+      layer: 'sdk',
+    })
+    expect(over.text).toMatch(/within any 7 days past the \$120 your mandate allows/)
   })
 
   it('list a published offer with Avow, withdraw it, and say plainly when Avow lists none', async () => {

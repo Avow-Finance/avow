@@ -169,6 +169,7 @@ export async function liveWorld(options: {
               capPerCommitment: agent.mandate.message.capPerCommitment,
               price: null,
               priceCapPerCommitment: agent.mandate.message.priceCapPerCommitment ?? null,
+              pricePeriodLimit: null,
               dailyLimit: null,
               dailyLeft: null,
             },

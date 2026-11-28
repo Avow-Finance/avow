@@ -87,6 +87,7 @@ describe('job terms', () => {
         request: { ...demoRequest(agent.address), category, terms },
         token: TOKEN,
         openReserves: 0n,
+        committedInPeriod: 0n,
         revoked: false,
         now: NOW,
         profile: TESTNET_DEMO_PROFILE,

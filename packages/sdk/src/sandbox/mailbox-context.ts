@@ -25,7 +25,7 @@ import { pause } from './connect.js'
 import { loadSandboxDeployment } from './deployment.js'
 import { fundFees } from './fees.js'
 import { SANDBOX_SCREEN_URL } from './session.js'
-import { type AgentItem, loadAgentItem, type SandboxStore } from './store.js'
+import { type AgentItem, committedWithin, loadAgentItem, type SandboxStore } from './store.js'
 import { loadSupplierItem, type SupplierItem } from './supplier-key.js'
 import { sandboxSupplierProfile } from './supplier-profile.js'
 import { trustedChainReader, trustedLockReaders } from './trusted-readers.js'
@@ -145,6 +145,7 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
         return { transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber }
       },
       dependencies: { readers: lockReaders },
+      committedInPeriod: (period) => committedWithin(store, period, systemClock()),
     }).commitToQuote(quote)
   }
 

@@ -10,6 +10,7 @@ import {
   agentLabelOf,
   agentLabelProblem,
   describeReason,
+  formatPeriod,
   formatUsd,
   isApprovalRequestId,
   isSessionId,
@@ -18,6 +19,7 @@ import {
   PRICE_LIMIT_LAYERS,
   publishedOffer,
   quotedLabel,
+  type RefusalAmounts,
   refusalSentence,
   SANDBOX_TOOLS,
   type SandboxTool,
@@ -98,6 +100,49 @@ const usd = (dollars: number | null) =>
  */
 const priceLimit = (dollars: number | null) =>
   dollars === null ? null : { limit: dollars, enforcedBy: [...PRICE_LIMIT_ENFORCED_BY] }
+
+/**
+ * A mandate's limit over a period as a tool's structured answer gives it, in dollars, with what
+ * the agent committed within it as its own records count it, or null when it has none.
+ */
+const periodLimit = (
+  limit: { limit: number; periodSeconds: bigint } | null,
+  committed: number | null,
+) =>
+  limit === null
+    ? null
+    : {
+        limit: limit.limit,
+        periodSeconds: Number(limit.periodSeconds),
+        committed,
+        enforcedBy: [...PRICE_LIMIT_ENFORCED_BY],
+      }
+
+/** A refusal's or a check's limit over a period, in dollars, as a tool's structured answer gives it. */
+const periodOfAmounts = (p: RefusalAmounts['pricePeriodLimit'] | undefined) =>
+  p == null
+    ? null
+    : periodLimit(
+        { limit: Number(p.limit) / 1_000_000, periodSeconds: p.period },
+        p.committed === null ? null : Number(p.committed) / 1_000_000,
+      )
+
+/** What a mandate's limit over a period means for the agent, in a sentence, or nothing. */
+const periodLimitSentence = (
+  limit: { limit: number; periodSeconds: bigint } | null,
+  committed: number | null,
+) =>
+  limit === null
+    ? []
+    : [
+        `What it commits within any ${formatPeriod(limit.periodSeconds)} can come to at most ${usd(limit.limit)}, a limit ${PRICE_LIMIT_LAYERS} hold it to${committed === null ? '' : `, and ${usd(committed)} is committed now by its own count`}.`,
+      ]
+
+/** The period sentence for a check's answer, from the limit as its structured answer gives it. */
+const periodSentenceOf = (p: ReturnType<typeof periodLimit>) =>
+  p === null
+    ? []
+    : periodLimitSentence({ limit: p.limit, periodSeconds: BigInt(p.periodSeconds) }, p.committed)
 
 /** What a mandate's price limit means for the agent, in a sentence, or that it has none. */
 const priceLimitSentence = (dollars: number | null) =>
@@ -828,6 +873,7 @@ export function mcpAgent(
     const agent = await open('authority')
     const left = await agent.left()
     const dailyLeft = await agent.dailyLeft()
+    const committed = await agent.committedInPeriod()
     const now = dailyLeft === null ? left : Math.min(left, dailyLeft)
     return {
       text: [
@@ -835,6 +881,7 @@ export function mcpAgent(
         `It holds at most ${usd(agent.authority)} in bookings at once, which Avow refuses past and the lock checks against Avow's approval, and ${usd(left)} of that is free.`,
         `Its key moves at most ${usd(agent.dailyLimit)} a day, a limit your business set on chain, and ${usd(dailyLeft)} of today's is left.`,
         priceLimitSentence(agent.priceCapPerCommitment),
+        ...periodLimitSentence(agent.pricePeriodLimit, committed),
         `It may book with ${agent.suppliers.map((s) => s.id).join(', ')} only.`,
       ].join(' '),
       structured: {
@@ -842,6 +889,7 @@ export function mcpAgent(
         heldAtOnce: { limit: agent.authority, left },
         movedPerDay: { limit: agent.dailyLimit, left: dailyLeft },
         pricePerCommitment: priceLimit(agent.priceCapPerCommitment),
+        pricePerPeriod: periodLimit(agent.pricePeriodLimit, committed),
         suppliers: agent.suppliers,
         business: agent.business,
         mandateHash: agent.mandateHash,
@@ -869,6 +917,7 @@ export function mcpAgent(
       movedTodayLeft: dollars(answer.amounts.dailyLeft),
       price: dollars(answer.amounts.price ?? null),
       pricePerCommitment: priceLimit(dollars(answer.amounts.priceCapPerCommitment ?? null)),
+      pricePerPeriod: periodOfAmounts(answer.amounts.pricePeriodLimit),
     }
     const what = `${quantity} of ${offer.item.name} from ${offer.supplier}`
     const price = dollars(answer.price)
@@ -880,6 +929,7 @@ export function mcpAgent(
           `Ordering ${what} would pass now, and nothing was ordered.`,
           `It would reserve ${usd(amounts?.needed ?? null)}, which is what your mandate's reserve limits count. The price is ${usd(price)}, paid outside the lock.`,
           priceLimitSentence(amounts?.pricePerCommitment?.limit ?? null),
+          ...periodSentenceOf(amounts?.pricePerPeriod ?? null),
           `Your agent has ${usd(amounts?.heldAtOnceLeft ?? null)} left of its ${usd(amounts?.heldAtOnce ?? null)} held at once, and its key ${usd(amounts?.movedTodayLeft ?? null)} of today's ${usd(amounts?.movedPerDay ?? null)}.`,
           unchecked,
         ].join(' '),
@@ -945,6 +995,7 @@ export function mcpAgent(
       movedTodayLeft: dollars(answer.amounts.dailyLeft),
       price: dollars(answer.amounts.price ?? null),
       pricePerCommitment: priceLimit(dollars(answer.amounts.priceCapPerCommitment ?? null)),
+      pricePerPeriod: periodOfAmounts(answer.amounts.pricePeriodLimit),
     }
     const unchecked = `It doesn't check ${PREFLIGHT_UNCHECKED.join(' or ')}, so booking can still be refused there.`
     if (answer.passes) {
@@ -954,6 +1005,7 @@ export function mcpAgent(
           `Your agent has ${usd(amounts.heldAtOnceLeft)} left of its ${usd(amounts.heldAtOnce)} held at once, and its key ${usd(amounts.movedTodayLeft)} of today's ${usd(amounts.movedPerDay)}.`,
           `Its price comes to ${usd(amounts.price)} at the supplier's rate, paid outside the lock.`,
           priceLimitSentence(amounts.pricePerCommitment?.limit ?? null),
+          ...periodSentenceOf(amounts.pricePerPeriod),
           unchecked,
         ].join(' '),
         structured: {
@@ -1054,6 +1106,7 @@ export function mcpAgent(
             movedToday: dollars(error.amounts.dailyLeft),
             price: dollars(error.amounts.price ?? null),
             pricePerCommitment: priceLimit(dollars(error.amounts.priceCapPerCommitment ?? null)),
+            pricePerPeriod: periodOfAmounts(error.amounts.pricePeriodLimit),
           },
           screen: screen(),
         },

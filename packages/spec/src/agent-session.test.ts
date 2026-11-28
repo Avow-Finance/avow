@@ -153,6 +153,7 @@ describe('a refusal by the developer’s service.ts or the customer’s verifier
     capPerCommitment: 500_000_000n,
     price: null,
     priceCapPerCommitment: null,
+    pricePeriodLimit: null,
     dailyLimit: null,
     dailyLeft: null,
   }

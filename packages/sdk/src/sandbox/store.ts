@@ -88,6 +88,12 @@ export interface StoredCommitment {
   mandateHash: Hex
   /** Unix seconds. */
   madeAt: bigint
+  /**
+   * The commitment's price, as `termsPrice` reads it, in micros. A commitment stored before the SDK
+   * kept prices has none, and counts nothing toward a limit over a period here, though Avow counts
+   * it.
+   */
+  price?: bigint
 }
 
 const isKey = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-f]{64}$/i.test(v)
@@ -182,7 +188,8 @@ export async function loadCommitments(store: SandboxStore): Promise<StoredCommit
       typeof c.supplier !== 'string' ||
       !isKey(c.mandateHash) ||
       typeof c.madeAt !== 'string' ||
-      !/^[0-9]+$/.test(c.madeAt)
+      !/^[0-9]+$/.test(c.madeAt) ||
+      (c.price !== undefined && (typeof c.price !== 'string' || !/^[0-9]+$/.test(c.price)))
     ) {
       return []
     }
@@ -193,9 +200,27 @@ export async function loadCommitments(store: SandboxStore): Promise<StoredCommit
         supplier: c.supplier,
         mandateHash: c.mandateHash,
         madeAt: BigInt(c.madeAt),
+        ...(typeof c.price === 'string' ? { price: BigInt(c.price) } : {}),
       },
     ]
   })
+}
+
+/**
+ * The prices of the commitments this agent made within the last `period` seconds before `now`,
+ * under every mandate its key held. It's the SDK's own count toward a mandate's limit over a period.
+ * It counts by when the SDK stored each commitment, a moment after Avow approved it, so it never
+ * counts one for less time than Avow does.
+ */
+export async function committedWithin(
+  store: SandboxStore,
+  period: bigint,
+  now: bigint,
+): Promise<bigint> {
+  const since = now - period
+  return (await loadCommitments(store))
+    .filter((c) => c.madeAt > since)
+    .reduce((sum, c) => sum + (c.price ?? 0n), 0n)
 }
 
 export const saveCommitments = (store: SandboxStore, commitments: readonly StoredCommitment[]) =>

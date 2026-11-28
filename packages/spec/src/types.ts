@@ -99,6 +99,12 @@ export interface PaymentLimit {
   period: bigint
 }
 
+/** A limit on the prices committed within a rolling window, in micros and seconds. */
+export interface PricePeriodLimit {
+  amount: bigint
+  period: bigint
+}
+
 /**
  * What one agent may commit to, signed by the business's administrator. An empty supplier or
  * category list puts no limit on that dimension, and at least one of the two must be non-empty.
@@ -124,6 +130,14 @@ export interface MandateFields {
    * on the price, and signs exactly as it did before the field existed.
    */
   priceCapPerCommitment?: bigint
+  /**
+   * The most the prices of the agent's commitments may come to within any rolling window of
+   * `period` seconds, counted back from when Avow approves a reserve. Every commitment Avow approved
+   * for the agent's key counts, under this mandate and every one it replaced, whatever became of it
+   * after. Like the price limit, only the SDK and Avow's API hold an agent to it. A mandate that
+   * leaves it out puts no limit on what it commits over time.
+   */
+  pricePeriodLimit?: PricePeriodLimit
   /** Business ids of the suppliers the agent may commit to. */
   suppliers: readonly string[]
   categories: readonly string[]
@@ -134,16 +148,17 @@ export interface MandateFields {
 }
 
 /**
- * The mandate an agent's key was put on with, which replaces none. It signs at version 1, or at
- * `MANDATE_PRICE_VERSION` when it carries a price limit.
+ * The mandate an agent's key was put on with, which replaces none. It signs at version 1, at
+ * `MANDATE_PRICE_VERSION` when it carries a price limit, or at `MANDATE_PERIOD_VERSION` when it
+ * carries a limit over a period.
  */
 export type FirstMandate = MandateFields & { replaces?: never }
 
 /**
  * A mandate that replaces another, for the same business, lock and agent key, when the
  * administrator changed the agent's limits in place. `replaces` is the hash of the mandate it
- * replaces. It signs at `MANDATE_REPLACEMENT_VERSION`, or at `MANDATE_PRICE_VERSION` when it
- * carries a price limit, and only the business account's own
+ * replaces. It signs at `MANDATE_REPLACEMENT_VERSION`, at `MANDATE_PRICE_VERSION` when it carries
+ * a price limit, or at `MANDATE_PERIOD_VERSION` when it carries a limit over a period, and only the business account's own
  * signature authorizes it, since the key on the chain still carries the first mandate's hash.
  */
 export type ReplacementMandate = MandateFields & { replaces: Hex }

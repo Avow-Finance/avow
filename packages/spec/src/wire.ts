@@ -297,6 +297,7 @@ export const mandateJson = z.strictObject({
   capPerCommitment: u256,
   capOpenReserves: u256,
   priceCapPerCommitment: u256.exactOptional(),
+  pricePeriodLimit: z.strictObject({ amount: u256, period: u64 }).exactOptional(),
   suppliers: z.array(z.string().min(1)),
   categories: z.array(z.string().min(1)),
   paymentLimits: z.array(z.strictObject({ token: address, amount: u256, period: u64 })).min(1),
