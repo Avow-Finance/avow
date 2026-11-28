@@ -22,11 +22,12 @@ import {
   quoteTermsProblem,
   type ReasonCode,
   SANDBOX_PATHS,
+  standInComputeBooking,
   testnetDemoJobTerms,
 } from '@avow-finance/spec'
 import { type Hex, toHex } from 'viem'
 import { signingRequestKey } from '../http.js'
-import { type ComputeBooking, jobQuoteTerms, quoteJob, standInBooking } from '../job/quote.js'
+import { type ComputeBooking, jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
 import {
@@ -408,7 +409,9 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
           await sellerStanding(),
           {
             orderId: job.orderId,
-            terms: jobQuoteTerms(job, standInBooking(deployment.chainId, business.lock)),
+            terms: jobQuoteTerms(job, {
+              reference: standInComputeBooking(deployment.chainId, business.lock),
+            }),
             offer: null,
             buyer: job.buyer.businessId,
             signingKey: signing.address,
