@@ -4,7 +4,7 @@ import { dollars } from './demo.js'
 import { chainedJobTerms, jobTerms } from './job.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import { REASON_CODES, type ReasonCode } from './reasons.js'
-import type { SellerMandate } from './seller-mandate.js'
+import { SELLER_CATEGORIES, SELLER_TEMPLATES, type SellerMandate } from './seller-mandate.js'
 import {
   BUYER_HEARS,
   buyerFacingReason,
@@ -492,6 +492,12 @@ describe("the seller's mandate check", () => {
       denied('seller_mandate.template_not_covered'),
     )
     expect(saleFacts(demoRequest(KEY).terms)).toBeNull()
+  })
+
+  it('reads a sale under exactly the templates SELLER_TEMPLATES lists, a category each', () => {
+    const read = [sale(), job(), demoRequest(KEY).terms].filter((t) => saleFacts(t) !== null)
+    expect(read.map((t) => ('template' in t ? t.template : null))).toEqual([...SELLER_TEMPLATES])
+    expect(read.map((t) => saleFacts(t)?.category)).toEqual([...SELLER_CATEGORIES])
   })
 })
 

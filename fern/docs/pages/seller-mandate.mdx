@@ -13,7 +13,7 @@ A `SellerMandate` is EIP-712 typed data for the business account's root key to s
 
 The spec holds the messages and the checks. Where a deployment turns seller's mandates on, Avow's sandbox stores each one the business account signed, sealed under a key only Avow's API holds, so a mandate's terms never sit in its database in the clear, and it opens one only to answer the business and its selling agent. Avow's testnet has them off until it turns them on. Nothing stores a revocation yet, so the check takes whether a mandate was revoked from whoever calls it. [Replacing and revoking](#replacing-and-revoking) says how a caller works that out.
 
-Version 1 covers sales of `service/1` and `job/1`. Terms under any other template are refused with `seller_mandate.template_not_covered`.
+Version 1 covers sales of `service/1` and `job/1`, which `SELLER_TEMPLATES` lists. Terms under any other template are refused with `seller_mandate.template_not_covered`, and a sale under one, such as a GPU reservation, is outside every seller's mandate.
 
 ## What it holds
 
