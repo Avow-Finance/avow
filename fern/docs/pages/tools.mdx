@@ -19,6 +19,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `book` | Reserves money | Books GPU capacity, reserving the money in the business's own lock for one supplier. It answers with the commitment and a link anyone can check it with |
 | `verify` | No | Checks a commitment someone shared, from its link, against the lock on chain, and says whether it pays a given address |
 | `commitments` | No | The agent's commitments, each with its state on the lock and its link |
+| `commitment_events` | No | What the business's lock logged for one of the agent's commitments, read from the chain's final blocks and never from Avow, with `next` when a read stops short. Each event is a notice that grants nothing, so check the commitment with `verify` before acting on one |
 | `top_up` | Sends test dollars to the business | Asks the sandbox faucet for more test dollars, sent to the business's own account and never its lock, so no limit changes. A business gets one a day |
 | `request_change` | Asks for a change | Asks the business's administrator for a higher limit, a supplier named on the lock and in the mandate, or the lock opened to listed suppliers up to a cap, and answers with a link where they decide with their passkey. Nothing changes until they approve |
 | `request_seller_mandate` | Asks for a change | Asks the business's administrator for a seller's mandate with the terms the person set, and answers with a link where they decide with their passkey. Avow doesn't take these requests yet, and the tool says so |

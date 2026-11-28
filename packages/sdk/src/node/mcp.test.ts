@@ -41,6 +41,7 @@ describe('avow-sandbox-mcp', () => {
       'book',
       'verify',
       'commitments',
+      'commitment_events',
       'top_up',
       'request_change',
       'request_seller_mandate',
@@ -129,6 +130,7 @@ describe('avow-sandbox-mcp', () => {
     for (const name of [
       'authority',
       'commitments',
+      'commitment_events',
       'check',
       'top_up',
       'request_change',

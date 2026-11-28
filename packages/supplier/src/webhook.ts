@@ -6,6 +6,7 @@ import {
   enforceableTerms,
   parseCommitmentEvent,
   toWire,
+  WEBHOOK_RETRY_SCHEDULE,
 } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
 import { z } from 'zod'
@@ -97,9 +98,9 @@ export function bookingEvent(booking: Booking, now: Date): WebhookDelivery | nul
 }
 
 /** How long after the last failed delivery each retry waits, then the last wait over again. */
-const RETRY_AFTER_MS = [5_000, 30_000, 120_000, 600_000, 1_800_000, 3_600_000, 10_800_000]
+const RETRY_AFTER_MS = WEBHOOK_RETRY_SCHEDULE.retryAfterMs
 /** How long after its first attempt the adapter keeps trying an event before it gives it up. */
-const GIVE_UP_AFTER_MS = 3 * 24 * 3_600_000
+const GIVE_UP_AFTER_MS = WEBHOOK_RETRY_SCHEDULE.giveUpAfterMs
 
 const pendingJson = z.strictObject({
   id: z.string().regex(EVENT_ID),
