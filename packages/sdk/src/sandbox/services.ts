@@ -9,7 +9,6 @@ import {
   type ReasonCode,
   SANDBOX_PATHS,
   SERVICE_ACCEPT_WITHIN,
-  SERVICE_CATEGORY,
   SERVICE_ORDER_ACCEPT_MARGIN,
   type SellerMandateTerms,
   type ServiceOfferVersion,
@@ -47,15 +46,7 @@ import { DAY, holdOffer, holdToNamedMandate, type SellerStanding } from './selle
 import { sellerStandingOf } from './seller-mandate-read.js'
 import { type HeldSale, holdInTurn, holdToMandate } from './seller-sales.js'
 import { type Quoted, readQuoted } from './service-quoted.js'
-import {
-  addCommitment,
-  inTurn,
-  isRecord,
-  loadCommitments,
-  readJson,
-  type SandboxStore,
-  write,
-} from './store.js'
+import { addCommitment, inTurn, loadCommitments, readJson, write } from './store.js'
 
 /**
  * Services through the sandbox mailbox, from an agent's side. A supplier's agent publishes offers
