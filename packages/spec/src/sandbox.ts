@@ -100,15 +100,16 @@ export const SANDBOX_PATHS = {
    *
    * A listing shows only while its supplier is a sandbox business in the agent's own environment,
    * other than the agent's own, whose registered signing key listed it. It has to fit the search by
-   * `offerFits` at Avow's clock, its seller's newest mandate has to let the seller offer it then by
-   * `sellerOfferProblem`, and `checkMandate` has to approve the terms it builds for the search's
-   * quantity under the agent's current mandate and what its lock holds. A refusal of the mandate
-   * check that an administrator can lift puts it among the offers needing approval instead, and
-   * any other leaves it out. A seller whose newest mandate won't deal with the agent's business,
-   * by `counterpartyAllowed`, is left out too, and the answer says nothing of why a seller is
-   * missing. The search doesn't read what a booking alone settles, which is what Avow approved
-   * within each payment limit's period, how the lock stands toward the supplier, and the agent's
-   * key on chain, with its expiry and daily limit.
+   * `offerFits` at Avow's clock, which holds it to the kind of offer the search names, if any, and
+   * finds a job only in a search for one unit. Its seller's newest mandate has to let the seller
+   * offer it then by `sellerOfferProblem`, and `checkMandate` has to approve the terms it builds
+   * for the search's quantity, under its own category, under the agent's current mandate and what
+   * its lock holds. A refusal of the mandate check that an administrator can lift puts it among the
+   * offers needing approval instead, and any other leaves it out. A seller whose newest mandate
+   * won't deal with the agent's business, by `counterpartyAllowed`, is left out too, and the answer
+   * says nothing of why a seller is missing. The search doesn't read what a booking alone settles,
+   * which is what Avow approved within each payment limit's period, how the lock stands toward the
+   * supplier, and the agent's key on chain, with its expiry and daily limit.
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**
