@@ -12,12 +12,13 @@ import {
   LOWER_ADDRESS,
   LOWER_BYTES32,
 } from './fields.js'
-import { JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
+import { JOB, JOB_CATEGORY, JOB_KIND_MAX } from './job.js'
 import { address, bytes32, u64, u256 } from './json-fields.js'
 import { OPEN_TERMS, type OpenTerm } from './negotiation.js'
 import type { ReasonCode } from './reasons.js'
 import {
   BUSINESS_ID_MAX,
+  SERVICE,
   SERVICE_CATEGORY,
   SERVICE_NAME_MAX,
   SERVICE_QUANTITY_MAX,
@@ -46,6 +47,15 @@ import { approvalRuleJson, type Parsed, parseSigned } from './wire.js'
 /** The mandate categories a seller's mandate can name, one for each template it covers. */
 export const SELLER_CATEGORIES = [SERVICE_CATEGORY, JOB_CATEGORY] as const
 export type SellerCategory = (typeof SELLER_CATEGORIES)[number]
+
+/**
+ * The templates a seller's mandate covers, in the order of `SELLER_CATEGORIES`. A sale under any
+ * other template, such as a GPU reservation, falls under no seller's mandate, so whoever holds
+ * sales to one checks only these. `saleFacts` reads exactly these, and a test holds the two
+ * together.
+ */
+export const SELLER_TEMPLATES = [SERVICE, JOB] as const
+export type SellerTemplate = (typeof SELLER_TEMPLATES)[number]
 
 /** The most lines of selling limits one mandate holds. */
 export const SELLER_LIMITS_MAX = 50
