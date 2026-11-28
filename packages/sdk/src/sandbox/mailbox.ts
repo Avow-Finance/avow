@@ -39,7 +39,7 @@ import {
 import { jobOfferFor, publishedOffers } from './published-offers.js'
 import { holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
-import { holdInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
+import { holdInTurn, holdJobInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -373,14 +373,16 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     if (job.status === 'requested') {
       // An order for a kind of work this business offers has to be the job its current offer
       // builds, checked before anything is booked, since the terms name no offer of their own.
-      jobOfferFor(job.terms, await publishedOffers(store))
+      const offered = jobOfferFor(job.terms, await publishedOffers(store), systemClock())
+      const capacity = offered ? offered.rules.dailyCapacity : null
       let compute = (await kept()).sales[job.orderId]?.compute ?? null
       if (!compute) {
         // The job is held to the seller's mandate before any compute is booked for it, so a job the
         // mandate refuses leaves nothing booked. Its limits don't read the booking a job relies on,
         // so this check runs on the job's terms with a stand-in for the booking, and the check
-        // below holds the exact terms the quote signs.
-        await holdInTurn(
+        // below holds the exact terms the quote signs. A job past its offer's capacity for the day
+        // books nothing either.
+        await holdJobInTurn(
           store,
           await sellerStanding(),
           {
@@ -390,6 +392,7 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
             buyer: job.buyer.businessId,
             signingKey: signing.address,
           },
+          capacity,
           systemClock(),
         )
         const agent = await sandboxAgent({
@@ -424,7 +427,7 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
         buyer: job.buyer.businessId,
         signingKey: signing.address,
       }
-      const sellerMandate = await holdJobQuote(store, standing, sale, now)
+      const sellerMandate = await holdJobQuote(store, standing, sale, now, capacity)
       const quote = await quoteJob({
         offer: job,
         customer: job.buyer,

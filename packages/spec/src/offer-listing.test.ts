@@ -7,6 +7,8 @@ import { type JobOfferVersion, jobOfferVersionId } from './job-offer.js'
 import {
   OFFER_LISTINGS_MAX,
   type OfferListing,
+  offerListingOf,
+  offerListingRequestOf,
   parseOfferListing,
   parseOfferListingRequest,
   parseOfferListings,
@@ -19,6 +21,7 @@ import { REASON_CODES } from './reasons.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 import { offerVersionId, type ServiceOfferVersion } from './service.js'
 import { NOW } from './test-helpers.js'
+import { OFFER_LISTING_JOB_VERSION } from './version.js'
 import { toWire } from './wire.js'
 
 const HOUR = 3600n
@@ -69,13 +72,11 @@ const jobNamed = (kind: string, price = fineTuning.price): JobOfferVersion => ({
   price,
 })
 
-const listingOf = (version: OfferVersion, replaced: Hex | null = null): OfferListing => ({
-  id: offerIdOf(version),
-  version,
-  listedAt: NOW,
-  sellerMandate: MANDATE,
-  replaced,
-})
+const listingOf = (version: OfferVersion, replaced: Hex | null = null): OfferListing =>
+  offerListingOf(
+    { id: offerIdOf(version), listedAt: NOW, sellerMandate: MANDATE, replaced },
+    version,
+  )
 const wire = (v: unknown) => JSON.parse(JSON.stringify(toWire(v)))
 
 describe('the listing paths', () => {
@@ -112,16 +113,27 @@ describe('a listing request', () => {
     expect(read).toEqual({ ok: true, value: { version: transcript } })
   })
 
-  it('reads a job offer version, apart from a service', () => {
-    const read = parseOfferListingRequest(wire({ version: fineTuning }))
-    expect(read).toEqual({ ok: true, value: { version: fineTuning } })
+  it('reads a job offer version at version 2, apart from a service', () => {
+    const body = { schemaVersion: OFFER_LISTING_JOB_VERSION, version: fineTuning }
+    expect(offerListingRequestOf(fineTuning)).toEqual(body)
+    expect(parseOfferListingRequest(wire(body))).toEqual({ ok: true, value: body })
+  })
+
+  it('keeps a service at version 1 byte for byte, and refuses either kind at the other version', () => {
+    expect(JSON.stringify(wire(offerListingRequestOf(transcript)))).toBe(
+      JSON.stringify(wire({ version: transcript })),
+    )
+    expect(parseOfferListingRequest(wire({ version: fineTuning })).ok).toBe(false)
+    const serviceAt2 = { schemaVersion: OFFER_LISTING_JOB_VERSION, version: transcript }
+    expect(parseOfferListingRequest(wire(serviceAt2)).ok).toBe(false)
+    expect(parseOfferListingRequest(wire({ schemaVersion: 3, version: fineTuning })).ok).toBe(false)
   })
 
   it('refuses a job offer its own rules refuse, or one with a field of the other kind', () => {
     const early = { ...fineTuning, rules: { ...fineTuning.rules, startAfter: 60n } }
-    expect(parseOfferListingRequest(wire({ version: early })).ok).toBe(false)
+    expect(parseOfferListingRequest(wire(offerListingRequestOf(early))).ok).toBe(false)
     const mixed = { ...fineTuning, item: transcript.item }
-    expect(parseOfferListingRequest(wire({ version: mixed })).ok).toBe(false)
+    expect(parseOfferListingRequest(wire(offerListingRequestOf(mixed))).ok).toBe(false)
   })
 
   it('refuses a version the offer rules refuse, an extra field, or no version', () => {
@@ -179,8 +191,13 @@ describe("Avow's answers", () => {
   it("read a job's listing only under the job offer's own id", () => {
     const listing = listingOf(fineTuning, jobOfferVersionId(jobNamed('fine-tuning', dollars(100))))
     expect(parseOfferListing(wire(listing))).toEqual({ ok: true, value: listing })
+    expect(listing).toHaveProperty('schemaVersion', OFFER_LISTING_JOB_VERSION)
     const asService = { ...listing, id: offerVersionId(transcript) }
     expect(parseOfferListing(wire(asService)).ok).toBe(false)
+    const { schemaVersion: _, ...unversioned } = wire(listing)
+    expect(parseOfferListing(unversioned).ok).toBe(false)
+    expect(parseOfferListing({ ...wire(listingOf(transcript)), schemaVersion: 2 }).ok).toBe(false)
+    expect(wire(listingOf(transcript))).not.toHaveProperty('schemaVersion')
   })
 
   it('read a withdrawal', () => {

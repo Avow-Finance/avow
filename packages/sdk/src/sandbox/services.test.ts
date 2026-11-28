@@ -3,9 +3,11 @@ import {
   JOB,
   type JobOfferVersion,
   jobOfferVersionId,
+  OFFER_LISTING_JOB_VERSION,
   type OfferVersion,
   offerIdOf,
   offerItemOf,
+  offerListingOf,
   offerVersionId,
   parseServiceQuote,
   SANDBOX_PATHS,
@@ -14,6 +16,7 @@ import {
   serviceOfferTerms,
   serviceQuoteProblem,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
@@ -165,14 +168,18 @@ describe("a supplier's offers", () => {
 })
 
 describe("a supplier's listings with Avow", () => {
-  const listingOf = (version: OfferVersion, replaced: string | null = null) =>
-    wire({
-      id: offerIdOf(version),
-      version,
-      listedAt: 1_800_000_000n,
-      sellerMandate: `0x${'ab'.repeat(32)}`,
-      replaced,
-    })
+  const listingOf = (version: OfferVersion, replaced: Hex | null = null) =>
+    wire(
+      offerListingOf(
+        {
+          id: offerIdOf(version),
+          listedAt: 1_800_000_000n,
+          sellerMandate: `0x${'ab'.repeat(32)}`,
+          replaced,
+        },
+        version,
+      ),
+    )
 
   it('sends a version published here, signed with the signing key, and answers the listing Avow holds', async () => {
     const { store } = await folder(SELLER, true)
@@ -206,7 +213,7 @@ describe("a supplier's listings with Avow", () => {
     const outcome = await services.listWithAvow(id)
     if (!outcome.ok) throw new Error('the job offer was listed')
     expect(outcome.listing).toMatchObject({ id: jobOfferVersionId(jobOffer), version: jobOffer })
-    expect(sent).toEqual([{ version: wire(jobOffer) }])
+    expect(sent).toEqual([{ schemaVersion: OFFER_LISTING_JOB_VERSION, version: wire(jobOffer) }])
   })
 
   it('lists nothing it never published here, and sends nothing for it', async () => {

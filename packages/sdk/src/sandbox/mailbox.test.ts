@@ -233,6 +233,20 @@ describe('the sandbox mailbox', () => {
   })
 })
 
+/** A compute booking the seller's folder kept for a job, so selling it books nothing new. */
+const keptCompute = (now: bigint) => ({
+  reference: {
+    kind: 'commitment',
+    chainId: deployment.chainId,
+    lock: LOCK.toLowerCase(),
+    commitmentId: `0x${'34'.repeat(32)}`,
+    side: 'buyer',
+    termsHash: `0x${'78'.repeat(32)}`,
+  },
+  terms: testnetDemoTerms(now, deployment.arbiter),
+  salt: `0x${'56'.repeat(32)}`,
+})
+
 describe('a job ordered from a job offer', () => {
   it("builds the order's terms from the offer, and lapses it before work starts", async () => {
     const { store } = await agentFolder(BUYER)
@@ -290,19 +304,7 @@ describe('a job ordered from a job offer', () => {
     await write(store, 'services', { published: [wire(jobOffer)] })
     const now = BigInt(Math.floor(Date.now() / 1000))
     const order = { ...anOrder(now + 600n), terms: jobOfferTerms(jobOffer, now, settlement) }
-    const compute = {
-      reference: {
-        kind: 'commitment',
-        chainId: deployment.chainId,
-        lock: LOCK.toLowerCase(),
-        commitmentId: `0x${'34'.repeat(32)}`,
-        side: 'buyer',
-        termsHash: `0x${'78'.repeat(32)}`,
-      },
-      terms: testnetDemoTerms(now, deployment.arbiter),
-      salt: `0x${'56'.repeat(32)}`,
-    }
-    await write(store, 'mailbox', { sales: { [order.orderId]: { compute } } })
+    await write(store, 'mailbox', { sales: { [order.orderId]: { compute: keptCompute(now) } } })
     const fetch = (async (input: string | URL | Request) => {
       const path = new URL(String(input)).pathname
       if (path === '/config.json') return json(wire(deployment))
@@ -317,6 +319,84 @@ describe('a job ordered from a job offer', () => {
     const [held] = await mailbox.inbox()
     if (!held) throw new Error('The inbox read no order')
     await mailbox.sell(held)
+    expect(quotes).toHaveBeenCalledOnce()
+  })
+})
+
+describe('a job sold from a job offer, held to the clock and the day', () => {
+  const now = () => BigInt(Math.floor(Date.now() / 1000))
+
+  /** A seller folder with the job offer published, selling the order given from its inbox. */
+  async function sellerSelling(
+    order: ReturnType<typeof anOrder>,
+    o: { jobSales?: unknown; computeKept?: boolean } = {},
+  ) {
+    bookings.mockReset()
+    quotes.mockReset().mockResolvedValue({ quoted: true })
+    const { store } = await agentFolder(SELLER, true)
+    await write(store, 'services', { published: [wire(jobOffer)] })
+    if (o.jobSales) await write(store, 'job-sales', { sales: o.jobSales })
+    if (o.computeKept) {
+      await write(store, 'mailbox', { sales: { [order.orderId]: { compute: keptCompute(now()) } } })
+    }
+    const fetch = (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/config.json') return json(wire(deployment))
+      if (path === SANDBOX_PATHS.sellerMandates) {
+        return json({ error: { reason: 'request.invalid', message: 'No such route' } }, 404)
+      }
+      const held = answered(wire(order), 'requested')
+      return json(path === SANDBOX_PATHS.mailboxInbox ? { orders: [held] } : held)
+    }) as typeof globalThis.fetch
+    const mailbox = await sandboxMailbox({ store, fetch })
+    const [held] = await mailbox.inbox()
+    if (!held) throw new Error('The inbox read no order')
+    return { mailbox, held }
+  }
+
+  it('quotes nothing, and books nothing, for an order built from a moment ahead of its clock', async () => {
+    const ahead = now() + 3_600n
+    const order = { ...anOrder(ahead + 600n), terms: jobOfferTerms(jobOffer, ahead, settlement) }
+    const { mailbox, held } = await sellerSelling(order)
+    await expect(mailbox.sell(held)).rejects.toThrow(/dated ahead/)
+    expect(bookings).not.toHaveBeenCalled()
+    expect(quotes).not.toHaveBeenCalled()
+  })
+
+  it("quotes nothing, and books nothing, once the offer's capacity for the day is taken", async () => {
+    const t = now()
+    const order = { ...anOrder(t + 600n), terms: jobOfferTerms(jobOffer, t, settlement) }
+    const place = (accepted: boolean, at: bigint, until: bigint) => ({
+      item: jobOffer.work.kind,
+      at: String(at),
+      until: String(until),
+      accepted,
+      units: 1,
+      price: String(jobOffer.price),
+      deliverBy: String(t + 86_400n),
+    })
+    // One quoted that can still be accepted and two accepted today fill a capacity of three.
+    const full = {
+      a: place(false, t - 60n, t + 600n),
+      b: place(true, t - 3_600n, t - 3_000n),
+      c: place(true, t - 7_200n, t - 6_000n),
+    }
+    const { mailbox, held } = await sellerSelling(order, { jobSales: full })
+    await expect(mailbox.sell(held)).rejects.toThrow(/capacity for the day is taken/)
+    expect(bookings).not.toHaveBeenCalled()
+    expect(quotes).not.toHaveBeenCalled()
+    // With the compute already booked, the quote counts the places again and still refuses.
+    const booked = await sellerSelling(order, { jobSales: full, computeKept: true })
+    await expect(booked.mailbox.sell(booked.held)).rejects.toThrow(/capacity for the day is taken/)
+    expect(quotes).not.toHaveBeenCalled()
+    // A quote that lapsed unaccepted, and a job of another kind, take no place.
+    const room = {
+      ...full,
+      a: place(false, t - 3_600n, t - 60n),
+      d: { ...place(false, t - 60n, t + 600n), item: 'inference' },
+    }
+    const again = await sellerSelling(order, { jobSales: room, computeKept: true })
+    await again.mailbox.sell(again.held)
     expect(quotes).toHaveBeenCalledOnce()
   })
 })

@@ -6,6 +6,7 @@ import {
   type OfferVersion,
   offerItemOf,
   parseOfferVersion,
+  SERVICE_ORDER_CLOCK_SKEW,
 } from '@avow-finance/spec'
 import { readJson, type SandboxStore } from './store.js'
 
@@ -36,14 +37,17 @@ export async function publishedOffers(store: SandboxStore): Promise<OfferVersion
 
 /**
  * The job offer a job order is sold under, by the current version this folder published for the
- * order's kind of work. A job's terms name no offer, so an order for a kind of work with no job
- * offer published is answered null and sold as any job is. One for a kind with an offer published
- * has to be exactly the job that version builds, or this throws and nothing is quoted, so an order
- * built from a version replaced or withdrawn here is never quoted.
+ * order's kind of work, checked at `now`. A job's terms name no offer, so an order for a kind of
+ * work with no job offer published here is answered null and sold as any job is, which includes a
+ * kind whose offer was withdrawn. One for a kind with an offer published has to be exactly the job
+ * that version builds, from a moment no more than `SERVICE_ORDER_CLOCK_SKEW` ahead of `now`, as a
+ * service order's is, or this throws and nothing is quoted. So an order built from a version
+ * replaced here, or dated ahead to escape a later price, is never quoted.
  */
 export function jobOfferFor(
   terms: JobTerms,
   published: readonly OfferVersion[],
+  now: bigint,
 ): JobOfferVersion | null {
   const kind = terms.subject.work.kind
   const version = published.filter(isJobOfferVersion).find((v) => offerItemOf(v).name === kind)
@@ -51,6 +55,11 @@ export function jobOfferFor(
   if (!jobTermsMatchOffer(terms, version)) {
     throw new Error(
       `The order's terms aren't the job this business's current offer of ${kind} builds, so nothing was quoted.`,
+    )
+  }
+  if (terms.subject.startsAt - version.rules.startAfter > now + SERVICE_ORDER_CLOCK_SKEW) {
+    throw new Error(
+      "The order's terms are dated ahead of this business's clock, so nothing was quoted.",
     )
   }
   return version
