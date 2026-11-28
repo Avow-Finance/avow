@@ -17,6 +17,16 @@ Two layers hold a worker to its slice's own limits, the SDK and Avow's API. Wher
 - The agent's key funds every reserve its workers make, through the agent's own process on its own machine. It never leaves the `.avow` folder that made it, and a worker never holds it.
 - So the lock and the keychain still hold the agent and every worker together to the mandate a person signed. No slice, and no number of slices, gets past that.
 
+## How a worker funds a reserve
+
+The agent's own process is the only thing that signs with the agent's key, for itself and for its workers.
+
+- The agent's process serves a socket at `.avow/workers/signer.sock`. The folder is the agent's user's alone and the socket opens for that user only.
+- A worker signs each request with its own key. `createParentSigner` checks the signature, reads the worker's slices from Avow and checks them back to the mandate, and runs `checkSlicedMandate` with what is open and what was approved within each period before it signs anything with the agent's key.
+- It signs the buyer's side of a terms agreement open no longer than an offer may stay open, and later funds the reserve Avow approves for that same agreement and that same worker, reading the slices again first and counting Avow's approval of that reserve once. It refuses anything else.
+- It checks one ask at a time across the agent's whole tree, and it holds the room at funding. Signing an agreement takes no room, so two agreements can be signed on room only one fits. Avow approves only what fits, and the signer funds no more than fits, counting what Avow approved. It funds a commitment once however often it's asked, and when a send fails after signing it reads the lock before it answers, so the worker can ask again and hear how it ended.
+- `handOutSlice` signs a slice for a worker's key, `narrowSlice` narrows one, and `revokeWorker` ends one. Each refuses limits wider than the parent's before it signs.
+
 ## What a slice may hold
 
 A slice carries the limits a mandate carries, and `sliceWidensProblem` refuses one that would let a worker do anything its parent can't.

@@ -149,6 +149,31 @@ export const SANDBOX_PATHS = {
   /** Where an agent reads every mandate it has held, the current one first, as `AgentMandates`. */
   agentMandates: '/v1/sandbox/agents/mandates',
   /**
+   * Where a key that hands out a slice posts it, or a new version of it, as a signed `Slice`, with
+   * a request the slice's issuer signs: the agent's key, or the key of a worker whose own slice is
+   * live. Avow answers with the worker's slices as a `WorkerSlicesAnswer`. It takes a first
+   * version only when it fits inside its parent's current version, and a new version only when
+   * `sliceReplacementProblem` passes against the version it holds as current. It refuses a key it
+   * holds a revocation for as `slice.revoked`, a slice that doesn't fit as `slice.widens`, and a
+   * version that doesn't replace the current one as `slice.replaces_mismatch`.
+   */
+  slices: '/v1/sandbox/agents/slices',
+  /**
+   * Where a worker reads its slices, or a key above it reads them for it, as a `WorkerSlicesRead`
+   * naming the worker's key, signed by that key or by the agent's key or a worker key above it.
+   * Avow answers with a `WorkerSlicesAnswer`, and a reader trusts the slices only once
+   * `sliceChainProblem` reads them as one chain. A key Avow holds no slice for is
+   * `slice.key_mismatch`, with status 404.
+   */
+  workerSlices: '/v1/sandbox/agents/slices/read',
+  /**
+   * Where the agent's key or a worker key above another posts a signed `SliceRevocation`, with a
+   * request the revocation's signer signs. Avow stores it only once `sliceRevocationProblem`
+   * passes, and refuses one that doesn't as `slice.signature_invalid`. Posting it again changes
+   * nothing. The administrator revokes from the console instead.
+   */
+  sliceRevocations: '/v1/sandbox/agents/slices/revocations',
+  /**
    * Where a business's console is to send a seller's mandate for one selling agent's signing key,
    * as a `SellerMandatePost`. Avow doesn't take this route yet. Anyone may post one, unsigned,
    * since the business account's signature on the mandate is the only authority, and Avow is to

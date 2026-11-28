@@ -44,4 +44,27 @@ describe("the agent's side of the SDK", () => {
       ).toEqual([])
     }
   })
+
+  it('keeps the slices entry, the signer an agent runs for its workers, free of the business key', () => {
+    for (const entry of ['slices-entry.js', 'node-slices.js']) {
+      const loaded = graph(entry)
+      for (const m of [
+        'slices/hand-out.js',
+        'slices/parent-signer.js',
+        'slices/worker-request.js',
+      ]) {
+        expect(loaded.has(m), `${entry} loads ${m}`).toBe(true)
+      }
+      expect(
+        BUSINESS_SIDE.filter((m) => loaded.has(m)),
+        entry,
+      ).toEqual([])
+    }
+    expect(graph('node-slices.js').has('node/worker-socket.js')).toBe(true)
+    // The browser's entry opens no socket, and the agent's own entries load no slice code.
+    expect(graph('slices-entry.js').has('node/worker-socket.js')).toBe(false)
+    for (const entry of ['agent-entry.js', 'node-agent.js']) {
+      expect(graph(entry).has('slices/parent-signer.js'), entry).toBe(false)
+    }
+  })
 })
