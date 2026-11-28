@@ -126,13 +126,13 @@ Nothing lets a person approve one sale today. The spec holds the message and the
 
 Once it's live, a person approves one sale, and only that one. The approval names the signing key that makes it, the buyer, the whole offer version and the units, as `SaleContent` in `@avow-finance/spec`. The total it comes to is the offer's price for each unit times the units, which `salePrice` gives, and the card shows the offer whole so the person reads its price, its charges and its delivery. `coversSale` says whether a sale is exactly the approved one, the same key, buyer, offer version and units.
 
-An approval is good once, within 24 hours of being given, which is `SALE_APPROVAL_LASTS`, and lapses unused after that. It names no terms hash, since a service's supplier has minutes to accept, and the buyer's next order of those units from that version is the sale that was approved. Whoever records sales keeps an approval to one sale and to its day, since the check reads only what it's handed. The request rests on the mandate the sale would be made under, so a mandate that replaces it, or a revocation of the key, makes the request stale. An approval lifts no limit, since every limit is checked first, and no job is approved this way, since a job has no offer version. The [approval request](/docs/reference/approval-requests#asking-a-person-to-approve-one-sale) page has the request itself.
+An approval is good once, within 24 hours of being given, which is `SALE_APPROVAL_LASTS`, and lapses unused after that. It names no terms hash, since a service's supplier has minutes to accept, and the buyer's next order of those units from that version is the sale that was approved. Whoever records sales keeps an approval to one sale and to its day, since the check reads only what it's handed. The request rests on the mandate the sale would be made under, so a mandate that replaces it, or a revocation of the key, makes the request stale. An approval lifts no limit, since every limit is checked first, and no job is approved this way, since the request names a service's offer version and a job's terms name no offer. The [approval request](/docs/reference/approval-requests#asking-a-person-to-approve-one-sale) page has the request itself.
 
 The arbiter and the day-90 share in a sale's terms are Avow's to hold to its own when it approves the reserve, as for any commitment.
 
 ### A service is sold on its offer's terms
 
-A service's terms have to be exactly the ones `serviceOfferTerms` builds from the offer version they book. So the price for each unit is the offer's whatever the quantity, and no discount gets under the floor. The offer has to be the mandate's own business's. A job books no offer, and its floor is on the job's whole price. A job is read from its version 3 terms, which name the compute it runs on.
+A service's terms have to be exactly the ones `serviceOfferTerms` builds from the offer version they book. So the price for each unit is the offer's whatever the quantity, and no discount gets under the floor. The offer has to be the mandate's own business's. A job's terms name no offer, even when the buyer built them from a job offer, and its floor is on the job's whole price. A job is read from its version 3 terms, which name the compute it runs on.
 
 ### Time
 
@@ -141,6 +141,7 @@ A limit on a length of time is held exactly wherever one clock measures both of 
 - A service's lead time and free-cancellation window are lengths its offer states. They meet the mandate's horizon and longest free cancellation with nothing to spare.
 - A service's terms are built from a moment the buyer's order names, on the buyer's clock. That moment may be up to 60 seconds ahead of the clock of whoever runs the check, and no more. So a service's delivery falls at most the horizon plus 60 seconds after the check.
 - A job's horizon runs from the clock of whoever runs the check to the job's delivery deadline, and is held exactly.
+- A job offer's start and turnaround are lengths, and a buyer builds the job from them on its own clock. So a job offer lists only when its start and turnaround leave 60 seconds of the horizon to spare, and a buyer whose clock runs up to 60 seconds ahead still gets a job the check passes.
 - A job's free cancellation ends when work starts, and whoever agrees the job agrees when that is. The mandate's longest free cancellation is for a service and doesn't read a job, so nothing bounds how long a job's buyer can cancel at no charge.
 
 ### Counterparties
@@ -157,7 +158,15 @@ The day's units and what's outstanding come from a ledger the caller keeps, coun
 
 ## Listing an offer
 
-`sellerOfferProblem` reads an offer version before anyone orders. The offer has to be for an item the mandate covers, within the limits the check holds an offer to, and its largest booking has to be within the units and the value one order may come to. A price so small that one unit's charges round to nothing builds no terms, and isn't listed. So every booking a listed offer invites is one the check would pass on those counts, under a profile its terms are sound in. An offer binds nobody, and this refuses early what the check would refuse at the sale.
+`sellerOfferProblem` reads an offer version before anyone orders, a service's or a [job's](/docs/composable-commitments/jobs#job-offers). The offer has to be the mandate's own business's, in its currency, and for an item the mandate covers under the offer's own category, so a job offer reads the `compute-job` lines by its kind of work and never a service line of the same name.
+
+A service offer has to be within the limits the check holds an offer to, and its largest booking has to be within the units and the value one order may come to. A price so small that one unit's charges round to nothing builds no terms, and isn't listed.
+
+A job offer is one unit, and the check reads the job its version builds at the moment of listing by the same rule it holds a job's terms to. The price is at or above the line's floor and within the most one order may come to. Its start and turnaround together come to at least 60 seconds under the delivery horizon, which is `SERVICE_ORDER_CLOCK_SKEW`, since the buyer builds the job on its own clock. Each charge, rounded up to the micro as the offer builds it, is at least the mandate's lowest share, and a no-show can be reported by the delivery deadline. The mandate's longest free cancellation doesn't read a job, as at the sale.
+
+A job offer priced where the mandate's approval rule asks a person to decide doesn't list, and refuses as `seller_mandate.job_approval_unavailable`. A person can't approve a job's sale yet, so every order of it would wait for an approval nobody can give. Set the approval rule's amount at or above the job's price, or to never, to list it.
+
+So every order a listed offer invites is one the check would pass on those counts, under a profile its terms are sound in. An offer binds nobody, and this refuses early what the check would refuse at the sale.
 
 ## When Avow approves a reserve for a sale
 
