@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { type Hex, keccak256, toHex } from 'viem'
+import { type Hex, keccak256, maxUint64, maxUint256, toHex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { canonicalJson } from './canonical.js'
 import { dollars } from './demo.js'
@@ -102,6 +102,10 @@ describe('a job offer version', () => {
       withRules({ lateCancellationBps: 10_001 }),
       withRules({ lateCancellationBps: 0, noShowBps: 0 }),
       withRules({ startAfter: 3600 as never }),
+      // Past a uint64 of seconds once the charge window after delivery is added.
+      withRules({ startAfter: JOB_OFFER_START_MIN, turnaround: maxUint64 }),
+      // Past a uint256 once multiplied by 10,000 basis points.
+      { ...version, price: maxUint256 / 10_000n + 1n },
     ]
     for (const v of cases) {
       expect(jobOfferProblem(v), JSON.stringify(toWire(v))).not.toBeNull()
@@ -110,6 +114,13 @@ describe('a job offer version', () => {
     expect(jobOfferProblem(null as never)).not.toBeNull()
     expect(jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN }))).toBeNull()
     expect(jobOfferProblem(withRules({ gracePeriod: 2n * HOUR }))).toBeNull()
+    // Each bound holds at its edge.
+    const turnaround = maxUint64 - JOB_OFFER_START_MIN - JOB_OFFER_CHARGE_AFTER
+    expect(jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN, turnaround }))).toBeNull()
+    expect(
+      jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN, turnaround: turnaround + 1n })),
+    ).not.toBeNull()
+    expect(jobOfferProblem({ ...version, price: maxUint256 / 10_000n })).toBeNull()
   })
 
   it('reads no JSON with a field it does not know or a field missing', () => {

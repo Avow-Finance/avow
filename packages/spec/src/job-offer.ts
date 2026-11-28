@@ -1,4 +1,4 @@
-import { type Address, encodeAbiParameters, type Hex, keccak256 } from 'viem'
+import { type Address, encodeAbiParameters, type Hex, keccak256, maxUint64, maxUint256 } from 'viem'
 import { z } from 'zod'
 import { canonicalJson } from './canonical.js'
 import { BPS, isCount, isShare } from './fields.js'
@@ -105,6 +105,8 @@ export interface JobOfferVersion {
  * `JOB_OFFER_START_MIN` after the order and is delivered some time after it starts, the grace
  * period ends by delivery, capacity is at least one job a day, each charge is a share from 0 to
  * 100%, and at least one is above zero, since a reserve with nothing to charge backs nothing.
+ * The start, the turnaround and the charge window after delivery add up to a uint64 of seconds,
+ * and the price times 10,000 basis points fits a uint256, so a share of it can be worked out.
  * Every field has its declared type, so a version that passes hashes one way only.
  */
 export function jobOfferProblem(v: JobOfferVersion): string | null {
@@ -127,6 +129,7 @@ export function jobOfferProblem(v: JobOfferVersion): string | null {
   }
   if (!(CURRENCIES as readonly unknown[]).includes(v.currency)) return 'Choose a currency.'
   if (typeof v.price !== 'bigint' || v.price <= 0n) return 'The price has to be more than zero.'
+  if (v.price * BPS > maxUint256) return 'The price is too large to take a share of.'
   const r = v.rules
   if (typeof r !== 'object' || r === null) return 'Set the rules for ordering.'
   if (typeof r.startAfter !== 'bigint' || r.startAfter < JOB_OFFER_START_MIN) {
@@ -134,6 +137,9 @@ export function jobOfferProblem(v: JobOfferVersion): string | null {
   }
   if (typeof r.turnaround !== 'bigint' || r.turnaround <= 0n) {
     return 'Delivery comes some time after work starts.'
+  }
+  if (r.startAfter + r.turnaround + JOB_OFFER_CHARGE_AFTER > maxUint64) {
+    return 'Work starts and is delivered too far ahead to count in seconds.'
   }
   if (typeof r.gracePeriod !== 'bigint' || r.gracePeriod < 0n || r.gracePeriod > r.turnaround) {
     return 'The grace period for the inputs ends by delivery.'

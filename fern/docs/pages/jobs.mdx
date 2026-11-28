@@ -76,7 +76,7 @@ The buyer builds the job's terms with `jobOfferTerms`, in version 2's shape, and
 
 Job terms name no offer, since `job/1` has no field for one, and a job ordered without an offer runs as it always has. `jobTermsMatchOffer` says whether terms, in either shape, are exactly the ones a version builds, for whoever holds that version. It never reads the version from the terms, so the supplier's agent checks an order against a version it published itself.
 
-`OfferVersion` is either kind of offer. `parseOfferVersion` reads one from JSON, `offerIdOf` gives its id under its own label, and `offerItemOf` names its item under its category, so a service and a job that share a name stay apart. A seller's agent checks a job offer against its seller's mandate with `sellerOfferProblem` before it publishes, as the [seller's mandate](/docs/reference/seller-mandate#listing-an-offer) page says.
+`OfferVersion` is either kind of offer. `parseOfferVersion` reads one from JSON, `offerIdOf` gives its id under its own label, and `offerItemOf` names its item under its category, so a service and a job that share a name stay apart. A seller's agent checks a job offer against its seller's mandate with `sellerOfferProblem` before it publishes, as the [seller's mandate](/docs/reference/seller-mandate#listing-an-offer) page says. A person can't approve a job's sale yet, so a job offer priced where the mandate asks a person to decide doesn't list.
 
 ## What the customer's reserve backs
 

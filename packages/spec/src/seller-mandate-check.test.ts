@@ -593,9 +593,48 @@ describe("listing a job offer under a seller's mandate", () => {
 
   it('lets the agent list a job offer inside the job line', () => {
     expect(problem()).toBeNull()
-    // The whole horizon, from the order to delivery, is the mandate's own seven days.
-    expect(problem(withJob({}, { startAfter: DAY, turnaround: 6n * DAY }))).toBeNull()
-    expect(problem(withJob({ price: dollars(500) }))).toBeNull()
+    // From the order to delivery takes the mandate's seven days less the clock skew.
+    const longest = 6n * DAY - SERVICE_ORDER_CLOCK_SKEW
+    expect(problem(withJob({}, { startAfter: DAY, turnaround: longest }))).toBeNull()
+    // A person decides above $300, so a job lists at $300 and, with nobody deciding, at $500.
+    expect(problem(withJob({ price: dollars(300) }))).toBeNull()
+    expect(
+      problem(withJob({ price: dollars(500) }), { approvalRule: { kind: 'never' } }),
+    ).toBeNull()
+  })
+
+  it('leaves the clock skew of the horizon to spare, so a buyer a little ahead still buys', () => {
+    const longest = 6n * DAY - SERVICE_ORDER_CLOCK_SKEW
+    const atEdge = withJob({}, { startAfter: DAY, turnaround: longest })
+    expect(problem(atEdge)).toBeNull()
+    expect(problem(withJob({}, { startAfter: DAY, turnaround: longest + 1n }))).toBe(
+      'seller_mandate.over_delivery_horizon',
+    )
+    // Exactly the horizon, which the sale check passes only on a buyer's clock that agrees.
+    expect(problem(withJob({}, { startAfter: DAY, turnaround: 6n * DAY }))).toBe(
+      'seller_mandate.over_delivery_horizon',
+    )
+    // A buyer whose clock runs the whole skew ahead builds a job the check passes.
+    const ahead = chainedJobTerms(
+      jobOfferTerms(atEdge, NOW + SERVICE_ORDER_CLOCK_SKEW, settlement),
+      [{ on: COMPUTE_REFERENCE, condition: 'accepted', disclosed: 'subject' }],
+    )
+    expect(check({ terms: ahead, offer: null })).toEqual(approved)
+  })
+
+  it("refuses a job offer priced where a person decides, since a person can't approve a job's sale yet", () => {
+    expect(problem(withJob({ price: dollars(300) + 1n }))).toBe(
+      'seller_mandate.job_approval_unavailable',
+    )
+    expect(problem(jobOffer, { approvalRule: { kind: 'always' } })).toBe(
+      'seller_mandate.job_approval_unavailable',
+    )
+    expect(problem(jobOffer, { approvalRule: { kind: 'above', amount: dollars(120) } })).toBeNull()
+    expect(problem(jobOffer, { approvalRule: { kind: 'above', amount: dollars(120) - 1n } })).toBe(
+      'seller_mandate.job_approval_unavailable',
+    )
+    // Every limit is read first, so an offer past one hears that limit.
+    expect(problem(withJob({ price: dollars(501) }))).toBe('seller_mandate.over_order_value')
   })
 
   it('refuses each way a job offer goes past the mandate', () => {
@@ -603,7 +642,7 @@ describe("listing a job offer under a seller's mandate", () => {
       [withJob({ price: dollars(99) }), 'seller_mandate.under_price_floor'],
       [withJob({ price: dollars(501) }), 'seller_mandate.over_order_value'],
       [
-        withJob({}, { startAfter: DAY, turnaround: 6n * DAY + 1n }),
+        withJob({}, { startAfter: DAY, turnaround: 6n * DAY - SERVICE_ORDER_CLOCK_SKEW + 1n }),
         'seller_mandate.over_delivery_horizon',
       ],
       [withJob({}, { lateCancellationBps: 1_999 }), 'seller_mandate.charges_not_allowed'],
@@ -637,10 +676,11 @@ describe("listing a job offer under a seller's mandate", () => {
 
   it('lists no job offer whose job the check would refuse', () => {
     // A price that doesn't divide evenly, with each charge at the mandate's lowest share and the
-    // horizon at its longest.
+    // horizon at its longest a listing takes.
+    const longest = 6n * DAY - SERVICE_ORDER_CLOCK_SKEW
     const awkward = withJob(
       { price: 100_000_001n },
-      { startAfter: DAY, turnaround: 6n * DAY, gracePeriod: 6n * DAY },
+      { startAfter: DAY, turnaround: longest, gracePeriod: longest },
     )
     expect(problem(awkward)).toBeNull()
     const quoted = chainedJobTerms(jobOfferTerms(awkward, NOW, settlement), [

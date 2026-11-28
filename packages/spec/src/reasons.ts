@@ -69,6 +69,8 @@ export const REASON_CODES = {
     "Delivery is due later than the seller's mandate lets the agent promise",
   'seller_mandate.charges_not_allowed':
     "A cancellation or no-show charge is under the seller's mandate's lowest, or free cancellation lasts longer than it allows",
+  'seller_mandate.job_approval_unavailable':
+    "The seller's mandate asks a person to decide a sale at this job offer's price, and a person can't approve a job's sale yet",
   'negotiation.rounds_exhausted':
     'The thread has taken as many proposals and counter-offers as a thread can',
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
