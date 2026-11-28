@@ -27,7 +27,6 @@ import { signingRequestKey } from '../http.js'
 import { type ComputeBooking, jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { sandboxAgent } from './agent.js'
 import { pause } from './connect.js'
-import { holdJobAcceptance, holdJobQuote, jobAccepted } from './job-sales.js'
 import {
   awaitAccepted,
   listenFor,
@@ -35,8 +34,9 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
-import type { SellerStanding } from './seller-mandate.js'
+import { holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
+import { holdInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -393,16 +393,18 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     }
     if (job.status === 'reserved') {
       // The mandate may have changed, ended or been revoked since the quote, so the job is held to
-      // the newest one again before the acceptance binds the seller.
+      // the newest one again before the acceptance binds the seller, and only when it's the one
+      // the agreement names.
       const standing = await sellerStanding()
-      const now = systemClock()
+      holdToNamedMandate(standing, job.quote.agreement.sellerMandate)
       const sale = {
         orderId: job.orderId,
         terms: job.quote.terms,
+        offer: null,
         buyer: job.buyer.businessId,
         signingKey: signing.address,
       }
-      await holdJobAcceptance(store, standing, sale, now)
+      await holdInTurn(store, standing, sale, systemClock())
       // Null when an earlier run's acceptance was already on the lock, which Avow reads either way.
       const acceptedIn = await context.accept(job.buyer, job.quote)
       await jobAccepted(store, job.orderId, systemClock())

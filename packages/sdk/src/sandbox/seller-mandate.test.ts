@@ -8,6 +8,7 @@ import {
   SERVICE_CATEGORY,
   type SellerMandate,
   type ServiceOfferVersion,
+  type ServiceQuote,
   type Signed,
   sellerKeyRevocationTypedData,
   sellerMandateHash,
@@ -38,7 +39,8 @@ vi.mock('../moderato.js', async (original) => ({
 }))
 
 const { sandboxServices } = await import('./services.js')
-const { NO_SELLER_MANDATE, SellerMandateRefusal } = await import('./seller-mandate.js')
+const { holdToNamedMandate, NAMED_MANDATE_CHANGED, NO_SELLER_MANDATE, SellerMandateRefusal } =
+  await import('./seller-mandate.js')
 const { readSellerStanding, SELLER_STANDING_RETRY_FOR } = await import('./seller-mandate-read.js')
 const { SELLER_MANDATE_ASKS_UNTAKEN } = await import('./services.js')
 
@@ -222,16 +224,22 @@ describe('a selling agent under a seller’s mandate', () => {
   async function under(change: Partial<SellerMandate> = {}) {
     const s = await seller()
     const mandate = mandateFor(s.root.address, s.signingKey, change)
-    let current = mandate
-    const served = async () =>
-      toWire({ current: await signed(current, s.root), earlier: [], revocation: null })
-    const api = avow(served)
+    let current: SellerMandate | null = mandate
+    const api = avow(null, async () =>
+      current
+        ? json(toWire({ current: await signed(current, s.root), earlier: [], revocation: null }))
+        : json({ error: { reason: 'seller_mandate.missing', message: 'No mandate' } }, 404),
+    )
     const services = await sandboxServices({ store: s.store, fetch: api.fetch })
     /** Serves a mandate with these changes in place of the first, as an administrator's new one. */
     const changeTo = (next: Partial<SellerMandate>) => {
       current = mandateFor(s.root.address, s.signingKey, { ...change, ...next })
     }
-    return { ...s, mandate, services, changeTo, ...api }
+    /** Serves no mandate, as once the one in force has ended and Avow holds none for the key. */
+    const end = () => {
+      current = null
+    }
+    return { ...s, mandate, services, changeTo, end, ...api }
   }
 
   it('reads its newest mandate as one chain the business account signed, and says it holds itself to it', async () => {
@@ -383,6 +391,35 @@ describe('a selling agent under a seller’s mandate', () => {
     expect(again.quoted.map((q: { orderId: string }) => q.orderId)).toEqual(['aa'.repeat(16)])
   })
 
+  it('counts the jobs it sold toward what it may have outstanding for a service', async () => {
+    const { services, store, posted } = await under({ maxOutstanding: dollars(500) })
+    const { version } = await services.publish(draft)
+    const now = BigInt(Math.floor(Date.now() / 1000))
+    // A job of $400 accepted an hour ago and due tomorrow, which the same mandate counts.
+    await store.write(
+      'job-sales',
+      JSON.stringify({
+        sales: {
+          ['bb'.repeat(16)]: {
+            category: 'compute-job',
+            item: 'fine-tuning',
+            units: 1,
+            price: String(dollars(400)),
+            at: String(now - 3600n),
+            until: String(now - 3000n),
+            deliverBy: String(now + 86_400n),
+            accepted: true,
+          },
+        },
+      }),
+    )
+    const order = orderFor(version, 3)
+    await expect(services.sell(order)).rejects.toMatchObject({
+      reason: 'seller_mandate.over_outstanding',
+    })
+    expect(quoted(posted, order.orderId)).toBeNull()
+  })
+
   it('keeps an earlier quote when quoting the same order again is refused', async () => {
     const { services, store, posted, changeTo } = await under()
     const { version } = await services.publish(draft)
@@ -396,6 +433,51 @@ describe('a selling agent under a seller’s mandate', () => {
     const kept = JSON.parse((await store.read('services')) ?? '{}')
     const record = kept.quoted.find((q: { orderId: string }) => q.orderId === order.orderId)
     expect(record?.hashes).toHaveLength(1)
+  })
+
+  /** The order as the mailbox holds it once the buyer has funded the seller's quote. */
+  const funded = (order: ReturnType<typeof orderFor>, quote: ServiceQuote) =>
+    ({
+      ...order,
+      status: 'reserved',
+      quote,
+      reserve: { fundedIn: null, amount: dollars(50), acceptBy: order.builtAt + 900n },
+    }) as const
+
+  it('doesn’t accept an order whose agreement names a mandate replaced since the quote', async () => {
+    const { services, posted, changeTo, mandate } = await under()
+    const { version } = await services.publish(draft)
+    const order = orderFor(version, 2)
+    // Avow's answer to the quote isn't one the test serves, so the step ends after it's sent.
+    await services.sell(order).catch(() => {})
+    const quote = quoted(posted, order.orderId)
+    if (!quote) throw new Error('the seller quoted the order')
+    expect(quote.agreement.sellerMandate).toBe(sellerMandateHash(mandate, domain))
+    // The administrator signs a new mandate the sale would pass, for the same key.
+    changeTo({ mandateId: id('seller-mandate-2') })
+    await expect(services.sell(funded(order, quote))).rejects.toThrow(NAMED_MANDATE_CHANGED)
+    expect(posted.some((p) => p.path === SANDBOX_PATHS.serviceAccepted(order.orderId))).toBe(false)
+  })
+
+  it('doesn’t accept an order whose agreement names a mandate that has ended', async () => {
+    const { services, posted, end } = await under()
+    const { version } = await services.publish(draft)
+    const order = orderFor(version, 2)
+    // Avow's answer to the quote isn't one the test serves, so the step ends after it's sent.
+    await services.sell(order).catch(() => {})
+    const quote = quoted(posted, order.orderId)
+    if (!quote) throw new Error('the seller quoted the order')
+    end()
+    await expect(services.sell(funded(order, quote))).rejects.toThrow(NAMED_MANDATE_CHANGED)
+    expect(posted.some((p) => p.path === SANDBOX_PATHS.serviceAccepted(order.orderId))).toBe(false)
+  })
+
+  it('reads an agreement that names no mandate as the one in force only while none is', () => {
+    const standing = { inForce: false, notice: NO_SELLER_MANDATE } as const
+    expect(() => holdToNamedMandate(standing, undefined)).not.toThrow()
+    expect(() => holdToNamedMandate(standing, id('seller-mandate-1'))).toThrow(
+      NAMED_MANDATE_CHANGED,
+    )
   })
 
   it('says in the refusal itself, once, that Avow enforces no seller limit', async () => {

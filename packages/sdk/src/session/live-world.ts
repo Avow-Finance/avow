@@ -26,8 +26,9 @@ import { jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/fees.js'
-import { holdJobAcceptance, holdJobQuote, jobAccepted } from '../sandbox/job-sales.js'
+import { holdToNamedMandate } from '../sandbox/seller-mandate.js'
 import { sellerStandingOf } from '../sandbox/seller-mandate-read.js'
+import { holdInTurn, holdJobQuote, jobAccepted } from '../sandbox/seller-sales.js'
 import type { SandboxStore } from '../sandbox/store.js'
 import { loadSupplierItem } from '../sandbox/supplier-key.js'
 import { trustedChainReader, trustedLockReaders } from '../sandbox/trusted-readers.js'
@@ -239,9 +240,12 @@ export async function liveWorld(options: {
 
     async accept(order, quote) {
       const c = customer.profile
-      // The mandate may have changed since the quote, so the job is held to the newest one again.
-      const sale = jobSale(order.orderId, quote.terms)
-      await holdJobAcceptance(store, await sellerStanding(), sale, systemClock())
+      // The mandate may have changed since the quote, so the job is held to the newest one again,
+      // and only when it's the one the agreement names.
+      const standing = await sellerStanding()
+      holdToNamedMandate(standing, quote.agreement.sellerMandate)
+      const sale = { ...jobSale(order.orderId, quote.terms), offer: null }
+      await holdInTurn(store, standing, sale, systemClock())
       const approvalKey = await client.readContract({
         address: c.lock,
         abi: APPROVAL_KEY_ABI,

@@ -36,7 +36,7 @@ vi.mock('../moderato.js', async (original) => ({
 }))
 
 const { sandboxMailbox } = await import('./mailbox.js')
-const { SellerMandateRefusal } = await import('./seller-mandate.js')
+const { NAMED_MANDATE_CHANGED, SellerMandateRefusal } = await import('./seller-mandate.js')
 
 const id = (word: string): Hex => keccak256(stringToHex(word))
 const SELLER = 'sandbox-seller'
@@ -124,20 +124,26 @@ async function sellingJobs(orderIds: string[], change?: Partial<SellerMandate> |
   const sales = Object.fromEntries(orders.map((o, i) => [o.orderId, { compute: computeFor(i) }]))
   await write(store, 'mailbox', { sales })
   const mandate = change === null ? null : mandateFor(root.address, signingKey, change)
-  const served = mandate
-    ? toWire({
-        current: {
-          type: 'SellerMandate',
-          schemaVersion: '1',
-          chainId: deployment.chainId,
-          lock: LOCK.toLowerCase(),
-          message: mandate,
-          signature: await root.sign({ hash: digestOf(sellerMandateTypedData(mandate, domain)) }),
-        } as Signed<SellerMandate>,
-        earlier: [],
-        revocation: null,
-      })
-    : null
+  const servedFor = async (mandate: SellerMandate | null) =>
+    mandate
+      ? toWire({
+          current: {
+            type: 'SellerMandate',
+            schemaVersion: '1',
+            chainId: deployment.chainId,
+            lock: LOCK.toLowerCase(),
+            message: mandate,
+            signature: await root.sign({ hash: digestOf(sellerMandateTypedData(mandate, domain)) }),
+          } as Signed<SellerMandate>,
+          earlier: [],
+          revocation: null,
+        })
+      : null
+  let served = await servedFor(mandate)
+  /** Serves a mandate with these changes in place of the first, as an administrator's new one. */
+  const serve = async (next: Partial<SellerMandate>) => {
+    served = await servedFor(mandateFor(root.address, signingKey, { ...change, ...next }))
+  }
   const posted: { path: string; body: Record<string, unknown> }[] = []
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
@@ -169,7 +175,7 @@ async function sellingJobs(orderIds: string[], change?: Partial<SellerMandate> |
     const sent = posted.find((p) => p.path === SANDBOX_PATHS.mailboxQuote(orderId))
     return sent ? parseQuoteRequest(sent.body) : null
   }
-  return { mailbox, mandate, signingKey, quoted, store }
+  return { mailbox, mandate, signingKey, quoted, store, posted, serve }
 }
 
 describe('a job sold through the mailbox', () => {
@@ -229,6 +235,54 @@ describe('a job sold through the mailbox', () => {
     await expect(sold).rejects.toBeInstanceOf(SellerMandateRefusal)
     await expect(sold).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
     expect(quoted(order.orderId)).toBeNull()
+  })
+
+  it('counts the services it sold toward what it may have outstanding for a job', async () => {
+    const { mailbox, quoted, store } = await sellingJobs(['c1'.repeat(16)], {
+      maxOutstanding: PRICE + 1n,
+      maxOrderValue: PRICE + 1n,
+    })
+    // A service accepted an hour ago and due tomorrow, which the same mandate counts.
+    await store.write(
+      'services',
+      JSON.stringify({
+        quoted: [
+          {
+            orderId: 'dd'.repeat(16),
+            item: 'Transcript',
+            at: String(NOW - 3600n),
+            until: String(NOW - 3000n),
+            accepted: true,
+            hashes: [],
+            sale: { units: 1, price: '2', deliverBy: String(NOW + 86_400n) },
+          },
+        ],
+      }),
+    )
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    await expect(mailbox.sell(order)).rejects.toMatchObject({
+      reason: 'seller_mandate.over_outstanding',
+    })
+    expect(quoted(order.orderId)).toBeNull()
+  })
+
+  it('doesn’t accept a job whose agreement names a mandate replaced since the quote', async () => {
+    const { mailbox, quoted, posted, serve } = await sellingJobs(['c2'.repeat(16)])
+    const [order] = await mailbox.inbox()
+    if (!order) throw new Error('the inbox read no order')
+    await mailbox.sell(order)
+    const quote = quoted(order.orderId)
+    if (!quote?.ok) throw new Error('the seller quoted the order')
+    await serve({ mandateId: id('seller-mandate-2') })
+    const reserved = {
+      ...order,
+      status: 'reserved',
+      quote: quote.value,
+      reserve: { fundedIn: null, amount: 1n, acceptBy: NOW + 900n },
+    } as unknown as typeof order
+    await expect(mailbox.sell(reserved)).rejects.toThrow(NAMED_MANDATE_CHANGED)
+    expect(posted.some((p) => p.path === SANDBOX_PATHS.mailboxAccepted(order.orderId))).toBe(false)
   })
 
   it('counts the jobs it quoted today, and refuses one past the day’s units', async () => {

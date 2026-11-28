@@ -83,6 +83,8 @@ export function holdOffer(
 
 /** One sale this agent quoted, as its ledger counts it. */
 export interface CountedSale {
+  /** Whether it's a service or a job, which with its item says which line of limits governs it. */
+  category: SellerCategory
   /** The item, by the name a service's offer gives it or the kind of work a job does. */
   item: string
   units: number
@@ -119,11 +121,24 @@ export function ledgerFor(
   let outstanding = 0n
   for (const s of sales) {
     if (!binding(s)) continue
-    const sameLine = line !== null && sellingLimitFor(m, category, s.item) === line
+    const sameLine = line !== null && sellingLimitFor(m, s.category, s.item) === line
     if (sameLine && s.at >= dayStart) unitsToday += s.units
     if (!s.accepted || s.deliverBy > now) outstanding += s.price
   }
   return { unitsToday, outstanding }
+}
+
+/** Why an order isn't accepted when its agreement names another mandate than the one in force. */
+export const NAMED_MANDATE_CHANGED = `The order's agreement names another seller's mandate than the one in force now, or one that has ended, so the sale wasn't held to the mandate in force. This agent doesn't accept it, and the order lapses. ${SELLER_LIMITS_UNENFORCED}`
+
+/**
+ * Throws when the seller's mandate in force isn't the one a quote's agreement names, by its hash,
+ * so an order is never accepted on an agreement that names a mandate the sale wasn't held to. An
+ * agreement that names none matches only while none is in force.
+ */
+export function holdToNamedMandate(standing: SellerStanding, named: Hex | undefined): void {
+  const current = standing.inForce ? standing.chain.current.hash.toLowerCase() : undefined
+  if (named?.toLowerCase() !== current) throw new Error(NAMED_MANDATE_CHANGED)
 }
 
 /**
