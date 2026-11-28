@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { API_PATH_PATTERN } from './api-request.js'
 import { BUSINESS_NAME_MAX, shownBusinessName } from './business-name.js'
 import { dollars } from './demo.js'
+import { JOB, JOB_CATEGORY } from './job.js'
+import { type JobOfferVersion, jobOfferTerms, jobOfferVersionId } from './job-offer.js'
 import {
   APPROVAL_NEEDS,
   type ApprovalNeed,
@@ -21,10 +23,12 @@ import {
   parseOfferSearchResult,
   rankOffers,
 } from './offer-search.js'
+import { type OfferVersion, offerQuote } from './offer-version.js'
 import { REASON_CODES } from './reasons.js'
 import { SANDBOX_PATHS } from './sandbox.js'
 import {
   offerVersionId,
+  SERVICE_CATEGORY,
   type ServiceOfferVersion,
   serviceOfferQuote,
   serviceOfferTerms,
@@ -68,13 +72,14 @@ const search: OfferSearch = {
   query: 'english transcript',
   budget: dollars(200),
   currency: 'USD',
+  category: null,
   quantity: 2,
   deliverBy: NOW + 48n * HOUR,
   needingApproval: true,
 }
-const match = (version: ServiceOfferVersion, s: OfferSearch = search) =>
+const match = (version: OfferVersion, s: OfferSearch = search) =>
   offerMatch(s, version, 'Acme Transcripts', NOW)
-const needing = (version: ServiceOfferVersion, need: ApprovalNeed): OfferNeedingApproval => ({
+const needing = (version: OfferVersion, need: ApprovalNeed): OfferNeedingApproval => ({
   ...match(version),
   need,
 })
@@ -100,13 +105,14 @@ describe('the search path', () => {
 })
 
 describe('parseOfferSearch', () => {
-  it('fills in every offer, one unit, any time and eligible offers only when they are left out', () => {
+  it('fills in every offer of both kinds, one unit, any time and eligible offers only when they are left out', () => {
     expect(parseOfferSearch({ budget: '100000000', currency: 'USD' })).toEqual({
       ok: true,
       value: {
         query: null,
         budget: 100_000_000n,
         currency: 'USD',
+        category: null,
         quantity: 1,
         deliverBy: null,
         needingApproval: false,
@@ -137,6 +143,7 @@ describe('parseOfferSearch', () => {
     ['part of a unit', { budget: '1', currency: 'USD', quantity: 1.5 }],
     ['words past the limit', { budget: '1', currency: 'USD', query: 'a'.repeat(201) }],
     ["a field it doesn't know", { budget: '1', currency: 'USD', supplier: 'acme' }],
+    ['a kind of offer it lists none of', { budget: '1', currency: 'USD', category: 'compute' }],
   ])('refuses %s', (_, json) => {
     expect(parseOfferSearch(json)).toEqual({ ok: false, reason: 'message.invalid' })
   })
@@ -505,5 +512,90 @@ describe('serviceOfferQuote', () => {
 
   it("refuses a quantity the offer doesn't take", () => {
     expect(() => serviceOfferQuote(transcript, 11)).toThrow(/1 to 10 units/)
+  })
+})
+
+/** Transcribing a whole audio archive as one job on an H100, for $120, delivered within 3 hours. */
+const archive: JobOfferVersion = {
+  template: JOB,
+  supplier: 'acme-transcripts',
+  work: { kind: 'archive-transcript', summary: 'A whole audio archive transcribed into English' },
+  compute: { gpu: 'H100', count: 1, region: 'demo' },
+  currency: 'USD',
+  price: dollars(120),
+  rules: {
+    startAfter: HOUR,
+    turnaround: 2n * HOUR,
+    gracePeriod: 600n,
+    dailyCapacity: 3,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+  },
+}
+const oneJob: OfferSearch = { ...search, quantity: 1 }
+
+describe('a job offer in a search', () => {
+  it('fits a search for one unit by its kind of work and summary, within budget and in time', () => {
+    expect(offerFits(oneJob, archive, NOW)).toBe(true)
+    expect(offerFits({ ...oneJob, query: 'ARCHIVE english' }, archive, NOW)).toBe(true)
+    expect(offerFits({ ...oneJob, query: 'captions' }, archive, NOW)).toBe(false)
+  })
+
+  it('is left out of a search for more than one unit, since a job is one', () => {
+    expect(offerFits(search, archive, NOW)).toBe(false)
+    expect(() => offerQuote(archive, 2)).toThrow(/one job/)
+  })
+
+  it('is held to the budget by its price, and to the deadline by its start and turnaround', () => {
+    expect(offerFits({ ...oneJob, budget: dollars(119) }, archive, NOW)).toBe(false)
+    expect(offerFits({ ...oneJob, deliverBy: NOW + 3n * HOUR }, archive, NOW)).toBe(true)
+    expect(offerFits({ ...oneJob, deliverBy: NOW + 3n * HOUR - 1n }, archive, NOW)).toBe(false)
+  })
+
+  it('is priced as the job its version builds, under its own id', () => {
+    const m = match(archive, oneJob)
+    expect(m.id).toBe(jobOfferVersionId(archive))
+    expect(m.quote).toEqual({
+      total: dollars(120),
+      lateCancellation: dollars(24),
+      noShow: dollars(60),
+      reserve: dollars(60),
+    })
+    expect(m.deliverBy).toBe(NOW + 3n * HOUR)
+    const terms = jobOfferTerms(archive, NOW, { arbiter: ARBITER, day90SupplierShareBps: 5_000 })
+    expect(terms.consideration.amount).toBe(m.quote.total)
+    expect(terms.backing.amount).toBe(m.quote.reserve)
+    expect(terms.subject.deliverBy).toBe(m.deliverBy)
+  })
+
+  it('lists only jobs or only services when the search names one kind, and both when it names none', () => {
+    const kinds = (category: OfferSearch['category']) =>
+      [archive, transcript].filter((v) => offerFits({ ...oneJob, query: null, category }, v, NOW))
+    expect(kinds(null)).toEqual([archive, transcript])
+    expect(kinds(JOB_CATEGORY)).toEqual([archive])
+    expect(kinds(SERVICE_CATEGORY)).toEqual([transcript])
+    const jobsOnly = { ...oneJob, category: JOB_CATEGORY }
+    expect(parseOfferSearch(toWire(jobsOnly))).toEqual({ ok: true, value: jobsOnly })
+    const sent = answer([match(archive, jobsOnly)], [], jobsOnly)
+    expect(parseOfferSearchResult(toWire(sent))).toEqual({ ok: true, value: sent })
+    const held = { mandate: MANDATE, now: NOW }
+    expect(offerSearchAnswerProblem(jobsOnly, sent, held)).toBeNull()
+    expect(offerSearchAnswerProblem(oneJob, sent, held)).toMatch(/another search/)
+  })
+
+  it('ranks beside services, and reads back through toWire', () => {
+    const job = match(archive, oneJob)
+    const service = match(transcript, oneJob)
+    expect(rankOffers([job, service])).toEqual([service, job])
+    const mixed = answer([job, service], [], oneJob)
+    expect(parseOfferSearchResult(toWire(mixed))).toEqual({ ok: true, value: mixed })
+  })
+
+  it("refuses an answer whose job is listed under another id, or that doesn't deliver when it says", () => {
+    const job = match(archive, oneJob)
+    const wrongId = answer([{ ...job, id: offerVersionId(transcript) }], [], oneJob)
+    expect(offerSearchResultProblem(wrongId)).toMatch(/doesn't match/)
+    const late = answer([{ ...job, deliverBy: job.deliverBy + 1n }], [], oneJob)
+    expect(offerSearchResultProblem(late)).toMatch(/doesn't match/)
   })
 })

@@ -7,6 +7,7 @@ import {
   DEMO_GPU_SUPPLIER,
   parseComputeOffers,
   type SandboxDeployment,
+  standInComputeBooking,
   TESTNET_DEMO_PROFILE,
 } from '@avow-finance/spec'
 import {
@@ -22,7 +23,7 @@ import { Account } from 'viem/tempo'
 import { AvowApiError, requestSupplierAuthorization, signingRequestKey } from '../http.js'
 import { acceptJob } from '../job/accept.js'
 import { connectTestCustomer, TestCustomerError } from '../job/customer.js'
-import { jobQuoteTerms, quoteJob, standInBooking } from '../job/quote.js'
+import { jobQuoteTerms, quoteJob } from '../job/quote.js'
 import { moderatoClient, moderatoUsdToken } from '../moderato.js'
 import { Refusal, sandboxAgent } from '../sandbox/agent.js'
 import { fundFees } from '../sandbox/fees.js'
@@ -145,7 +146,9 @@ export async function liveWorld(options: {
       // so this check runs on the job's terms with a stand-in for the booking, and the quote holds
       // the exact terms it signs again.
       if (order) {
-        const standIn = standInBooking(deployment.chainId, agent.business.lock)
+        const standIn = {
+          reference: standInComputeBooking(deployment.chainId, agent.business.lock),
+        }
         const sale = { ...jobSale(order.orderId, jobQuoteTerms(order, standIn)), offer: null }
         await holdInTurn(store, await sellerStanding(), sale, systemClock())
       }

@@ -1,5 +1,5 @@
-import type { Address } from 'viem'
-import type { Dependencies } from './dependencies.js'
+import { type Address, keccak256, stringToHex } from 'viem'
+import type { BuyerSideReference, Dependencies } from './dependencies.js'
 import { type GpuSubject, gpuSubjectProblem } from './gpu-reservation.js'
 import type { ReasonCode } from './reasons.js'
 import { isText } from './text.js'
@@ -146,6 +146,21 @@ export function jobTerms(input: JobInput): JobTerms {
     backing: { kind: 'reserve', side: 'buyer', amount: reserve, releaseDate: input.releaseDate },
   }
 }
+
+/**
+ * A stand-in for the compute booking a job will rely on before it's booked, on the buyer side of
+ * `lock`. A check of the terms that reads no lock, such as a seller's mandate check before booking
+ * or a search, reads job terms through it, since job terms that name no booking never pass. No
+ * quote, record or approval carries it, and a booking names the real one.
+ */
+export const standInComputeBooking = (chainId: number, lock: Address): BuyerSideReference => ({
+  kind: 'commitment',
+  chainId,
+  lock: lock.toLowerCase() as Address,
+  commitmentId: keccak256(stringToHex('avow-compute-stand-in')),
+  side: 'buyer',
+  termsHash: keccak256(stringToHex('avow-compute-stand-in-terms')),
+})
 
 /** Version 3 job terms that rely on the compute bookings given, which the customer checks. */
 export function chainedJobTerms(terms: JobTerms, dependencies: Dependencies): ChainedJobTerms {

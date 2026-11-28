@@ -3,16 +3,20 @@ import { z } from 'zod'
 import { API_REQUEST_MAX_VALIDITY } from './api-request.js'
 import { BUSINESS_NAME_MAX, shownBusinessName } from './business-name.js'
 import { bytes32, u64, u256 } from './json-fields.js'
-import type { ReasonCode } from './reasons.js'
 import {
-  offerVersionId,
-  SERVICE_QUANTITY_MAX,
-  type ServiceOfferQuote,
-  type ServiceOfferVersion,
-  serviceOfferProblem,
-  serviceOfferQuote,
-  serviceOfferVersionJson,
-} from './service.js'
+  type OfferQuote,
+  type OfferVersion,
+  offerDeliveryAfter,
+  offerIdOf,
+  offerItemOf,
+  offerQuote,
+  offerTextOf,
+  offerVersionJson,
+  offerVersionProblem,
+} from './offer-version.js'
+import type { ReasonCode } from './reasons.js'
+import { SELLER_CATEGORIES, type SellerCategory } from './seller-mandate.js'
+import { SERVICE_QUANTITY_MAX } from './service.js'
 import { isFilled } from './text.js'
 import { CURRENCIES, type Currency } from './types.js'
 import type { Parsed } from './wire.js'
@@ -27,9 +31,10 @@ import type { Parsed } from './wire.js'
  *
  * A result grants nothing. Booking an offer checks the agent's mandate and funds again, and Avow
  * refuses a version that was replaced (`offer.superseded`) or withdrawn (`offer.withdrawn`) since
- * the search. Avow builds its answer with `offerSearchResult`, `parseOfferSearchResult` refuses an
- * answer that isn't consistent with the search it echoes, and `offerSearchAnswerProblem` lets the
- * agent check the answer is to its own search, its current mandate and the present moment.
+ * the search. An offer is a service's or a job's, and a job is one unit, so it fits only a search
+ * for a quantity of 1. Avow builds its answer with `offerSearchResult`, `parseOfferSearchResult`
+ * refuses an answer that isn't consistent with the search it echoes, and `offerSearchAnswerProblem`
+ * lets the agent check the answer is to its own search, its current mandate and the present moment.
  */
 
 /**
@@ -66,14 +71,20 @@ export type ApprovalNeed = (typeof APPROVAL_NEEDS)[number]
 export interface OfferSearch {
   /**
    * Words that only filter. The query splits on whitespace, and each word has to appear somewhere
-   * in the item's name or summary, in any case, including inside a longer word. Null lists every
-   * offer that fits the rest, and a blank query reads as null.
+   * in the item's name or summary, a job's kind of work standing for its name, in any case,
+   * including inside a longer word. Null lists every offer that fits the rest, and a blank query
+   * reads as null.
    */
   query: string | null
   /** The most the agent will pay for the whole booking, in micros of `currency`. */
   budget: bigint
   currency: Currency
-  /** How many units the agent would book. */
+  /**
+   * The one kind of offer to list, `SERVICE_CATEGORY` or `JOB_CATEGORY`, or null for both. A search that leaves it
+   * out lists both.
+   */
+  category: SellerCategory | null
+  /** How many units the agent would book. A job is one unit, so only a quantity of 1 finds jobs. */
   quantity: number
   /** The latest the agent needs delivery, in unix seconds, or null when any time will do. */
   deliverBy: bigint | null
@@ -83,10 +94,13 @@ export interface OfferSearch {
 
 /** One offer a search found, priced for the search's quantity. */
 export interface OfferMatch {
-  /** The version's id, which `offerVersionId` gives and a booking names. */
+  /** The version's id, which `offerIdOf` gives under its kind's own label and a booking names. */
   id: Hex
-  /** The version Avow would book, whose `supplier` is the supplier's business id. */
-  version: ServiceOfferVersion
+  /**
+   * The version Avow would book, a service's or a job's, whose `supplier` is the supplier's
+   * business id.
+   */
+  version: OfferVersion
   /**
    * The name the supplier's business registered with Avow, up to `BUSINESS_NAME_MAX` characters.
    * A business that registered a longer name before names were capped shows it shortened by
@@ -95,8 +109,11 @@ export interface OfferMatch {
    */
   supplier: { name: string; sandbox: true }
   /** What booking the search's quantity costs, with each charge and the reserve it takes. */
-  quote: ServiceOfferQuote
-  /** When delivery would be due if the agent had booked when Avow checked, in unix seconds. */
+  quote: OfferQuote
+  /**
+   * When delivery would be due if the agent had booked when Avow checked, in unix seconds. A job's
+   * is its start plus its turnaround.
+   */
   deliverBy: bigint
 }
 
@@ -134,24 +151,25 @@ const words = (query: string | null) =>
   query === null ? [] : query.toLowerCase().split(/\s+/).filter(Boolean)
 
 /**
- * Whether an offer version fits a search at `now`, leaving the agent's mandate aside. It's in the
- * search's currency, its item has every word of the query, it takes the quantity, its total for
+ * Whether an offer version fits a search at `now`, leaving the agent's mandate aside. It's of the
+ * kind the search asks for, if it names one, in the search's currency, its item has every word of the query, it takes the quantity, its total for
  * that quantity is within the budget, and booked at `now` it delivers by the search's deadline. An
  * offer whose delivery falls exactly on the deadline fits at `now` and no later, so a search with
  * a deadline is best booked straight away.
  */
-export function offerFits(search: OfferSearch, version: ServiceOfferVersion, now: bigint): boolean {
-  if (serviceOfferProblem(version) !== null || version.currency !== search.currency) return false
-  const text = `${version.item.name} ${version.item.summary}`.toLowerCase()
+export function offerFits(search: OfferSearch, version: OfferVersion, now: bigint): boolean {
+  if (offerVersionProblem(version) !== null || version.currency !== search.currency) return false
+  if (search.category !== null && offerItemOf(version).category !== search.category) return false
+  const text = offerTextOf(version).toLowerCase()
   if (!words(search.query).every((w) => text.includes(w))) return false
-  let quote: ServiceOfferQuote
+  let quote: OfferQuote
   try {
-    quote = serviceOfferQuote(version, search.quantity)
+    quote = offerQuote(version, search.quantity)
   } catch {
     return false
   }
   if (quote.total > search.budget) return false
-  return search.deliverBy === null || now + version.rules.leadTime <= search.deliverBy
+  return search.deliverBy === null || now + offerDeliveryAfter(version) <= search.deliverBy
 }
 
 /**
@@ -161,7 +179,7 @@ export function offerFits(search: OfferSearch, version: ServiceOfferVersion, now
  */
 export function offerMatch(
   search: OfferSearch,
-  version: ServiceOfferVersion,
+  version: OfferVersion,
   supplierName: string,
   checkedAt: bigint,
 ): OfferMatch {
@@ -170,11 +188,11 @@ export function offerMatch(
   const name = shownBusinessName(supplierName)
   if (!isFilled(name, BUSINESS_NAME_MAX)) throw new RangeError("The supplier's name is blank")
   return {
-    id: offerVersionId(version),
+    id: offerIdOf(version),
     version,
     supplier: { name, sandbox: true },
-    quote: serviceOfferQuote(version, search.quantity),
-    deliverBy: checkedAt + version.rules.leadTime,
+    quote: offerQuote(version, search.quantity),
+    deliverBy: checkedAt + offerDeliveryAfter(version),
   }
 }
 
@@ -218,10 +236,10 @@ export function offerSearchResult(input: {
 
 const sameMatch = (search: OfferSearch, checkedAt: bigint, m: OfferMatch) => {
   if (!offerFits(search, m.version, checkedAt)) return false
-  const quote = serviceOfferQuote(m.version, search.quantity)
+  const quote = offerQuote(m.version, search.quantity)
   return (
-    m.id === offerVersionId(m.version) &&
-    m.deliverBy === checkedAt + m.version.rules.leadTime &&
+    m.id === offerIdOf(m.version) &&
+    m.deliverBy === checkedAt + offerDeliveryAfter(m.version) &&
     m.quote.total === quote.total &&
     m.quote.lateCancellation === quote.lateCancellation &&
     m.quote.noShow === quote.noShow &&
@@ -280,6 +298,7 @@ export function offerSearchAnswerProblem(
     s.query === sent.query &&
     s.budget === sent.budget &&
     s.currency === sent.currency &&
+    s.category === sent.category &&
     s.quantity === sent.quantity &&
     s.deliverBy === sent.deliverBy &&
     s.needingApproval === sent.needingApproval
@@ -293,11 +312,15 @@ export function offerSearchAnswerProblem(
   return null
 }
 
-/** A search as JSON. Words, quantity, deadline and the group needing approval may be left out. */
+/**
+ * A search as JSON. Words, the kind of offer, quantity, deadline and the group needing approval may
+ * be left out.
+ */
 export const offerSearchJson = z.strictObject({
   query: z.string().max(OFFER_QUERY_MAX).nullable().optional(),
   budget: u256,
   currency: z.enum(CURRENCIES),
+  category: z.enum(SELLER_CATEGORIES).nullable().optional(),
   quantity: z.number().int().min(1).max(SERVICE_QUANTITY_MAX).optional(),
   deliverBy: u64.nullable().optional(),
   needingApproval: z.boolean().optional(),
@@ -310,6 +333,7 @@ const searchOf = (data: z.output<typeof offerSearchJson>): OfferSearch | null =>
     query: query ? query : null,
     budget: data.budget,
     currency: data.currency,
+    category: data.category ?? null,
     quantity: data.quantity ?? 1,
     deliverBy: data.deliverBy ?? null,
     needingApproval: data.needingApproval ?? false,
@@ -318,7 +342,8 @@ const searchOf = (data: z.output<typeof offerSearchJson>): OfferSearch | null =>
 
 /**
  * Reads a search from JSON. Words left out, null, empty or only whitespace all read as no words,
- * which lists every offer, and the quantity defaults to 1. A budget of nothing is refused.
+ * which lists every offer, a kind of offer left out reads as null, which lists both, and the
+ * quantity defaults to 1. A budget of nothing is refused.
  */
 export function parseOfferSearch(json: unknown): Parsed<OfferSearch> {
   const parsed = offerSearchJson.safeParse(json)
@@ -328,7 +353,7 @@ export function parseOfferSearch(json: unknown): Parsed<OfferSearch> {
 
 const offerMatchJson = z.strictObject({
   id: bytes32,
-  version: serviceOfferVersionJson,
+  version: offerVersionJson,
   supplier: z.strictObject({
     name: z.string().min(1).max(BUSINESS_NAME_MAX),
     sandbox: z.literal(true),
@@ -352,9 +377,8 @@ export const offerSearchResultJson = z.strictObject({
 
 /**
  * Reads Avow's answer to a search from JSON, refusing one whose shape is wrong or that
- * `offerSearchResultProblem` finds inconsistent, which includes a version `serviceOfferProblem`
- * refuses. Whether it
- * answers the search the agent sent is `offerSearchAnswerProblem`'s to say.
+ * `offerSearchResultProblem` finds inconsistent, which includes a version `offerVersionProblem`
+ * refuses. Whether it answers the search the agent sent is `offerSearchAnswerProblem`'s to say.
  */
 export function parseOfferSearchResult(json: unknown): Parsed<OfferSearchResult> {
   const parsed = offerSearchResultJson.safeParse(json)
