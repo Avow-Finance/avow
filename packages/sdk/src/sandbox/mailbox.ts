@@ -39,7 +39,7 @@ import {
 import { jobOfferFor, publishedOffers } from './published-offers.js'
 import { holdToNamedMandate, type SellerStanding } from './seller-mandate.js'
 import { sellerStandingOf } from './seller-mandate-read.js'
-import { holdInTurn, holdJobInTurn, holdJobQuote, jobAccepted } from './seller-sales.js'
+import { holdInTurn, holdJobInTurn, holdJobQuote, jobAccepted, releaseJob } from './seller-sales.js'
 import { isRecord, readJson, write } from './store.js'
 
 /**
@@ -368,6 +368,27 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
     signing: () => needSupplier().signing,
   })
 
+  /** Books the compute a job relies on, from the testnet's compute offers, and waits for it. */
+  async function bookCompute(job: MailboxOrder) {
+    const agent = await sandboxAgent({
+      store,
+      deployment,
+      session: null,
+      log: () => {},
+      fetch: send,
+    })
+    const { offer, gpus } = await computeFor(job)
+    const terms = computeOfferTerms(offer, gpus, deployment)
+    const booked = await agent.bookTerms({ supplier: offer.supplier, terms })
+    if (!(await booked.accepted())) throw new Error('The compute supplier never accepted')
+    const compute: ComputeBooking = {
+      reference: booked.reference as BuyerSideReference,
+      terms,
+      salt: booked.commitment.salt,
+    }
+    return { compute, reservedIn: booked.commitment.reservedIn }
+  }
+
   async function sell(job: MailboxOrder, onStep?: (step: SellStep) => void): Promise<void> {
     const { asSupplier, signing, supplier } = needSupplier()
     if (job.status === 'requested') {
@@ -395,25 +416,18 @@ export async function sandboxMailbox(o: MailboxOptions = {}): Promise<SandboxMai
           capacity,
           systemClock(),
         )
-        const agent = await sandboxAgent({
-          store,
-          deployment,
-          session: null,
-          log: () => {},
-          fetch: send,
-        })
-        const { offer, gpus } = await computeFor(job)
-        const terms = computeOfferTerms(offer, gpus, deployment)
-        const booked = await agent.bookTerms({ supplier: offer.supplier, terms })
-        if (!(await booked.accepted())) throw new Error('The compute supplier never accepted')
-        compute = {
-          reference: booked.reference as BuyerSideReference,
-          terms,
-          salt: booked.commitment.salt,
+        // The hold above took the job's place, so a booking that fails gives it back.
+        let booked: Awaited<ReturnType<typeof bookCompute>>
+        try {
+          booked = await bookCompute(job)
+        } catch (error) {
+          await releaseJob(store, job.orderId, systemClock())
+          throw error
         }
+        compute = booked.compute
         const booking = compute
         await keep((k) => ({ sales: { ...k.sales, [job.orderId]: { compute: booking } } }))
-        onStep?.({ step: 'compute', reservedIn: booked.commitment.reservedIn })
+        onStep?.({ step: 'compute', reservedIn: booked.reservedIn })
       }
       // The job is held to the seller's mandate again on the exact terms the quote signs, and the
       // quote names the mandate it was held to. The mandate is read again after the compute is

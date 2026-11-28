@@ -74,8 +74,8 @@ export interface JobOfferRules {
    */
   gracePeriod: bigint
   /**
-   * How many of these jobs the supplier takes in a day. The terms don't carry it, so whoever accepts
-   * jobs for the supplier counts against it.
+   * How many of these jobs the supplier takes in a day. The terms don't carry it, so whoever
+   * accepts jobs for the supplier counts against it.
    */
   dailyCapacity: number
   /** What a cancellation after the start can cost, as a share of the price in basis points. */
@@ -89,7 +89,7 @@ export interface JobOfferRules {
  * or a change to the rules is a new version, with a new id.
  */
 export interface JobOfferVersion {
-  /** Which template the version sells under, so a version reads as a job's wherever it's carried. */
+  /** The template the version sells under, so a version reads as a job's wherever it's carried. */
   template: typeof JOB
   /** The supplier's business id. */
   supplier: string
@@ -113,8 +113,9 @@ export interface JobOfferVersion {
  * period ends by delivery, capacity is at least one job a day, each charge is a share from 0 to
  * 100%, and at least one is above zero, since a reserve with nothing to charge backs nothing.
  * The start, the turnaround and the charge window after delivery, counted from any moment up to
- * `JOB_OFFER_BUILT_BY_MAX`, add up to a uint64 of seconds, and the price times 10,000 basis points fits a uint256, so a share of it can be worked out.
- * Every field has its declared type, so a version that passes hashes one way only.
+ * `JOB_OFFER_BUILT_BY_MAX`, add up to a uint64 of seconds, and the price times 10,000 basis points
+ * fits a uint256, so a share of it can be worked out. Every field has its declared type, so a
+ * version that passes hashes one way only.
  */
 export function jobOfferProblem(v: JobOfferVersion): string | null {
   if (typeof v !== 'object' || v === null || v.template !== JOB) return 'Offer a job/1 job.'
@@ -145,7 +146,8 @@ export function jobOfferProblem(v: JobOfferVersion): string | null {
   if (typeof r.turnaround !== 'bigint' || r.turnaround <= 0n) {
     return 'Delivery comes some time after work starts.'
   }
-  if (JOB_OFFER_BUILT_BY_MAX + r.startAfter + r.turnaround + JOB_OFFER_CHARGE_AFTER > maxUint64) {
+  const furthest = JOB_OFFER_BUILT_BY_MAX + r.startAfter + r.turnaround + JOB_OFFER_CHARGE_AFTER
+  if (furthest > maxUint64) {
     return 'Work starts and is delivered too far ahead to count in seconds.'
   }
   if (typeof r.gracePeriod !== 'bigint' || r.gracePeriod < 0n || r.gracePeriod > r.turnaround) {
@@ -165,7 +167,7 @@ export function jobOfferProblem(v: JobOfferVersion): string | null {
 
 const text = (max: number) => z.string().min(1).max(max)
 
-/** A job offer version as JSON, with amounts and times as decimal strings and nothing else in it. */
+/** A job offer version as JSON, with amounts and times as decimal strings, and nothing else. */
 export const jobOfferVersionJson = z.strictObject({
   template: z.literal(JOB),
   supplier: text(BUSINESS_ID_MAX),
@@ -187,7 +189,7 @@ export const jobOfferVersionJson = z.strictObject({
   }),
 })
 
-/** Reads a job offer version from JSON, refusing one `jobOfferProblem` finds anything wrong with. */
+/** Reads a job offer version from JSON, refusing one `jobOfferProblem` finds anything wrong in. */
 export function parseJobOfferVersion(json: unknown): Parsed<JobOfferVersion> {
   const parsed = jobOfferVersionJson.safeParse(json)
   if (!parsed.success) return { ok: false, reason: 'message.invalid' }
