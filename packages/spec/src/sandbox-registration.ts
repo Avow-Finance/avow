@@ -8,6 +8,7 @@ import {
   zeroAddress,
 } from 'viem'
 import { z } from 'zod'
+import { BUSINESS_NAME_MAX, BUSINESS_NAME_RULE, businessNameFits } from './business-name.js'
 import { COUNTRY_CODE } from './fields.js'
 import type { HashSigner } from './keychain.js'
 import type { Parsed } from './wire.js'
@@ -137,7 +138,7 @@ export const businessRegistrationBody = z.strictObject({
   registration: z.strictObject({
     ...common,
     lock: address,
-    legalName: z.string().min(1).max(200),
+    legalName: z.string().min(1).max(BUSINESS_NAME_MAX),
     country: z.string().regex(COUNTRY_CODE),
   }),
   accountSignature: signature,
@@ -154,6 +155,7 @@ export const supplierRegistrationBody = z.strictObject({
  * A business's registration, signed by its account's root key, as the body of the request that
  * registers it. The request around it has to be signed by the same root key, naming the business's
  * lock. It's valid for `validity` seconds from `now`, which the API holds to at most five minutes.
+ * It throws for a name `businessNameFits` refuses, which Avow wouldn't register.
  */
 export async function signBusinessRegistration(r: {
   chainId: number
@@ -168,6 +170,7 @@ export async function signBusinessRegistration(r: {
   validity: bigint
   rootKey: HashSigner
 }): Promise<{ registration: BusinessRegistration; accountSignature: Hex }> {
+  if (!businessNameFits(r.legalName)) throw new RangeError(BUSINESS_NAME_RULE)
   const registration: BusinessRegistration = {
     environment: SANDBOX_ENVIRONMENT,
     audience: r.audience,

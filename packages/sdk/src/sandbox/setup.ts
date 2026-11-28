@@ -1,5 +1,7 @@
 import {
   type AvowDomain,
+  BUSINESS_NAME_RULE,
+  businessNameFits,
   formatUsd,
   mandateHash,
   REFUSED_BY,
@@ -219,8 +221,10 @@ export async function prepareSandboxBusiness(
   const { config, prompts } = options
   const log = options.log ?? ((line: string) => console.log(line))
   const send = options.fetch ?? ((input, init) => fetch(input, init))
-  if (typeof config.name !== 'string' || config.name.trim() === '' || config.name.length > 200) {
-    throw new RangeError("The business's name has to be 1 to 200 characters")
+  // A business set up before names were capped keeps its longer name, so only a registration is
+  // held to the cap, before anything is asked.
+  if (typeof config.name !== 'string' || config.name.trim() === '') {
+    throw new RangeError("The business's name can't be blank")
   }
   const country = config.country ?? 'US'
   if (!/^[A-Z]{2}$/.test(country)) throw new RangeError('The country has to be two capital letters')
@@ -240,6 +244,7 @@ export async function prepareSandboxBusiness(
   let item: BusinessItem | null = await loadBusinessItem(store)
   const fresh = !item
   if (!item) {
+    if (!businessNameFits(config.name)) throw new RangeError(BUSINESS_NAME_RULE)
     if ((await store.read('agent')) !== null) {
       throw new Error(
         "The business's file is gone from .avow but its agent's file is there, so the business's key is missing. Restore .avow/business.json, or start over with npm run fresh.",
@@ -309,6 +314,7 @@ export async function prepareSandboxBusiness(
         )
       }
     }
+    if (!businessNameFits(config.name)) throw new RangeError(BUSINESS_NAME_RULE)
     if (!fresh) log('Your business on Tempo testnet', 'stage')
     const root = await openRoot()
     log("Funding the account's fees", 'wait')

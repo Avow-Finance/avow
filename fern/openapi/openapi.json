@@ -5684,7 +5684,7 @@
               "legalName": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 200
+                "maxLength": 120
               },
               "country": {
                 "type": "string",

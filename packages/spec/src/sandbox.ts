@@ -102,9 +102,10 @@ export const SANDBOX_PATHS = {
    * `sellerOfferProblem`, and `checkMandate` has to approve the terms it builds for the search's
    * quantity under the agent's current mandate and what its lock holds. A refusal of the mandate
    * check that an administrator can lift puts it among the offers needing approval instead, and
-   * any other leaves it out. The search doesn't read what a booking alone settles, which is what
-   * Avow approved within each payment limit's period, how the lock stands toward the supplier and
-   * whether the seller's mandate deals with this buyer.
+   * any other leaves it out. A seller whose newest mandate won't deal with the agent's business,
+   * by `counterpartyAllowed`, is left out too, and the answer says nothing of why a seller is
+   * missing. The search doesn't read what a booking alone settles, which is what Avow approved
+   * within each payment limit's period and how the lock stands toward the supplier.
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**

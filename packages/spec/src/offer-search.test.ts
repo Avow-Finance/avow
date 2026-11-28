@@ -1,6 +1,7 @@
 import type { Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { API_PATH_PATTERN } from './api-request.js'
+import { BUSINESS_NAME_MAX, shownBusinessName } from './business-name.js'
 import { dollars } from './demo.js'
 import {
   APPROVAL_NEEDS,
@@ -209,6 +210,14 @@ describe('offerMatch', () => {
   it("refuses an offer that doesn't fit, or a blank supplier name", () => {
     expect(() => match(priced(dollars(150)))).toThrow(/doesn't fit/)
     expect(() => offerMatch(search, transcript, '   ', NOW)).toThrow(/blank/)
+  })
+
+  it('lists a supplier whose registered name is longer than a result carries, under it shortened', () => {
+    const long = `Acme Transcripts ${'and Sons '.repeat(20)}`
+    const found = offerMatch(search, transcript, long, NOW)
+    expect(found.supplier.name).toBe(shownBusinessName(long))
+    expect(found.supplier.name).toHaveLength(BUSINESS_NAME_MAX)
+    expect(found.supplier.name.endsWith('\u2026')).toBe(true)
   })
 })
 

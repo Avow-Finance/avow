@@ -1,5 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { describe, expect, it } from 'vitest'
+import { BUSINESS_NAME_MAX, BUSINESS_NAME_RULE } from './business-name.js'
 import { isKeySignature } from './keychain.js'
 import {
   businessRegistrationBody,
@@ -90,5 +91,26 @@ describe('the sandbox registration', () => {
         rootKey: root,
       })
     expect((await sign()).registration.nonce).not.toBe((await sign()).registration.nonce)
+  })
+
+  it('signs a name of up to BUSINESS_NAME_MAX characters, and refuses a longer one with the rule', async () => {
+    const root = privateKeyToAccount(generatePrivateKey())
+    const sign = (legalName: string) =>
+      signBusinessRegistration({
+        chainId: 42431,
+        factory: FACTORY,
+        audience: 'https://api.testnet.avow.finance',
+        account: root.address,
+        lock: '0x00000000000000000000000000000000000000b2',
+        legalName,
+        country: 'JP',
+        now: 1_800_000_000n,
+        validity: 120n,
+        rootKey: root,
+      })
+    const longest = 'N'.repeat(BUSINESS_NAME_MAX)
+    expect((await sign(longest)).registration.legalName).toBe(longest)
+    await expect(sign(`${longest}s`)).rejects.toThrow(BUSINESS_NAME_RULE)
+    await expect(sign('   ')).rejects.toThrow(BUSINESS_NAME_RULE)
   })
 })
