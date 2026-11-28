@@ -266,19 +266,6 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       await write(store, 'services', toWire({ ...now, ...(await change(now)) }) as object)
     })
 
-  /** A service sale as the seller's mandate reads it, on the exact terms its quote signs. */
-  const heldSale = (
-    sale: ServiceOrder,
-    terms: ServiceQuote['terms'],
-    version: ServiceOfferVersion,
-  ): HeldSale => ({
-    orderId: sale.orderId,
-    terms,
-    offer: version,
-    buyer: sale.buyer.businessId,
-    signingKey: context.needSupplier().signing.address,
-  })
-
   const sells = (() => {
     try {
       context.needSupplier()
@@ -295,6 +282,19 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     send: context.send,
     business,
     signing: () => context.needSupplier().signing,
+  })
+
+  /** A service sale as the seller's mandate reads it, on the exact terms its quote signs. */
+  const heldSale = (
+    sale: ServiceOrder,
+    terms: ServiceQuote['terms'],
+    version: ServiceOfferVersion,
+  ): HeldSale => ({
+    orderId: sale.orderId,
+    terms,
+    offer: version,
+    buyer: sale.buyer.businessId,
+    signingKey: context.needSupplier().signing.address,
   })
 
   // Asking for a seller's mandate.
