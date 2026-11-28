@@ -1,4 +1,5 @@
 import { MODERATO_RPC_URL } from '@avow-finance/sdk'
+import { dollars } from '@avow-finance/spec'
 import { type Address, getAddress, isAddress } from 'viem'
 
 type Env = Record<string, string | undefined>
@@ -68,7 +69,7 @@ export function enrollSettings(env: Env) {
     agentId: r.text('AGENT_ID', ID, 'agt_quickstart'),
     supplierUrl: r.text('SUPPLIER_URL', /^https?:\/\/\S+$/),
     token: r.address('AVOW_TOKEN'),
-    reserve: BigInt(r.whole('RESERVE_DOLLARS', 500, 100_000)) * 1_000_000n,
+    reserve: dollars(r.whole('RESERVE_DOLLARS', 500, 100_000)),
     open: BigInt(r.whole('OPEN_BOOKINGS', 3, 100)),
   }
   r.done()
@@ -105,7 +106,7 @@ export function bookSettings(env: Env) {
     token: r.address('AVOW_TOKEN'),
     arbiter: r.address('AVOW_ARBITER'),
     day90SupplierShareBps: r.whole('AVOW_DAY90_SHARE_BPS', 5000, 10_000),
-    reserve: BigInt(r.whole('RESERVE_DOLLARS', 500, 100_000)) * 1_000_000n,
+    reserve: dollars(r.whole('RESERVE_DOLLARS', 500, 100_000)),
     startsIn: BigInt(r.whole('WINDOW_STARTS_IN', 720)),
     minutes: BigInt(r.whole('WINDOW_MINUTES', 30)),
   }
