@@ -5,6 +5,7 @@ import { canonicalJson } from './canonical.js'
 import { dollars } from './demo.js'
 import { chainedJobTerms, JOB, JOB_CATEGORY, validateJob } from './job.js'
 import {
+  JOB_OFFER_BUILT_BY_MAX,
   JOB_OFFER_CHARGE_AFTER,
   JOB_OFFER_START_MIN,
   JOB_OFFER_VERSION_LABEL,
@@ -55,6 +56,8 @@ const withRules = (change: Partial<JobOfferVersion['rules']>): JobOfferVersion =
   ...version,
   rules: { ...version.rules, ...change },
 })
+/** The longest turnaround a version takes, with room for a job built at the latest moment. */
+const longest = maxUint64 - JOB_OFFER_BUILT_BY_MAX - JOB_OFFER_START_MIN - JOB_OFFER_CHARGE_AFTER
 const roundTrip = (value: unknown) => JSON.parse(JSON.stringify(toWire(value)))
 
 const service: ServiceOfferVersion = {
@@ -115,7 +118,7 @@ describe('a job offer version', () => {
     expect(jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN }))).toBeNull()
     expect(jobOfferProblem(withRules({ gracePeriod: 2n * HOUR }))).toBeNull()
     // Each bound holds at its edge.
-    const turnaround = maxUint64 - JOB_OFFER_START_MIN - JOB_OFFER_CHARGE_AFTER
+    const turnaround = longest
     expect(jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN, turnaround }))).toBeNull()
     expect(
       jobOfferProblem(withRules({ startAfter: JOB_OFFER_START_MIN, turnaround: turnaround + 1n })),
@@ -167,6 +170,16 @@ describe('what a job of an offer version costs', () => {
 })
 
 describe('job terms from an offer version', () => {
+  it('count every time in a uint64 when built at the latest moment from the longest lengths', () => {
+    const far = withRules({ startAfter: JOB_OFFER_START_MIN, turnaround: longest, gracePeriod: 0n })
+    const terms = jobOfferTerms(far, JOB_OFFER_BUILT_BY_MAX, settlement)
+    expect(terms.remedies.chargeDeadline).toBe(maxUint64)
+    expect(terms.backing.releaseDate).toBe(maxUint64)
+    expect(validateJob(terms)).toBeNull()
+    expect(() => jobOfferTerms(far, JOB_OFFER_BUILT_BY_MAX + 1n, settlement)).toThrow(RangeError)
+    expect(() => jobOfferTerms(version, -1n, settlement)).toThrow(RangeError)
+  })
+
   const terms = jobOfferTerms(version, NOW, settlement)
 
   it('build the job at its price, starting and delivering when its rules say', () => {
