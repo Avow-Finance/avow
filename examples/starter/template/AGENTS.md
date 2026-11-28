@@ -40,4 +40,5 @@ A refusal comes back with a reason code and the layer that refused. Tell your pe
 
 - `npm start` sets up the business the first time, then runs `agent.ts` each time your person presses Enter.
 - `npm run job` runs one job with no input.
+- `npm run loop` books twice with Avow's demo GPU supplier, a test business, keeps one booking and cancels the other late, in about ten minutes. The late cancellation spends half of one $10 reserve of the business's test dollars, so run it when your person asks.
 - `npm run bypass` tries to get past the agent's limits without Avow, and shows each refusal.

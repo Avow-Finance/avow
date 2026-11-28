@@ -48,6 +48,7 @@ To sell, your agent has to be connected to sell. No limit your person approved a
 
 - `publish_offer` publishes an offer and answers with the offer itself. Ask your person for the price and both charges, and never choose them yourself. Hand the offer, whole, to the buyer's agent.
 - `offers` lists what you've published.
+- `list_offer` lists an offer you published with Avow, which checks it against your newest seller's mandate first and lists nothing the mandate doesn't allow. An item has one current listing, so listing a new version replaces the old one. `withdraw_listing` takes an item's listing away. Avow never lists a version again once it's replaced or withdrawn, so publish a new one instead. When Avow holds no seller's mandates it lists nothing and says so. A listing grants nothing.
 - `orders` shows the orders waiting on you. `sell` quotes a new one, which signs your business's agreement to the terms the offer builds, and accepts one the buyer has funded.
 
 To buy before any business has given you an offer, call `test_sellers`. It lists Avow's test sellers, labelled test businesses that sell simple services at any hour, each with its offers. Nothing they sell is delivered or billed, and none is verified, so call each one a test business. When the sandbox lists none, it says so.

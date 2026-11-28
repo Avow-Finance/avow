@@ -266,7 +266,65 @@ describe('a selling agent under a seller’s mandate', () => {
     const cheap = services.publish({ ...draft, unitPrice: dollars(10) })
     await expect(cheap).rejects.toBeInstanceOf(SellerMandateRefusal)
     await expect(cheap).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
-    expect((await services.published()).map((v) => v.unitPrice)).toEqual([dollars(50)])
+    expect(await services.published()).toMatchObject([{ unitPrice: dollars(50) }])
+  })
+
+  it('publishes a job offer its line for the job allows, and refuses one a person would decide', async () => {
+    const jobs = {
+      category: 'compute-job',
+      item: 'fine-tuning',
+      minUnitPrice: dollars(100),
+      maxUnitsPerOrder: 1,
+      maxUnitsPerDay: 3,
+    } as const
+    const { services } = await under({
+      limits: [jobs, ...mandateFor(LOCK, LOCK).limits],
+      approvalRule: { kind: 'above', amount: dollars(150) },
+    })
+    const job = {
+      template: 'job/1',
+      work: { kind: 'fine-tuning', summary: 'Fine-tune a small model on the dataset sent' },
+      compute: { gpu: 'H100', count: 1, region: 'demo' },
+      currency: 'USD',
+      price: dollars(120),
+      rules: {
+        startAfter: HOUR,
+        turnaround: 2n * HOUR,
+        gracePeriod: 600n,
+        dailyCapacity: 3,
+        lateCancellationBps: 2_000,
+        noShowBps: 5_000,
+      },
+    } as const
+    await expect(services.publish(job)).resolves.toMatchObject({ standing: { inForce: true } })
+    const dear = services.publish({ ...job, price: dollars(200) })
+    await expect(dear).rejects.toBeInstanceOf(SellerMandateRefusal)
+    await expect(dear).rejects.toMatchObject({ reason: 'seller_mandate.job_approval_unavailable' })
+    const cheap = services.publish({ ...job, price: dollars(80) })
+    await expect(cheap).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
+    expect(await services.published()).toMatchObject([{ price: dollars(120) }])
+  })
+
+  it('lists with Avow only an offer its newest mandate allows, and sends nothing for another', async () => {
+    const { services, changeTo, posted } = await under()
+    const published = await services.publish(draft)
+    // The administrator raises the floor after the offer was published.
+    changeTo({
+      mandateId: id('seller-mandate-2'),
+      limits: [
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: dollars(60),
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+      ],
+    })
+    const listed = services.listWithAvow(published.id)
+    await expect(listed).rejects.toBeInstanceOf(SellerMandateRefusal)
+    await expect(listed).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
+    expect(posted.some((p) => p.path === SANDBOX_PATHS.offerListings)).toBe(false)
   })
 
   it('refuses an offer whose largest booking goes past the units one order may take', async () => {

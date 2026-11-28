@@ -1,6 +1,15 @@
 import type { Hex } from 'viem'
 import { z } from 'zod'
 import {
+  DECLINE_RETRY_MAX,
+  DECLINE_RULES,
+  type DeclineReason,
+  type DeclineRule,
+  isDeclineReason,
+  replacementProblem,
+  supplierMayDecline,
+} from './decline.js'
+import {
   type AvowDomain,
   digestOf,
   MOVE_KINDS,
@@ -17,10 +26,10 @@ import {
   SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
   type ServiceTerms,
-  serviceOfferProblem,
   serviceOfferQuote,
   serviceOfferTerms,
   serviceOfferVersionJson,
+  soundOfferVersion,
 } from './service.js'
 import {
   leavesTimeToAccept,
@@ -55,6 +64,12 @@ import { termsAgreementJson } from './wire.js'
  * ended the thread. A thread that ran out of time shows only that no move followed, and never
  * whose fault that was.
  *
+ * A move signs at `MESSAGE_VERSIONS.NegotiationMove`. Its typed data and canonical form are fixed,
+ * and which declines a reader takes is read from `decline.ts`. Nothing carried a move before Avow
+ * stored threads, so the decline rules could change without a new version. Once Avow keeps
+ * threads, a change that narrows what a reader takes, such as a reason refused that was taken,
+ * bumps that version, so a thread signed under the old rules is never read under the new ones.
+ *
  * This module holds the moves and what makes each one valid where it stands. It reads no lock and
  * checks no signature, so a caller establishes who signed a move before it asks whether the move
  * fits. Nothing here says a move is within either side's authority, which is the mandates' part.
@@ -75,74 +90,8 @@ export const THREAD_SECONDS = 30n * 60n
 /** The most moves a thread holds: every proposal and counter, an acceptance, and a decline. */
 export const THREAD_MOVES_MAX = THREAD_PROPOSALS_MAX + 2
 
-/** The furthest past a thread's first build moment a decline can say to ask again, in seconds. */
-export const DECLINE_RETRY_MAX = 7n * 24n * 60n * 60n
-
 const ZERO: Hex = `0x${'00'.repeat(32)}`
 const other = (s: Side): Side => (s === 'buyer' ? 'supplier' : 'buyer')
-
-/**
- * What the side that reads a decline does next. An agent acts on the step and the decline's typed
- * fields, and never on words from the other side, since a decline carries no free text.
- *
- * - `retry_later`: send the order again at the time the decline gives, or after a while when it
- *   gives none.
- * - `change_order`: the order as it stood won't be taken, so open a new thread for something else.
- *   For a replaced offer that is the version the decline names, read and checked as any offer the
- *   agent has never seen, since its price and rules can differ from the one it ordered.
- * - `choose_another`: this business won't take the order, so look elsewhere.
- *
- * No step says to send the same order again unchanged and at once. A decline never turns an order
- * for one offer version into an order for another without the buyer's own checks.
- */
-export type DeclineNext = 'retry_later' | 'change_order' | 'choose_another'
-
-/** What one reason to decline allows: the next step, who can give it, and what it can carry. */
-export interface DeclineRule {
-  next: DeclineNext
-  /** Whether only the supplier can decline for this reason, or either side. */
-  by: 'supplier' | 'either'
-  /** Whether the decline can say when to ask again. */
-  retryAt: boolean
-  /** Whether the decline can say how many units the supplier would take. */
-  available: boolean
-}
-
-/**
- * Every reason a move can decline with. A reason about the offer or the supplier's capacity is the
- * supplier's to give, and only `offer.superseded` names another offer version, which it has to.
- */
-export const DECLINE_RULES = {
-  'offer.superseded': { next: 'change_order', by: 'supplier', retryAt: false, available: false },
-  'offer.withdrawn': { next: 'choose_another', by: 'supplier', retryAt: false, available: false },
-  'capacity.exhausted': { next: 'retry_later', by: 'supplier', retryAt: true, available: true },
-  'quantity.out_of_range': {
-    next: 'change_order',
-    by: 'supplier',
-    retryAt: false,
-    available: true,
-  },
-  'terms.not_negotiable': { next: 'change_order', by: 'either', retryAt: false, available: false },
-  'proposal.unacceptable': { next: 'change_order', by: 'either', retryAt: false, available: false },
-  'counterparty.not_eligible': {
-    next: 'choose_another',
-    by: 'either',
-    retryAt: false,
-    available: false,
-  },
-  'approval.human_required': { next: 'retry_later', by: 'either', retryAt: true, available: false },
-  'negotiation.rounds_exhausted': {
-    next: 'choose_another',
-    by: 'either',
-    retryAt: false,
-    available: false,
-  },
-} as const satisfies Partial<Record<ReasonCode, DeclineRule>>
-
-export type DeclineReason = keyof typeof DECLINE_RULES
-
-export const isDeclineReason = (reason: string): reason is DeclineReason =>
-  Object.hasOwn(DECLINE_RULES, reason)
 
 /** The terms a proposal may set against its base offer. */
 export const OPEN_TERMS = ['unitPrice', 'quantity', 'leadTime'] as const
@@ -365,7 +314,9 @@ function declineProblem(
 ): ReasonCode | null {
   if (!isDeclineReason(next.reason)) return 'message.invalid'
   const rule: DeclineRule = DECLINE_RULES[next.reason]
-  if (rule.by === 'supplier' && next.side !== 'supplier') return 'message.invalid'
+  if (rule.by !== 'either' && next.side !== rule.by) return 'message.invalid'
+  // A supplier declines only with a reason its buyer may hear as it is.
+  if (next.side === 'supplier' && !supplierMayDecline(next.reason)) return 'message.invalid'
   if (next.quantity !== 0 || next.unitPrice !== 0n || next.leadTime !== 0n) return 'message.invalid'
   if (next.builtAt !== 0n || !same(next.termsHash, ZERO)) return 'message.invalid'
   // A decline ends the thread, so nothing waits on it and it has no expiry to give.
@@ -553,16 +504,7 @@ export function signedMoveProblem(
   }
   const names = !same(move.currentOffer, ZERO)
   if (names !== (next.current !== null)) return 'message.invalid'
-  if (next.current) {
-    if (next.current.supplier !== thread.base.supplier) return 'message.invalid'
-    // The replacement is a newer version of the item ordered, and never some other item.
-    if (next.current.item.name !== thread.base.item.name) return 'message.invalid'
-    try {
-      if (!same(offerVersionId(next.current), move.currentOffer)) return 'message.invalid'
-    } catch {
-      return 'terms.template_invalid'
-    }
-  }
+  if (next.current) return replacementProblem(thread.base, next.current, move.currentOffer)
   return null
 }
 
@@ -657,7 +599,7 @@ export const negotiationThreadJson = z
     moves: z.array(signedMoveJson).min(1).max(THREAD_MOVES_MAX),
   })
   // An offer the template's rules refuse is refused where the thread is read.
-  .refine((thread) => serviceOfferProblem(thread.base as ServiceOfferVersion) === null)
+  .refine((thread) => soundOfferVersion(thread.base) !== null)
 
 export const parseNegotiationMove = readOrNull(
   negotiationMoveJson as unknown as z.ZodType<NegotiationMove>,

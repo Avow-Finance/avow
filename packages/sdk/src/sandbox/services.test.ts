@@ -1,5 +1,13 @@
 import {
   dollars,
+  JOB,
+  type JobOfferVersion,
+  jobOfferVersionId,
+  OFFER_LISTING_JOB_VERSION,
+  type OfferVersion,
+  offerIdOf,
+  offerItemOf,
+  offerListingOf,
   offerVersionId,
   parseServiceQuote,
   SANDBOX_PATHS,
@@ -8,6 +16,7 @@ import {
   serviceOfferTerms,
   serviceQuoteProblem,
 } from '@avow-finance/spec'
+import type { Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import { folderWithAgent, json, wire } from '../test/agent-folder.js'
 import { deployment, LOCK } from '../test/sandbox-business.js'
@@ -44,6 +53,24 @@ const draft = {
   },
 } as const
 const offer: ServiceOfferVersion = { ...draft, supplier: SELLER }
+
+/** Fine-tuning on one H100 at $120 a job, as its supplier writes it. */
+const jobDraft = {
+  template: JOB,
+  work: { kind: 'Transcript', summary: 'Fine-tune a small model on the dataset the buyer sends' },
+  compute: { gpu: 'H100', count: 1, region: 'demo' },
+  currency: 'USD',
+  price: dollars(120),
+  rules: {
+    startAfter: HOUR,
+    turnaround: 2n * HOUR,
+    gracePeriod: 600n,
+    dailyCapacity: 3,
+    lateCancellationBps: 2_000,
+    noShowBps: 5_000,
+  },
+} as const
+const jobOffer: JobOfferVersion = { ...jobDraft, supplier: SELLER }
 
 const folder = (businessId: string, sells = false) =>
   folderWithAgent(businessId, { sells, suppliers: [SELLER], categories: [SERVICE_CATEGORY] })
@@ -99,13 +126,36 @@ describe("a supplier's offers", () => {
     await services.publish({ ...draft, item: { ...draft.item, name: 'Summary' } })
     // Another run of the agent reads the same offers from the folder.
     const again = await sandboxServices({ store, fetch })
-    expect((await again.published()).map((v) => [v.item.name, v.unitPrice])).toEqual([
-      ['Transcript', dollars(60)],
-      ['Summary', dollars(50)],
+    expect(await again.published()).toMatchObject([
+      { item: { name: 'Transcript' }, unitPrice: dollars(60) },
+      { item: { name: 'Summary' }, unitPrice: dollars(50) },
     ])
     expect(await again.withdraw(dearer.id)).toBe(true)
     expect(await again.withdraw(dearer.id)).toBe(false)
-    expect((await again.published()).map((v) => v.item.name)).toEqual(['Summary'])
+    expect((await again.published()).map((v) => offerItemOf(v).name)).toEqual(['Summary'])
+  })
+
+  it('take a job offer beside a service of the same name, as two items, each replaced by its own', async () => {
+    const { store } = await folder(SELLER, true)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    const service = await services.publish(draft)
+    const job = await services.publish(jobDraft)
+    expect(job.version).toEqual(jobOffer)
+    expect(job.id).toBe(jobOfferVersionId(jobOffer))
+    expect(await services.published()).toEqual([offer, jobOffer])
+    // A new price for the job replaces only the job, under the job offer's own id.
+    const dearer = await services.publish({ ...jobDraft, price: dollars(150) })
+    expect((await services.published()).map((v) => offerIdOf(v))).toEqual([service.id, dearer.id])
+    expect(await services.withdraw(dearer.id)).toBe(true)
+    expect(await services.published()).toEqual([offer])
+  })
+
+  it("don't publish a job offer its own rules refuse", async () => {
+    const { store } = await folder(SELLER, true)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    const early = { ...jobDraft, rules: { ...jobDraft.rules, startAfter: 60n } }
+    await expect(services.publish(early)).rejects.toThrow(RangeError)
+    expect(await services.published()).toEqual([])
   })
 
   it("aren't published when the template's rules refuse them", async () => {
@@ -114,6 +164,138 @@ describe("a supplier's offers", () => {
     const nothingToCharge = { ...draft.rules, lateCancellationBps: 0, noShowBps: 0 }
     await expect(services.publish({ ...draft, rules: nothingToCharge })).rejects.toThrow(RangeError)
     expect(await services.published()).toEqual([])
+  })
+})
+
+describe("a supplier's listings with Avow", () => {
+  const listingOf = (version: OfferVersion, replaced: Hex | null = null) =>
+    wire(
+      offerListingOf(
+        {
+          id: offerIdOf(version),
+          listedAt: 1_800_000_000n,
+          sellerMandate: `0x${'ab'.repeat(32)}`,
+          replaced,
+        },
+        version,
+      ),
+    )
+
+  it('sends a version published here, signed with the signing key, and answers the listing Avow holds', async () => {
+    const { store } = await folder(SELLER, true)
+    const sent: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.offerListings) return null
+      sent.push(body)
+      return json(listingOf(offer))
+    })
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    const outcome = await services.listWithAvow(id)
+    if (!outcome.ok) throw new Error('the offer was listed')
+    expect(outcome.listing.id).toBe(id)
+    expect(outcome.listing.version).toEqual(offer)
+    expect(outcome.standing.inForce).toBe(false)
+    expect(sent).toEqual([{ version: wire(offer) }])
+  })
+
+  it("sends a job offer published here, and answers Avow's listing of it under the job's id", async () => {
+    const { store } = await folder(SELLER, true)
+    const sent: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.offerListings) return null
+      sent.push(body)
+      return json(listingOf(jobOffer))
+    })
+    const services = await sandboxServices({ store, fetch })
+    await services.publish(draft)
+    const { id } = await services.publish(jobDraft)
+    const outcome = await services.listWithAvow(id)
+    if (!outcome.ok) throw new Error('the job offer was listed')
+    expect(outcome.listing).toMatchObject({ id: jobOfferVersionId(jobOffer), version: jobOffer })
+    expect(sent).toEqual([{ schemaVersion: OFFER_LISTING_JOB_VERSION, version: wire(jobOffer) }])
+  })
+
+  it('lists nothing it never published here, and sends nothing for it', async () => {
+    const { store } = await folder(SELLER, true)
+    const { fetch, paths } = avow(() => null)
+    const services = await sandboxServices({ store, fetch })
+    await expect(services.listWithAvow(offerVersionId(offer))).rejects.toThrow(/hasn't published/)
+    expect(paths).not.toContain(SANDBOX_PATHS.offerListings)
+  })
+
+  it('says plainly when the sandbox lists no offers, whichever way it says so', async () => {
+    for (const refusal of [
+      json({ error: { reason: 'offer.listing_unavailable', message: 'No listings' } }, 409),
+      null,
+    ]) {
+      const { store } = await folder(SELLER, true)
+      const { fetch } = avow((path) => (path === SANDBOX_PATHS.offerListings ? refusal : null))
+      const services = await sandboxServices({ store, fetch })
+      const { id } = await services.publish(draft)
+      const { OFFER_LISTINGS_UNTAKEN } = await import('./services.js')
+      expect(await services.listWithAvow(id)).toEqual({
+        ok: false,
+        reason: 'offer.listing_unavailable',
+        notice: OFFER_LISTINGS_UNTAKEN,
+      })
+      expect(await services.listedWithAvow()).toEqual([])
+    }
+  })
+
+  it("passes on Avow's refusal of a replaced version by its reason", async () => {
+    const { store } = await folder(SELLER, true)
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListings
+        ? json({ error: { reason: 'offer.superseded', message: 'Replaced' } }, 409)
+        : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    await expect(services.listWithAvow(id)).rejects.toMatchObject({ reason: 'offer.superseded' })
+  })
+
+  it('refuses an answer that lists another version than the one sent', async () => {
+    const { store } = await folder(SELLER, true)
+    const other = { ...offer, unitPrice: dollars(60) }
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListings ? json(listingOf(other)) : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    await expect(services.listWithAvow(id)).rejects.toThrow(/another version/)
+  })
+
+  it('withdraws a listing by its id and reads what Avow lists for the business', async () => {
+    const { store } = await folder(SELLER, true)
+    const id = offerVersionId(offer)
+    const { fetch } = avow((path, body) => {
+      if (path === SANDBOX_PATHS.offerWithdrawals) {
+        return json(wire({ id: body.id, withdrawnAt: 1_800_000_100n }))
+      }
+      if (path === SANDBOX_PATHS.offerListingsMine) return json({ listed: [listingOf(offer)] })
+      return null
+    })
+    const services = await sandboxServices({ store, fetch })
+    expect(await services.withdrawFromAvow(id)).toEqual({ id, withdrawnAt: 1_800_000_100n })
+    expect((await services.listedWithAvow()).map((l) => l.id)).toEqual([id])
+  })
+
+  it("refuses a read of listings that holds another business's offer", async () => {
+    const { store } = await folder(SELLER, true)
+    const theirs = { ...offer, supplier: 'sandbox-other' }
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListingsMine ? json({ listed: [listingOf(theirs)] }) : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    await expect(services.listedWithAvow()).rejects.toThrow(/another business/)
+  })
+
+  it('needs a signing key, which an agent connected only to buy has none of', async () => {
+    const { store } = await folder(BUYER)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    await expect(services.listedWithAvow()).rejects.toThrow()
+    await expect(services.withdrawFromAvow(offerVersionId(offer))).rejects.toThrow()
   })
 })
 

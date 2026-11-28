@@ -26,6 +26,11 @@ export const REASON_CODES = {
   'offer.superseded':
     'The supplier replaced the offer version booked with a newer one, which the answer carries for review before booking again',
   'offer.withdrawn': "The supplier withdrew the offer, so it can't be booked",
+  'offer.unknown': 'Avow holds no listing of that offer version for this business',
+  'offer.listing_unavailable':
+    "This Avow deployment doesn't hold seller's mandates, so it lists no offer, since every listing is checked against one",
+  'offer.listings_full':
+    'The business already lists as many items as one business can, so withdraw one before listing another',
   'capacity.exhausted':
     'The supplier has no capacity for this now. The answer says when to ask again, or how many units are free, when the supplier gave them',
   'quantity.out_of_range':
@@ -69,6 +74,8 @@ export const REASON_CODES = {
     "Delivery is due later than the seller's mandate lets the agent promise",
   'seller_mandate.charges_not_allowed':
     "A cancellation or no-show charge is under the seller's mandate's lowest, or free cancellation lasts longer than it allows",
+  'seller_mandate.job_approval_unavailable':
+    "The seller's mandate asks a person to decide a sale at this job offer's price, and a person can't approve a job's sale yet",
   'negotiation.rounds_exhausted':
     'The thread has taken as many proposals and counter-offers as a thread can',
   'mandate.currency_not_allowed': "The terms' currency isn't the mandate's",
@@ -159,6 +166,9 @@ export const REASON_CODES = {
     "The order isn't at the step this request is for, such as a second quote or a delivery before acceptance",
   'order.terms_changed':
     "The quote's terms differ from the order's. A job's quote may add the compute bookings it relies on, and a service's quote may change nothing",
+  'order.withdrawn': 'The buyer withdrew its order before anything was reserved',
+  'order.declined':
+    "The supplier declined the order, so it takes no quote or reserve. The order carries the supplier's reason",
   'order.commitment_mismatch':
     "The quote's terms agreement names another commitment id than the order's",
   'agreement.parties_mismatch':

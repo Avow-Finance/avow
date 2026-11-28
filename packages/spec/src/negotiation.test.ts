@@ -2,10 +2,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Address, Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
+import { DECLINE_RETRY_MAX, DECLINE_RULES, supplierMayDecline } from './decline.js'
 import type { AvowDomain, NegotiationMove } from './eip712.js'
 import {
-  DECLINE_RETRY_MAX,
-  DECLINE_RULES,
   moveDigest,
   type NegotiationRules,
   type NegotiationThread,
@@ -303,7 +302,7 @@ describe('declines', () => {
       const t = thread()
       t.add(t.plain({ side: 'buyer', kind: 'propose' }))
       t.add(t.quoted({ kind: 'accept' }))
-      t.add(t.plain({ side, kind: 'decline', reason: 'approval.human_required' }))
+      t.add(t.plain({ side, kind: 'decline', reason: 'proposal.unacceptable' }))
       expect(t.state()).toMatchObject({ status: 'closed', why: 'declined', by: side })
     }
   })
@@ -334,14 +333,16 @@ describe('declines', () => {
       t.problem(t.plain({ side: 'supplier', kind: 'decline', reason, ...fields }))
     expect(decline('quantity.out_of_range', { available: 5 })).toBeNull()
     expect(decline('quantity.out_of_range', { retryAt: NOW + HOUR })).toBe('message.invalid')
-    expect(decline('approval.human_required', { retryAt: NOW + HOUR })).toBeNull()
-    expect(decline('approval.human_required', { available: 1 })).toBe('message.invalid')
+    const fromBuyer = (reason: string, fields: Partial<NegotiationMove>) =>
+      t.problem(t.plain({ side: 'buyer', kind: 'decline', reason, ...fields }))
+    expect(fromBuyer('approval.human_required', { retryAt: NOW + HOUR })).toBeNull()
+    expect(fromBuyer('approval.human_required', { available: 1 })).toBe('message.invalid')
     expect(decline('offer.withdrawn', { retryAt: NOW + HOUR })).toBe('message.invalid')
     expect(decline('offer.withdrawn', { available: 1 })).toBe('message.invalid')
     expect(decline('proposal.unacceptable', { available: 1 })).toBe('message.invalid')
   })
 
-  it('takes a reason about the offer or its capacity from the supplier only', () => {
+  it('takes each reason only from the side that can give it', () => {
     const t = thread()
     t.add(t.plain({ side: 'buyer', kind: 'propose' }))
     for (const [reason, rule] of Object.entries(DECLINE_RULES)) {
@@ -349,9 +350,42 @@ describe('declines', () => {
       if (reason === 'offer.superseded') continue
       const from = (side: 'buyer' | 'supplier') =>
         t.problem(t.plain({ side, kind: 'decline', reason }))
-      expect(from('supplier')).toBeNull()
-      expect(from('buyer')).toBe(rule.by === 'supplier' ? 'message.invalid' : null)
+      const supplierMay = supplierMayDecline(reason as keyof typeof DECLINE_RULES)
+      expect(from('supplier'), reason).toBe(supplierMay ? null : 'message.invalid')
+      expect(from('buyer'), reason).toBe(rule.by === 'supplier' ? 'message.invalid' : null)
     }
+  })
+
+  it("takes a supplier's reason only once its buyer may hear it, so a seller's limits stay its own", () => {
+    const t = thread()
+    t.add(t.plain({ side: 'buyer', kind: 'propose' }))
+    const from = (side: 'buyer' | 'supplier', reason: string) =>
+      t.problem(t.plain({ side, kind: 'decline', reason }))
+    // Avow takes no request to approve one sale yet, so a buyer told to wait would wait for nothing.
+    expect(from('supplier', 'approval.human_required')).toBe('message.invalid')
+    expect(from('supplier', 'supplier.not_authorized')).toBeNull()
+    expect(from('supplier', 'counterparty.not_eligible')).toBeNull()
+    expect(from('buyer', 'supplier.not_authorized')).toBe('message.invalid')
+  })
+
+  it('lets the buyer withdraw its own order, open or agreed, and only the buyer', () => {
+    const open = thread()
+    open.add(open.plain({ side: 'buyer', kind: 'propose' }))
+    expect(
+      open.problem(open.plain({ side: 'supplier', kind: 'decline', reason: 'order.withdrawn' })),
+    ).toBe('message.invalid')
+    open.add(open.plain({ side: 'buyer', kind: 'decline', reason: 'order.withdrawn' }))
+    expect(open.state()).toEqual({
+      status: 'closed',
+      why: 'declined',
+      reason: 'order.withdrawn',
+      by: 'buyer',
+    })
+    const agreed = thread()
+    agreed.add(agreed.plain({ side: 'buyer', kind: 'propose' }))
+    agreed.add(agreed.quoted({ kind: 'accept' }))
+    agreed.add(agreed.plain({ side: 'buyer', kind: 'decline', reason: 'order.withdrawn' }))
+    expect(agreed.state()).toMatchObject({ status: 'closed', reason: 'order.withdrawn' })
   })
 
   it('has no expiry, and comes only while the thread is still running', () => {
@@ -455,7 +489,7 @@ describe('declines', () => {
   it('gives every reason a next step, and every reason is a reason code', () => {
     for (const [reason, rule] of Object.entries(DECLINE_RULES)) {
       expect(REASON_CODES).toHaveProperty([reason])
-      expect(['retry_later', 'change_order', 'choose_another']).toContain(rule.next)
+      expect(['retry_later', 'change_order', 'choose_another', 'none']).toContain(rule.next)
     }
     // A replaced offer is a new offer to check, and never the same order sent again.
     expect(DECLINE_RULES['offer.superseded'].next).toBe('change_order')
@@ -467,13 +501,16 @@ describe('declines', () => {
       'utf8',
     )
     const rows = [
-      ...page.matchAll(/^\| `([a-z_.]+)` \| `([a-z_]+)` \| (Supplier|Either side) \|/gm),
+      ...page.matchAll(/^\| `([a-z_.]+)` \| `([a-z_]+)` \| (Supplier|Buyer|Either side) \|/gm),
     ]
     expect(Object.fromEntries(rows.map(([, reason, next, by]) => [reason, { next, by }]))).toEqual(
       Object.fromEntries(
         Object.entries(DECLINE_RULES).map(([reason, rule]) => [
           reason,
-          { next: rule.next, by: rule.by === 'supplier' ? 'Supplier' : 'Either side' },
+          {
+            next: rule.next,
+            by: { supplier: 'Supplier', buyer: 'Buyer', either: 'Either side' }[rule.by],
+          },
         ]),
       ),
     )

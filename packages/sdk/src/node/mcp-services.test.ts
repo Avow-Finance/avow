@@ -127,6 +127,56 @@ describe("the MCP server's tools for services", () => {
     expect(new Set(paths)).toEqual(new Set(['/config.json', SANDBOX_PATHS.sellerMandates]))
   })
 
+  it('list a published offer with Avow, withdraw it, and say plainly when Avow lists none', async () => {
+    let unavailable = false
+    const sent: { path: string; body: Record<string, unknown> }[] = []
+    const { fetch } = avow((path, body) => {
+      sent.push({ path, body })
+      if (path === SANDBOX_PATHS.offerListings) {
+        if (unavailable) {
+          return json({ error: { reason: 'offer.listing_unavailable', message: 'None' } }, 409)
+        }
+        const version = body.version
+        const id = offerVersionId(readSharedOffer(version) ?? (null as never))
+        return json(
+          wire({
+            id,
+            version,
+            listedAt: 1_800_000_000n,
+            sellerMandate: `0x${'ab'.repeat(32)}`,
+            replaced: null,
+          }),
+        )
+      }
+      if (path === SANDBOX_PATHS.offerWithdrawals) {
+        return json(wire({ id: body.id, withdrawnAt: 1_800_000_100n }))
+      }
+      return null
+    })
+    const seller = mcpAgent(await folder(SELLER, true), { fetch })
+    const { structured } = await seller.call('publish_offer', asked)
+    const listed = await seller.call('list_offer', { id: structured.id })
+    expect(listed.isError).toBe(false)
+    expect(listed.text).toMatch(/current listing/)
+    expect(listed.text).toContain(NO_SELLER_MANDATE)
+    expect(listed.structured).toMatchObject({ listed: true, listing: { id: structured.id } })
+    expect(sent.find((s) => s.path === SANDBOX_PATHS.offerListings)?.body).toEqual({
+      version: structured.offer,
+    })
+    const withdrawn = await seller.call('withdraw_listing', { id: structured.id })
+    expect(withdrawn.isError).toBe(false)
+    expect(withdrawn.structured).toEqual({ id: structured.id, withdrawnAt: '1800000100' })
+    unavailable = true
+    const none = await seller.call('list_offer', { id: structured.id })
+    expect(none).toMatchObject({ isError: false, structured: { listed: false } })
+    expect(none.text).toMatch(/doesn't list offers yet/)
+    // An id that isn't one, or one never published here, sends nothing.
+    const before = sent.length
+    expect((await seller.call('list_offer', { id: 'x' })).isError).toBe(true)
+    expect((await seller.call('list_offer', { id: `0x${'12'.repeat(32)}` })).isError).toBe(true)
+    expect(sent.slice(before).some((s) => s.path === SANDBOX_PATHS.offerListings)).toBe(false)
+  })
+
   it('check an order from the offer without sending it, with the price beside what is reserved', async () => {
     const sellerSide = mcpAgent(await folder(SELLER, true), { fetch: avow(() => null).fetch })
     const { structured } = await sellerSide.call('publish_offer', asked)

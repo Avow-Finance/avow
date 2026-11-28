@@ -246,7 +246,7 @@ export async function mailboxContext(o: MailboxOptions = {}): Promise<MailboxCon
 
 /** What waiting on an order reads of it, whichever kind of order it is. */
 type Staged = { orderId: string } & (
-  | { status: 'requested' | 'expired' | 'quoted' }
+  | { status: 'requested' | 'expired' | 'declined' | 'withdrawn' | 'quoted' }
   | { status: 'reserved'; reserve: { acceptBy: bigint } }
   | { status: 'accepted'; acceptedIn: Hex | null }
 )

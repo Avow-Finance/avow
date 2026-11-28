@@ -13,10 +13,10 @@ import {
   SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
   type ServiceTerms,
-  serviceOfferProblem,
   serviceOfferQuote,
   serviceOfferTerms,
   serviceOfferVersionJson,
+  soundOfferVersion,
 } from './service.js'
 import { termsHash } from './terms.js'
 import { orderIdJson } from './test-customer.js'
@@ -239,7 +239,7 @@ export const serviceOrderRequestJson = z
     expiry: u64,
   })
   // An offer the template's rules refuse is refused where the order is read.
-  .refine((order) => serviceOfferProblem(order.offer as ServiceOfferVersion) === null)
+  .refine((order) => soundOfferVersion(order.offer) !== null)
 
 export const serviceQuoteJson = z.strictObject({
   terms: serviceTermsJson,
@@ -257,9 +257,7 @@ const held = {
 export const serviceOrderJson = orderStagesJson(held, serviceQuoteJson)
 
 /** An order as the mailbox answers it has to carry an offer the template takes, as a request does. */
-const heldOrderJson = serviceOrderJson.refine(
-  (order) => serviceOfferProblem(order.offer as ServiceOfferVersion) === null,
-)
+const heldOrderJson = serviceOrderJson.refine((order) => soundOfferVersion(order.offer) !== null)
 
 export const parseServiceOrderRequest = readOrNull(
   serviceOrderRequestJson as unknown as z.ZodType<ServiceOrderRequest>,

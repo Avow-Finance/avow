@@ -1,8 +1,19 @@
 import {
   type CommitmentReference,
-  offerVersionId,
+  isJobOfferVersion,
+  type JobOfferVersion,
+  type OfferListing,
+  type OfferVersion,
+  type OfferWithdrawal,
+  offerIdOf,
+  offerItemKey,
+  offerListingRequestOf,
+  offerVersionProblem,
+  parseOfferListing,
+  parseOfferListings,
+  parseOfferVersion,
+  parseOfferWithdrawal,
   parseServiceInbox,
-  parseServiceOfferVersion,
   parseServiceOrder,
   parseServiceOrderRequest,
   publishedOffer,
@@ -16,7 +27,6 @@ import {
   type ServiceOrderRequest,
   type ServiceQuote,
   saleFacts,
-  serviceOfferProblem,
   serviceOfferTerms,
   serviceOrderProblem,
   serviceQuoteProblem,
@@ -33,6 +43,7 @@ import {
   mailboxContext,
   systemClock,
 } from './mailbox-context.js'
+import { readPublished, unreadableServices } from './published-offers.js'
 import {
   type AskedChange,
   askForChange,
@@ -110,8 +121,42 @@ export type SellAskOutcome =
 export const SELLER_MANDATE_ASKS_UNTAKEN =
   "Avow doesn't take seller's mandate requests yet, so nothing was asked. This agent sells as it did before, and no seller's mandate is in force for its signing key."
 
+/** What Avow said to a listing. */
+export type ListOutcome =
+  | { ok: true; listing: OfferListing; standing: SellerStanding }
+  | { ok: false; reason: 'offer.listing_unavailable'; notice: string }
+
+/** What an agent is told when the sandbox it talks to lists no offers. */
+export const OFFER_LISTINGS_UNTAKEN =
+  "This Avow sandbox doesn't list offers yet, so nothing was listed. Hand the offer to the buyer's agent yourself, as before."
+
+/**
+ * Whether Avow's refusal says the sandbox lists no offers: a deployment that holds no seller's
+ * mandates, or one that doesn't serve the listing routes yet.
+ */
+const listsNothing = (error: unknown): boolean =>
+  error instanceof AvowApiError &&
+  error.definite &&
+  (error.reason === 'offer.listing_unavailable' ||
+    (error.status === 404 &&
+      error.reason === 'request.invalid' &&
+      /no such route/i.test(error.message)))
+
 /** An offer as its supplier writes it, before its business is named for it. */
 export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>
+
+/** A job offer as its supplier writes it, before its business is named for it. */
+export type JobOfferDraft = Omit<JobOfferVersion, 'supplier'>
+
+/** Either kind of offer as its supplier writes it. A job's names `job/1` as its template. */
+export type OfferDraft = ServiceOfferDraft | JobOfferDraft
+
+/** What publishing a draft answers: the version, its id and where the agent stands as a seller. */
+export interface Published<V extends OfferVersion> {
+  version: V
+  id: Hex
+  standing: SellerStanding | null
+}
 
 export interface SandboxServices {
   readonly businessId: string
@@ -123,15 +168,16 @@ export interface SandboxServices {
    */
   readonly signingKey: Address | null
   /**
-   * Publishes an offer under this business, and answers with the version, its id and where the
-   * agent stands as a seller. A version of the same item it had published is replaced, since an
-   * item has one current version. Publishing keeps the offer in this folder and tells nobody, so
+   * Publishes an offer under this business, a service's or a job's, and answers with the version,
+   * its id and where the agent stands as a seller. A version of the same item it had published is
+   * replaced, since an item has one current version, and a service and a job that share a name are
+   * two items. Publishing keeps the offer in this folder and tells nobody, so
    * hand the version to whoever should order. An agent that sells under a seller's mandate lists
    * only an offer the mandate allows, and throws a `SellerMandateRefusal` for any other.
    */
-  publish(
-    draft: ServiceOfferDraft,
-  ): Promise<{ version: ServiceOfferVersion; id: Hex; standing: SellerStanding | null }>
+  publish(draft: JobOfferDraft): Promise<Published<JobOfferVersion>>
+  // A service's comes last, so a type read from `publish` alone keeps reading a service's answer.
+  publish(draft: ServiceOfferDraft): Promise<Published<ServiceOfferVersion>>
   /**
    * Asks the business's administrator for a seller's mandate with exactly these terms, signed with
    * the agent's own enrolled key. It only asks: the administrator decides with their passkey on
@@ -154,10 +200,34 @@ export interface SandboxServices {
    * sells as it did before, and Avow doesn't enforce seller limits yet either way.
    */
   sellerStanding(): Promise<SellerStanding>
-  /** The offers this business has published and not withdrawn, oldest first. */
-  published(): Promise<ServiceOfferVersion[]>
-  /** Withdraws a published version by its id, and says whether there was one. */
+  /** The offers of either kind this business has published and not withdrawn, oldest first. */
+  published(): Promise<OfferVersion[]>
+  /**
+   * Withdraws a published version by its id, and says whether there was one. It changes only this
+   * folder, so a version listed with Avow stays listed until `withdrawFromAvow` takes it away.
+   */
   withdraw(id: Hex): Promise<boolean>
+  /**
+   * Lists a version this business published from this folder with Avow, signed with the agent's
+   * signing key, for Avow's directory of offers. It becomes its item's current
+   * listing there, in place of any version of the item listed before. The agent holds the version
+   * to its newest seller's mandate first and throws a `SellerMandateRefusal` for one the mandate
+   * doesn't allow, and Avow checks it against the newest mandate again and refuses it with the
+   * reason. A version replaced or withdrawn with Avow is refused as `offer.superseded` or
+   * `offer.withdrawn`. A sandbox that holds no seller's mandates lists nothing, and the answer says
+   * so plainly.
+   */
+  listWithAvow(id: Hex): Promise<ListOutcome>
+  /**
+   * Withdraws an item's current listing from Avow's directory, by its version's id, and answers
+   * with when Avow withdrew it. The version stays published in this folder.
+   */
+  withdrawFromAvow(id: Hex): Promise<OfferWithdrawal>
+  /**
+   * Every current listing Avow holds for this business, oldest first, or none where the sandbox
+   * lists no offers.
+   */
+  listedWithAvow(): Promise<OfferListing[]>
   /**
    * Sends an order for units of an offer, with nothing reserved. The order is kept in the store
    * before it's sent, so `buy` can pick it up after a restart.
@@ -213,7 +283,7 @@ export interface SandboxServices {
 
 /** What the store keeps for services: a supplier's offers and quotes, and a buyer's unfinished orders. */
 interface Kept {
-  published: ServiceOfferVersion[]
+  published: OfferVersion[]
   buying: ServiceOrderRequest[]
   quoted: Quoted[]
 }
@@ -237,15 +307,10 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
   async function kept(): Promise<Kept> {
     const text = await store.read('services')
     const json = text ? readJson(text, 'services') : {}
-    const unreadable = () => new Error("The sandbox's services file holds something it can't read.")
-    const published = (Array.isArray(json.published) ? json.published : []).map((v: unknown) => {
-      const version = parseServiceOfferVersion(v)
-      if (!version.ok) throw unreadable()
-      return version.value
-    })
+    const published = readPublished(json)
     const buying = (Array.isArray(json.buying) ? json.buying : []).map((r: unknown) => {
       const request = parseServiceOrderRequest(r)
-      if (!request) throw unreadable()
+      if (!request) throw unreadableServices()
       return request
     })
     const quoted = readQuoted(json, systemClock())
@@ -339,35 +404,102 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
 
   // The supplier's offers.
 
-  async function publish(draft: ServiceOfferDraft) {
-    const version: ServiceOfferVersion = { ...draft, supplier: business.businessId }
-    const problem = serviceOfferProblem(version)
+  async function publish(draft: OfferDraft): Promise<Published<OfferVersion>> {
+    const version: OfferVersion = { ...draft, supplier: business.businessId }
+    const problem = offerVersionProblem(version)
     if (problem) throw new RangeError(problem)
     // An agent that can sell lists only what its seller's mandate allows, when one is in force.
     const standing = sells ? await sellerStanding() : null
     if (standing)
       holdOffer(standing, version, context.needSupplier().signing.address, systemClock())
     // An offer that wouldn't read back, such as one with a time too long to write, is never kept.
-    if (!parseServiceOfferVersion(JSON.parse(JSON.stringify(toWire(version)))).ok) {
+    if (!parseOfferVersion(JSON.parse(JSON.stringify(toWire(version)))).ok) {
       throw new RangeError('The offer holds a number too large to keep.')
     }
-    const id = offerVersionId(version)
+    const id = offerIdOf(version)
+    const item = offerItemKey(version)
     await keep((k) => ({
-      published: [...k.published.filter((v) => v.item.name !== version.item.name), version],
+      published: [...k.published.filter((v) => offerItemKey(v) !== item), version],
     }))
     return { version, id, standing }
   }
 
   const published = async () => (await kept()).published
 
+  /** The services this business published, which are all a service order can be quoted from. */
+  const publishedServices = async () =>
+    (await published()).filter((v): v is ServiceOfferVersion => !isJobOfferVersion(v))
+
   async function withdraw(id: Hex): Promise<boolean> {
     let gone = false
     await keep((k) => {
-      const left = k.published.filter((v) => offerVersionId(v) !== id.toLowerCase())
+      const left = k.published.filter((v) => offerIdOf(v) !== id.toLowerCase())
       gone = left.length !== k.published.length
       return { published: left }
     })
     return gone
+  }
+
+  // The supplier's listings with Avow.
+
+  async function listWithAvow(id: Hex): Promise<ListOutcome> {
+    const { asSupplier, signing } = context.needSupplier()
+    const version = (await published()).find((v) => offerIdOf(v) === id.toLowerCase())
+    if (!version) throw new Error(`This business hasn't published an offer with id ${id} here.`)
+    // The agent's own layer holds the listing to its mandate before Avow's does.
+    const standing = await sellerStanding()
+    holdOffer(standing, version, signing.address, systemClock())
+    try {
+      const listing = await asSupplier({
+        domain,
+        path: SANDBOX_PATHS.offerListings,
+        body: offerListingRequestOf(version),
+        read: parseOfferListing,
+      })
+      if (listing.id !== offerIdOf(version)) {
+        throw new Error("Avow's answer lists another version than the one sent.")
+      }
+      return { ok: true, listing, standing }
+    } catch (error) {
+      if (listsNothing(error)) {
+        return { ok: false, reason: 'offer.listing_unavailable', notice: OFFER_LISTINGS_UNTAKEN }
+      }
+      throw error
+    }
+  }
+
+  async function withdrawFromAvow(id: Hex): Promise<OfferWithdrawal> {
+    const { asSupplier } = context.needSupplier()
+    const withdrawn = await asSupplier({
+      domain,
+      path: SANDBOX_PATHS.offerWithdrawals,
+      body: { id },
+      read: parseOfferWithdrawal,
+    })
+    if (withdrawn.id !== id.toLowerCase()) {
+      throw new Error("Avow's answer withdraws another version than the one named.")
+    }
+    return withdrawn
+  }
+
+  async function listedWithAvow(): Promise<OfferListing[]> {
+    const { asSupplier } = context.needSupplier()
+    try {
+      const { listed } = await asSupplier({
+        domain,
+        path: SANDBOX_PATHS.offerListingsMine,
+        body: {},
+        read: parseOfferListings,
+      })
+      // Every listing names the business it was listed for, which has to be this one.
+      if (listed.some((l) => l.version.supplier !== business.businessId)) {
+        throw new Error("Avow's answer lists another business's offer.")
+      }
+      return listed
+    } catch (error) {
+      if (listsNothing(error)) return []
+      throw error
+    }
   }
 
   // The buyer's side.
@@ -556,7 +688,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     const { asSupplier, signing, supplier } = context.needSupplier()
     if (sale.status === 'requested') {
       // The offer in an order is the buyer's copy, so only a version published here is quoted.
-      const version = publishedOffer(sale, await published())
+      const version = publishedOffer(sale, await publishedServices())
       if (!version) throw new Error("The order is for an offer this business hasn't published.")
       const early = serviceOrderProblem(sale, systemClock())
       if (early) throw new Error(`The order can't be quoted: ${early}`)
@@ -636,7 +768,7 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       // agreement names.
       const standing = await sellerStanding()
       holdToNamedMandate(standing, sale.quote.agreement.sellerMandate)
-      const version = publishedOffer(sale, await published())
+      const version = publishedOffer(sale, await publishedServices())
       if (standing.inForce) {
         if (!version) {
           throw new Error("The order is for an offer this business hasn't published.")
@@ -664,12 +796,16 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     businessId: business.businessId,
     sells,
     signingKey,
-    publish,
+    // Each draft publishes as its own kind, which the overloads say and the implementation keeps.
+    publish: publish as SandboxServices['publish'],
     sellerStanding,
     askToSell,
     awaitSellRequest,
     published,
     withdraw,
+    listWithAvow,
+    withdrawFromAvow,
+    listedWithAvow,
     order,
     unfinished,
     read,

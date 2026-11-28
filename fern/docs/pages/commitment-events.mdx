@@ -280,7 +280,23 @@ What the read gives is still a notice. It's only as true as the lock it read is 
 
 ## Receiving events from Avow
 
-Once delivery is switched on, which it isn't on testnet yet, a business adds an address in the console, signed with its passkey, and Avow posts each event its lock logs there after the address answers a challenge. A delivery follows Standard Webhooks' asymmetric scheme.
+Event delivery is off until Avow switches it on, and it isn't on testnet yet. Once it is, a business's administrator adds an address in the console and signs the add with the business's passkey. No agent can add one. Avow sends the address a challenge, and starts posting events once the address answers it, from blocks no older than that answer.
+
+The administrator chooses what each address receives.
+
+| Choice | What Avow posts there |
+| --- | --- |
+| As a buyer | Each event the business's own lock logs, for the commitments it buys |
+| As a supplier | Each event of a commitment Avow recorded with the business as its supplier, which another business's lock logs |
+| Both | Both of those |
+
+Signing an address approves no transaction. A supplier address gets no event of a commitment its business doesn't supply. An address that takes both tells the sides apart by comparing the event's `commitment.lock` with the business's own lock address, both in lower case. When they match, the business is buying, and any other lock means it's supplying.
+
+An address added before this choice existed gets the buyer's events only.
+
+The choice is part of what the passkey signs, so it can't be changed in place. To change what an address receives, remove it and add it again with the new choice, and it answers a fresh challenge before anything more is posted.
+
+A delivery follows Standard Webhooks' asymmetric scheme.
 
 | Header | What it holds |
 | --- | --- |

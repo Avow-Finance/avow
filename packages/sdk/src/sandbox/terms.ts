@@ -20,7 +20,13 @@ export interface SandboxResource {
   hours: number
 }
 
-/** Dollars, whole or with cents, in micros. */
+/**
+ * Dollars as micros, rounded to the nearest micro, for an amount the SDK already holds in dollars,
+ * such as one `toDollars` gave. It's the inverse of `toDollars`.
+ */
+export const fromDollars = (amount: number): bigint => BigInt(Math.round(amount * 1_000_000))
+
+/** Dollars a person wrote, whole or with cents, in micros, refusing anything else. */
 export function micros(amount: number, what: string): bigint {
   const cents = Math.round(amount * 100)
   if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - cents) > 1e-6) {
