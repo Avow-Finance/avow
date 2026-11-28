@@ -101,12 +101,22 @@ type FreeTool = 'connect' | 'status' | 'verify' | 'test_sellers'
 
 /**
  * The tools for services between two agents. `order` is a buyer's, and funds under the agent's
- * mandate like any other commitment. The first two and `sell` are a supplier's, for an agent
- * connected to sell. Its signing key, the offers in its folder and, once Avow serves one, the
- * seller's mandate its own SDK holds it to are its limits, and the tools say which stand. Avow
- * enforces no seller limit yet. None reports to the runner's screen.
+ * mandate like any other commitment. The first four and `sell` are a supplier's, for an agent
+ * connected to sell. A supplier's agent is held by its signing key, the offers in its folder and,
+ * once Avow serves one, the seller's mandate its own SDK holds it to, and the tools say which
+ * stand. `list_offer` and `withdraw_listing` reach Avow, which lists an offer only where it holds
+ * seller's mandates and only after checking the offer against the agent's newest one. None reports
+ * to the runner's screen.
  */
-const SERVICE_TOOLS = ['publish_offer', 'offers', 'order', 'orders', 'sell'] as const
+const SERVICE_TOOLS = [
+  'publish_offer',
+  'offers',
+  'list_offer',
+  'withdraw_listing',
+  'order',
+  'orders',
+  'sell',
+] as const
 type ServiceTool = (typeof SERVICE_TOOLS)[number]
 
 /**
@@ -443,7 +453,7 @@ export const MCP_TOOLS = [
       openWorldHint: false,
     },
     description:
-      "Publishes an offer of a service your business sells by the unit at a fixed price, such as a transcript or a design review, for an agent connected to sell. It keeps the offer in this folder and answers with the offer to hand a buyer's agent, which orders from it. Nothing is sent to Avow and no directory lists it. Take the price and both charges from your person and never choose them yourself. No limit your administrator approved applies to what this agent sells, so the offer is the only bound on what sell will sign. A booking reserves the larger of the two charges from the buyer, and the supplier can charge nothing else. Publishing an item of the same name again replaces its offer, and orders for the old one are no longer quoted.",
+      "Publishes an offer of a service your business sells by the unit at a fixed price, such as a transcript or a design review, for an agent connected to sell. It keeps the offer in this folder and answers with the offer to hand a buyer's agent, which orders from it. Nothing is sent to Avow until list_offer lists it. Take the price and both charges from your person and never choose them yourself. No limit your administrator approved applies to what this agent sells, so the offer is the only bound on what sell will sign. A booking reserves the larger of the two charges from the buyer, and the supplier can charge nothing else. Publishing an item of the same name again replaces its offer, and orders for the old one are no longer quoted.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -513,6 +523,47 @@ export const MCP_TOOLS = [
     description:
       "Lists the offers your business has published from this folder, each with its id, its rules in words and the offer itself to hand a buyer's agent.",
     inputSchema: noInput,
+  },
+  {
+    name: 'list_offer',
+    title: 'List an offer with Avow',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    description:
+      "Lists an offer your business published from this folder with Avow, for Avow's directory of offers, for an agent connected to sell. Give the id publish_offer or offers answered with. It becomes its item's current listing with Avow, in place of any version of the item listed before, and a version Avow no longer lists can never be listed again, so publish a new one instead. Listing the current version again checks it against the newest mandate again. Your agent holds the offer to its newest seller's mandate first, and Avow checks it against the same mandate and lists nothing it doesn't allow, with the reason. A listing grants nothing, and every order is checked again. When Avow holds no seller's mandates it lists nothing, and the answer says so. Buying agents can't search the directory yet.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id of an offer this business published here' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'withdraw_listing',
+    title: "Withdraw an offer from Avow's listing",
+    annotations: {
+      readOnlyHint: false,
+      // A withdrawn version is never listed again, so the change can't be undone.
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    description:
+      "Withdraws an item's current listing with Avow, by the id of its version, for an agent connected to sell. The offer stays published in this folder, and a booking already accepted stands. Avow never lists that version again, so publish and list a new one to offer the item again.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id of the version Avow lists now' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
   },
   {
     name: 'test_sellers',
@@ -1243,7 +1294,7 @@ export function mcpAgent(
     const { version, id, standing } = await (await services()).publish(draft)
     return {
       text: [
-        `Published offer ${id}, kept in this folder. The offer wasn't sent to Avow, and no directory lists it.`,
+        `Published offer ${id}, kept in this folder. The offer wasn't sent to Avow, and list_offer lists it there.`,
         ...(standing ? [standing.notice] : []),
         ...offerSentences(version),
         "Hand the buyer's agent the offer below, whole, and it orders from it with its order tool. Call orders to see what comes, and sell to quote and accept.",
@@ -1270,6 +1321,48 @@ export function mcpAgent(
               )
               .join('\n'),
       structured: { offers: published.map(shared) },
+      isError: false,
+    }
+  }
+
+  /** The id a tool was given, read as a version's id, or why it isn't one. */
+  const versionIdOf = (args: Record<string, unknown>): Hex => {
+    const id = args.id
+    if (typeof id !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(id)) {
+      throw new RangeError("Give the offer's id, as publish_offer or offers answered with it.")
+    }
+    return id.toLowerCase() as Hex
+  }
+
+  async function listOffer(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const listed = await (await services()).listWithAvow(versionIdOf(args))
+    if (!listed.ok) {
+      return {
+        text: listed.notice,
+        structured: { listed: false, reason: listed.reason },
+        isError: false,
+      }
+    }
+    const { listing, standing } = listed
+    return {
+      text: [
+        `Avow lists offer ${listing.id} as its item's current listing, checked against seller's mandate ${listing.sellerMandate}.`,
+        ...(listing.replaced
+          ? [`It replaces ${listing.replaced}, which Avow no longer lists.`]
+          : []),
+        standing.notice,
+        'A listing grants nothing, and every order is checked again.',
+      ].join(' '),
+      structured: { listed: true, listing: toWire(listing) },
+      isError: false,
+    }
+  }
+
+  async function withdrawListing(args: Record<string, unknown>): Promise<ToolAnswer> {
+    const { id, withdrawnAt } = await (await services()).withdrawFromAvow(versionIdOf(args))
+    return {
+      text: `Avow no longer lists offer ${id}. It stays published in this folder, and a booking already accepted stands.`,
+      structured: toWire({ id, withdrawnAt }) as Record<string, unknown>,
       isError: false,
     }
   }
@@ -1563,6 +1656,8 @@ export function mcpAgent(
         if (name === 'request_status') return await requestStatus(args)
         if (name === 'publish_offer') return await publishOffer(args)
         if (name === 'offers') return await offers()
+        if (name === 'list_offer') return await listOffer(args)
+        if (name === 'withdraw_listing') return await withdrawListing(args)
         if (name === 'order') return await order(args)
         if (name === 'orders') return await orders()
         if (name === 'sell') return await sell(args)

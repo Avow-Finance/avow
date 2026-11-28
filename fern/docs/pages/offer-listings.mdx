@@ -1,0 +1,83 @@
+---
+title: Listing offers with Avow
+slug: docs/reference/offer-listings
+subtitle: How a selling agent puts its offers in Avow's directory, checked against its seller's mandate
+---
+
+A selling agent publishes an offer in its own `.avow` folder first, as [Services sold by quantity](/docs/reference/services) describes. Listing sends a published version to Avow, which checks it against the agent's newest [seller's mandate](/docs/reference/seller-mandate) and holds it as its item's current listing. Avow lists nothing it hasn't checked, so a directory built from listings holds only offers a person's signed limits allowed when they were listed.
+
+Buying agents can't search the directory yet. The search messages are in the spec as `OfferSearch` and `OfferSearchResult`, and Avow is to answer them from the listings described here.
+
+## List, read and withdraw
+
+| Step | Terminal | MCP tool | SDK |
+| --- | --- | --- | --- |
+| List a published offer | `offer list-with-avow <id>` | `list_offer` | `listWithAvow(id)` |
+| See what Avow lists | `offer listed-with-avow` | | `listedWithAvow()` |
+| Withdraw a listing | `offer withdraw-from-avow <id>` | `withdraw_listing` | `withdrawFromAvow(id)` |
+
+`sandboxServices()` in `@avow-finance/sdk` gives the calls in the last column. Each takes the id `publish` answered with, and lists only a version found among the ones published from the folder.
+
+```ts
+import { sandboxServices } from '@avow-finance/sdk'
+
+const services = await sandboxServices()
+const { id } = await services.publish(draft)
+const listed = await services.listWithAvow(id)
+if (!listed.ok) console.log(listed.notice)
+```
+
+Each call signs with the agent's signing key under its business's lock. Only a sandbox business lists, and a search result is to say so on each supplier, as `OfferMatch` does with `sandbox: true`. Passing a business check doesn't change that, and nothing about a listing says the business is verified.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `SANDBOX_PATHS.offerListings` | `OfferListingRequest`, the whole version | `OfferListing` |
+| `SANDBOX_PATHS.offerListingsMine` | An empty object | `OfferListings`, every current listing, oldest first |
+| `SANDBOX_PATHS.offerWithdrawals` | `OfferWithdrawalRequest`, the version's id | `OfferWithdrawal` |
+
+An `OfferListing` carries the version and its id, when Avow listed it, the seller's mandate Avow checked it against and the version it replaced, if any. `parseOfferListing` refuses an answer whose id isn't its version's, and `parseOfferListings` refuses two listings of one item.
+
+## What Avow checks
+
+Avow checks a listing in this order and refuses at the first thing that fails.
+
+1. The signer is the signing key a sandbox business registered, and the request is signed under that business's lock.
+2. The version parses and names that business as its supplier.
+3. The deployment holds seller's mandates. Where it doesn't, it lists nothing and answers `offer.listing_unavailable`.
+4. The version isn't one Avow listed before and has since replaced or withdrawn.
+5. The key holds a seller's mandate, its chain reads as one the business account signed, and the newest allows the version by `sellerOfferProblem`. That covers the currency, the item, the price floor, the delivery horizon, the charges, free cancellation and the largest booking against the units and value one order may come to.
+6. A new item fits under `OFFER_LISTINGS_MAX`, 100 items for one business.
+
+The selling agent runs the same `sellerOfferProblem` before it sends anything, so a version its mandate refuses never leaves the folder. Avow runs it again because Avow holds the listing, and an agent's own check is no proof to anyone else.
+
+## One current version for each item
+
+An item is named by its `item.name`, as the seller's mandate reads it. Listing a version of an item Avow already lists replaces the one it held, and the answer names the version replaced. Listing the current version again checks it against the newest mandate again. It answers the listing Avow holds, which names the mandate it was first listed under, or the reason the newest mandate refuses it. A refusal leaves the listing in place, since a search holds every listing to the mandate in force anyway, and the seller withdraws it to take it down.
+
+Versions only move forward. A version once replaced or withdrawn is never current again, and listing it is refused by name as `offer.superseded` or `offer.withdrawn`, the same reasons a booking of it is to hear. A buyer told a version was replaced will never find it current later. To offer the same terms again after a withdrawal, publish a new version, which can differ in its summary alone.
+
+Withdrawing needs no seller's mandate, since it only takes an offer away, and it works on a deployment with seller's mandates off. When a business registers a new signing key, Avow ends every current listing of the old key in the same step, so a key the business stopped using lists nothing. The item lists nothing until a new version of it is listed. Withdrawing from Avow leaves the version published in the folder, and withdrawing it from the folder leaves Avow's listing in place, so do both to stop selling an item.
+
+## What a listing claims
+
+A listing says Avow found the version within the seller's mandate named in it, at the moment it was listed. It says nothing about later. The administrator can replace the mandate, it can end, and the key is to be revocable, so a search is to check each listing again before showing it and a sale is checked again when it's quoted and when its reserve is approved. A listing grants no buyer anything, and an order from a listed offer goes through the buyer's own mandate check, Avow's approval and the keychain like any other.
+
+## Refusals
+
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `request.signer_unknown` | 401 | The signer isn't the signing key a sandbox business registers now |
+| `message.wrong_contract` | 400 | The request wasn't signed under the business's own lock |
+| `message.invalid` | 400 | The body doesn't parse, or the version names another business |
+| `offer.listing_unavailable` | 409 | The deployment holds no seller's mandates, so it lists nothing |
+| `offer.superseded` | 409 | Avow listed this version and has since replaced it |
+| `offer.withdrawn` | 409 | Avow listed this version and it was withdrawn |
+| `offer.unknown` | 404 | A withdrawal names a version Avow holds no listing of for the business |
+| `seller_mandate.missing` | 403 | The signing key holds no seller's mandate |
+| `seller_mandate.*` | 403 | The mandate's chain doesn't read as one, or the newest mandate doesn't allow the version, with the reason `sellerOfferProblem` gives |
+| `offer.listings_full` | 409 | The business already lists 100 items |
+| `service.unavailable` | 503 | Avow couldn't read its records or the chain, and listed nothing |
+
+The SDK answers `offer.listing_unavailable`, and a sandbox that doesn't serve the listing routes yet, with `{ ok: false, notice }`, and the MCP tool and the command say the same in words. Every other refusal throws as it came, with its reason code.
+
+Version 1 lists `service/1` offers, the only kind `ServiceOfferVersion` describes. A job is quoted from the work a buyer sends and has no offer version to list, and no seller's mandate covers a GPU reservation, so neither lists.

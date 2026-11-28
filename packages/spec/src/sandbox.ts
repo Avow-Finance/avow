@@ -89,6 +89,48 @@ export const SANDBOX_PATHS = {
    * with an `OfferSearch`. Avow answers with an `OfferSearchResult`.
    */
   offerSearch: '/v1/sandbox/offers/search',
+  /**
+   * Where a selling agent lists an offer version with Avow, as an `OfferListingRequest`, signed by
+   * its signing key under its business's lock. Avow answers with the `OfferListing` it holds, and
+   * the version becomes its item's current version, replacing the one held for the item before.
+   * Listing the current version again checks it against the newest mandate again, and answers the
+   * listing Avow already holds or the refusal, which leaves the listing in place.
+   *
+   * Avow refuses a request out of form as `request.invalid`, one signed for another chain as
+   * `message.wrong_chain`, and one signed under another lock than the business's own as
+   * `message.wrong_contract`. A key that isn't the signing key a sandbox business registered is
+   * `request.signer_unknown`, and a body that doesn't parse, or a version that names another
+   * business as its supplier, is `message.invalid`. A deployment that holds no seller's mandates
+   * lists nothing, since every listing is checked against one, and answers
+   * `offer.listing_unavailable` with status 409.
+   *
+   * A version Avow listed before and that has since been replaced is `offer.superseded`, and one
+   * withdrawn is `offer.withdrawn`, both with status 409. Then the version is checked with
+   * `sellerOfferProblem` against the newest seller's mandate of the key, read as one chain the
+   * business account signed. A key with no mandate is `seller_mandate.missing`, a chain that
+   * doesn't read as one is refused with the reason `sellerMandateChainProblem` gives, and a
+   * version the mandate doesn't allow is refused with the reason `sellerOfferProblem` gives, each
+   * with status 403. A business that already lists `OFFER_LISTINGS_MAX` items and lists a new one
+   * is `offer.listings_full`, with status 409. When Avow can't read its records or the chain it
+   * answers `service.unavailable` and lists nothing.
+   */
+  offerListings: '/v1/sandbox/offers/listings',
+  /**
+   * Where a selling agent reads every current listing of its business, oldest first, as
+   * `OfferListings`, with an empty object as an `OfferListingsRequest` signed the same way. A
+   * business with none answers an empty list.
+   */
+  offerListingsMine: '/v1/sandbox/offers/listings/mine',
+  /**
+   * Where a selling agent withdraws an item's current version from the directory, as an
+   * `OfferWithdrawalRequest` signed the same way, and Avow answers with an `OfferWithdrawal`.
+   * Withdrawing needs no seller's mandate, since it only takes an offer away. The item lists
+   * nothing until a new version of it is listed. When a business registers a new signing key,
+   * Avow ends every current listing of the old one as withdrawn. A version Avow holds for the
+   * business but that isn't current is `offer.superseded` or `offer.withdrawn`, with status 409,
+   * and an id Avow holds no listing of for the business is `offer.unknown`, with status 404.
+   */
+  offerWithdrawals: '/v1/sandbox/offers/withdrawals',
   /** Where an agent asks a business for authority, and asks again to hear the answer. */
   agentRequests: '/v1/sandbox/agent-requests',
   /**
@@ -163,7 +205,10 @@ export const SANDBOX_PATHS = {
    *
    * A revocation is for good. Avow is to record no seller's mandate for the key after it, to
    * approve no new reserve for an agreement the key signed, to take no new quote the key signs and
-   * to refuse the key wherever a supplier registers one, for any business. It stops new approvals
+   * to refuse the key wherever a supplier registers one, for any business. The seller's side hears
+   * each of those refusals as `seller_mandate.revoked`. A buyer whose reserve is refused for an
+   * agreement the key signed is to hear `supplier.not_authorized`, as `buyerFacingReason` gives,
+   * and Avow is to keep `seller_mandate.revoked` in the decision's evidence. It stops new approvals
    * and new quotes only. A commitment already made stays in force, and a revocation can't
    * invalidate an approval already issued on-chain, which a lock goes on taking until its own
    * deadline.
