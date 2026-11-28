@@ -20,10 +20,12 @@ import {
   type SliceRevocation,
   sliceHash,
   sliceProblem,
+  sliceReplacementProblem,
   sliceRevocationTypedData,
   sliceTypedData,
   sliceWidensProblem,
 } from './slice.js'
+import type { Mandate } from './types.js'
 import { heldEnvelopeProblem, type Parsed } from './wire.js'
 
 /**
@@ -99,28 +101,66 @@ export interface SliceChain {
 }
 
 /**
+ * Why a revocation can't count against the worker key it names, or null when it counts: it names
+ * the agent's business, account and agent, and the business account or the key of a level above
+ * the revoked one signed it. `above` lists those keys, the agent's first. Avow checks a revocation
+ * with this before it stores one, and `sliceChainProblem` passes over one that fails it, so a
+ * revocation nobody entitled signed can't lock a worker or its siblings out.
+ */
+export async function sliceRevocationProblem(
+  revocation: Signed<SliceRevocation>,
+  expected: { domain: AvowDomain; mandate: Mandate; above: readonly Address[] },
+  check?: SignatureCheck,
+): Promise<ReasonCode | null> {
+  const { domain: d, mandate } = expected
+  const envelope = heldEnvelopeProblem(revocation, {
+    type: 'SliceRevocation',
+    chainId: d.chainId,
+    lock: d.verifyingContract,
+  })
+  if (envelope) return envelope
+  const m = revocation.message
+  if (
+    m.businessId !== mandate.businessId ||
+    !isAddressEqual(m.account, mandate.account) ||
+    m.agentId !== mandate.agentId
+  ) {
+    return 'message.invalid'
+  }
+  const byAccount = isAddressEqual(m.by, mandate.account)
+  if (!byAccount && !expected.above.some((k) => isAddressEqual(k, m.by))) {
+    return 'slice.signature_invalid'
+  }
+  const typedData = sliceRevocationTypedData(m, d)
+  const signed = byAccount
+    ? await isSignedBy(typedData, revocation.signature, mandate.account, check)
+    : isKeySignature(digestOf(typedData), revocation.signature, m.by)
+  return signed ? null : 'slice.signature_invalid'
+}
+
+/**
  * Checks a worker's slices link, level by level, into the agent's mandate chain, and returns them
  * as a `SliceChain`, or the reason they don't.
  *
  * - Every version of every level names the mandate's business, account and agent, a mandate in
- *   the agent's checked chain, and the same id, parent, issuer and worker key as its level.
+ *   the agent's checked chain, and the same id, parent, issuer and worker key as its level. No id
+ *   or key holds two levels, and the last level's worker key is the one the caller expects.
  * - The first level divides the mandate and was handed out by the agent's key. Each level after
- *   it divides the one above and was handed out by that level's worker key. No key holds two
- *   levels, and the last level's worker key is the one the caller expects.
- * - Each version after the first names the hash of the one before. A version the issuer signed
- *   only narrows the one it replaces, and a version the business account signed fits inside its
- *   parent's current limits.
+ *   it divides the one above and was handed out by that level's worker key.
+ * - A level's versions form one line. Its first version replaces none and fits inside its parent,
+ *   the current mandate for a slice handed out under it, or any version of the slice above. Every
+ *   version after it passes `sliceReplacementProblem` against the one before.
  * - The issuer's key or the account signed every version. A key's signature is checked here, and
  *   the account's with `check`, which defaults to recovering a secp256k1 signer, so a caller
  *   whose account signs with a passkey passes its own, as Avow's API does with its chain reader.
- * - No revocation names a worker key on the way. A revocation counts when the account or the key
- *   of a level above the revoked one signed it, and one signed by anyone else is refused.
+ * - No revocation that `sliceRevocationProblem` lets count names a worker key on the way. One
+ *   that doesn't count is passed over.
  *
  * Hashes are worked out here, never taken from whoever served the chain. It reads only what it's
- * handed, so it can't see a version or a revocation its server left out, and Avow, which holds
- * them, is the one that has to refuse a revoked key. Limits handed out are checked against their
- * parent by whoever takes a slice in, with `sliceWidensProblem`, and every level is held to its
- * parent's current limits when it's used, by `checkSlicedMandate`.
+ * handed, so it can't see a version or a revocation its server left out. Avow holds them, so Avow
+ * is what refuses a revoked key, and what takes a new version only when it replaces the current
+ * one. A slice handed out under an earlier mandate in the chain is held to the current mandate
+ * when it's used, by `checkSlicedMandate`, as every level is held to its parent's current limits.
  */
 export async function sliceChainProblem(
   served: WorkerSlices,
@@ -130,13 +170,17 @@ export async function sliceChainProblem(
   const no = (reason: ReasonCode) => ({ ok: false, reason }) as const
   const { domain: d, mandates } = expected
   const mandate = mandates.current.proof.message
+  const currentMandate = mandates.current.hash.toLowerCase()
   const mandateHashes = [mandates.current.hash, ...mandates.earlier].map((h) => h.toLowerCase())
   if (served.levels.length === 0) return no('message.invalid')
   if (served.levels.length > MAX_SLICE_DEPTH) return no('slice.too_deep')
   const where = { chainId: d.chainId, lock: d.verifyingContract }
 
   const keys: Address[] = [mandate.agentKey]
+  const ids = new Set<string>()
   const levels: { slice: Slice; hash: Hex; earlier: Hex[] }[] = []
+  // The parent's versions, oldest first, and its current limits.
+  let parentVersions: readonly Slice[] = []
   let parentLimits: AuthorityLimits = mandate
   let parentId: Hex = zeroHash
   for (const level of served.levels) {
@@ -162,31 +206,40 @@ export async function sliceChainProblem(
       }
     }
     if (keys.some((k) => isAddressEqual(k, head.subKey))) return no('slice.chain_mismatch')
+    if (ids.has(head.sliceId.toLowerCase())) return no('slice.chain_mismatch')
+    ids.add(head.sliceId.toLowerCase())
 
-    const hashes = versions.map((v) => sliceHash(v.message, d))
-    for (let i = 0; i < versions.length; i++) {
-      const v = versions[i] as Signed<Slice>
+    const line = [...versions].reverse()
+    const first = (line[0] as Signed<Slice>).message
+    if (first.replaces !== undefined) return no('slice.replaces_mismatch')
+    const fits =
+      parentVersions.length === 0
+        ? // A slice handed out under an earlier mandate is held to the current one when used.
+          first.mandateHash.toLowerCase() !== currentMandate ||
+          sliceWidensProblem(first, mandate) === null
+        : parentVersions.some((p) => sliceWidensProblem(first, p) === null)
+    if (!fits) return no('slice.widens')
+    for (let i = 1; i < line.length; i++) {
+      const problem = sliceReplacementProblem(
+        (line[i] as Signed<Slice>).message,
+        (line[i - 1] as Signed<Slice>).message,
+        parentLimits,
+        d,
+      )
+      if (problem) return no(problem)
+    }
+    for (const v of line) {
       const s = v.message
-      const older = versions[i + 1]
-      if (older === undefined) {
-        if (s.replaces !== undefined) return no('slice.replaces_mismatch')
-      } else if (s.replaces?.toLowerCase() !== hashes[i + 1]?.toLowerCase()) {
-        return no('slice.replaces_mismatch')
-      }
-      const byIssuer = isAddressEqual(s.by, s.issuerKey)
       const typedData = sliceTypedData(s, d)
-      const signed = byIssuer
+      const signed = isAddressEqual(s.by, s.issuerKey)
         ? isKeySignature(digestOf(typedData), v.signature, s.issuerKey)
         : await isSignedBy(typedData, v.signature, s.account, check)
       if (!signed) return no('slice.signature_invalid')
-      if (older !== undefined) {
-        const bound = byIssuer ? older.message : parentLimits
-        const widens = sliceWidensProblem(s, bound)
-        if (widens) return no(widens)
-      }
     }
+    const hashes = versions.map((v) => sliceHash(v.message, d))
     levels.push({ slice: head, hash: hashes[0] as Hex, earlier: hashes.slice(1) })
     keys.push(head.subKey)
+    parentVersions = line.map((v) => v.message)
     parentLimits = head
     parentId = head.sliceId
   }
@@ -195,27 +248,15 @@ export async function sliceChainProblem(
   }
 
   for (const r of served.revocations) {
-    if (heldEnvelopeProblem(r, { type: 'SliceRevocation', ...where })) return no('message.invalid')
-    const m = r.message
-    if (
-      m.businessId !== mandate.businessId ||
-      !isAddressEqual(m.account, mandate.account) ||
-      m.agentId !== mandate.agentId
-    ) {
-      continue
-    }
     // keys[0] is the agent's, so a worker key sits at 1 or deeper.
-    const at = keys.findIndex((k, i) => i > 0 && isAddressEqual(k, m.subKey))
+    const at = keys.findIndex((k, i) => i > 0 && isAddressEqual(k, r.message.subKey))
     if (at < 0) continue
-    const byAccount = isAddressEqual(m.by, mandate.account)
-    const byAbove = keys.slice(0, at).some((k) => isAddressEqual(k, m.by))
-    if (!byAccount && !byAbove) return no('slice.signature_invalid')
-    const typedData = sliceRevocationTypedData(m, d)
-    const signed = byAccount
-      ? await isSignedBy(typedData, r.signature, mandate.account, check)
-      : isKeySignature(digestOf(typedData), r.signature, m.by)
-    if (!signed) return no('slice.signature_invalid')
-    return no('slice.revoked')
+    const counts = await sliceRevocationProblem(
+      r,
+      { domain: d, mandate, above: keys.slice(0, at) },
+      check,
+    )
+    if (counts === null) return no('slice.revoked')
   }
 
   return { ok: true, value: { mandates, levels } as unknown as SliceChain }

@@ -8,10 +8,16 @@ import {
   type Slice,
   type SliceRevocation,
   sliceHash,
+  sliceReplacementProblem,
   sliceRevocationTypedData,
   sliceTypedData,
 } from './slice.js'
-import { parseWorkerSlices, sliceChainProblem, type WorkerSlices } from './slice-chain.js'
+import {
+  parseWorkerSlices,
+  sliceChainProblem,
+  sliceRevocationProblem,
+  type WorkerSlices,
+} from './slice-chain.js'
 import { CHAIN_ID, DOMAIN, demoMandate, demoSlice, id, LOCK, newKey } from './test-helpers.js'
 import type { Mandate } from './types.js'
 import { toWire } from './wire.js'
@@ -165,6 +171,30 @@ describe("a worker's chain of slices", () => {
     }
   })
 
+  it('refuses a first version wider than its parent, and an id held by two levels', async () => {
+    const wide = { ...top, capPerCommitment: first.capPerCommitment + 1n }
+    expect(
+      await sliceChainProblem({ levels: [await level(wide)], revocations: [] }, expected()),
+    ).toEqual({
+      ok: false,
+      reason: 'slice.widens',
+    })
+    const child = { ...under(top, key().address), capOpenReserves: top.capOpenReserves + 1n }
+    expect(
+      await sliceChainProblem(
+        { levels: [await level(top), await level(child)], revocations: [] },
+        expected(child.subKey),
+      ),
+    ).toEqual({ ok: false, reason: 'slice.widens' })
+    const twin = { ...under(top, key().address), sliceId: top.sliceId }
+    expect(
+      await sliceChainProblem(
+        { levels: [await level(top), await level(twin)], revocations: [] },
+        expected(twin.subKey),
+      ),
+    ).toMatchObject({ ok: false })
+  })
+
   it('takes a slice handed out under an earlier mandate in the chain', async () => {
     const replaced = { ...first, capOpenReserves: dollars(1500), nonce: 2n, replaces: mHash }
     const served = { levels: [await level(top)], revocations: [] }
@@ -241,6 +271,46 @@ describe("a worker's chain of slices", () => {
       ).toEqual({ ok: false, reason: 'slice.replaces_mismatch' })
     })
 
+    it('in one line, so a version that skips one is refused', async () => {
+      const narrowed = next(top, { capOpenReserves: dollars(800) }, admin.address)
+      // The issuer signs over the version before the administrator's, putting the limit back.
+      const undone = {
+        ...next(top, { capOpenReserves: dollars(1100) }),
+        nonce: narrowed.nonce + 1n,
+      }
+      expect(
+        await sliceChainProblem(
+          { levels: [await level(undone, top)], revocations: [] },
+          expected(),
+        ),
+      ).toEqual({ ok: false, reason: 'slice.replaces_mismatch' })
+      // Avow takes a version only when it replaces the one held as current.
+      expect(
+        sliceReplacementProblem(
+          next(top, { capOpenReserves: dollars(1100) }),
+          narrowed,
+          first,
+          DOMAIN,
+        ),
+      ).toBe('slice.replaces_mismatch')
+      expect(
+        sliceReplacementProblem(
+          next(narrowed, { capOpenReserves: dollars(700) }, top.issuerKey),
+          narrowed,
+          first,
+          DOMAIN,
+        ),
+      ).toBeNull()
+      expect(
+        sliceReplacementProblem(
+          next(narrowed, { capOpenReserves: dollars(900) }, top.issuerKey),
+          narrowed,
+          first,
+          DOMAIN,
+        ),
+      ).toBe('slice.widens')
+    })
+
     it('without changing which worker or parent it is for', async () => {
       const moved = next(top, { subKey: key().address })
       expect(
@@ -273,19 +343,40 @@ describe("a worker's chain of slices", () => {
       }
     })
 
-    it('refuses a revocation from the worker itself, a key below, or a forged one', async () => {
-      const own = await revoke(child.subKey, child.subKey)
-      expect(await sliceChainProblem(await served([own]), expected(child.subKey))).toEqual({
-        ok: false,
-        reason: 'slice.signature_invalid',
-      })
+    it('passes over a revocation from the worker itself, a key below, a sibling or a forger', async () => {
+      const sibling = under(top, key().address)
       const forged = {
         ...(await revoke(child.subKey, agent.address)),
         signature: (await revoke(child.subKey, admin.address)).signature,
       }
-      expect(await sliceChainProblem(await served([forged]), expected(child.subKey))).toEqual({
+      for (const r of [
+        await revoke(child.subKey, child.subKey),
+        await revoke(worker.address, child.subKey),
+        await revoke(child.subKey, sibling.subKey),
+        forged,
+      ]) {
+        expect((await sliceChainProblem(await served([r]), expected(child.subKey))).ok).toBe(true)
+        expect(
+          await sliceRevocationProblem(r, {
+            domain: DOMAIN,
+            mandate: first,
+            above: [agent.address, worker.address],
+          }),
+        ).toBe('slice.signature_invalid')
+      }
+    })
+
+    it("leaves a sibling's chain standing when one worker is revoked", async () => {
+      const sibling = under(top, key().address)
+      const revoked = await revoke(child.subKey, worker.address)
+      const siblingChain = {
+        levels: [await level(top), await level(sibling)],
+        revocations: [revoked],
+      }
+      expect((await sliceChainProblem(siblingChain, expected(sibling.subKey))).ok).toBe(true)
+      expect(await sliceChainProblem(await served([revoked]), expected(child.subKey))).toEqual({
         ok: false,
-        reason: 'slice.signature_invalid',
+        reason: 'slice.revoked',
       })
     })
 

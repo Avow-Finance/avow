@@ -26,20 +26,23 @@ const agent = newKey()
 const worker = newKey()
 const grandchild = newKey()
 
-async function chainOf(mandate: Mandate, slices: Slice[]): Promise<SliceChain> {
+const proof = (m: Mandate) => ({
+  type: 'Mandate' as const,
+  schemaVersion: mandateVersion(m),
+  chainId: CHAIN_ID,
+  lock: LOCK,
+  message: m,
+  signature: `0x${'11'.repeat(65)}` as Hex,
+})
+
+async function chainOf(mandate: Mandate, slices: Slice[], earlier?: Mandate): Promise<SliceChain> {
   const read = mandateChainProblem(
+    { current: proof(mandate), earlier: earlier ? [proof(earlier)] : [] },
     {
-      current: {
-        type: 'Mandate',
-        schemaVersion: mandateVersion(mandate),
-        chainId: CHAIN_ID,
-        lock: LOCK,
-        message: mandate,
-        signature: `0x${'11'.repeat(65)}` as Hex,
-      },
-      earlier: [],
+      domain: DOMAIN,
+      agentKey: agent.address,
+      witness: mandateHash(earlier ?? mandate, DOMAIN),
     },
-    { domain: DOMAIN, agentKey: agent.address, witness: mandateHash(mandate, DOMAIN) },
   )
   if (!read.ok) throw new Error(read.reason)
   const signers = [agent, worker, grandchild]
@@ -89,6 +92,7 @@ async function input(
     request: demoRequest(agent.address),
     token: TOKEN,
     openReserves: open,
+    approvedWithin: slices.map(() => 0n),
     revoked: false,
     now: NOW,
     profile: TESTNET_DEMO_PROFILE,
@@ -112,9 +116,9 @@ describe('checkSlicedMandate', () => {
       reason: 'mandate.over_commitment_cap',
       level: 1,
     })
-    const elsewhere = { ...below, suppliers: ['biz_other'] }
-    expect(checkSlicedMandate(await input([top, elsewhere]))).toMatchObject({
-      reason: 'mandate.supplier_not_allowed',
+    const smaller = { ...below, capPerCommitment: dollars(499) }
+    expect(checkSlicedMandate(await input([top, smaller]))).toMatchObject({
+      reason: 'mandate.over_commitment_cap',
       level: 2,
     })
   })
@@ -130,6 +134,27 @@ describe('checkSlicedMandate', () => {
         await input([top, below], { mandate: dollars(701), slices: [dollars(701), 0n] }),
       ),
     ).toMatchObject({ result: 'denied', reason: 'mandate.over_open_reserves_cap', level: 1 })
+  })
+
+  it("totals a slice's payment limit over its period, at the level it belongs to", async () => {
+    // $3,000 a day for the worker's slice, and a $500 reserve.
+    const room = { ...(await input()), approvedWithin: [dollars(2500)] }
+    expect(checkSlicedMandate(room).result).toBe('approved')
+    const full = { ...(await input()), approvedWithin: [dollars(2501)] }
+    expect(checkSlicedMandate(full)).toEqual({
+      result: 'denied',
+      reason: 'mandate.over_payment_limit',
+      level: 1,
+    })
+    const tight = {
+      ...below,
+      paymentLimits: [{ token: TOKEN.token, amount: dollars(600), period: 86_400n }],
+    }
+    const below2 = { ...(await input([top, tight])), approvedWithin: [0n, dollars(101)] }
+    expect(checkSlicedMandate(below2)).toMatchObject({
+      reason: 'mandate.over_payment_limit',
+      level: 2,
+    })
   })
 
   it("holds a worker to the slice's price limit and to the mandate's", async () => {
@@ -150,9 +175,15 @@ describe('checkSlicedMandate', () => {
   })
 
   it('holds a slice to a mandate narrowed after it was handed out', async () => {
-    const narrowed = { ...mandate, suppliers: ['biz_other'] }
-    const slice = demoSlice(narrowed, mandateHash(narrowed, DOMAIN), worker.address)
-    expect(checkSlicedMandate(await input([slice], undefined, narrowed))).toMatchObject({
+    const narrowed = {
+      ...mandate,
+      suppliers: ['biz_other'],
+      nonce: 2n,
+      replaces: mandateHash(mandate, DOMAIN),
+    }
+    const chain = await chainOf(narrowed, [top], mandate)
+    const read = { ...(await input()), chain }
+    expect(checkSlicedMandate(read)).toMatchObject({
       reason: 'mandate.supplier_not_allowed',
       level: 0,
     })
@@ -176,5 +207,7 @@ describe('checkSlicedMandate', () => {
   it('needs what is open under every level', async () => {
     const short = await input([top, below], { mandate: 0n, slices: [0n] })
     expect(() => checkSlicedMandate(short)).toThrow(RangeError)
+    const unapproved = { ...(await input([top, below])), approvedWithin: [0n] }
+    expect(() => checkSlicedMandate(unapproved)).toThrow(RangeError)
   })
 })

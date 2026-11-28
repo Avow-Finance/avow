@@ -68,8 +68,10 @@ export interface Slice {
   suppliers: readonly string[]
   categories: readonly string[]
   /**
-   * What the worker may approve within each period. The keychain holds the agent's key to its own
-   * limit for every worker together, and the SDK and Avow hold each slice to this.
+   * The most the worker and every worker below it may have approved within each period, in the
+   * token's base units. `checkSlicedMandate` totals the reserves approved under the slice within
+   * the period, as Avow and the agent's signer count them, and refuses one that would pass it. The
+   * keychain holds the agent's key to the mandate's own limit for every worker together.
    */
   paymentLimits: readonly PaymentLimit[]
   approvalRule: ApprovalRule
@@ -249,6 +251,42 @@ export function sliceWidensProblem(
   }
   if (child.expiry > parent.expiry) return widens
   return null
+}
+
+/**
+ * Why `next` can't replace `current` as the next version of the same slice, or null when it can.
+ * It names `current` by its hash and carries the next nonce, it keeps the slice's id, business,
+ * account, agent, parent, issuer and worker key, and it widens nothing it may not: a version the
+ * issuer signed only narrows `current`, and one the business account signed fits inside
+ * `parentLimits`, its parent's current limits.
+ *
+ * Whoever holds slices takes a new version only when it replaces the one held as current, as Avow
+ * takes a mandate only when it replaces the agent's current one. So an issuer can never sign past
+ * an administrator's narrowing by replacing an older version, and the versions of a slice always
+ * form one line. `sliceChainProblem` runs this on every version it's served.
+ */
+export function sliceReplacementProblem(
+  next: Slice,
+  current: Slice,
+  parentLimits: AuthorityLimits,
+  d: AvowDomain,
+): ReasonCode | null {
+  if (next.replaces?.toLowerCase() !== sliceHash(current, d).toLowerCase()) {
+    return 'slice.replaces_mismatch'
+  }
+  if (next.nonce !== current.nonce + 1n) return 'slice.replaces_mismatch'
+  if (
+    next.sliceId.toLowerCase() !== current.sliceId.toLowerCase() ||
+    next.businessId !== current.businessId ||
+    !isAddressEqual(next.account, current.account) ||
+    next.agentId !== current.agentId ||
+    next.parentSliceId.toLowerCase() !== current.parentSliceId.toLowerCase() ||
+    !isAddressEqual(next.issuerKey, current.issuerKey) ||
+    !isAddressEqual(next.subKey, current.subKey)
+  ) {
+    return 'slice.replaces_mismatch'
+  }
+  return sliceWidensProblem(next, isAddressEqual(next.by, next.issuerKey) ? current : parentLimits)
 }
 
 /**
