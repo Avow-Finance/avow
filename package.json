@@ -14,7 +14,8 @@
     "lint": "biome check .",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "eval": "node packages/sdk/dist/node/eval.js"
+    "eval": "node packages/sdk/dist/node/eval.js",
+    "compat": "node packages/compat/dist/cli.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
