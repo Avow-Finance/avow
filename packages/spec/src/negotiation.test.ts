@@ -12,6 +12,7 @@ import {
   parseNegotiationThread,
   parseSignedMove,
   proposalTerms,
+  proposedVersion,
   type SignedMove,
   signedMoveProblem,
   THREAD_MOVE_SECONDS,
@@ -22,6 +23,7 @@ import {
 } from './negotiation.js'
 import { REASON_CODES } from './reasons.js'
 import {
+  agreedVersion,
   offerVersionId,
   SERVICE_ACCEPT_WITHIN,
   SERVICE_CATEGORY,
@@ -68,6 +70,7 @@ const BASE = offerVersionId(base)
 /** Rules that open every term, as a later offer format could, to exercise bargaining. */
 const bargaining: NegotiationRules = {
   open: ['unitPrice', 'quantity', 'leadTime'],
+  leadTime: { min: 12n * HOUR, max: 72n * HOUR },
   proposalsMax: THREAD_PROPOSALS_MAX,
 }
 
@@ -648,13 +651,79 @@ describe('bargaining, once an offer opens its terms', () => {
   })
 
   it('refuses a counter that repeats the proposal it answers, or moves a closed term', () => {
-    const t = thread({ open: ['unitPrice'], proposalsMax: THREAD_PROPOSALS_MAX })
+    const t = thread({ open: ['unitPrice'], leadTime: null, proposalsMax: THREAD_PROPOSALS_MAX })
     t.add(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
     expect(t.problem(t.quoted({ kind: 'counter', unitPrice: 40_000_000n }))).toBe('message.invalid')
     expect(t.problem(t.quoted({ kind: 'counter', quantity: 1 }))).toBe('terms.not_negotiable')
     expect(t.problem(t.quoted({ kind: 'counter', leadTime: 48n * HOUR }))).toBe(
       'terms.not_negotiable',
     )
+  })
+})
+
+describe('an offer that opens terms to bargaining', () => {
+  const negotiable: ServiceOfferVersion = {
+    ...base,
+    negotiation: {
+      open: ['unitPrice', 'leadTime'],
+      leadTime: { min: 12n * HOUR, max: 48n * HOUR },
+    },
+  }
+
+  it('gives a thread the terms and the lead time band the offer opens', () => {
+    expect(negotiationRules(negotiable)).toEqual({
+      open: ['unitPrice', 'leadTime'],
+      leadTime: { min: 12n * HOUR, max: 48n * HOUR },
+      proposalsMax: THREAD_PROPOSALS_MAX,
+    })
+    expect(negotiationRules(base)).toEqual({
+      open: [],
+      leadTime: null,
+      proposalsMax: THREAD_PROPOSALS_MAX,
+    })
+  })
+
+  it('never asks more than the offer’s own price, from either side', () => {
+    const t = thread(bargaining)
+    expect(t.problem(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 51_000_000n }))).toBe(
+      'terms.not_negotiable',
+    )
+    t.add(t.plain({ side: 'buyer', kind: 'propose', unitPrice: 40_000_000n }))
+    expect(t.problem(t.quoted({ kind: 'counter', unitPrice: 50_000_001n }))).toBe(
+      'terms.not_negotiable',
+    )
+    // Back to the listed price is a counter the supplier may make.
+    expect(t.problem(t.quoted({ kind: 'counter', unitPrice: 50_000_000n }))).toBeNull()
+  })
+
+  it('keeps a moved lead time within the band, and moves none without one', () => {
+    const t = thread(bargaining)
+    const propose = (leadTime: bigint) => t.plain({ side: 'buyer', kind: 'propose', leadTime })
+    expect(t.problem(propose(12n * HOUR))).toBeNull()
+    expect(t.problem(propose(72n * HOUR))).toBeNull()
+    expect(t.problem(propose(12n * HOUR - 1n))).toBe('terms.not_negotiable')
+    expect(t.problem(propose(72n * HOUR + 1n))).toBe('terms.not_negotiable')
+    const unbanded = thread({ ...bargaining, leadTime: null })
+    expect(
+      unbanded.problem(unbanded.plain({ side: 'buyer', kind: 'propose', leadTime: 30n * HOUR })),
+    ).toBe('terms.not_negotiable')
+  })
+
+  it('agrees on terms that name the version the agreement fixes, which opens nothing', () => {
+    const agreed = { unitPrice: 45_000_000n, leadTime: 36n * HOUR, quantity: 2, builtAt: NOW }
+    const fixed = proposedVersion(negotiable, agreed)
+    expect(fixed.negotiation).toBeUndefined()
+    expect(fixed).toEqual(agreedVersion(negotiable, agreed))
+    const terms = proposalTerms(negotiable, agreed, settlement)
+    expect(terms.subject.offer).toBe(offerVersionId(fixed))
+    expect(terms.subject.offer).not.toBe(offerVersionId(negotiable))
+    expect(terms.consideration.amount).toBe(45_000_000n)
+    expect(terms.subject.delivery.by).toBe(NOW + 36n * HOUR)
+  })
+
+  it('leaves a thread about an offer that opens nothing exactly as it was', () => {
+    const asListed = { unitPrice: base.unitPrice, leadTime: base.rules.leadTime }
+    expect(offerVersionId(proposedVersion(base, asListed))).toBe(BASE)
   })
 })
 

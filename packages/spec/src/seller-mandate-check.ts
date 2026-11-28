@@ -441,6 +441,19 @@ function readServiceOffer(m: SellerMandate, v: ServiceOfferVersion): ReasonCode 
   if (v.unitPrice * BigInt(v.rules.maxPerBooking) > m.maxOrderValue) {
     return 'seller_mandate.over_order_value'
   }
+  // An offer opens to bargaining only the terms the mandate lets its agent move, and a lead time
+  // moved to the end of its band is still within the horizon. A moved price is never above the
+  // offer's, so the largest booking above bounds every bargained one. A price under the floor is
+  // refused at the move that proposes it.
+  const n = v.negotiation
+  if (n) {
+    if (n.open.some((term) => !m.negotiable.includes(term))) {
+      return 'seller_mandate.term_not_negotiable'
+    }
+    if (n.leadTime && n.leadTime.max > m.maxDeliveryHorizon) {
+      return 'seller_mandate.over_delivery_horizon'
+    }
+  }
   return null
 }
 

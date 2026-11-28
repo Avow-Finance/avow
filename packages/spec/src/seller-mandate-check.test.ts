@@ -511,6 +511,11 @@ describe("listing an offer under a seller's mandate", () => {
     expect(problem(withOffer({}, { leadTime: 7n * DAY, freeCancelWindow: DAY }))).toBeNull()
   })
 
+  it('refuses an offer that opens a term the mandate doesn’t let the agent move', () => {
+    const negotiable = withOffer({ negotiation: { open: ['unitPrice'], leadTime: null } })
+    expect(problem(negotiable)).toBe('seller_mandate.term_not_negotiable')
+  })
+
   it('refuses each way an offer goes past the mandate', () => {
     const cases: [ServiceOfferVersion, ReasonCode][] = [
       [withOffer({ unitPrice: dollars(39) }), 'seller_mandate.under_price_floor'],

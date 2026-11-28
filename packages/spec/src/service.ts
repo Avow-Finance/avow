@@ -61,6 +61,27 @@ export type PaymentRoute = (typeof PAYMENT_ROUTES)[number]
 const isPaymentRoute = (v: unknown): v is PaymentRoute =>
   (PAYMENT_ROUTES as readonly unknown[]).includes(v)
 
+/** The terms a buyer and a supplier can bargain over against one offer version. */
+export const OPEN_TERMS = ['unitPrice', 'quantity', 'leadTime'] as const
+export type OpenTerm = (typeof OPEN_TERMS)[number]
+
+/**
+ * What an offer version opens to bargaining, which the supplier approves when it publishes it.
+ *
+ * - `open` names the terms a proposal or a counter-offer may move, each once, in the order of
+ *   `OPEN_TERMS`, and at least one.
+ * - `leadTime` is the band a moved lead time stays in, in seconds, when `open` names the lead
+ *   time, and null when it doesn't. It holds the offer's own lead time.
+ *
+ * A moved unit price is never above the offer's own and never below the lowest price the supplier
+ * takes, which the offer doesn't state, since a supplier's lowest price is its own. A moved
+ * quantity stays from 1 to the offer's most per booking.
+ */
+export interface OfferNegotiation {
+  open: readonly OpenTerm[]
+  leadTime: { min: bigint; max: bigint } | null
+}
+
 /** The whole price of a number of units at a unit price, the one rule terms and quotes share. */
 const totalOf = (unitPrice: bigint, quantity: number): bigint => unitPrice * BigInt(quantity)
 
@@ -276,6 +297,39 @@ export interface ServiceOfferVersion {
   /** The price of one unit, in micros. */
   unitPrice: bigint
   rules: ServiceRules
+  /**
+   * What the version opens to bargaining. A version without it opens nothing, keeps the format
+   * and the id it always had, and is booked only on its own terms.
+   */
+  negotiation?: OfferNegotiation | undefined
+}
+
+/** What's wrong with what an offer opens to bargaining, in words for the person setting it. */
+function negotiationProblem(n: OfferNegotiation, rules: ServiceRules): string | null {
+  if (typeof n !== 'object' || n === null || !Array.isArray(n.open)) {
+    return 'Say which terms a buyer can bargain over.'
+  }
+  const order = n.open.map((t) => OPEN_TERMS.indexOf(t))
+  if (
+    order.length === 0 ||
+    order.some((at, i) => at < 0 || (i > 0 && at <= (order[i - 1] ?? -1)))
+  ) {
+    return 'Name each term open to bargaining once, from price, quantity and lead time.'
+  }
+  if (n.open.includes('leadTime') !== (n.leadTime !== null)) {
+    return 'Give a band for the lead time exactly when the lead time is open to bargaining.'
+  }
+  if (n.leadTime !== null) {
+    const { min, max } = n.leadTime ?? {}
+    if (typeof min !== 'bigint' || typeof max !== 'bigint') return 'Set the lead time band.'
+    if (min < SERVICE_ACCEPT_WITHIN || min < rules.freeCancelWindow) {
+      return 'The shortest lead time leaves you time to accept and outlasts free cancellation.'
+    }
+    if (min > rules.leadTime || max < rules.leadTime) {
+      return "The lead time band holds the offer's own lead time."
+    }
+  }
+  return null
 }
 
 /**
@@ -330,7 +384,7 @@ export function serviceOfferProblem(v: ServiceOfferVersion): string | null {
   if (typeof r.payment.dueAfterDelivery !== 'bigint' || r.payment.dueAfterDelivery < 0n) {
     return 'Payment is due at or after delivery.'
   }
-  return null
+  return v.negotiation === undefined ? null : negotiationProblem(v.negotiation, r)
 }
 
 const text = (max: number) => z.string().min(1).max(max)
@@ -351,6 +405,12 @@ export const serviceOfferVersionJson = z.strictObject({
     noShowBps: z.number().int(),
     payment: z.strictObject({ route: z.enum(PAYMENT_ROUTES), dueAfterDelivery: u64 }),
   }),
+  negotiation: z
+    .strictObject({
+      open: z.array(z.enum(OPEN_TERMS)).max(OPEN_TERMS.length).readonly(),
+      leadTime: z.strictObject({ min: u64, max: u64 }).nullable(),
+    })
+    .optional(),
 })
 
 /**
@@ -376,18 +436,27 @@ export function parseServiceOfferVersion(json: unknown): Parsed<ServiceOfferVers
 const OFFER_VERSION_LABEL = 'avow:offer:service/1'
 
 /**
- * An offer version's id: keccak256 of the ABI encoding of `avow:offer:service/1` and the
- * version's canonical JSON as a string. It hashes exactly the fields a version has, so the same
- * version always has the same id, and it throws for a version `serviceOfferProblem` refuses rather
- * than give one an id.
+ * The label of a version that opens terms to bargaining. A version that opens none keeps
+ * `avow:offer:service/1` and hashes byte for byte as it always did.
+ */
+const NEGOTIABLE_OFFER_VERSION_LABEL = 'avow:offer:service/2'
+
+/**
+ * An offer version's id: keccak256 of the ABI encoding of its label and the version's canonical
+ * JSON as a string. The label is `avow:offer:service/1`, or `avow:offer:service/2` for a version
+ * that opens terms to bargaining. It hashes exactly the fields a version has, so the same version
+ * always has the same id, and it throws for a version `serviceOfferProblem` refuses rather than
+ * give one an id.
  */
 export function offerVersionId(version: ServiceOfferVersion): Hex {
   const problem = serviceOfferProblem(version)
   if (problem) throw new RangeError(problem)
+  const label =
+    version.negotiation === undefined ? OFFER_VERSION_LABEL : NEGOTIABLE_OFFER_VERSION_LABEL
   return keccak256(
     encodeAbiParameters(
       [{ type: 'string' }, { type: 'string' }],
-      [OFFER_VERSION_LABEL, canonicalJson(offerVersionFields(version))],
+      [label, canonicalJson(offerVersionFields(version))],
     ),
   )
 }
@@ -397,8 +466,8 @@ export function offerVersionId(version: ServiceOfferVersion): Hex {
  * these and nothing else, so anything else a value carries is no part of the version.
  */
 export function offerVersionFields(version: ServiceOfferVersion): ServiceOfferVersion {
-  const { supplier, item, currency, unitPrice, rules: r } = version
-  return {
+  const { supplier, item, currency, unitPrice, rules: r, negotiation: n } = version
+  const fields: ServiceOfferVersion = {
     supplier,
     item: { name: item.name, summary: item.summary },
     currency,
@@ -413,6 +482,32 @@ export function offerVersionFields(version: ServiceOfferVersion): ServiceOfferVe
       noShowBps: r.noShowBps,
       payment: { route: r.payment.route, dueAfterDelivery: r.payment.dueAfterDelivery },
     },
+  }
+  // A version that opens nothing has no such field at all, so its canonical form never changes.
+  if (n !== undefined) {
+    fields.negotiation = {
+      open: [...n.open],
+      leadTime: n.leadTime === null ? null : { min: n.leadTime.min, max: n.leadTime.max },
+    }
+  }
+  return fields
+}
+
+/**
+ * The version a negotiated booking is made on: the base with the agreed unit price and lead time
+ * in place, and nothing open to bargaining, since what was agreed is fixed. Its terms are built
+ * by `serviceOfferTerms` like any version's, and name this version's id. Only the thread that
+ * reached it says which base it came from.
+ */
+export function agreedVersion(
+  base: ServiceOfferVersion,
+  agreed: { unitPrice: bigint; leadTime: bigint },
+): ServiceOfferVersion {
+  const { negotiation: _open, ...fixed } = offerVersionFields(base)
+  return {
+    ...fixed,
+    unitPrice: agreed.unitPrice,
+    rules: { ...fixed.rules, leadTime: agreed.leadTime },
   }
 }
 

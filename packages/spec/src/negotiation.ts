@@ -22,6 +22,9 @@ import { address, bytes32, hexBytes, sameHex as same, side, u64, u256 } from './
 import { businessIdJson, readOrNull } from './order-wire.js'
 import type { ReasonCode } from './reasons.js'
 import {
+  agreedVersion,
+  type OfferNegotiation,
+  type OpenTerm,
   offerVersionId,
   SERVICE_QUANTITY_MAX,
   type ServiceOfferVersion,
@@ -93,29 +96,31 @@ export const THREAD_MOVES_MAX = THREAD_PROPOSALS_MAX + 2
 const ZERO: Hex = `0x${'00'.repeat(32)}`
 const other = (s: Side): Side => (s === 'buyer' ? 'supplier' : 'buyer')
 
-/** The terms a proposal may set against its base offer. */
-export const OPEN_TERMS = ['unitPrice', 'quantity', 'leadTime'] as const
-export type OpenTerm = (typeof OPEN_TERMS)[number]
-
-/** What a thread about an offer allows: which terms can move, and how many proposals it takes. */
+/**
+ * What a thread about an offer allows: which terms can move, the band a moved lead time stays in,
+ * and how many proposals it takes.
+ */
 export interface NegotiationRules {
   open: readonly OpenTerm[]
+  /** The band a moved lead time stays in, in seconds, or null when the lead time can't move. */
+  leadTime: OfferNegotiation['leadTime']
   /** The most proposals and counters, which never passes `THREAD_PROPOSALS_MAX` whatever it says. */
   proposalsMax: number
 }
 
 /**
- * The rules a thread about this offer runs under. No offer opens a term to bargaining yet, since
- * an offer version has no field to say so. So today a thread's one proposal carries the offer's
- * own price and lead time, and a counter-offer is refused. A later version of the offer format
- * names its open terms, and this reads them.
- *
- * Two things are to settle before any term opens. Terms built from a proposal that moves the price
- * or the lead time name the id of the base as amended, and nothing in them names the base itself.
- * And a proposed lead time has the offer template's lower bound and no upper one.
+ * The rules a thread about this offer runs under, read from what the base version opens. A
+ * version that opens nothing gives a thread whose one proposal carries the offer's own price and
+ * lead time, and no counter-offer. A version that opens terms lets proposals and counter-offers
+ * move those terms, the lead time within its band.
  */
-export function negotiationRules(_base: ServiceOfferVersion): NegotiationRules {
-  return { open: [], proposalsMax: THREAD_PROPOSALS_MAX }
+export function negotiationRules(base: ServiceOfferVersion): NegotiationRules {
+  const n = base.negotiation
+  return {
+    open: n ? [...n.open] : [],
+    leadTime: n?.leadTime ?? null,
+    proposalsMax: THREAD_PROPOSALS_MAX,
+  }
 }
 
 /**
@@ -216,16 +221,15 @@ export function threadStateAt(thread: Pick<NegotiationThread, 'moves'>, now: big
   return { status: 'open', head, turn: other(head.side), proposals: proposals.length }
 }
 
-/** The offer version a proposal asks for: the base with the proposal's price and lead time. */
+/**
+ * The offer version a proposal asks for: the base with the proposal's price and lead time, as
+ * `agreedVersion` fixes it. For a base that opens nothing it is the base itself.
+ */
 export function proposedVersion(
   base: ServiceOfferVersion,
   proposal: Pick<NegotiationMove, 'unitPrice' | 'leadTime'>,
 ): ServiceOfferVersion {
-  return {
-    ...base,
-    unitPrice: proposal.unitPrice,
-    rules: { ...base.rules, leadTime: proposal.leadTime },
-  }
+  return agreedVersion(base, proposal)
 }
 
 /**
@@ -245,17 +249,21 @@ export function proposalTerms(
   )
 }
 
-/** The terms a proposal sets differently from the offer, or from the proposal it answers. */
-function moved(
+/**
+ * The terms a proposal moves: the unit price or the lead time when they differ from the base
+ * offer's, and the quantity when it differs from `from`. A thread reads a counter against the
+ * proposal it answers, and a seller's mandate reads a move against the buyer's opening proposal.
+ * The buyer's opening proposal sets the quantity, so with no `from` the quantity never moves.
+ */
+export function termsMovedFrom(
   base: ServiceOfferVersion,
-  proposal: NegotiationMove,
-  answered: NegotiationMove | null,
+  from: Pick<NegotiationMove, 'quantity'> | null,
+  proposal: Pick<NegotiationMove, 'unitPrice' | 'leadTime' | 'quantity'>,
 ): OpenTerm[] {
   const terms: OpenTerm[] = []
   if (proposal.unitPrice !== base.unitPrice) terms.push('unitPrice')
+  if (from && proposal.quantity !== from.quantity) terms.push('quantity')
   if (proposal.leadTime !== base.rules.leadTime) terms.push('leadTime')
-  // The buyer's first proposal sets the quantity, and only a counter can move it.
-  if (answered && proposal.quantity !== answered.quantity) terms.push('quantity')
   return terms
 }
 
@@ -292,8 +300,15 @@ function proposalProblem(
     // A counter that repeats the proposal it answers is an acceptance written as a counter.
     return 'message.invalid'
   }
-  if (moved(base, next, answered).some((term) => !rules.open.includes(term))) {
+  if (termsMovedFrom(base, answered, next).some((term) => !rules.open.includes(term))) {
     return 'terms.not_negotiable'
+  }
+  // A proposal never asks more than the offer's own price, so the listing is the most a buyer
+  // can be asked to pay for what it lists.
+  if (next.unitPrice > base.unitPrice) return 'terms.not_negotiable'
+  const band = rules.leadTime
+  if (next.leadTime !== base.rules.leadTime) {
+    if (!band || next.leadTime < band.min || next.leadTime > band.max) return 'terms.not_negotiable'
   }
   try {
     serviceOfferQuote(proposedVersion(base, next), next.quantity)

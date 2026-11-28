@@ -1,8 +1,11 @@
+import { encodeAbiParameters, keccak256 } from 'viem'
 import { describe, expect, it } from 'vitest'
+import { canonicalJson } from './canonical.js'
 import { dollars } from './demo.js'
 import { subjectFits, subjectProblem } from './dependencies.js'
 import { TESTNET_DEMO_PROFILE } from './profiles.js'
 import {
+  offerVersionFields,
   offerVersionId,
   parseServiceOfferVersion,
   SERVICE,
@@ -140,6 +143,52 @@ describe('an offer version', () => {
     if (parsed.ok) expect(offerVersionId(parsed.value)).toBe(offerVersionId(version))
     expect(parseServiceOfferVersion({ ...roundTrip(version), extra: 1 }).ok).toBe(false)
     expect(parseServiceOfferVersion(roundTrip(withRules({ freeCancelWindow: 60n }))).ok).toBe(false)
+  })
+})
+
+describe('an offer version that opens terms to bargaining', () => {
+  const negotiable: ServiceOfferVersion = {
+    ...version,
+    negotiation: {
+      open: ['unitPrice', 'leadTime'],
+      leadTime: { min: 12n * HOUR, max: 48n * HOUR },
+    },
+  }
+  const idUnder = (label: string, v: ServiceOfferVersion) =>
+    keccak256(
+      encodeAbiParameters([{ type: 'string' }, { type: 'string' }], [label, canonicalJson(v)]),
+    )
+
+  it('hashes under its own label, and leaves a version that opens nothing as it was', () => {
+    expect(offerVersionId(version)).toBe(idUnder('avow:offer:service/1', version))
+    expect(offerVersionId(negotiable)).toBe(idUnder('avow:offer:service/2', negotiable))
+    expect(offerVersionFields({ ...version, negotiation: undefined })).toEqual(version)
+  })
+
+  it('says what is wrong with what it opens, in words for the supplier', () => {
+    expect(serviceOfferProblem(negotiable)).toBeNull()
+    const wrong = (negotiation: unknown, words: RegExp) =>
+      expect(serviceOfferProblem({ ...version, negotiation } as ServiceOfferVersion)).toMatch(words)
+    wrong({ open: [], leadTime: null }, /once/)
+    wrong({ open: ['unitPrice', 'unitPrice'], leadTime: null }, /once/)
+    wrong({ open: ['leadTime', 'unitPrice'], leadTime: { min: HOUR, max: HOUR } }, /once/)
+    wrong({ open: ['delivery'], leadTime: null }, /once/)
+    wrong({ open: ['unitPrice'], leadTime: { min: HOUR, max: 48n * HOUR } }, /exactly when/)
+    wrong({ open: ['leadTime'], leadTime: null }, /exactly when/)
+    wrong({ open: ['leadTime'], leadTime: { min: HOUR, max: 48n * HOUR } }, /outlasts free/)
+    wrong({ open: ['leadTime'], leadTime: { min: 25n * HOUR, max: 48n * HOUR } }, /own lead time/)
+    wrong({ open: ['leadTime'], leadTime: { min: 12n * HOUR, max: 23n * HOUR } }, /own lead time/)
+    wrong(null, /bargain/)
+  })
+
+  it('reads back from JSON with the same id', () => {
+    const parsed = parseServiceOfferVersion(roundTrip(negotiable))
+    expect(parsed).toEqual({ ok: true, value: negotiable })
+    const sloppy = {
+      ...roundTrip(negotiable),
+      negotiation: { open: ['unitPrice'], leadTime: null, x: 1 },
+    }
+    expect(parseServiceOfferVersion(sloppy).ok).toBe(false)
   })
 })
 
