@@ -27,6 +27,7 @@ import {
   type RailToken,
   type ReasonCode,
   type RefusalLayer,
+  type ReserveRequest,
   type Signed,
   type SignedAgreement,
   type StartReceipt,
@@ -73,14 +74,52 @@ export interface Landed {
   blockNumber: bigint
 }
 
-export interface AgentConfig<A extends AvowApi = AvowApi> {
+/**
+ * Who signs and funds for a worker, which holds no key on the business account. The agent's own
+ * process signs for it with the agent's key, inside the worker's slice, through
+ * `createParentSigner`. Each call answers a refusal with its reason instead of throwing.
+ */
+export interface AgentBuyer {
+  /** Signs the buyer's side of an agreement for version 2 terms, given the request Avow will see. */
+  signAgreement(a: {
+    agreement: TermsAgreement
+    request: Omit<ReserveRequest, 'terms'> & { terms: Terms }
+    salt: Hex
+  }): Promise<{ ok: true; signature: Hex } | { ok: false; reason: ReasonCode }>
+  /**
+   * Funds an approved reserve with the agent's key. A refusal says whether anything may have been
+   * sent, so a booking whose funding nothing sent is settled at once and any other is read from the
+   * lock. The hash and block are null when only the lock showed where the reserve landed.
+   */
+  fund(
+    approval: Signed<Approval>,
+  ): Promise<
+    | { ok: true; transactionHash: Hex | null; blockNumber: bigint | null }
+    | { ok: false; reason: ReasonCode; sent: boolean }
+  >
+}
+
+/** The agent's key as a worker knows it: its address on the business account, and nothing to sign with. */
+export interface AgentIdentity {
+  readonly address: Address
+  readonly accessKeyAddress: Address
+}
+
+/**
+ * How an agent signs: with its own key, or, for a worker, through the agent that started it, which
+ * signs with the agent's key inside the worker's slice. A worker gives the agent's key's addresses
+ * and a buyer, and never the key.
+ */
+export type AgentSigning =
+  | { key: AgentKey; buyer?: never }
+  | { key: AgentIdentity; buyer: AgentBuyer }
+
+/** What an agent is made with. */
+export type AgentConfig<A extends AvowApi = AvowApi> = AgentConfigFields<A> & AgentSigning
+
+interface AgentConfigFields<A extends AvowApi = AvowApi> {
   /** A client for the chain the business's lock is on, with the chain's fee token set. */
   client: Client<Transport, Chain>
-  /**
-   * The agent's access key on the business account. Its own address is the mandate's agent key.
-   * It signs transactions for the account, and Avow's messages with its bare signature.
-   */
-  key: AgentKey
   /**
    * The mandate the business's administrator authorized for this agent, by signing it or by the
    * transaction that put the agent's key on. It names the chain and lock.
@@ -279,7 +318,7 @@ export interface AgentCalls {
    * It takes what a `BookingError` carries.
    */
   reconcile(
-    approved: ApprovedCommitment<CommittedTerms>,
+    approved: Pick<ApprovedCommitment<CommittedTerms>, 'commitmentId' | 'approval'>,
     hashes?: readonly Hex[],
   ): Promise<Reconciled>
   /** What the lock holds for one of the business's commitments, or null when it holds nothing. */
@@ -336,6 +375,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  */
 export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A> {
   const { client, key, avow, token } = config
+  // A worker's buyer signs and funds with the agent's key in the agent's process. Without one, the
+  // agent's own key does.
+  const buyer = config.buyer ?? null
+  const ownKey = buyer ? null : (config.key as AgentKey)
   const mandate = config.mandate.message
   const d: AvowDomain = {
     chainId: config.mandate.chainId,
@@ -386,7 +429,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     ((calls: Call[]) =>
       sendSponsored({
         client,
-        account: key,
+        account: ownKey as AgentKey,
         calls,
         sponsor: (transaction) => avow.sponsor(transaction),
         ...(config.limits ? { limits: config.limits } : {}),
@@ -484,7 +527,7 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
    * timeout.
    */
   async function reconcile(
-    approved: ApprovedCommitment<CommittedTerms>,
+    approved: Pick<ApprovedCommitment<CommittedTerms>, 'commitmentId' | 'approval'>,
     hashes: readonly Hex[] = [],
   ): Promise<Reconciled> {
     const a = approved.approval.message
@@ -618,7 +661,20 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
     // signs anything or asks Avow.
     const overPrice = priceLimitProblem(mandate, terms)
     if (overPrice) return { ok: false, reason: overPrice, layer: 'sdk' }
-    const buyerSignature = await key.sign({ hash: digest, raw: true })
+    let buyerSignature: Hex
+    if (buyer) {
+      // A worker commits to version 2 terms only, as the agent's signer takes them.
+      if (isChainedTerms(terms)) return { ok: false, reason: 'terms.version_unknown', layer: 'sdk' }
+      const asked = await buyer.signAgreement({
+        agreement,
+        request: requestOf(agreement.commitmentId, supplier, agreement.category, terms),
+        salt,
+      })
+      if (!asked.ok) return { ok: false, reason: asked.reason, layer: 'sdk' }
+      buyerSignature = asked.signature
+    } else {
+      buyerSignature = await (ownKey as AgentKey).sign({ hash: digest, raw: true })
+    }
     const signed: SignedAgreement = {
       type: 'TermsAgreement',
       schemaVersion: termsAgreementVersion(agreement),
@@ -680,20 +736,40 @@ export function createAgent<A extends AvowApi>(config: AgentConfig<A>): Agent<A>
    */
   async function fund(approved: ApprovedCommitment<CommittedTerms>): Promise<Hex | null> {
     const { commitmentId, approval } = approved
-    let landed: Landed | null = null
+    let landed: { transactionHash: Hex | null; blockNumber: bigint | null } | null = null
     let failure: unknown = null
-    try {
-      landed = await send(reserveCalls(approval, d))
-    } catch (error) {
-      failure = error
+    if (buyer) {
+      const funded = await buyer.fund(approval)
+      if (funded.ok) landed = funded
+      else {
+        // A refusal that sent nothing is a send that never signed, which settles the booking.
+        failure = new SendError(`The agent refused to fund it (${funded.reason})`, 'failed', {
+          hashes: [],
+          signings: funded.sent ? 1 : 0,
+        })
+      }
+    } else {
+      try {
+        landed = await send(reserveCalls(approval, d))
+      } catch (error) {
+        failure = error
+      }
     }
     if (landed) {
-      const held = await backingAt(commitmentId, landed.blockNumber).catch(() => null)
+      const read =
+        landed.blockNumber === null
+          ? readBacking(client, d.verifyingContract, commitmentId, 'buyer')
+          : backingAt(commitmentId, landed.blockNumber)
+      const held = await read.catch(() => null)
       const expected = approvalDigest(approval.message, d).toLowerCase()
       if (held && held.approvalHash.toLowerCase() === expected) return landed.transactionHash
     }
     const hashes =
-      failure instanceof SendError ? failure.hashes : landed ? [landed.transactionHash] : []
+      failure instanceof SendError
+        ? failure.hashes
+        : landed?.transactionHash
+          ? [landed.transactionHash]
+          : []
     const what = failure
       ? failure instanceof Error
         ? failure.message

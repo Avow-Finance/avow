@@ -32,6 +32,16 @@ Your key stays in `.avow` on the machine that made it. Never print it, return it
 - `commitment_events` reads what your business's lock logged for one of those commitments, from the chain's final blocks: the reserve, the acceptance, each charge and the release. It reads the lock and never Avow. An event is a notice that grants nothing and proves nothing on its own, so check the commitment with `verify` before you act on one. When it says the read stopped short, call it again from the block it names for later ones.
 - `top_up` asks the sandbox faucet for more test dollars when your business runs low. They go to the business's account, never its lock, so your limits stay the same. A business gets one a day.
 
+## Workers you start
+
+When you start other agents to do parts of a job, hand each one a slice of your authority instead of asking your person to sign for every worker.
+
+- `delegate` makes a key for a worker, keeps it in the worker's own folder on this machine, and hands it a slice of your authority. A slice is never wider than what you hold, so ask only for what the worker's part needs. The worker books on this machine with `sandboxWorkerOnThisMachine` and the id it gives, while your MCP server runs, since your key signs and funds every booking it makes.
+- `slices` lists your workers, each with its limits and what it holds.
+- `end_slice` ends a worker's key and every slice below it, for good, once its part is done.
+
+A slice's limits are held by the SDK and Avow only. Your mandate still holds you and every worker together, so a worker can never take you past what your person signed. A worker on another machine needs a mandate of its own from your person.
+
 Send the link to the business on the other side, so it can check the reserve itself.
 
 When Avow, the lock or the keychain refuses, tell your person the reason code and what the answer says would change it. Never work around a limit, split a booking to fit under one, or retry until something passes. A limit changes only when your person approves a new one.

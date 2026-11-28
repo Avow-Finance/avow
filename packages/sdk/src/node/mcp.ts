@@ -52,6 +52,7 @@ import { sandboxTestSellers } from '../sandbox/test-sellers.js'
 import { APPROVAL_CARD_MIME, APPROVAL_CARD_URI, approvalCardHtml } from './approval-card.js'
 import { addToClient, isMcpClient, MCP_CLIENTS, mcpServersJson } from './mcp-clients.js'
 import { type Connection, mcpConnection } from './mcp-connection.js'
+import { SLICE_TOOL_DEFS, SLICE_TOOLS, type SliceTool, sliceTools } from './mcp-slices.js'
 import { fileStore, SANDBOX_DIR, takeRun } from './platform.js'
 import {
   bookingSentence,
@@ -640,8 +641,9 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+  ...SLICE_TOOL_DEFS,
 ] as const satisfies readonly {
-  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool | EventTool
+  name: SandboxTool | FreeTool | ServiceTool | FundsTool | RequestTool | EventTool | SliceTool
   /** What a client shows for the tool. */
   title: string
   /**
@@ -1630,8 +1632,18 @@ export function mcpAgent(
     (REQUEST_TOOLS as readonly string[]).includes(name)
   const isServiceTool = (name: string): name is ServiceTool =>
     (SERVICE_TOOLS as readonly string[]).includes(name)
+  const isSliceTool = (name: string): name is SliceTool =>
+    (SLICE_TOOLS as readonly string[]).includes(name)
+  const workers = sliceTools(dir, options.fetch ? { fetch: options.fetch } : {})
 
   return {
+    /**
+     * Serves the agent's signer to the workers already in its folder, once it's connected, so
+     * their bookings go on while the server runs. Nothing starts for an agent with no workers.
+     */
+    async startWorkers(): Promise<void> {
+      if ((await connection.state()).at === 'connected') await workers.start()
+    },
     async call(name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
       try {
         if (name === 'connect') return await connect(args)
@@ -1643,12 +1655,14 @@ export function mcpAgent(
           !isServiceTool(name) &&
           !isFundsTool(name) &&
           !isRequestTool(name) &&
-          !isEventTool(name)
+          !isEventTool(name) &&
+          !isSliceTool(name)
         ) {
           return { text: `There's no tool named ${name}.`, structured: {}, isError: true }
         }
         const waiting = await unready()
         if (waiting) return waiting
+        if (isSliceTool(name)) return await workers.call(name, args)
         if (name === 'top_up') return await topUp()
         if (name === 'commitment_events') return await commitmentEvents(args)
         if (name === 'request_change') return await requestChange(args)
@@ -1681,6 +1695,13 @@ type Message = { jsonrpc?: string; id?: string | number | null; method?: string;
 /** Serves MCP over stdio, a JSON-RPC message per line, for the agent in `dir`. */
 export function serve(dir: string, io = { input: process.stdin, output: process.stdout }): void {
   const agent = mcpAgent(dir)
+  agent
+    .startWorkers()
+    .catch((error: unknown) =>
+      process.stderr.write(
+        `The workers' signer didn't start: ${error instanceof Error ? error.message : String(error)}\n`,
+      ),
+    )
   const write = (message: object) =>
     io.output.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
   const lines = createInterface({ input: io.input })

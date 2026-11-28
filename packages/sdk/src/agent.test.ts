@@ -1004,3 +1004,73 @@ describe('setting up an agent', () => {
     ).toThrow('or in its currency')
   })
 })
+
+describe('a worker booking through the agent that started it', () => {
+  type Refusing = {
+    at: 'sign' | 'fund'
+    reason: 'mandate.over_commitment_cap' | 'slice.revoked'
+    sent?: boolean
+  }
+  async function worker(refusing: Refusing | null = null, blockNumber: bigint | null = LANDED_IN) {
+    const s = await setup()
+    const asked: string[] = []
+    const buyer = {
+      async signAgreement({ agreement }: { agreement: TermsAgreement }) {
+        asked.push('sign')
+        if (refusing?.at === 'sign') return { ok: false as const, reason: refusing.reason }
+        const hash = digestOf(termsAgreementTypedData(agreement, D))
+        return { ok: true as const, signature: await s.key.sign({ hash, raw: true }) }
+      },
+      async fund(approval: Signed<Approval>) {
+        asked.push('fund')
+        if (refusing?.at === 'fund') {
+          return { ok: false as const, reason: refusing.reason, sent: refusing.sent ?? false }
+        }
+        s.chain.state.holds = approval.message
+        return { ok: true as const, transactionHash: id('worker reserve'), blockNumber }
+      },
+    }
+    const { key: _key, send: _send, ...rest } = s.config
+    const agent = createAgent({
+      ...rest,
+      key: { address: s.key.address, accessKeyAddress: s.key.accessKeyAddress },
+      buyer,
+    })
+    return { s, agent, asked }
+  }
+  const booking = (s: Awaited<ReturnType<typeof setup>>) => ({
+    supplier: s.connection,
+    terms: gpuReservationTerms(gpuBooking()),
+    category: 'compute',
+  })
+
+  it('signs and funds through its buyer, and never with a key of its own', async () => {
+    const { s, agent, asked } = await worker()
+    const booked = await agent.book(booking(s))
+    expect(booked).toMatchObject({ ok: true, commitment: { reservedIn: id('worker reserve') } })
+    expect(asked).toEqual(['sign', 'fund'])
+    expect(s.sent).toEqual([])
+  })
+
+  it('reads the lock for a reserve the agent funded without saying where it landed', async () => {
+    const { s, agent } = await worker(null, null)
+    expect(await agent.book(booking(s))).toMatchObject({ ok: true })
+  })
+
+  it("answers the agent's refusal of the agreement, with nothing asked of Avow or funded", async () => {
+    const { s, agent, asked } = await worker({ at: 'sign', reason: 'mandate.over_commitment_cap' })
+    expect(await agent.book(booking(s))).toEqual({
+      ok: false,
+      reason: 'mandate.over_commitment_cap',
+    })
+    expect(asked).toEqual(['sign'])
+    expect(s.calls).not.toContain('approveReserve')
+  })
+
+  it('settles at once a funding the agent refused before sending anything', async () => {
+    const { s, agent } = await worker({ at: 'fund', reason: 'slice.revoked' })
+    const error = await agent.book(booking(s)).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(BookingError)
+    expect((error as BookingError).outcome).toBe('failed')
+  })
+})

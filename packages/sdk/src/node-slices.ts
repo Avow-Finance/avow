@@ -4,8 +4,14 @@
  */
 
 export {
+  delegationOnThisMachine,
+  sandboxWorkerOnThisMachine,
+  workerFolders,
+} from './node/delegation.js'
+export {
   serveWorkers,
   WorkerRefused,
+  workerBuyer,
   workerSigner,
   workerSocketPath,
 } from './node/worker-socket.js'
