@@ -21,6 +21,9 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 | `commitments` | No | The agent's commitments, each with its state on the lock and its link |
 | `commitment_events` | No | What the business's lock logged for one of the agent's commitments, read from the chain's final blocks and never from Avow, with `next` when a read stops short. Each event is a notice that grants nothing, so check the commitment with `verify` before acting on one |
 | `top_up` | Sends test dollars to the business | Asks the sandbox faucet for more test dollars, sent to the business's own account and never its lock, so no limit changes. A business gets one a day |
+| `delegate` | Hands a worker a slice | Makes a key for a worker in its own folder on this machine and hands it a slice of the agent's authority, signed with the agent's key, never wider than what the agent holds. The server signs and funds the worker's bookings inside the slice while it runs. A slice's limits are held by the SDK and Avow only |
+| `slices` | No | The agent's workers, each with its id, its slice's limits and what it holds as Avow counts it |
+| `end_slice` | Ends a worker | Ends a worker's key, its slice and every slice below it, for good. Commitments it made keep their terms |
 | `request_change` | Asks for a change | Asks the business's administrator for a higher limit, a supplier named on the lock and in the mandate, or the lock opened to listed suppliers up to a cap, and answers with a link where they decide with their passkey. Nothing changes until they approve |
 | `request_seller_mandate` | Asks for a change | Asks the business's administrator for a seller's mandate with the terms the person set, and answers with a link where they decide with their passkey. Avow doesn't take these requests yet, and the tool says so |
 | `request_status` | No | Where one of the agent's requests stands: waiting, landing, active, or ended as declined, lapsed, out of date or failed |
@@ -74,7 +77,7 @@ The `avow-sandbox` package gives an agent the same abilities two ways, as tools 
 
 Every tool answers in text a model can read and in structured JSON with the same facts. A refusal names its reason code and its layer, with the amounts behind it where they apply. The layer is `sdk` for the agent's own mandate check, `avow` for Avow's API, `supplier` when the supplier declines, `relay` for the service that sends the transaction, `lock` for the lock and `keychain` for Tempo's keychain. When a tool refuses, tell the person the reason code and what would change it, and don't work around the limit.
 
-Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order` and `sell` are the ones that change anything. `withdraw_listing` is marked destructive, since Avow never lists a withdrawn version again, and nothing else is.
+Each tool carries a title and hints a client reads. `connect`, `book`, `top_up`, the two asks for a change, `publish_offer`, `list_offer`, `withdraw_listing`, `order` and `sell` are the ones that change anything. `withdraw_listing` is marked destructive, since Avow never lists a withdrawn version again, and so is `end_slice`, since a revoked worker key never holds a slice again. `delegate` changes something too.
 
 ## Terminal commands
 

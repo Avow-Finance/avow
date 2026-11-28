@@ -4,6 +4,17 @@
  * with the agent's own key, and nothing here opens the business's key, signs a mandate or changes
  * the authority a person gave the agent.
  */
+
+export {
+  type AgentDelegation,
+  agentDelegation,
+  type DelegatedWorker,
+  type WorkerFolders,
+  type WorkerLimitsAsk,
+  workerLimits,
+} from './sandbox/delegation.js'
+export { type SandboxWorker, sandboxWorker, WorkerBookingRefused } from './sandbox/worker.js'
+export { type SliceApi, sliceApi } from './slices/client.js'
 export { handOutSlice, narrowSlice, revokeWorker, SliceRefused } from './slices/hand-out.js'
 export {
   createParentSigner,

@@ -12,6 +12,7 @@ import {
   WORKER_SOCKET,
   WORKERS_DIR,
   WorkerRefused,
+  workerBuyer,
   workerSigner,
   workerSocketPath,
 } from './worker-socket.js'
@@ -153,5 +154,47 @@ describe("the agent's socket for its workers", () => {
     await expect(
       serveWorkers({ avowDir: dir, signer, expected: { chainId: CHAIN_ID, lock: LOCK } }),
     ).rejects.toThrow('not a socket')
+  })
+})
+
+describe("a worker's buyer over the socket", () => {
+  it("hands createAgent the agent's funding, and its refusal of an agreement as a reason", async () => {
+    const buyer = workerBuyer(workerSigner({ socketPath: workerSocketPath(dir), key: worker }))
+    expect(await buyer.fund(approval)).toEqual({
+      ok: true,
+      transactionHash: id('tx'),
+      blockNumber: 9n,
+    })
+    const refused = await buyer.signAgreement({
+      agreement: {
+        commitmentId: id('c'),
+        termsHash: id('t'),
+        category: 'compute',
+        buyerBusinessId: 'biz_buyer',
+        supplierBusinessId: 'biz_supplier',
+        mandateHash: id('m'),
+        nonce: 1n,
+        expiry: 9n,
+      },
+      request: {
+        commitmentId: id('c'),
+        agentKey: worker.address,
+        supplier: 'biz_supplier',
+        payee: worker.address,
+        category: 'compute',
+        terms: {} as never,
+      },
+      salt: id('salt'),
+    })
+    expect(refused).toEqual({ ok: false, reason: 'request.invalid' })
+  })
+
+  it('says nothing was sent when no agent answers the socket', async () => {
+    const buyer = workerBuyer(workerSigner({ socketPath: join(dir, 'nobody.sock'), key: worker }))
+    expect(await buyer.fund(approval)).toEqual({
+      ok: false,
+      reason: 'service.unavailable',
+      sent: false,
+    })
   })
 })

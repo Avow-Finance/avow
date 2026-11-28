@@ -1,8 +1,9 @@
 import { chmod, lstat, mkdir, rm } from 'node:fs/promises'
 import { connect, createServer, type Server } from 'node:net'
 import { join } from 'node:path'
-import { toWire } from '@avow-finance/spec'
+import { type ReasonCode, toWire } from '@avow-finance/spec'
 import type { Address, Hex } from 'viem'
+import type { AgentBuyer } from '../agent.js'
 import type { ParentSigner } from '../slices/parent-signer.js'
 import {
   signWorkerRequest,
@@ -155,5 +156,41 @@ export class WorkerRefused extends Error {
     super(`The agent refused its worker's request (${code})`)
     this.name = 'WorkerRefused'
     this.code = code
+  }
+}
+
+/**
+ * A worker's side of the socket as `createAgent` takes it, so a worker books with the same calls
+ * an agent does. A refusal comes back with the agent's reason. A funding whose answer never came
+ * may have been sent, so `createAgent` reads the lock for it.
+ */
+export function workerBuyer(signer: ReturnType<typeof workerSigner>): AgentBuyer {
+  return {
+    async signAgreement(a) {
+      try {
+        return { ok: true, signature: await signer.signAgreement(a) }
+      } catch (error) {
+        if (error instanceof WorkerRefused) return { ok: false, reason: error.code as ReasonCode }
+        throw error
+      }
+    },
+    async fund(approval) {
+      try {
+        return { ok: true, ...(await signer.fund(approval)) }
+      } catch (error) {
+        if (error instanceof WorkerRefused) {
+          // The agent answers `service.unavailable` only once it sent and couldn't tell the outcome.
+          return {
+            ok: false,
+            reason: error.code as ReasonCode,
+            sent: error.code === 'service.unavailable',
+          }
+        }
+        // A socket nobody answers took no request. Any other failure may have come after it did.
+        const code = (error as NodeJS.ErrnoException).code
+        const unreached = code === 'ECONNREFUSED' || code === 'ENOENT'
+        return { ok: false, reason: 'service.unavailable', sent: !unreached }
+      }
+    },
   }
 }

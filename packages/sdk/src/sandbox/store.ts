@@ -25,6 +25,7 @@ export type SandboxStoreItem =
   | 'mailbox'
   | 'services'
   | 'job-sales'
+  | 'worker'
 
 /**
  * Where a sandbox keeps its items, as text. In Node it's the `.avow` folder of the working
@@ -164,6 +165,60 @@ export async function loadAgentItem(store: SandboxStore): Promise<AgentItem | nu
 }
 
 export const saveAgentItem = (store: SandboxStore, item: AgentItem) => write(store, 'agent', item)
+
+/**
+ * A worker's item, in the worker's own folder under the agent's: the worker's own key, which signs
+ * its requests to Avow and nothing on the chain, the business, the agent's key by its addresses
+ * only, the agent's mandate the slice traces back to, the slice's id and the agent's suppliers.
+ * The agent's key is never in it.
+ */
+export interface WorkerItem {
+  workerKey: Hex
+  business: StoredBusiness
+  /** The agent's key on the business account, which funds every reserve the worker makes. */
+  agentKey: Address
+  mandate: MandateProof
+  sliceId: Hex
+  label: string | null
+  suppliers: SandboxSupplier[]
+}
+
+/** The worker's item, or null when the folder holds no worker. */
+export async function loadWorkerItem(store: SandboxStore): Promise<WorkerItem | null> {
+  const text = await store.read('worker')
+  if (text === null) return null
+  const json = readJson(text, 'worker')
+  const business = readBusiness(json.business)
+  const suppliers = readSuppliers(json.suppliers)
+  if (
+    !business ||
+    !suppliers ||
+    !isKey(json.workerKey) ||
+    !isKey(json.sliceId) ||
+    typeof json.agentKey !== 'string' ||
+    !isAddress(json.agentKey, { strict: false }) ||
+    !(json.label === null || typeof json.label === 'string')
+  ) {
+    return null
+  }
+  const mandate = parseMandateProof(json.mandate, {
+    chainId: business.chainId,
+    lock: business.lock,
+  })
+  if (!mandate.ok) return null
+  return {
+    workerKey: json.workerKey,
+    business,
+    agentKey: json.agentKey as Address,
+    mandate: mandate.value,
+    sliceId: json.sliceId,
+    label: json.label,
+    suppliers,
+  }
+}
+
+export const saveWorkerItem = (store: SandboxStore, item: WorkerItem) =>
+  write(store, 'worker', item)
 
 /** The commitments the agent made, as far as each still parses. */
 export async function loadCommitments(store: SandboxStore): Promise<StoredCommitment[]> {

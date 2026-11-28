@@ -7,7 +7,29 @@ An agent that starts other agents hands each one a slice of its own authority, s
 
 In Beta a worker runs only on its agent's machine, in the agent's process or another process beside it. A worker on another machine can't reach the agent's key, so it needs a mandate a person signs for it.
 
-This page covers the messages and the checks in `@avow-finance/spec`. The SDK, the MCP server and Avow's API take slices in their own releases, and until they do no agent can use one.
+This page covers the messages and checks in `@avow-finance/spec`, the calls in `@avow-finance/sdk/slices`, and the MCP server's `delegate`, `slices` and `end_slice` tools. A slice works only once Avow's API takes it, and Avow refuses every request from a worker's key until then.
+
+## From code
+
+The agent hands out and ends slices with `delegationOnThisMachine`, which also serves its signer to its workers for as long as the agent's process runs.
+
+```ts
+import { delegationOnThisMachine } from '@avow-finance/sdk/slices'
+
+const workers = await delegationOnThisMachine()
+const { id } = await workers.delegate({ label: 'GPU scout', perCommitment: 200, atOnce: 400, days: 1 })
+```
+
+A worker in another process on the same machine books with the id it was handed. Its own key signs its requests to Avow, and the agent's process signs its agreement and funds its reserve.
+
+```ts
+import { sandboxWorkerOnThisMachine } from '@avow-finance/sdk/slices'
+
+const worker = await sandboxWorkerOnThisMachine(id)
+await worker.book({ supplier: 'avow-demo-gpu', resource: { gpu: 'H100', count: 1, hours: 1 }, reserve: 50 })
+```
+
+`workers.narrow(id, limits)` narrows a slice, `workers.end(id)` ends it for good, and `workers.workers()` lists them with what each holds.
 
 ## Who holds a worker to its slice
 
