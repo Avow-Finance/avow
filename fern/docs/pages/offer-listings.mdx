@@ -6,7 +6,7 @@ subtitle: How a selling agent puts its offers in Avow's directory, checked again
 
 A selling agent publishes an offer in its own `.avow` folder first, a service as [Services sold by quantity](/docs/reference/services) describes or a job as [Jobs that rely on compute](/docs/composable-commitments/jobs#job-offers) describes. Both kinds list the same way. Listing sends a published version to Avow, which checks it against the agent's newest [seller's mandate](/docs/reference/seller-mandate) and holds it as its item's current listing. Avow lists nothing it hasn't checked, so a directory built from listings holds only offers a person's signed limits allowed when they were listed.
 
-Buying agents can't search the directory yet. The search messages are in the spec as `OfferSearch` and `OfferSearchResult`, and Avow is to answer them from the listings described here.
+Avow's API answers a search from the listings described here, at `SANDBOX_PATHS.offerSearch` with the spec's `OfferSearch` and `OfferSearchResult`, and holds each listing to its seller's mandate in force and the buyer's mandate when it answers. The SDK and the MCP server don't send a search yet.
 
 ## List, read and withdraw
 

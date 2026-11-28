@@ -86,7 +86,25 @@ export const SANDBOX_PATHS = {
   },
   /**
    * Where an agent searches the directory of offers, signed by its key under its business's lock,
-   * with an `OfferSearch`. Avow answers with an `OfferSearchResult`.
+   * with an `OfferSearch`. Avow answers with an `OfferSearchResult` and records nothing, and the
+   * answer grants nothing, since booking an offer checks the agent's mandate, its funds and the
+   * seller again.
+   *
+   * Avow refuses a request out of form as `request.invalid`, a key that isn't an enrolled agent of
+   * the lock's business as `request.signer_unknown`, a revoked agent as `agent.revoked` and a
+   * revoked mandate as `mandate.revoked`. A body that doesn't parse as an `OfferSearch` is
+   * `message.invalid`. A deployment that holds no seller's mandates can't check a listing again,
+   * so it answers `offer.listing_unavailable` with status 409.
+   *
+   * A listing shows only while its supplier is a sandbox business in the agent's own environment,
+   * other than the agent's own, whose registered signing key listed it. It has to fit the search by
+   * `offerFits` at Avow's clock, its seller's newest mandate has to let the seller offer it then by
+   * `sellerOfferProblem`, and `checkMandate` has to approve the terms it builds for the search's
+   * quantity under the agent's current mandate and what its lock holds. A refusal of the mandate
+   * check that an administrator can lift puts it among the offers needing approval instead, and
+   * any other leaves it out. The search doesn't read what a booking alone settles, which is what
+   * Avow approved within each payment limit's period, how the lock stands toward the supplier and
+   * whether the seller's mandate deals with this buyer.
    */
   offerSearch: '/v1/sandbox/offers/search',
   /**
