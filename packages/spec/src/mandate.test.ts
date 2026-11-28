@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { dollars } from './demo.js'
 import {
   checkMandate,
+  handsToPerson,
   type MandateCheckInput,
   mandateEndsBeforeWindow,
   validateMandate,
@@ -191,5 +192,15 @@ describe('validateMandate', () => {
 
   it('refuses a malformed mandate in the check too', () => {
     expect(checkMandate(input({ paymentLimits: [] }))).toEqual(denied('mandate.invalid'))
+  })
+})
+
+describe('handsToPerson', () => {
+  it('hands every amount to a person under always, none under never, and only above the amount', () => {
+    expect(handsToPerson({ kind: 'always' }, 0n)).toBe(true)
+    expect(handsToPerson({ kind: 'never' }, dollars(1_000_000))).toBe(false)
+    const above = { kind: 'above', amount: dollars(100) } as const
+    expect(handsToPerson(above, dollars(100))).toBe(false)
+    expect(handsToPerson(above, dollars(100) + 1n)).toBe(true)
   })
 })
