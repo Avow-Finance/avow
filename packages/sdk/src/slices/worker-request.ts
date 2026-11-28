@@ -39,7 +39,16 @@ export interface WorkerRequest {
 /** What the agent's process answers a worker. */
 export type WorkerAnswer =
   | { ok: true; kind: 'agreement'; buyerSignature: Hex }
-  | { ok: true; kind: 'fund'; transactionHash: Hex; blockNumber: bigint }
+  | {
+      ok: true
+      kind: 'fund'
+      /**
+       * The transaction that funded the reserve, with its block. Both are null when the lock shows
+       * the reserve funded under the approval and no receipt of the agent's own said where.
+       */
+      transactionHash: Hex | null
+      blockNumber: bigint | null
+    }
   | { ok: false; reason: ReasonCode }
 
 /** The label a worker's request is signed under, which nothing else signs. */

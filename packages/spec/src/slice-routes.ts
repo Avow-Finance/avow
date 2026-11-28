@@ -1,22 +1,30 @@
-import type { Address } from 'viem'
-import { address } from './json-fields.js'
+import type { Address, Hex } from 'viem'
+import { address, bytes32 } from './json-fields.js'
 import { parseWorkerSlices, type WorkerSlices } from './slice-chain.js'
 import type { Parsed } from './wire.js'
 
 /** What a worker, or a key above it, sends to read the worker's slices. */
 export interface WorkerSlicesRead {
   subKey: Address
+  /**
+   * A commitment to leave out of the counts, for the agent's signer checking a reserve it's about
+   * to fund, which Avow already counts as approved.
+   */
+  excluding?: Hex
 }
 
-/** Reads a `WorkerSlicesRead`, which names the worker's key and nothing else. */
+/** Reads a `WorkerSlicesRead`, which names the worker's key, any commitment to leave out, and nothing else. */
 export function parseWorkerSlicesRead(json: unknown): Parsed<WorkerSlicesRead> {
-  if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-    return { ok: false, reason: 'message.invalid' }
-  }
-  const keys = Object.keys(json)
-  const subKey = address.safeParse((json as { subKey?: unknown }).subKey)
-  if (keys.length !== 1 || !subKey.success) return { ok: false, reason: 'message.invalid' }
-  return { ok: true, value: { subKey: subKey.data as Address } }
+  const bad = { ok: false, reason: 'message.invalid' } as const
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return bad
+  const { subKey, excluding, ...rest } = json as { subKey?: unknown; excluding?: unknown }
+  if (Object.keys(rest).length > 0) return bad
+  const key = address.safeParse(subKey)
+  if (!key.success) return bad
+  if (excluding === undefined) return { ok: true, value: { subKey: key.data as Address } }
+  const left = bytes32.safeParse(excluding)
+  if (!left.success) return bad
+  return { ok: true, value: { subKey: key.data as Address, excluding: left.data as Hex } }
 }
 
 /**

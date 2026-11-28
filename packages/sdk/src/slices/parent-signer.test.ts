@@ -1,6 +1,7 @@
 import {
   type AuthorityLimits,
   dollars,
+  enforceableTerms,
   gpuReservationTerms,
   type MandateChain,
   mandateChainProblem,
@@ -16,8 +17,10 @@ import {
 import { type Address, isAddressEqual } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { Landed, Reconciled } from '../agent.js'
 import { agentRequestKey } from '../http.js'
 import type { Call } from '../lock.js'
+import { SendError } from '../send.js'
 import {
   type BookingFixture,
   bookingFixture,
@@ -37,6 +40,12 @@ let served: Map<string, WorkerSlices>
 let open: { mandate: bigint; slices: bigint[] }
 let approved: bigint[]
 let sent: Call[][]
+/** Avow's approvals of reserves under the worker's slice, by commitment, in micros. */
+let avowApproved: Map<string, bigint>
+let sendImpl: (calls: Call[]) => Promise<Landed>
+let reconcileImpl: () => Promise<Reconciled>
+let inHoldings: number
+let mostAtOnce: number
 const worker = privateKeyToAccount(generatePrivateKey())
 
 const limits = (change: Partial<AuthorityLimits> = {}): AuthorityLimits => ({
@@ -61,17 +70,29 @@ function signer() {
     now: () => NOW,
     mandates: async () => mandates,
     workerSlices: async (k: Address) => served.get(k.toLowerCase()) ?? null,
-    holdings: async (chain) => ({
-      openReserves: {
-        mandate: open.mandate,
-        slices: chain.levels.map((_, i) => open.slices[i] ?? 0n),
-      },
-      approvedWithin: chain.levels.map((_, i) => approved[i] ?? 0n),
-    }),
-    send: async (calls) => {
-      sent.push(calls)
-      return { transactionHash: id('funded'), blockNumber: 7n }
+    // As Avow counts them: what it approved under the slice, less the commitment left out.
+    holdings: async (chain, excluding) => {
+      inHoldings++
+      mostAtOnce = Math.max(mostAtOnce, inHoldings)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inHoldings--
+      let counted = 0n
+      for (const [commitment, micros] of avowApproved) {
+        if (commitment !== excluding?.toLowerCase()) counted += micros
+      }
+      return {
+        openReserves: {
+          mandate: open.mandate + counted,
+          slices: chain.levels.map((_, i) => (open.slices[i] ?? 0n) + counted),
+        },
+        approvedWithin: chain.levels.map((_, i) => (approved[i] ?? 0n) + counted),
+      }
     },
+    send: (calls) => {
+      sent.push(calls)
+      return sendImpl(calls)
+    },
+    reconcile: () => reconcileImpl(),
   })
 }
 
@@ -127,6 +148,25 @@ function agreementAsk(
 
 const asked = (ask: WorkerAsk, key = worker) => signWorkerRequest(ask, key, NOW)
 
+/** Avow's approval of the reserve an agreement asks for, which Avow then counts as held. */
+async function approve(ask: Extract<WorkerAsk, { kind: 'agreement' }>) {
+  const answer = await f.avow.approveReserve({
+    request: ask.request,
+    salt: ask.salt,
+    agreement: {} as never,
+    fundedBy: 'agent',
+  })
+  if (!answer.ok) throw new Error('not approved')
+  avowApproved.set(
+    ask.request.commitmentId.toLowerCase(),
+    enforceableTerms(ask.request.terms).reserve,
+  )
+  return answer.approval
+}
+
+const reserveOf = (ask: Extract<WorkerAsk, { kind: 'agreement' }>) =>
+  enforceableTerms(ask.request.terms).reserve
+
 beforeEach(async () => {
   f = await bookingFixture()
   const read = mandateChainProblem(
@@ -139,6 +179,11 @@ beforeEach(async () => {
   open = { mandate: 0n, slices: [] }
   approved = []
   sent = []
+  avowApproved = new Map()
+  sendImpl = async () => ({ transactionHash: id('funded'), blockNumber: 7n })
+  reconcileImpl = async () => ({ outcome: 'unknown' })
+  inHoldings = 0
+  mostAtOnce = 0
 })
 
 describe('handing out a slice', () => {
@@ -246,6 +291,95 @@ describe("the agent's signer for its workers", () => {
     expect(await signer().handle(await asked(agreementAsk()))).toEqual({
       ok: false,
       reason: 'mandate.over_open_reserves_cap',
+    })
+  })
+
+  it("funds a reserve that takes most of the room left, counting Avow's approval of it once", async () => {
+    const ask = agreementAsk()
+    // Room for one and a half of these reserves, so counting it twice would refuse it.
+    await give({ capOpenReserves: (reserveOf(ask) * 3n) / 2n, capPerCommitment: reserveOf(ask) })
+    const s = signer()
+    expect((await s.handle(await asked(ask))).ok).toBe(true)
+    const approval = await approve(ask)
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toMatchObject({
+      ok: true,
+      kind: 'fund',
+    })
+  })
+
+  it('funds one commitment once, however many times it is asked at once', async () => {
+    await give()
+    const s = signer()
+    const ask = agreementAsk()
+    expect((await s.handle(await asked(ask))).ok).toBe(true)
+    const approval = await approve(ask)
+    const answers = await Promise.all([
+      s.handle(await asked({ kind: 'fund', approval })),
+      s.handle(await asked({ kind: 'fund', approval })),
+    ])
+    expect(answers.every((a) => a.ok)).toBe(true)
+    expect(sent).toHaveLength(1)
+    // Asked again later, it answers the same and sends nothing.
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toEqual(answers[0])
+    expect(sent).toHaveLength(1)
+  })
+
+  it('checks one ask at a time', async () => {
+    await give()
+    const s = signer()
+    await Promise.all([1, 2, 3].map(async () => s.handle(await asked(agreementAsk()))))
+    expect(mostAtOnce).toBe(1)
+  })
+
+  it('reconciles a send that failed after signing, and keeps the agreement until it knows', async () => {
+    await give()
+    const s = signer()
+    const ask = agreementAsk()
+    expect((await s.handle(await asked(ask))).ok).toBe(true)
+    const approval = await approve(ask)
+    sendImpl = async () => {
+      throw new SendError('no receipt', 'unknown', { hashes: [id('maybe')], signings: 1 })
+    }
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toEqual({
+      ok: false,
+      reason: 'service.unavailable',
+    })
+    reconcileImpl = async () => ({ outcome: 'funded', reservedIn: id('maybe') })
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toEqual({
+      ok: true,
+      kind: 'fund',
+      transactionHash: id('maybe'),
+      blockNumber: null,
+    })
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toMatchObject({ ok: true })
+  })
+
+  it('sends again when the first send never signed, and spends an approval that can no longer land', async () => {
+    await give()
+    const s = signer()
+    const ask = agreementAsk()
+    expect((await s.handle(await asked(ask))).ok).toBe(true)
+    const approval = await approve(ask)
+    sendImpl = async () => {
+      throw new SendError('node down', 'failed', { hashes: [], signings: 0 })
+    }
+    expect((await s.handle(await asked({ kind: 'fund', approval }))).ok).toBe(false)
+    sendImpl = async () => {
+      throw new SendError('reverted', 'failed', { hashes: [id('reverted')], signings: 1 })
+    }
+    reconcileImpl = async () => ({ outcome: 'failed' })
+    expect(await s.handle(await asked({ kind: 'fund', approval }))).toEqual({
+      ok: false,
+      reason: 'message.expired',
+    })
+    expect(sent).toHaveLength(2)
+  })
+
+  it('refuses an agreement open longer than an offer may stay open', async () => {
+    await give()
+    expect(await signer().handle(await asked(agreementAsk({ expiry: NOW + 601n })))).toEqual({
+      ok: false,
+      reason: 'message.validity_too_long',
     })
   })
 

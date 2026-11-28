@@ -20,6 +20,20 @@ export {
 export type { SandboxCommitmentEvents } from './sandbox/commitment-events.js'
 export type { SandboxStore, SandboxSupplier } from './sandbox/store.js'
 export type { SandboxResource } from './sandbox/terms.js'
+export { handOutSlice, narrowSlice, revokeWorker, SliceRefused } from './slices/hand-out.js'
+export {
+  createParentSigner,
+  type ParentKey,
+  type ParentSigner,
+  type ParentSignerDeps,
+} from './slices/parent-signer.js'
+export {
+  signWorkerRequest,
+  type WorkerAnswer,
+  type WorkerAsk,
+  type WorkerKey,
+  type WorkerRequest,
+} from './slices/worker-request.js'
 
 /** The sandbox as an agent sees it. */
 export const sandbox = { agent: sandboxAgent } as const

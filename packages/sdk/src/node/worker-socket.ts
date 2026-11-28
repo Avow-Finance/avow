@@ -2,8 +2,7 @@ import { chmod, lstat, mkdir, rm } from 'node:fs/promises'
 import { connect, createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { toWire } from '@avow-finance/spec'
-import type { Address } from 'viem'
-import type { Landed } from '../agent.js'
+import type { Address, Hex } from 'viem'
 import type { ParentSigner } from '../slices/parent-signer.js'
 import {
   signWorkerRequest,
@@ -138,7 +137,9 @@ export function workerSigner(a: { socketPath: string; key: WorkerKey; now?: () =
       if (answer.kind !== 'agreement') throw new WorkerRefused('request.invalid')
       return answer.buyerSignature
     },
-    async fund(approval: Extract<WorkerAsk, { kind: 'fund' }>['approval']): Promise<Landed> {
+    async fund(
+      approval: Extract<WorkerAsk, { kind: 'fund' }>['approval'],
+    ): Promise<{ transactionHash: Hex | null; blockNumber: bigint | null }> {
       const answer = await send({ kind: 'fund', approval })
       if (!answer.ok) throw new WorkerRefused(answer.reason)
       if (answer.kind !== 'fund') throw new WorkerRefused('request.invalid')

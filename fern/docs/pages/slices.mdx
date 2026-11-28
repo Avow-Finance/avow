@@ -23,7 +23,8 @@ The agent's own process is the only thing that signs with the agent's key, for i
 
 - The agent's process serves a socket at `.avow/workers/signer.sock`. The folder is the agent's user's alone and the socket opens for that user only.
 - A worker signs each request with its own key. `createParentSigner` checks the signature, reads the worker's slices from Avow and checks them back to the mandate, and runs `checkSlicedMandate` with what is open and what was approved within each period before it signs anything with the agent's key.
-- It signs the buyer's side of a terms agreement, and later funds the reserve Avow approves for that same agreement and that same worker, reading the slices again first. It refuses anything else.
+- It signs the buyer's side of a terms agreement open no longer than an offer may stay open, and later funds the reserve Avow approves for that same agreement and that same worker, reading the slices again first and counting Avow's approval of that reserve once. It refuses anything else.
+- It checks one ask at a time across the agent's whole tree, so two asks can't both pass on room only one fits. It funds a commitment once however often it's asked, and when a send fails after signing it reads the lock before it answers, so the worker can ask again and hear how it ended.
 - `handOutSlice` signs a slice for a worker's key, `narrowSlice` narrows one, and `revokeWorker` ends one. Each refuses limits wider than the parent's before it signs.
 
 ## What a slice may hold

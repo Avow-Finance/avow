@@ -54,6 +54,10 @@ describe('the slice routes', () => {
     const read = parseWorkerSlicesRead({ subKey: worker.address })
     expect(read.ok && read.value.subKey.toLowerCase()).toBe(worker.address.toLowerCase())
     expect(parseWorkerSlicesRead({ subKey: worker.address, more: 1 }).ok).toBe(false)
+    expect(
+      parseWorkerSlicesRead({ subKey: worker.address, excluding: `0x${'ab'.repeat(32)}` }).ok,
+    ).toBe(true)
+    expect(parseWorkerSlicesRead({ subKey: worker.address, excluding: '0x12' }).ok).toBe(false)
     expect(parseWorkerSlicesRead({ subKey: 'nope' }).ok).toBe(false)
   })
 

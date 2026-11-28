@@ -1,4 +1,5 @@
 import {
+  type Approval,
   type AvowDomain,
   approvalCaps,
   approvalMandateProblem,
@@ -13,6 +14,7 @@ import {
   type ReasonCode,
   type ReserveRequest,
   type SignatureCheck,
+  type Signed,
   type SliceChain,
   sliceChainProblem,
   type Terms,
@@ -22,8 +24,9 @@ import {
   type WorkerSlices,
 } from '@avow-finance/spec'
 import { type Address, type Hex, isAddressEqual } from 'viem'
-import type { Landed } from '../agent.js'
+import type { Landed, Reconciled } from '../agent.js'
 import { type Call, reserveCalls } from '../lock.js'
+import { SendError } from '../send.js'
 import {
   isWorkerRequestSigned,
   WORKER_REQUEST_MAX_VALIDITY,
@@ -53,7 +56,11 @@ export interface ParentSignerDeps {
    * agent's mandate and under each level, and what each level had approved within the period of
    * its payment limit for the lock's token, in base units, top first.
    */
-  holdings: (chain: SliceChain) => Promise<{
+  holdings: (
+    chain: SliceChain,
+    /** A commitment to leave out of the counts, the one being funded, which Avow already counts. */
+    excluding: Hex | null,
+  ) => Promise<{
     openReserves: { mandate: bigint; slices: readonly bigint[] }
     approvedWithin: readonly bigint[]
   }>
@@ -61,6 +68,13 @@ export interface ParentSignerDeps {
   isAccountSignature?: SignatureCheck
   /** Sends the transaction that funds a reserve with the agent's key. */
   send: (calls: Call[]) => Promise<Landed>
+  /**
+   * Reads the lock for an approved reserve whose funding failed, once the approval can no longer
+   * land, as `createAgent`'s `reconcile` does, with every hash the send carried.
+   */
+  reconcile: (approval: Signed<Approval>, hashes: readonly Hex[]) => Promise<Reconciled>
+  /** How long, in seconds, an agreement may stay open. Ten minutes by default, as `createAgent`'s. */
+  offerValidity?: bigint
 }
 
 interface Agreed {
@@ -68,6 +82,20 @@ interface Agreed {
   request: Omit<ReserveRequest, 'terms'> & { terms: Terms }
   termsHash: Hex
   expiry: bigint
+  /** The funding under way, which a second ask for the same commitment waits on. */
+  funding: Promise<WorkerAnswer> | null
+  /** How funding ended, kept so the worker can ask again and hear the same answer. */
+  funded: WorkerAnswer | null
+}
+
+/** Runs one task at a time, in the order they're given. */
+function serial() {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(task: () => Promise<T>): Promise<T> => {
+    const run = tail.then(task, task)
+    tail = run.catch(() => {})
+    return run
+  }
 }
 
 /**
@@ -88,10 +116,15 @@ export function createParentSigner(deps: ParentSignerDeps) {
   const { key, domain: d, token } = deps
   const seen = new Map<string, bigint>()
   const agreed = new Map<string, Agreed>()
+  const offerValidity = deps.offerValidity ?? 600n
+  // One signer serves one agent, so this holds every check and the signature that follows it to
+  // one at a time across the agent's whole tree of slices, and two asks can't both pass on room
+  // only one of them fits.
+  const exclusive = serial()
 
   const forget = (now: bigint) => {
     for (const [id, until] of seen) if (until < now) seen.delete(id)
-    for (const [id, a] of agreed) if (a.expiry < now) agreed.delete(id)
+    for (const [id, a] of agreed) if (a.expiry < now && a.funding === null) agreed.delete(id)
   }
 
   async function liveChain(
@@ -111,8 +144,9 @@ export function createParentSigner(deps: ParentSignerDeps) {
   async function sliceCheck(
     chain: SliceChain,
     request: Omit<ReserveRequest, 'terms'> & { terms: Terms },
+    excluding: Hex | null,
   ): Promise<ReasonCode | null> {
-    const held = await deps.holdings(chain)
+    const held = await deps.holdings(chain, excluding)
     const check = checkSlicedMandate({
       chain,
       request,
@@ -137,13 +171,14 @@ export function createParentSigner(deps: ParentSignerDeps) {
     if (seen.has(id)) return no('message.replayed')
     seen.set(id, r.expiry)
 
-    const mandates = await deps.mandates()
-    const mandate = mandates.current.proof.message
-    const live = await liveChain(r.subKey, mandates)
-    if (!live.ok) return no(live.reason)
-
-    if (r.ask.kind === 'agreement') {
-      const { agreement: a, request, salt } = r.ask
+    if (r.ask.kind === 'fund') return fund(r, r.ask.approval)
+    const ask = r.ask
+    return exclusive(async () => {
+      const mandates = await deps.mandates()
+      const mandate = mandates.current.proof.message
+      const live = await liveChain(r.subKey, mandates)
+      if (!live.ok) return no(live.reason)
+      const { agreement: a, request, salt } = ask
       if (!isAddressEqual(request.agentKey, key.accessKeyAddress)) return no('agent.key_mismatch')
       if (
         a.mandateHash.toLowerCase() !== mandates.current.hash.toLowerCase() ||
@@ -155,10 +190,12 @@ export function createParentSigner(deps: ParentSignerDeps) {
         return no('message.invalid')
       }
       if (a.expiry <= now) return no('message.expired')
+      if (a.expiry > now + offerValidity) return no('message.validity_too_long')
+      if (agreed.has(a.commitmentId.toLowerCase())) return no('message.replayed')
       if (termsHash(request.terms, salt).toLowerCase() !== a.termsHash.toLowerCase()) {
         return no('terms.hash_mismatch')
       }
-      const refused = await sliceCheck(live.chain, request)
+      const refused = await sliceCheck(live.chain, request, null)
       if (refused) return no(refused)
       let digest: Hex
       try {
@@ -172,48 +209,107 @@ export function createParentSigner(deps: ParentSignerDeps) {
         request,
         termsHash: a.termsHash,
         expiry: a.expiry,
+        funding: null,
+        funded: null,
       })
-      return { ok: true, kind: 'agreement', buyerSignature }
-    }
+      return { ok: true, kind: 'agreement', buyerSignature } as WorkerAnswer
+    })
+  }
 
-    const { approval } = r.ask
-    const a = approval.message
-    const mine = agreed.get(a.commitmentId.toLowerCase())
+  /**
+   * Funds the reserve of an agreement this signer signed for the same worker. One funding runs for
+   * a commitment at a time, and an ask while one runs waits for it. A funding whose send fails is
+   * reconciled from the lock, and the entry stays until the outcome is known, so a worker that
+   * asks again hears it, or the reserve is sent again when the lock shows it can still land.
+   */
+  async function fund(r: WorkerRequest, approval: Signed<Approval>): Promise<WorkerAnswer> {
+    const no = (reason: ReasonCode): WorkerAnswer => ({ ok: false, reason })
+    const id = approval.message.commitmentId.toLowerCase()
+    const mine = agreed.get(id)
     if (!mine || !isAddressEqual(mine.subKey, r.subKey)) return no('approval.commitment_mismatch')
+    if (mine.funded) return mine.funded
+    if (mine.funding) return mine.funding
+    /** Keeps how funding ended, so the worker hears the same answer when it asks again. */
+    const settle = (answer: WorkerAnswer): WorkerAnswer => {
+      mine.funded = answer
+      return answer
+    }
+    const run = (async (): Promise<WorkerAnswer> => {
+      const checked = await exclusive(() => fundCheck(r, mine, approval))
+      if (checked) return no(checked)
+      try {
+        const landed = await deps.send(reserveCalls(approval, d))
+        return settle({
+          ok: true,
+          kind: 'fund',
+          transactionHash: landed.transactionHash,
+          blockNumber: landed.blockNumber,
+        })
+      } catch (error) {
+        const hashes = error instanceof SendError ? error.hashes : []
+        // A send that never signed can't land, so the reserve can be sent again.
+        if (error instanceof SendError && error.signings === 0) return no('service.unavailable')
+        const outcome = await deps.reconcile(approval, hashes)
+        if (outcome.outcome === 'funded') {
+          return settle({
+            ok: true,
+            kind: 'fund',
+            transactionHash: outcome.reservedIn ?? (hashes[0] as Hex | undefined) ?? null,
+            blockNumber: null,
+          })
+        }
+        if (outcome.outcome === 'failed') {
+          // The approval can no longer land, so this agreement is spent.
+          return settle(no('message.expired'))
+        }
+        return no('service.unavailable')
+      }
+    })()
+    mine.funding = run
+    try {
+      return await run
+    } finally {
+      mine.funding = null
+    }
+  }
+
+  /** The checks before funding, which run with no other check or signature under way. */
+  async function fundCheck(
+    r: WorkerRequest,
+    mine: Agreed,
+    approval: Signed<Approval>,
+  ): Promise<ReasonCode | null> {
+    const now = deps.now()
+    const mandates = await deps.mandates()
+    const mandate = mandates.current.proof.message
+    const live = await liveChain(r.subKey, mandates)
+    if (!live.ok) return live.reason
+    const a = approval.message
     const envelope = checkEnvelope(approval, {
       type: 'Approval',
       chainId: d.chainId,
       lock: d.verifyingContract,
     })
-    if (envelope) return no(envelope)
+    if (envelope) return envelope
     const tokenProblem = approvalTokenProblem(a, token.token)
-    if (tokenProblem) return no(tokenProblem)
+    if (tokenProblem) return tokenProblem
     const termsProblem = approvalTermsProblem(a, {
       lock: lockTerms(mine.request.terms, token.decimals),
       termsHash: mine.termsHash,
     })
-    if (termsProblem) return no(termsProblem)
+    if (termsProblem) return termsProblem
     const mandateProblem = approvalMandateProblem(a, {
       mandateHash: mandates.current.hash,
       caps: approvalCaps(mandate, token.decimals),
       fundingKeys: [key.accessKeyAddress],
     })
-    if (mandateProblem) return no(mandateProblem)
-    if (a.expiry <= now) return no('message.expired')
-    if (a.acceptBy <= now) return no('authorization.accept_by_passed')
+    if (mandateProblem) return mandateProblem
+    if (a.expiry <= now) return 'message.expired'
+    if (a.acceptBy <= now) return 'authorization.accept_by_passed'
     // The slices are read again, so a worker revoked or narrowed since the agreement funds nothing.
-    const refused = await sliceCheck(live.chain, mine.request)
-    if (refused) return no(refused)
-    // Avow's signature over the approval is the lock's to check, and the lock refuses a reserve
-    // without it, so nothing here moves money on an approval Avow didn't sign.
-    agreed.delete(a.commitmentId.toLowerCase())
-    const landed = await deps.send(reserveCalls(approval, d))
-    return {
-      ok: true,
-      kind: 'fund',
-      transactionHash: landed.transactionHash,
-      blockNumber: landed.blockNumber,
-    }
+    // Avow counts its own approval of this reserve, so the count leaves it out and the check adds
+    // it once.
+    return await sliceCheck(live.chain, mine.request, a.commitmentId)
   }
 
   return { handle }

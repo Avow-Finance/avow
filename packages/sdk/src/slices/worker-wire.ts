@@ -100,14 +100,14 @@ export function parseWorkerAnswer(json: unknown): WorkerAnswer | null {
   if (
     json.kind === 'fund' &&
     holdsOnly(json, ['ok', 'kind', 'transactionHash', 'blockNumber']) &&
-    matches(json.transactionHash, BYTES32) &&
-    matches(json.blockNumber, U64)
+    (json.transactionHash === null || matches(json.transactionHash, BYTES32)) &&
+    (json.blockNumber === null || matches(json.blockNumber, U64))
   ) {
     return {
       ok: true,
       kind: 'fund',
-      transactionHash: json.transactionHash as Hex,
-      blockNumber: BigInt(json.blockNumber as string),
+      transactionHash: json.transactionHash as Hex | null,
+      blockNumber: json.blockNumber === null ? null : BigInt(json.blockNumber as string),
     }
   }
   return null

@@ -5,3 +5,9 @@ import { setSandboxPlatform } from './sandbox/agent.js'
 setSandboxPlatform(nodePlatform)
 
 export * from './agent-entry.js'
+export {
+  serveWorkers,
+  WorkerRefused,
+  workerSigner,
+  workerSocketPath,
+} from './node/worker-socket.js'
