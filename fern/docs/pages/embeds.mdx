@@ -1,0 +1,100 @@
+---
+title: Embeds
+slug: docs/reference/embeds
+---
+
+Your users work in your agent platform, so Avow's approval card and commitment view can sit inside your screens. Each is a page Avow serves at a stable path, which you put in an iframe. Neither needs an Avow session, and opening one grants nothing.
+
+<Note>
+The testnet doesn't let other sites frame these pages yet. Until it does, every Avow page answers with `frame-ancestors 'none'`, and the links below open as ordinary pages.
+</Note>
+
+## The two embeds
+
+| Embed | Address | What it does |
+| --- | --- | --- |
+| Approval card | `https://testnet.avow.finance/embed/approval.html?origin=<your origin>#<hash>` | Shows a request your agent made and opens Avow's window to decide it |
+| Commitment view | `https://try.testnet.avow.finance/embed/commitment.html?origin=<your origin>#verify=<token>` | Checks a commitment against Tempo in the reader's browser |
+
+The hash is the one your agent already holds. An approval link from `connect` ends in `#approve-<agent key>`, and a link to one approval request ends in `#sign-<request id>`. A verify link ends in `#verify=<token>`. Copy the hash across as it is.
+
+`origin` is your page's own origin, such as `https://agents.example`. The embed sends messages to that origin and nowhere else. Only `https` origins count, and plain `http` only on `localhost` while you build.
+
+## Paste this
+
+```html
+<iframe
+  id="avow-approval"
+  title="Avow approval"
+  src="https://testnet.avow.finance/embed/approval.html?origin=https%3A%2F%2Fagents.example#approve-0x..."
+  style="width: 100%; max-width: 480px; border: 0; height: 240px"
+  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+></iframe>
+
+<script>
+  const AVOW = 'https://testnet.avow.finance'
+  const frame = document.getElementById('avow-approval')
+  window.addEventListener('message', (event) => {
+    if (event.origin !== AVOW || event.source !== frame.contentWindow) return
+    if (event.data?.source !== 'avow-embed') return
+    if (event.data.type === 'size') frame.style.height = `${event.data.height}px`
+    if (event.data.type === 'outcome') showOutcome(event.data)
+  })
+</script>
+```
+
+For the commitment view, use `https://try.testnet.avow.finance` as the address and the origin you check. It sends only `size`.
+
+Keep every one of those `sandbox` flags. `allow-same-origin` keeps the embed on Avow's own origin, which it needs to hear Avow's window, and gives it nothing of yours. `allow-popups-to-escape-sandbox` lets Avow's window open as a normal page, where the passkey works.
+
+## Messages
+
+Every message carries `source: 'avow-embed'`.
+
+| `type` | Fields | Sent by |
+| --- | --- | --- |
+| `size` | `height`, in CSS pixels | Both embeds, each time their height changes |
+| `outcome` | `outcome`, which is `approved` or `declined`, and `requestId` or `agentKey`, whichever your link named | The approval card, once |
+
+That's all an embed ever tells you. It never sends the passkey, the administrator's session, the terms or any other request.
+
+## Where the decision happens
+
+The approval card can't sign. When the administrator presses **Review on Avow**, the card opens Avow's console in a window of its own, at Avow's address. They sign in with the business's passkey there, see the exact terms and decide. The window then tells the card, and the card tells you.
+
+We built it this way on purpose. A passkey inside a cross-origin frame works in Chrome and Firefox and not in Safari, so a phone couldn't approve. A frame can also be covered by the page around it, and a passkey prompt names the site but none of the terms. Avow's own window works in every browser, and no page can draw over it. Avow serves each embed with a policy that turns the passkey off inside it, whatever your `allow` attribute says.
+
+If the browser blocks the window, the card offers a link that opens the same page.
+
+## Don't take the embed's word for it
+
+Treat `outcome` as a cue to refresh your screen. The agent learns what it may do from Avow, and the chain and Avow's API are where its authority lives.
+
+- After `approved` for an agent's ask, the agent picks up its mandate. With the MCP server, its `status` tool says so. From code, `connectToBusiness` resolves.
+- After `approved` for a change, the agent can use it once the request shows as `active`. Read it with `status`, or wait for `authority` to show the new limit.
+
+The commitment view tells you nothing about the commitment, because your page can't read what it draws. When your platform relies on a commitment, check it yourself against Tempo. It takes the same reads the view makes and never asks Avow.
+
+```ts
+import { factoriesToRead, MODERATO_FACTORY, moderatoClient } from '@avow-finance/sdk'
+import { decodeCommitmentReference } from '@avow-finance/spec'
+import { findCommitment, tempoChainReader } from '@avow-finance/verifier'
+
+const token = link.slice(link.indexOf('#verify=') + '#verify='.length)
+const reference = decodeCommitmentReference(token)
+if (!reference.ok) throw new Error(reference.reason)
+
+const client = moderatoClient()
+const chain = tempoChainReader(client, {
+  factory: factoriesToRead(client.chain.id, MODERATO_FACTORY),
+})
+const found = await findCommitment(reference.value, chain)
+// found.ok means a lock from a factory you trust holds that commitment under the link's terms hash.
+// found.held has its state, reserve, supplier and deadlines.
+```
+
+From a terminal, `npx avow-sandbox verify "<link>"` runs the same check, and so does the MCP server's `verify` tool.
+
+## On the testnet
+
+Both embeds say they run on Tempo's Moderato testnet with test dollars. Avow's window labels a sandbox business and a simulated check the way the console always does.

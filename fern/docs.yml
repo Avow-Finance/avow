@@ -60,6 +60,8 @@ navigation:
         path: ./docs/pages/top-ups.mdx
       - page: Approval requests
         path: ./docs/pages/approval-requests.mdx
+      - page: Embeds
+        path: ./docs/pages/embeds.mdx
       - page: Commitment events
         path: ./docs/pages/commitment-events.mdx
       - api: API reference
