@@ -35,7 +35,7 @@ const BUSINESS_SIDE = [
 
 describe("the agent's side of the SDK", () => {
   it('loads none of the modules that hold the business key or change the authority', () => {
-    for (const entry of ['agent-entry.js', 'node-agent.js', 'node/mcp.js']) {
+    for (const entry of ['agent-entry.js', 'node-agent.js', 'node/mcp.js', 'node/loop.js']) {
       const loaded = graph(entry)
       expect(loaded.has('sandbox/agent.js'), entry).toBe(true)
       expect(

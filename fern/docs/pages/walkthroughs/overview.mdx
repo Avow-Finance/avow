@@ -9,6 +9,23 @@ These walkthroughs take one person through the four things Avow has to get right
 npx https://try.testnet.avow.finance/create-avow-agent.tgz my-agent
 ```
 
+## The whole loop in one command
+
+Once your agent holds a mandate, one command shows a kept booking and a late cancellation on Moderato in about ten minutes. Run it in the starter's folder, or in any folder whose agent you connected with `npx avow-sandbox connect`.
+
+```bash
+npx avow-sandbox loop
+```
+
+Your agent books one H100 for four minutes, twice, from Avow's demo GPU supplier, a test business, with a \$10 reserve each. Free cancellation ends two minutes after each booking, the window opens two minutes later and lasts four minutes, and the reserve releases at its end, eight minutes after booking.
+
+1. **The kept booking.** The supplier accepts it, nothing is reported, and the lock gives the whole \$10 back to your business at its release date.
+2. **The late cancellation.** Once free cancellation has ended, your agent asks Avow to record the cancellation, and Avow records it with its own time. The run waits 40 seconds past the end of free cancellation first, and 40 seconds after the cancellation before the report, since Avow confirms a late-cancellation charge only for a cancellation at least its 30-second clock margin from each of those moments and refers one any closer to a ruling. The demo supplier reports the late-cancellation charge the terms allow, half the reserve. Avow confirms it from its own record of the cancellation, and the lock sends the other \$5 back to your business at once. The charge pays the supplier ten minutes later, when the contest window closes, unless your business contests it first.
+
+The run prints a link to check each booking, the report's transaction on the explorer and when the charge pays. Add `--reserve <dollars>` for another reserve, and the late cancellation always costs half of one.
+
+It acts with only your agent's key, within the limits your administrator already signed, and approves nothing. Before it books, it checks that the mandate names the demo supplier and permits `cancel`, that two reserves fit in the authority left and in what the key can still move today, and it stops with the reason code when one doesn't. A real supplier reports a late cancellation on its own. The demo supplier reports one only when the booking's own agent asks, signed with the key of the mandate the booking was made under, so the run asks it, and the charge still has to fit the terms and Avow's record of the cancellation.
+
 The rest run the buyer and supplier quickstarts on one machine against Avow's hosted testnet service, and you play both sides. The buyer quickstart is a business and its agent, and the supplier quickstart is the business the agent books from. Every amount is test tUSD on Tempo's Moderato testnet, so nothing here moves real money.
 
 | Walkthrough | What it shows |

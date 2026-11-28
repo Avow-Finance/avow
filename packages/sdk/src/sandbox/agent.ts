@@ -392,7 +392,7 @@ export async function keyLeftToday(
  * was set up on, its own key with the business's account, and the business's lock as the domain
  * its requests are signed under. It never reads the business's key.
  */
-async function agentContext(
+export async function agentContext(
   options: Pick<SandboxAgentOptions, 'fetch' | 'store' | 'screenUrl' | 'deployment'>,
 ) {
   const send = options.fetch ?? ((input, init) => fetch(input, init))

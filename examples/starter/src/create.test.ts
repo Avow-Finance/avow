@@ -39,6 +39,7 @@ describe('create-avow-agent', () => {
       start: 'avow-sandbox start',
       job: 'avow-sandbox job',
       fresh: 'avow-sandbox fresh',
+      loop: 'avow-sandbox loop',
       bypass: 'tsx bypass.ts',
       'mcp:claude-code': 'avow-sandbox-mcp add claude-code',
       'mcp:claude-desktop': 'avow-sandbox-mcp add claude-desktop',
