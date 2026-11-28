@@ -117,6 +117,117 @@ describe("a supplier's offers", () => {
   })
 })
 
+describe("a supplier's listings with Avow", () => {
+  const listingOf = (version: ServiceOfferVersion, replaced: string | null = null) =>
+    wire({
+      id: offerVersionId(version),
+      version,
+      listedAt: 1_800_000_000n,
+      sellerMandate: `0x${'ab'.repeat(32)}`,
+      replaced,
+    })
+
+  it('sends a version published here, signed with the signing key, and answers the listing Avow holds', async () => {
+    const { store } = await folder(SELLER, true)
+    const sent: Record<string, unknown>[] = []
+    const { fetch } = avow((path, body) => {
+      if (path !== SANDBOX_PATHS.offerListings) return null
+      sent.push(body)
+      return json(listingOf(offer))
+    })
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    const outcome = await services.listWithAvow(id)
+    if (!outcome.ok) throw new Error('the offer was listed')
+    expect(outcome.listing.id).toBe(id)
+    expect(outcome.listing.version).toEqual(offer)
+    expect(outcome.standing.inForce).toBe(false)
+    expect(sent).toEqual([{ version: wire(offer) }])
+  })
+
+  it('lists nothing it never published here, and sends nothing for it', async () => {
+    const { store } = await folder(SELLER, true)
+    const { fetch, paths } = avow(() => null)
+    const services = await sandboxServices({ store, fetch })
+    await expect(services.listWithAvow(offerVersionId(offer))).rejects.toThrow(/hasn't published/)
+    expect(paths).not.toContain(SANDBOX_PATHS.offerListings)
+  })
+
+  it('says plainly when the sandbox lists no offers, whichever way it says so', async () => {
+    for (const refusal of [
+      json({ error: { reason: 'offer.listing_unavailable', message: 'No listings' } }, 409),
+      null,
+    ]) {
+      const { store } = await folder(SELLER, true)
+      const { fetch } = avow((path) => (path === SANDBOX_PATHS.offerListings ? refusal : null))
+      const services = await sandboxServices({ store, fetch })
+      const { id } = await services.publish(draft)
+      const { OFFER_LISTINGS_UNTAKEN } = await import('./services.js')
+      expect(await services.listWithAvow(id)).toEqual({
+        ok: false,
+        reason: 'offer.listing_unavailable',
+        notice: OFFER_LISTINGS_UNTAKEN,
+      })
+      expect(await services.listedWithAvow()).toEqual([])
+    }
+  })
+
+  it("passes on Avow's refusal of a replaced version by its reason", async () => {
+    const { store } = await folder(SELLER, true)
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListings
+        ? json({ error: { reason: 'offer.superseded', message: 'Replaced' } }, 409)
+        : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    await expect(services.listWithAvow(id)).rejects.toMatchObject({ reason: 'offer.superseded' })
+  })
+
+  it('refuses an answer that lists another version than the one sent', async () => {
+    const { store } = await folder(SELLER, true)
+    const other = { ...offer, unitPrice: dollars(60) }
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListings ? json(listingOf(other)) : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    const { id } = await services.publish(draft)
+    await expect(services.listWithAvow(id)).rejects.toThrow(/another version/)
+  })
+
+  it('withdraws a listing by its id and reads what Avow lists for the business', async () => {
+    const { store } = await folder(SELLER, true)
+    const id = offerVersionId(offer)
+    const { fetch } = avow((path, body) => {
+      if (path === SANDBOX_PATHS.offerWithdrawals) {
+        return json(wire({ id: body.id, withdrawnAt: 1_800_000_100n }))
+      }
+      if (path === SANDBOX_PATHS.offerListingsMine) return json({ listed: [listingOf(offer)] })
+      return null
+    })
+    const services = await sandboxServices({ store, fetch })
+    expect(await services.withdrawFromAvow(id)).toEqual({ id, withdrawnAt: 1_800_000_100n })
+    expect((await services.listedWithAvow()).map((l) => l.id)).toEqual([id])
+  })
+
+  it("refuses a read of listings that holds another business's offer", async () => {
+    const { store } = await folder(SELLER, true)
+    const theirs = { ...offer, supplier: 'sandbox-other' }
+    const { fetch } = avow((path) =>
+      path === SANDBOX_PATHS.offerListingsMine ? json({ listed: [listingOf(theirs)] }) : null,
+    )
+    const services = await sandboxServices({ store, fetch })
+    await expect(services.listedWithAvow()).rejects.toThrow(/another business/)
+  })
+
+  it('needs a signing key, which an agent connected only to buy has none of', async () => {
+    const { store } = await folder(BUYER)
+    const services = await sandboxServices({ store, fetch: avow(() => null).fetch })
+    await expect(services.listedWithAvow()).rejects.toThrow()
+    await expect(services.withdrawFromAvow(offerVersionId(offer))).rejects.toThrow()
+  })
+})
+
 describe('buying a service', () => {
   it('sends the whole offer, and lets an order nobody quotes lapse with nothing reserved', async () => {
     const { store } = await folder(BUYER)

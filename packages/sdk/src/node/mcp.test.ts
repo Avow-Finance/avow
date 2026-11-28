@@ -48,6 +48,8 @@ describe('avow-sandbox-mcp', () => {
       'request_status',
       'publish_offer',
       'offers',
+      'list_offer',
+      'withdraw_listing',
       'test_sellers',
       'order',
       'orders',
@@ -75,6 +77,8 @@ describe('avow-sandbox-mcp', () => {
       'request_change',
       'request_seller_mandate',
       'publish_offer',
+      'list_offer',
+      'withdraw_listing',
       'order',
       'sell',
     ])

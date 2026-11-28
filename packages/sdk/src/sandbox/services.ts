@@ -1,6 +1,11 @@
 import {
   type CommitmentReference,
+  type OfferListing,
+  type OfferWithdrawal,
   offerVersionId,
+  parseOfferListing,
+  parseOfferListings,
+  parseOfferWithdrawal,
   parseServiceInbox,
   parseServiceOfferVersion,
   parseServiceOrder,
@@ -110,6 +115,27 @@ export type SellAskOutcome =
 export const SELLER_MANDATE_ASKS_UNTAKEN =
   "Avow doesn't take seller's mandate requests yet, so nothing was asked. This agent sells as it did before, and no seller's mandate is in force for its signing key."
 
+/** What Avow said to a listing. */
+export type ListOutcome =
+  | { ok: true; listing: OfferListing; standing: SellerStanding }
+  | { ok: false; reason: 'offer.listing_unavailable'; notice: string }
+
+/** What an agent is told when the sandbox it talks to lists no offers. */
+export const OFFER_LISTINGS_UNTAKEN =
+  "This Avow sandbox doesn't list offers yet, so nothing was listed. Hand the offer to the buyer's agent yourself, as before."
+
+/**
+ * Whether Avow's refusal says the sandbox lists no offers: a deployment that holds no seller's
+ * mandates, or one that doesn't serve the listing routes yet.
+ */
+const listsNothing = (error: unknown): boolean =>
+  error instanceof AvowApiError &&
+  error.definite &&
+  (error.reason === 'offer.listing_unavailable' ||
+    (error.status === 404 &&
+      error.reason === 'request.invalid' &&
+      /no such route/i.test(error.message)))
+
 /** An offer as its supplier writes it, before its business is named for it. */
 export type ServiceOfferDraft = Omit<ServiceOfferVersion, 'supplier'>
 
@@ -156,8 +182,32 @@ export interface SandboxServices {
   sellerStanding(): Promise<SellerStanding>
   /** The offers this business has published and not withdrawn, oldest first. */
   published(): Promise<ServiceOfferVersion[]>
-  /** Withdraws a published version by its id, and says whether there was one. */
+  /**
+   * Withdraws a published version by its id, and says whether there was one. It changes only this
+   * folder, so a version listed with Avow stays listed until `withdrawFromAvow` takes it away.
+   */
   withdraw(id: Hex): Promise<boolean>
+  /**
+   * Lists a version this business published from this folder with Avow, signed with the agent's
+   * signing key, for Avow's directory of offers. It becomes its item's current
+   * listing there, in place of any version of the item listed before. The agent holds the version
+   * to its newest seller's mandate first and throws a `SellerMandateRefusal` for one the mandate
+   * doesn't allow, and Avow checks it against the newest mandate again and refuses it with the
+   * reason. A version replaced or withdrawn with Avow is refused as `offer.superseded` or
+   * `offer.withdrawn`. A sandbox that holds no seller's mandates lists nothing, and the answer says
+   * so plainly.
+   */
+  listWithAvow(id: Hex): Promise<ListOutcome>
+  /**
+   * Withdraws an item's current listing from Avow's directory, by its version's id, and answers
+   * with when Avow withdrew it. The version stays published in this folder.
+   */
+  withdrawFromAvow(id: Hex): Promise<OfferWithdrawal>
+  /**
+   * Every current listing Avow holds for this business, oldest first, or none where the sandbox
+   * lists no offers.
+   */
+  listedWithAvow(): Promise<OfferListing[]>
   /**
    * Sends an order for units of an offer, with nothing reserved. The order is kept in the store
    * before it's sent, so `buy` can pick it up after a restart.
@@ -368,6 +418,68 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
       return { published: left }
     })
     return gone
+  }
+
+  // The supplier's listings with Avow.
+
+  async function listWithAvow(id: Hex): Promise<ListOutcome> {
+    const { asSupplier, signing } = context.needSupplier()
+    const version = (await published()).find((v) => offerVersionId(v) === id.toLowerCase())
+    if (!version) throw new Error(`This business hasn't published an offer with id ${id} here.`)
+    // The agent's own layer holds the listing to its mandate before Avow's does.
+    const standing = await sellerStanding()
+    holdOffer(standing, version, signing.address, systemClock())
+    try {
+      const listing = await asSupplier({
+        domain,
+        path: SANDBOX_PATHS.offerListings,
+        body: { version },
+        read: parseOfferListing,
+      })
+      if (listing.id !== offerVersionId(version)) {
+        throw new Error("Avow's answer lists another version than the one sent.")
+      }
+      return { ok: true, listing, standing }
+    } catch (error) {
+      if (listsNothing(error)) {
+        return { ok: false, reason: 'offer.listing_unavailable', notice: OFFER_LISTINGS_UNTAKEN }
+      }
+      throw error
+    }
+  }
+
+  async function withdrawFromAvow(id: Hex): Promise<OfferWithdrawal> {
+    const { asSupplier } = context.needSupplier()
+    const withdrawn = await asSupplier({
+      domain,
+      path: SANDBOX_PATHS.offerWithdrawals,
+      body: { id },
+      read: parseOfferWithdrawal,
+    })
+    if (withdrawn.id !== id.toLowerCase()) {
+      throw new Error("Avow's answer withdraws another version than the one named.")
+    }
+    return withdrawn
+  }
+
+  async function listedWithAvow(): Promise<OfferListing[]> {
+    const { asSupplier } = context.needSupplier()
+    try {
+      const { listed } = await asSupplier({
+        domain,
+        path: SANDBOX_PATHS.offerListingsMine,
+        body: {},
+        read: parseOfferListings,
+      })
+      // Every listing names the business it was listed for, which has to be this one.
+      if (listed.some((l) => l.version.supplier !== business.businessId)) {
+        throw new Error("Avow's answer lists another business's offer.")
+      }
+      return listed
+    } catch (error) {
+      if (listsNothing(error)) return []
+      throw error
+    }
   }
 
   // The buyer's side.
@@ -670,6 +782,9 @@ export async function sandboxServices(o: MailboxOptions = {}): Promise<SandboxSe
     awaitSellRequest,
     published,
     withdraw,
+    listWithAvow,
+    withdrawFromAvow,
+    listedWithAvow,
     order,
     unfinished,
     read,

@@ -74,7 +74,10 @@ const HELP = `avow-sandbox [start | job | fresh] [--provider local|anthropic] [-
            jobs and service orders for the business
   offer    publish makes an offer of a service this business sells, from --name, --summary,
            --price, --evidence, --late-cancellation and --no-show, and writes the file a buyer's
-           agent orders from. list shows what's published, and withdraw <id> takes one back
+           agent orders from. list shows what's published, and withdraw <id> takes one back.
+           list-with-avow <id> lists a published offer in Avow's directory, checked against the
+           seller's mandate, withdraw-from-avow <id> takes it away, and listed-with-avow shows
+           what Avow lists
   order    orders units of a supplier's offer with --offer <file> and --quantity, or the demo
            job from another business with --supplier <id>. Either way it checks the quote, funds
            it and waits for the acceptance

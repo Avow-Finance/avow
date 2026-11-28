@@ -48,6 +48,8 @@ navigation:
         path: ./docs/pages/supplier-adapter.mdx
       - page: Services sold by quantity
         path: ./docs/pages/services.mdx
+      - page: Listing offers with Avow
+        path: ./docs/pages/offer-listings.mdx
       - page: Negotiation threads
         path: ./docs/pages/negotiation.mdx
       - page: Seller's mandates

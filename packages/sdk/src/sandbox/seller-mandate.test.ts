@@ -269,6 +269,28 @@ describe('a selling agent under a seller’s mandate', () => {
     expect((await services.published()).map((v) => v.unitPrice)).toEqual([dollars(50)])
   })
 
+  it('lists with Avow only an offer its newest mandate allows, and sends nothing for another', async () => {
+    const { services, changeTo, posted } = await under()
+    const published = await services.publish(draft)
+    // The administrator raises the floor after the offer was published.
+    changeTo({
+      mandateId: id('seller-mandate-2'),
+      limits: [
+        {
+          category: 'service',
+          item: null,
+          minUnitPrice: dollars(60),
+          maxUnitsPerOrder: 4,
+          maxUnitsPerDay: 10,
+        },
+      ],
+    })
+    const listed = services.listWithAvow(published.id)
+    await expect(listed).rejects.toBeInstanceOf(SellerMandateRefusal)
+    await expect(listed).rejects.toMatchObject({ reason: 'seller_mandate.under_price_floor' })
+    expect(posted.some((p) => p.path === SANDBOX_PATHS.offerListings)).toBe(false)
+  })
+
   it('refuses an offer whose largest booking goes past the units one order may take', async () => {
     const { services } = await under()
     const big = { ...draft, rules: { ...draft.rules, maxPerBooking: 5 } }

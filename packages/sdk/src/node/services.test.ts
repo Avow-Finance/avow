@@ -7,6 +7,7 @@ import {
   bookingSentence,
   offerSentences,
   readAskToSellArgs,
+  readOfferArgs,
   readOfferInput,
   readPublishArgs,
   readServiceOrderArgs,
@@ -106,6 +107,50 @@ describe('an offer in words', () => {
     expect(readSharedOffer('{')).toBeNull()
     expect(readSharedOffer({ ...(shared as object), unitPrice: '0' })).toBeNull()
     expect(readSharedOffer(undefined)).toBeNull()
+  })
+})
+
+describe('avow-sandbox offer', () => {
+  const id = `0x${'ab'.repeat(32)}`
+
+  it('reads each verb, the ones that act on one version taking its id and nothing else', () => {
+    expect(readOfferArgs(['list'])).toEqual({ verb: 'list' })
+    expect(readOfferArgs(['listed-with-avow'])).toEqual({ verb: 'listed-with-avow' })
+    for (const verb of ['withdraw', 'list-with-avow', 'withdraw-from-avow']) {
+      expect(readOfferArgs([verb, id])).toEqual({ verb, id })
+      expect(readOfferArgs([verb])).toEqual({ error: `offer ${verb} takes the id of an offer` })
+      expect(readOfferArgs([verb, '0x12'])).toHaveProperty('error')
+      expect(readOfferArgs([verb, id, id])).toHaveProperty('error')
+    }
+    expect(readOfferArgs(['listed-with-avow', id])).toHaveProperty('error')
+  })
+
+  it('names every verb when given one it has none of', () => {
+    expect(readOfferArgs(['search'])).toEqual({
+      error:
+        'offer takes publish, list, withdraw, list-with-avow, withdraw-from-avow or listed-with-avow',
+    })
+    expect(readOfferArgs([])).toHaveProperty('error')
+  })
+
+  it('reads an offer to publish from its flags', () => {
+    const read = readOfferArgs([
+      'publish',
+      '--name',
+      'Transcript',
+      '--summary',
+      'One hour of audio transcribed into English text',
+      '--price',
+      '50',
+      '--evidence',
+      'The transcript is delivered to the buyer as a text file',
+      '--late-cancellation',
+      '20',
+      '--no-show',
+      '50',
+    ])
+    expect(read).toMatchObject({ verb: 'publish', draft: { unitPrice: dollars(50) } })
+    expect(readOfferArgs(['publish', '--colour', 'red'])).toHaveProperty('error')
   })
 })
 
