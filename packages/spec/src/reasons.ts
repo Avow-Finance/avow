@@ -89,6 +89,19 @@ export const REASON_CODES = {
   'mandate.change_pending':
     "The agent's limits just changed, and Avow approves under the new ones once every approval given under the old ones has expired, which takes at most a few minutes, so send it again then",
   'approval.human_required': 'The mandate asks the administrator to approve this reserve',
+  'slice.invalid':
+    "The slice isn't well formed: its limits conflict, or it names a worker's key that is the issuer's or the account's, or a signer that is neither",
+  'slice.widens':
+    'The slice would let the worker do something the authority it divides does not, so it was refused',
+  'slice.chain_mismatch':
+    "The worker's slices don't link back, level by level, to the agent's mandate and its key",
+  'slice.too_deep': 'The slice sits more levels below the mandate than a slice can',
+  'slice.replaces_mismatch':
+    "A version of the slice doesn't name the one before it, or changes what a new version can't",
+  'slice.revoked': "The worker's key, or the key of a worker above it, is revoked",
+  'slice.key_mismatch': "The request didn't come from the key the slice was handed to",
+  'slice.signature_invalid':
+    "A slice or one of its versions isn't signed by the key that handed it out or by the business account",
   'approval.acceptance_too_far':
     "The supplier could still accept more than 15 minutes from now, so Avow doesn't approve the reserve yet. Ask again closer to the acceptance deadline",
   'approval.human_invalid':

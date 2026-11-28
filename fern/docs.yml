@@ -54,6 +54,8 @@ navigation:
         path: ./docs/pages/negotiation.mdx
       - page: Price limits
         path: ./docs/pages/price-limits.mdx
+      - page: Slices for workers
+        path: ./docs/pages/slices.mdx
       - page: Seller's mandates
         path: ./docs/pages/seller-mandate.mdx
       - page: Business checks

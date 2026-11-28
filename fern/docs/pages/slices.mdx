@@ -1,0 +1,73 @@
+---
+title: Slices for workers
+slug: docs/reference/slices
+---
+
+An agent that starts other agents hands each one a slice of its own authority, so a person signs once for the agent and never for each worker. A slice is narrower than what it divides, it ends no later, and it always traces back to the mandate a person signed. A worker can hand a slice of its slice to a worker of its own, down to four levels below the mandate.
+
+In Beta a worker runs only on its agent's machine, in the agent's process or another process beside it. A worker on another machine can't reach the agent's key, so it needs a mandate a person signs for it.
+
+This page covers the messages and the checks in `@avow-finance/spec`. The SDK, the MCP server and Avow's API take slices in their own releases, and until they do no agent can use one.
+
+## Who holds a worker to its slice
+
+Two layers hold a worker to its slice's own limits, the SDK and Avow's API. Wherever a slice's limits are shown they're labelled as held by those two only.
+
+- A worker's key goes on no keychain and signs nothing on the chain. It signs the worker's requests to Avow, so Avow knows which slice is acting.
+- The agent's key funds every reserve its workers make, through the agent's own process on its own machine. It never leaves the `.avow` folder that made it, and a worker never holds it.
+- So the lock and the keychain still hold the agent and every worker together to the mandate a person signed. No slice, and no number of slices, gets past that.
+
+## What a slice may hold
+
+A slice carries the limits a mandate carries, and `sliceWidensProblem` refuses one that would let a worker do anything its parent can't.
+
+| Limit | A slice may |
+| --- | --- |
+| Actions, suppliers, categories | Name only what its parent names. When the parent names any supplier or category, the slice has to name some |
+| Most per commitment, most reserved at once | Be no larger |
+| Price limit | Be no larger, and stay when the parent has one |
+| Payment limits | Keep each token's period, with no larger amount, or leave a token out. What the slice and every slice below it had approved within the period counts toward it |
+| When a person approves | Leave no more to the worker, so a slice can send more reserves to a person and never fewer |
+| Expiry | Be no later |
+
+Slices can promise more on paper than their parent holds, two workers each with \$600 under a parent with \$1,000. What they hold is what counts. `checkSlicedMandate` runs `checkMandate` on the agent's current mandate with everything open under it, then on each slice from the top down with what's open under that slice and every slice below it. A reserve passes only when every level lets it through, so what all of a parent's slices hold together never passes the parent. A slice's payment limit is totalled the same way, over what was approved under it within the limit's period, as Avow and the agent's signer count it. No keychain holds a worker's key, so those two totals are all that hold a slice to its payment limit, while the keychain holds the agent's key to the mandate's. A refusal names the level that refused beside the mandate's own reason code, 0 for the mandate and 1 for the slice just under it.
+
+## The messages
+
+A `Slice` signs at version 1 under the business's lock. It names its id, the business, account and agent, the hash of the mandate it was handed out under, the id of the slice it divides, the key that handed it out, the worker's key, who signed it, its limits and the hash of the version it replaces. A slice with no price limit of its own signs zero for it, and a first version signs the zero hash as the one it replaces. A price limit over a period will come as version 2, the same way the mandate's did.
+
+A slice names its parent by id. Narrowing a parent never invalidates the slices under it, and no version of a child, its current one included, has to fit the parent's narrowed limits. The narrowed parent binds them when they're used instead, since each level is checked against its parent's current limits every time a worker below it books. A child given \$1,000 under a parent narrowed from \$1,200 to \$800 stays valid and can hold no more than the parent's \$800. A slice handed out under a mandate the administrator later replaced stays valid, and the new mandate binds it at once as the top level.
+
+| Who signs a new version | What it may do |
+| --- | --- |
+| The key that handed the slice out | Narrow it, never widen it |
+| The business account, from the console with its passkey | Change it to anything inside its parent |
+
+Narrowing means every limit stays inside the version it replaces, by the rules in the table above. A new version names the hash of the version it replaces and carries the next nonce, and `sliceReplacementProblem` checks both and the rule for its signer. The versions of a slice form one line, so an issuer can't sign past the administrator's change by replacing an older version.
+
+A `SliceRevocation` names a worker's key, and ends every slice that key holds and every slice handed out below it. A revocation counts only when the business account or the key of a level above the revoked worker signed it, which `sliceRevocationProblem` checks. A revocation from the worker itself, a worker below it, a sibling or a forger counts for nothing. A revoked key is given no slice again, so a worker starts over under a new key.
+
+## Checking a worker's slices
+
+`sliceChainProblem` reads a worker's slices as Avow serves them, one level for each slice from the mandate down to the worker, each with its versions newest first, and any revocations. It checks every link, and works every hash out itself.
+
+- every version names the agent's business, account and agent, and a mandate in the agent's checked chain
+- the first level was handed out by the agent's key, and each level after it by the worker key above, and no id or key holds two levels
+- each level's first version fits inside its parent, and every version after it passes `sliceReplacementProblem` against the one before
+- the issuer's key or the account signed every version
+- no revocation that counts names a key on the way
+
+It reads only what it's handed, so it can't see a version or a revocation its server left out. A slice handed out under an earlier mandate is held to the current one when it's used.
+
+## What Avow enforces
+
+Avow's API holds the slices and the revocations, so it enforces what a reader can't see for itself.
+
+- It takes a slice only when it fits inside its parent's current version, and a new version only when `sliceReplacementProblem` passes against the version it holds as current.
+- It stores a revocation only after `sliceRevocationProblem` passes, and gives no slice to a revoked key again.
+- It serves every version of every level and every revocation that counts, so a worker's chain is whole.
+- It runs `checkSlicedMandate` before it approves any reserve a worker asks for, counting what is open and what was approved within each period under every level.
+
+The lock counts what's open under a mandate and knows nothing of slices, so Avow counts what's open under each slice from its own records. It counts every reserve it approved under a slice or below it as open until the approval expired with nothing funded or the lock shows the reserve released. A reserve that may already have closed still counts, so the count can only run high, and a worker can be refused too early but never let past its slice. Before it refuses a worker near its cap, Avow reads the lock for the reserves it's counting and drops those the lock shows closed.
+
+`vectors/slice-v1.json` holds hashes another implementation can check itself against.

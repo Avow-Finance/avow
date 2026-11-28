@@ -47,6 +47,12 @@ import {
 } from './eip712.js'
 import { type SellerKeyRevocation, sellerKeyRevocationTypedData } from './seller-key-revocation.js'
 import { sellerMandateTypedData } from './seller-mandate.js'
+import {
+  type Slice,
+  type SliceRevocation,
+  sliceRevocationTypedData,
+  sliceTypedData,
+} from './slice.js'
 import { lockTerms, termsHash } from './terms.js'
 import {
   ARBITER,
@@ -54,6 +60,7 @@ import {
   DOMAIN,
   demoMandate,
   demoSellerMandate,
+  demoSlice,
   id,
   LOCK,
   NOW,
@@ -74,6 +81,19 @@ const revocation: SellerKeyRevocation = {
   businessId: sellerMandate.businessId,
   account: sellerMandate.account,
   signingKey: sellerMandate.signingKey,
+}
+// Every field set, the optional ones included, so the sample's keys are the table's.
+const slice: Slice = {
+  ...demoSlice(mandate, id('mandate'), newKey().address),
+  priceCapPerCommitment: 250_000_000n,
+  replaces: id('earlier slice'),
+}
+const sliceRevocation: SliceRevocation = {
+  businessId: slice.businessId,
+  account: slice.account,
+  agentId: slice.agentId,
+  subKey: slice.subKey,
+  by: slice.account,
 }
 const terms = testnetDemoTerms(START, ARBITER)
 const lock = lockTerms(terms, TOKEN.decimals)
@@ -275,6 +295,8 @@ const builders = {
   mandate: (d = DOMAIN) => mandateTypedData(mandate, d),
   sellerMandate: (d = DOMAIN) => sellerMandateTypedData(sellerMandate, d),
   revocation: (d = DOMAIN) => sellerKeyRevocationTypedData(revocation, d),
+  slice: (d = DOMAIN) => sliceTypedData(slice, d),
+  sliceRevocation: (d = DOMAIN) => sliceRevocationTypedData(sliceRevocation, d),
   agreement: (d = DOMAIN) => termsAgreementTypedData(agreement, d),
   approval: (d = DOMAIN) => approvalTypedData(approval, d),
   authorization: (d = DOMAIN) => supplierAuthorizationTypedData(authorization, d),
@@ -335,6 +357,8 @@ describe('signed messages', () => {
       Mandate: { typedData: builders.mandate(), from: mandate },
       SellerMandate: { typedData: builders.sellerMandate(), from: sellerMandate },
       SellerKeyRevocation: { typedData: builders.revocation(), from: revocation },
+      Slice: { typedData: builders.slice(), from: slice },
+      SliceRevocation: { typedData: builders.sliceRevocation(), from: sliceRevocation },
       TermsAgreement: { typedData: builders.agreement(), from: agreement },
       Approval: { typedData: builders.approval(), from: approval },
       SupplierAuthorization: { typedData: builders.authorization(), from: authorization },
@@ -363,7 +387,7 @@ describe('signed messages', () => {
         const table = names(typedData, type)
         expect(table.length).toBeGreaterThan(0)
         // A mandate's approval rule is written as two fields, its kind and an above rule's amount.
-        const twoFields = type === 'Mandate' || type === 'SellerMandate'
+        const twoFields = type === 'Mandate' || type === 'SellerMandate' || type === 'Slice'
         const fields = Object.keys(from).concat(twoFields ? ['approvalAbove'] : [])
         expect(fields.sort()).toEqual(table)
         expect(keys(typedData.message)).toEqual(table)
