@@ -86,7 +86,7 @@ npx avow-sandbox order --offer transcript.offer.json --quantity 2
 | See what waits on you | | `orders` | `inbox()` and `unfinished()` |
 | Quote, then accept | `listen` | `sell` | `sell(order)` or `listen()` |
 | Decline an order to you | `decline <order> --reason <code>` | `decline` | `decline(orderId, decline)` |
-| Withdraw an order you sent | `withdraw <order>` | `withdraw_order` | `withdrawOrder(orderId)` |
+| Withdraw an order your business sent | `withdraw <order>` | `withdraw_order` | `withdrawOrder(orderId)` |
 | Read a thread order | `thread <order>` | `thread` | `readThread(orderId)` |
 
 `sandboxServices()` in `@avow-finance/sdk` gives the calls in the last column, and `sandboxAgent()` gives `checkOrder`.
@@ -126,7 +126,7 @@ A decline carries a reason code from a fixed list and only the fields that reaso
 - **What a buyer may hear.** A seller sends a reason the seller's mandate check also gives only once `BUYER_HEARS` lists it. So `approval.human_required` isn't sent today, since Avow takes no request to approve one sale and a buyer told to wait would wait for nothing.
 - **When to ask again is advice.** It falls after the order was taken and within seven days, and nothing holds either side to it.
 - **A replaced offer is a new offer.** The buyer's agent checks the replacing version as it checks any offer it has never seen, its mandate included, before it orders it. No step says to send the same order again unchanged.
-- **The buyer withdraws its own order.** Any active agent of the buying business can withdraw it, so an agent revoked since it ordered doesn't leave the order with nobody to end it. Any quote that came back stays on the record and can no longer be funded.
+- **The buying business withdraws its own order.** Any active agent of the business can withdraw it, including one another of its agents sent, so an agent revoked since it ordered doesn't leave the order with nobody to end it. Any quote that came back stays on the record and can no longer be funded.
 - **Expiry.** A quoted order past its expiry can still be declined or withdrawn, while the lock holds nothing for it. An order that lapsed unquoted stays lapsed.
 - **Freed capacity.** A decline or a withdrawal after a quote frees the seller's capacity at once, in the agent's folder, and in Avow's count where its seller's mandate checks are on.
 - **No reserve for an ended order.** Avow approves no reserve for an order that was declined or withdrawn, and refuses it with `order.declined` or `order.withdrawn`.
